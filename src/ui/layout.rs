@@ -1,51 +1,35 @@
 //! Layout management for the TUI
 //!
-//! Defines the 4-panel layout structure:
-//! - User input (bottom)
-//! - LLM responses (top left)
-//! - Connection info (top right)
-//! - Status/activity log (middle)
+//! Defines the shell-like layout with scrollable output and pinned input
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-/// Layout structure for the application
+/// Shell-like application layout
 pub struct AppLayout {
-    /// User input area
-    pub input: Rect,
-    /// LLM output area
-    pub llm_output: Rect,
-    /// Connection information area
-    pub connection_info: Rect,
-    /// Status/activity area
+    /// Scrollable output area (main content)
+    pub output: Rect,
+    /// Status bar (connection info)
     pub status: Rect,
+    /// Input prompt area (pinned to bottom)
+    pub input: Rect,
 }
 
 impl AppLayout {
-    /// Create a new layout from the given area
+    /// Create a new layout for the given terminal area
     pub fn new(area: Rect) -> Self {
-        // Split vertically: top (70%) and bottom (30%)
-        let vertical_chunks = Layout::default()
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .constraints([
+                Constraint::Min(5),      // Output area (takes most space)
+                Constraint::Length(1),   // Status bar (1 line)
+                Constraint::Length(3),   // Input area (3 lines for border + text)
+            ])
             .split(area);
 
-        // Split the top area vertically again: main content (70%) and status (30%)
-        let top_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-            .split(vertical_chunks[0]);
-
-        // Split the main content area horizontally: LLM output (60%) and connection info (40%)
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(top_chunks[0]);
-
         Self {
-            input: vertical_chunks[1],
-            llm_output: main_chunks[0],
-            connection_info: main_chunks[1],
-            status: top_chunks[1],
+            output: chunks[0],
+            status: chunks[1],
+            input: chunks[2],
         }
     }
 }
