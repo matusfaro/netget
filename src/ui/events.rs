@@ -89,6 +89,20 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
             Ok(false)
         }
 
+        // Scrolling in output
+        (KeyCode::PageUp, _) => {
+            app.scroll_up(10);
+            Ok(false)
+        }
+        (KeyCode::PageDown, _) => {
+            app.scroll_down(10);
+            Ok(false)
+        }
+        (KeyCode::Char('g'), m) if m.contains(KeyModifiers::CONTROL) => {
+            app.scroll_to_bottom();
+            Ok(false)
+        }
+
         // Navigation
         (KeyCode::Left, _) => {
             app.move_cursor_left();

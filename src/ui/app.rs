@@ -3,7 +3,6 @@
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
@@ -26,17 +25,14 @@ pub struct App {
     pub history_position: Option<usize>,
     /// Temporary buffer when browsing history
     pub history_temp_input: Option<String>,
-    /// LLM response messages
-    pub llm_messages: Vec<String>,
-    /// Status/summary messages
-    pub status_messages: Vec<String>,
+    /// All output messages (combined log)
+    pub output_messages: Vec<String>,
     /// Connection information
     pub connection_info: ConnectionInfo,
     /// Packet statistics
     pub packet_stats: PacketStats,
-    /// Scroll positions for messages
-    pub llm_scroll: u16,
-    pub status_scroll: u16,
+    /// Scroll offset for output (0 = bottom, higher = scrolled up)
+    pub scroll_offset: usize,
 }
 
 #[derive(Default, Clone)]
@@ -65,12 +61,10 @@ impl Default for App {
             command_history: Vec::new(),
             history_position: None,
             history_temp_input: None,
-            llm_messages: Vec::new(),
-            status_messages: Vec::new(),
+            output_messages: Vec::new(),
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
-            llm_scroll: 0,
-            status_scroll: 0,
+            scroll_offset: 0,
         }
     }
 }
@@ -146,14 +140,38 @@ impl App {
         self.command_history.len()
     }
 
-    /// Add a message to the LLM messages panel
-    pub fn add_llm_message(&mut self, message: String) {
-        self.llm_messages.push(message);
+    /// Add a message to the output log
+    pub fn add_message(&mut self, message: String) {
+        self.output_messages.push(message);
+        // Auto-scroll to bottom when new message arrives (unless user is scrolled up)
+        if self.scroll_offset == 0 {
+            self.scroll_offset = 0; // Stay at bottom
+        }
     }
 
-    /// Add a message to the status panel
+    /// Legacy methods for compatibility
+    pub fn add_llm_message(&mut self, message: String) {
+        self.add_message(message);
+    }
+
     pub fn add_status_message(&mut self, message: String) {
-        self.status_messages.push(message);
+        self.add_message(message);
+    }
+
+    /// Scroll up in the output
+    pub fn scroll_up(&mut self, lines: usize) {
+        let max_scroll = self.output_messages.len().saturating_sub(1);
+        self.scroll_offset = (self.scroll_offset + lines).min(max_scroll);
+    }
+
+    /// Scroll down in the output
+    pub fn scroll_down(&mut self, lines: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+    }
+
+    /// Scroll to bottom
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
     }
 
     /// Handle character input
@@ -317,167 +335,112 @@ impl App {
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let layout = AppLayout::new(area);
 
-        // Render user input panel
-        self.render_input_panel(frame, layout.input);
+        // Render output area (scrollable)
+        self.render_output(frame, layout.output);
 
-        // Render LLM messages panel
-        self.render_llm_panel(frame, layout.llm_output);
+        // Render status bar
+        self.render_status_bar(frame, layout.status);
 
-        // Render connection info panel
-        self.render_connection_panel(frame, layout.connection_info);
-
-        // Render status panel
-        self.render_status_panel(frame, layout.status);
+        // Render input prompt
+        self.render_input(frame, layout.input);
     }
 
-    fn render_input_panel(&self, frame: &mut Frame, area: Rect) {
-        // Build title with shortcuts and history indicator
-        let title = if let Some(pos) = self.history_position {
-            format!("Input [History {}/{}] (Shift+Enter=newline, Ctrl+C=quit)",
-                    pos + 1, self.command_history.len())
+    /// Render the scrollable output area
+    fn render_output(&self, frame: &mut Frame, area: Rect) {
+        // Calculate which messages to show based on scroll offset
+        let available_height = area.height.saturating_sub(2) as usize; // Minus borders
+        let total_messages = self.output_messages.len();
+
+        let (start_idx, end_idx) = if total_messages <= available_height {
+            // All messages fit, show all
+            (0, total_messages)
+        } else if self.scroll_offset == 0 {
+            // At bottom, show most recent messages
+            (total_messages - available_height, total_messages)
         } else {
-            "Input (Enter=submit, Shift+Enter=newline, Up/Down=history, Ctrl+C=quit)".to_string()
+            // Scrolled up
+            let start = total_messages.saturating_sub(available_height + self.scroll_offset);
+            let end = total_messages.saturating_sub(self.scroll_offset);
+            (start, end)
         };
 
-        let input_text = Paragraph::new(self.input.as_str())
-            .style(Style::default().fg(Color::White).bg(Color::Blue))
+        let visible_messages: Vec<ListItem> = self.output_messages[start_idx..end_idx]
+            .iter()
+            .map(|m| ListItem::new(m.as_str()).style(Style::default().fg(Color::White).bg(Color::Black)))
+            .collect();
+
+        let scroll_indicator = if self.scroll_offset > 0 {
+            format!(" [↑ {} lines]", self.scroll_offset)
+        } else {
+            String::new()
+        };
+
+        let output_list = List::new(visible_messages)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(title)
+                    .title(format!("NetGet - Output{}", scroll_indicator))
                     .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                    .style(Style::default().bg(Color::Blue)),
+                    .style(Style::default().bg(Color::Black)),
+            );
+
+        frame.render_widget(output_list, area);
+    }
+
+    /// Render the status bar (single line)
+    fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
+        let status_text = format!(
+            " {} | {} | {} | {} | ↑{} ↓{} ",
+            if self.connection_info.mode.is_empty() { "Idle" } else { &self.connection_info.mode },
+            if self.connection_info.protocol.is_empty() { "-" } else { &self.connection_info.protocol },
+            if self.connection_info.local_addr.is_some() {
+                self.connection_info.local_addr.as_ref().unwrap()
+            } else {
+                "no connection"
+            },
+            &self.connection_info.model,
+            self.packet_stats.bytes_received,
+            self.packet_stats.bytes_sent,
+        );
+
+        let status = Paragraph::new(status_text)
+            .style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD));
+
+        frame.render_widget(status, area);
+    }
+
+    /// Render the input prompt (pinned to bottom)
+    fn render_input(&self, frame: &mut Frame, area: Rect) {
+        // Input with `> ` prompt
+        let prompt = "> ";
+        let display_text = format!("{}{}", prompt, self.input);
+
+        let input_widget = Paragraph::new(display_text.as_str())
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .style(Style::default().bg(Color::Black)),
             )
             .wrap(Wrap { trim: false });
 
-        frame.render_widget(input_text, area);
+        frame.render_widget(input_widget, area);
 
-        // Calculate cursor position accounting for newlines and wrapping
+        // Calculate cursor position (after "> " prompt)
         let text_before_cursor = &self.input[..self.cursor_position];
         let lines: Vec<&str> = text_before_cursor.split('\n').collect();
         let line_count = lines.len() as u16;
         let col_in_line = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
 
-        // Position cursor (accounting for border)
-        let cursor_x = area.x + col_in_line + 1;
+        // Position cursor (accounting for "> " prompt and border)
+        let cursor_x = area.x + prompt.len() as u16 + col_in_line + 1;
         let cursor_y = area.y + line_count;
 
         // Only set cursor if it's within the visible area
         if cursor_y < area.y + area.height - 1 {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
-    }
-
-    fn render_llm_panel(&self, frame: &mut Frame, area: Rect) {
-        let messages: Vec<ListItem> = self
-            .llm_messages
-            .iter()
-            .map(|m| ListItem::new(m.as_str()).style(Style::default().fg(Color::White).bg(Color::Blue)))
-            .collect();
-
-        let messages_list = List::new(messages)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("LLM Responses")
-                    .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                    .style(Style::default().bg(Color::Blue)),
-            );
-
-        frame.render_widget(messages_list, area);
-    }
-
-    fn render_connection_panel(&self, frame: &mut Frame, area: Rect) {
-        let info_text = vec![
-            Line::from(vec![
-                Span::styled("Mode: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue)),
-                Span::styled(&self.connection_info.mode, Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("Protocol: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue)),
-                Span::styled(&self.connection_info.protocol, Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("Model: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue)),
-                Span::styled(&self.connection_info.model, Style::default().fg(Color::LightGreen).bg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("Local: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue)),
-                Span::styled(
-                    self.connection_info
-                        .local_addr
-                        .as_deref()
-                        .unwrap_or("None"),
-                    Style::default().fg(Color::White).bg(Color::Blue),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Remote: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue)),
-                Span::styled(
-                    self.connection_info
-                        .remote_addr
-                        .as_deref()
-                        .unwrap_or("None"),
-                    Style::default().fg(Color::White).bg(Color::Blue),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("State: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue)),
-                Span::styled(&self.connection_info.state, Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-            Line::from(Span::styled("", Style::default().bg(Color::Blue))),
-            Line::from(vec![Span::styled(
-                "Packet Statistics:",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).bg(Color::Blue),
-            )]),
-            Line::from(vec![
-                Span::styled("  Packets RX: ", Style::default().fg(Color::LightCyan).bg(Color::Blue)),
-                Span::styled(self.packet_stats.packets_received.to_string(), Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("  Packets TX: ", Style::default().fg(Color::LightCyan).bg(Color::Blue)),
-                Span::styled(self.packet_stats.packets_sent.to_string(), Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("  Bytes RX: ", Style::default().fg(Color::LightCyan).bg(Color::Blue)),
-                Span::styled(self.packet_stats.bytes_received.to_string(), Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("  Bytes TX: ", Style::default().fg(Color::LightCyan).bg(Color::Blue)),
-                Span::styled(self.packet_stats.bytes_sent.to_string(), Style::default().fg(Color::White).bg(Color::Blue)),
-            ]),
-        ];
-
-        let info_paragraph = Paragraph::new(info_text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Connection Info")
-                    .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                    .style(Style::default().bg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: false });
-
-        frame.render_widget(info_paragraph, area);
-    }
-
-    fn render_status_panel(&self, frame: &mut Frame, area: Rect) {
-        let messages: Vec<ListItem> = self
-            .status_messages
-            .iter()
-            .map(|m| ListItem::new(m.as_str()).style(Style::default().fg(Color::LightCyan).bg(Color::Blue)))
-            .collect();
-
-        let status_list = List::new(messages)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Status / Activity Log")
-                    .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                    .style(Style::default().bg(Color::Blue)),
-            );
-
-        frame.render_widget(status_list, area);
     }
 }
 

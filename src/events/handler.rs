@@ -34,6 +34,48 @@ impl EventHandler {
         }
     }
 
+    /// Format bytes for display - as text if printable, otherwise as hex
+    fn format_data(&self, data: &[u8], max_len: usize) -> String {
+        // Check if data is printable ASCII/UTF-8
+        let is_text = data.iter().all(|&b| {
+            b == b'\n' || b == b'\r' || b == b'\t' || (b >= 32 && b < 127)
+        });
+
+        if is_text {
+            // Try to display as UTF-8 text
+            match std::str::from_utf8(data) {
+                Ok(text) => {
+                    let display_text = text.replace('\r', "\\r").replace('\n', "\\n").replace('\t', "\\t");
+                    if display_text.len() > max_len {
+                        format!("{}... ({} bytes)", &display_text[..max_len], data.len())
+                    } else {
+                        format!("{} ({} bytes)", display_text, data.len())
+                    }
+                }
+                Err(_) => self.format_as_hex(data, max_len),
+            }
+        } else {
+            self.format_as_hex(data, max_len)
+        }
+    }
+
+    /// Format bytes as hexadecimal
+    fn format_as_hex(&self, data: &[u8], max_len: usize) -> String {
+        let hex_chars = max_len / 3; // Each byte is "XX " (3 chars)
+        let bytes_to_show = hex_chars.min(data.len());
+
+        let hex: String = data.iter()
+            .take(bytes_to_show)
+            .map(|b| format!("{:02x} ", b))
+            .collect();
+
+        if data.len() > bytes_to_show {
+            format!("{}... ({} bytes, hex)", hex.trim(), data.len())
+        } else {
+            format!("{} ({} bytes, hex)", hex.trim(), data.len())
+        }
+    }
+
     /// Process LLM response to handle common issues
     /// - Strips b"..." wrapping if present
     /// - Unescapes common escape sequences if needed
@@ -115,10 +157,11 @@ impl EventHandler {
                             // Send the LLM's response
                             if let Some(stream) = self.connections.get_mut(&connection_id) {
                                 tcp::send_data(stream, response.as_bytes()).await?;
+                                let formatted = self.format_data(response.as_bytes(), 80);
                                 ui.add_status_message(format!(
-                                    "Sent initial {} bytes to {}",
-                                    response.len(),
-                                    connection_id
+                                    "→ Sent to {}: {}",
+                                    connection_id,
+                                    formatted
                                 ));
                             }
                         }
@@ -141,10 +184,11 @@ impl EventHandler {
                 connection_id,
                 data,
             } => {
+                let formatted = self.format_data(&data, 80);
                 ui.add_status_message(format!(
-                    "Received {} bytes from {}",
-                    data.len(),
-                    connection_id
+                    "← Recv from {}: {}",
+                    connection_id,
+                    formatted
                 ));
 
                 // Update stats
@@ -171,10 +215,11 @@ impl EventHandler {
                             // Send LLM's response
                             if let Some(stream) = self.connections.get_mut(&connection_id) {
                                 tcp::send_data(stream, response.as_bytes()).await?;
+                                let formatted = self.format_data(response.as_bytes(), 80);
                                 ui.add_status_message(format!(
-                                    "LLM: Sent {} bytes to {}",
-                                    response.len(),
-                                    connection_id
+                                    "→ Sent to {}: {}",
+                                    connection_id,
+                                    formatted
                                 ));
 
                                 // Update stats
