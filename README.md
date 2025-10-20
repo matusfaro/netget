@@ -157,8 +157,17 @@ See [`tests/README.md`](tests/README.md) for detailed testing documentation.
 # Start Ollama (if not running)
 ollama serve
 
-# Run NetGet
+# Run NetGet interactively
 cargo run
+
+# Run with debug logging enabled
+cargo run -- --debug
+
+# Pass a command directly (executes before entering TUI)
+cargo run -- "listen on port 21 via ftp"
+
+# Combine flags
+cargo run -- --debug "listen on port 21 via ftp"
 ```
 
 ### UI Color Scheme
@@ -173,6 +182,42 @@ NetGet uses a **Midnight Commander inspired blue theme**:
 - **Borders**: Bold cyan on all panels
 
 **Classic blue theme inspired by Midnight Commander for nostalgic terminal users!**
+
+### Shell-like Features
+
+NetGet provides a rich command-line interface with familiar keybindings:
+
+#### Command History
+- **Up/Down arrows**: Navigate through previous commands
+- **History indicator**: Title bar shows "History N/M" when browsing
+- **Smart editing**: Start typing to exit history and edit current input
+- **Persistent storage**: History automatically saved to `~/.netget_history` on exit
+- **Cross-session**: Previous commands are loaded when you restart NetGet
+
+#### Multi-line Input
+- **Shift+Enter**: Insert newline for multi-line commands
+- **Enter**: Submit command
+- **Smart cursor**: Tracks position across multiple lines
+
+#### Keybindings
+- **Ctrl+A**: Move to start of line
+- **Ctrl+E**: Move to end of line
+- **Ctrl+K**: Delete from cursor to end of line
+- **Ctrl+W**: Delete word before cursor
+- **Ctrl+U**: Clear entire input
+- **Home/End**: Jump to line start/end
+- **Ctrl+C**: Quit application
+
+#### CLI Arguments
+
+Execute commands immediately on startup:
+
+```bash
+# Start server with single command
+netget "listen on port 21 via ftp"
+
+# Useful for scripting and automation
+```
 
 ## Usage Examples
 
@@ -371,7 +416,38 @@ Traditional approach would implement FTP/HTTP/etc in Rust. Downsides:
 - **UI Improvements**: Hex view, packet inspector
 - **Performance**: Cache common responses
 
+## Files Created
+
+NetGet creates the following files:
+
+- **`netget.log`** - Application logs (only created with `--debug` flag)
+- **`~/.netget_history`** - Command history (always created)
+
+Both files are safe to delete if you want to start fresh.
+
 ## Troubleshooting
+
+### Debugging / Logs
+
+By default, NetGet runs without logging to keep things clean. To enable debug logging:
+
+```bash
+# Run with debug logging
+netget --debug
+
+# Or with cargo
+cargo run -- --debug
+```
+
+Logs are written to `netget.log` in the current directory. This prevents log messages from garbling the TUI.
+
+```bash
+# View logs in real-time
+tail -f netget.log
+
+# Search for errors
+grep ERROR netget.log
+```
 
 ### Ollama Connection Failed
 
