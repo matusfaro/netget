@@ -1,0 +1,40 @@
+[package]
+name = "netget"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.41", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# Terminal UI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# HTTP client for Ollama
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Byte manipulation
+bytes = "1.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+chrono = "0.4"
+
+[dev-dependencies]
+# FTP client for integration tests
+suppaftp = "6.0"
+# For async tests
+tokio-test = "0.4"
