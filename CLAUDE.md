@@ -61,83 +61,44 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
    - `types.rs` - Event enums
    - `handler.rs` - LLM-driven event processing
 
-## Critical Design Issue Found
+## Architecture Notes
 
-### The Bug
+### Connection Management
 
-**Location**: `src/events/handler.rs`
+**Current Implementation** (in `main.rs`):
 
-The `EventHandler` has a method `add_connection(connection_id, stream)` to register TcpStreams (line 289-291), but **this method is NEVER called anywhere in the codebase**.
-
-**Impact**:
-- When `Connected` or `DataReceived` events are processed, the handler tries to send data via `self.connections.get_mut(&connection_id)` (lines 85, 141)
-- Since `self.connections` is always empty, responses are never sent
-- The application cannot actually communicate with clients!
-
-**Why it wasn't noticed**: The main application (`main.rs`) has the same bug - it also never registers connections.
-
-### The Root Cause
-
-The design has a fundamental concurrency issue:
-
-1. `tcp::handle_connection()` receives a TcpStream and spawns a task to read from it
-2. `EventHandler` needs the same TcpStream to write responses
-3. But Rust's ownership rules prevent sharing mutable TcpStreams between tasks
-4. The `add_connection` method was created but never called because there was no way to pass the stream safely
-
-### The Solution
-
-**For Production** (needs implementation in main.rs):
-
-Use `tokio::io::split()` to separate read and write halves:
+The main application uses a shared connection map to manage TcpStream write halves:
 
 ```rust
+// In main.rs, line 87-88
+type WriteHalfMap = Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>>>;
+let connections: WriteHalfMap = Arc::new(Mutex::new(HashMap::new()));
+
+// When accepting connections (line 154-159)
 let (read_half, write_half) = tokio::io::split(stream);
-
-// Pass read_half to handle_connection for reading
-tokio::spawn(async move {
-    tcp::handle_connection(read_half, ...);
-});
-
-// Store write_half in EventHandler for writing
-event_handler.add_connection(connection_id, write_half);
-```
-
-**Alternative approach**:
-```rust
-// Use Arc<Mutex<WriteHalf>> for sharing across async tasks
 let write_half_arc = Arc::new(Mutex::new(write_half));
-connections.insert(connection_id, write_half_arc);
-```
+connections.lock().await.insert(connection_id, write_half_arc);
 
-**For Tests** (implemented in `tests/ftp_integration_test.rs`):
-
-```rust
-// Split stream
-let (read_half, write_half) = tokio::io::split(stream);
-
-// Store write half in shared HashMap
-let write_half_arc = Arc::new(Mutex::new(write_half));
-connections.lock().await.insert(connection_id, write_half_arc.clone());
-
-// Spawn read task
+// Read task spawned separately (line 169-200)
 tokio::spawn(async move {
-    let mut read_half = read_half;
+    let mut buffer = vec![0u8; 8192];
     loop {
         match read_half.read(&mut buffer).await {
-            // Read and send DataReceived events
+            Ok(n) => { /* send DataReceived event */ }
+            // ...
         }
     }
 });
 
-// Event handler uses shared HashMap to write
-let stream_arc_opt = connections.lock().await.get(connection_id).cloned();
-if let Some(stream_arc) = stream_arc_opt {
-    let mut stream = stream_arc.lock().await;
-    stream.write_all(response.as_bytes()).await?;
-    stream.flush().await?;
+// Write using shared HashMap (line 287-297)
+if let Some(write_half_arc) = connections.lock().await.get(connection_id) {
+    let mut write_half = write_half_arc.lock().await;
+    write_half.write_all(response.as_bytes()).await?;
+    write_half.flush().await?;
 }
 ```
+
+**Note**: The `EventHandler::add_connection()` method exists but is NOT used by main.rs. Instead, main.rs manages its own connection map directly. This is intentional to keep the connection management in the main event loop.
 
 ## Key Technical Learnings
 
@@ -256,25 +217,100 @@ All panels: Blue background (`Color::Blue`)
 
 User explicitly requested this after initial white-on-black was not visible.
 
+## User Interface Features
+
+### Command History
+
+- **Up/Down arrows**: Navigate through previous commands
+- **Automatic deduplication**: Doesn't save duplicate consecutive commands
+- **Smart browsing**: Typing while in history mode exits to current input
+- **Visual indicator**: Title shows "History N/M" when browsing
+- **Persistent storage**: History saved to `~/.netget_history`
+- **Auto-load**: Previous commands loaded on startup
+- **Auto-save**: History written on clean exit (Ctrl+C or quit)
+
+### Multi-line Input
+
+- **Shift+Enter**: Insert newline character for multi-line commands
+- **Enter**: Submit command as usual
+- **Smart cursor**: Tracks cursor position across multiple lines
+
+### Shell-like Keybindings
+
+- **Ctrl+A**: Move to start of line
+- **Ctrl+E**: Move to end of line
+- **Ctrl+K**: Delete from cursor to end of line
+- **Ctrl+W**: Delete word before cursor
+- **Ctrl+U**: Clear entire line
+- **Home/End**: Alternative start/end navigation
+- **Ctrl+C**: Quit application
+
+### CLI Arguments
+
+You can pass a command as a CLI argument to execute immediately on startup:
+
+```bash
+# Start and immediately listen on port 21 via FTP
+netget "listen on port 21 via ftp"
+
+# The command is executed before entering the TUI
+```
+
+This is useful for scripting and automation.
+
+## Recent Fixes
+
+### 1. LLM Response Formatting (Fixed)
+
+**Problem**: LLM was returning debug-formatted responses like `b"ack\n"` instead of raw text `ack\n`.
+
+**Solution**:
+- Updated prompts to explicitly instruct LLM to return raw text, not debug representations
+- Added `process_llm_response()` function in both `main.rs` and `events/handler.rs` that:
+  - Strips `b"..."` wrapping if present
+  - Unescapes `\n`, `\r`, `\t` sequences
+  - Logs warnings when fixups are applied
+
+**Location**: `src/main.rs:25-54`, `src/events/handler.rs:37-66`, `src/llm/prompt.rs:51-63,145-152`
+
+### 2. TUI Log Interference (Fixed)
+
+**Problem**: Tracing logs were written to stderr, garbling the TUI display.
+
+**Solution**:
+- Logging now only enabled with `--debug` flag
+- When enabled, logs go to `netget.log` file instead of stderr
+- Disabled ANSI colors in log file output
+- Added `netget.log` to `.gitignore`
+- No-op subscriber initialized when debug is disabled
+
+**Location**: `src/main.rs:71-108`
+
+### 3. Command History Persistence (Implemented)
+
+**Feature**: Command history persists across sessions in `~/.netget_history`.
+
+**Implementation**:
+- `App::load_history()` reads from `~/.netget_history` on startup
+- `App::save_history()` writes to `~/.netget_history` on exit
+- History loaded in `App::new()` constructor
+- History saved in main event loop cleanup (before terminal restore)
+- Uses `dirs` crate for cross-platform home directory detection
+- Gracefully handles missing files and I/O errors
+
+**Location**: `src/ui/app.rs:79-135`, `src/main.rs:500-503`
+
 ## Known Limitations
 
-1. **Main application broken**: Same bug as found in EventHandler - never registers connections
-2. **No concurrent connections**: EventHandler processes events sequentially
-3. **No streaming LLM**: Each response waits for full LLM generation
-4. **No error recovery**: LLM errors just log, don't retry
-5. **No TLS/SSL**: Plain TCP only
-6. **No UDP support**: TCP only
+1. **No concurrent connections**: EventHandler processes events sequentially
+2. **No streaming LLM**: Each response waits for full LLM generation
+3. **No error recovery**: LLM errors just log, don't retry
+4. **No TLS/SSL**: Plain TCP only
+5. **No UDP support**: TCP only
 
 ## Future Work
 
-### High Priority - Fix Main Application
-
-The main.rs needs the same fix as the tests:
-1. Split TcpStream into read/write halves
-2. Pass write half to EventHandler via add_connection()
-3. Keep read half in connection handler task
-
-### Medium Priority
+### High Priority
 
 - Implement connection pooling with Arc<Mutex<HashMap<>>>
 - Add streaming LLM support for faster responses
@@ -309,10 +345,13 @@ Before committing changes:
 ## Learnings Summary
 
 1. **Architecture**: LLM-only protocol handling, no hardcoded logic
-2. **Bug found**: EventHandler never registers TcpStreams → responses never sent
-3. **Solution**: Split streams with `tokio::io::split()` and use `Arc<Mutex<WriteHalf>>`
-4. **Testing**: Separate unit tests (no Ollama) from integration tests (requires Ollama)
-5. **Concurrency**: Avoid deadlocks by splitting read/write or using proper locking patterns
-6. **Model**: qwen3-coder:30b optimized for protocol implementation
-7. **UI**: Midnight Commander blue theme for visibility
-8. **Events**: Channel-based architecture with async event processing
+2. **Connection management**: Split streams with `tokio::io::split()` and use `Arc<Mutex<WriteHalf>>`
+3. **Testing**: Separate unit tests (no Ollama) from integration tests (requires Ollama)
+4. **Concurrency**: Avoid deadlocks by splitting read/write or using proper locking patterns
+5. **Model**: qwen3-coder:30b optimized for protocol implementation
+6. **UI**: Midnight Commander blue theme for visibility
+7. **Events**: Channel-based architecture with async event processing
+8. **UX**: Shell-like features (history, multi-line, keybindings) improve usability
+9. **CLI**: Support for initial command argument enables scripting
+10. **Logging**: Logs to file (netget.log) to avoid garbling TUI
+11. **History persistence**: Commands saved to ~/.netget_history across sessions

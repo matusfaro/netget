@@ -33,6 +33,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utilities
 chrono = "0.4"
 
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Home directory
+dirs = "5.0"
+
 [dev-dependencies]
 # FTP client for integration tests
 suppaftp = "6.0"

@@ -31,31 +31,84 @@ pub fn poll_event(timeout: Duration) -> anyhow::Result<Option<UiEvent>> {
 
 /// Handle a key event and return whether the app should quit
 pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<bool> {
-    match key.code {
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+C: quit
-            Ok(true)
-        }
-        KeyCode::Char(c) => {
-            app.enter_char(c);
+    match (key.code, key.modifiers) {
+        // Quit
+        (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => Ok(true),
+
+        // Newline (Shift+Enter)
+        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+            app.enter_char('\n');
             Ok(false)
         }
-        KeyCode::Backspace => {
-            app.delete_char();
-            Ok(false)
-        }
-        KeyCode::Left => {
-            app.move_cursor_left();
-            Ok(false)
-        }
-        KeyCode::Right => {
-            app.move_cursor_right();
-            Ok(false)
-        }
-        KeyCode::Enter => {
+
+        // Submit (Enter)
+        (KeyCode::Enter, _) => {
             // Input will be handled by the main event loop
             Ok(false)
         }
+
+        // History navigation
+        (KeyCode::Up, _) => {
+            app.history_previous();
+            Ok(false)
+        }
+        (KeyCode::Down, _) => {
+            app.history_next();
+            Ok(false)
+        }
+
+        // Shell-like keybindings
+        (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) => {
+            app.move_cursor_start();
+            Ok(false)
+        }
+        (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) => {
+            app.move_cursor_end();
+            Ok(false)
+        }
+        (KeyCode::Char('k'), m) if m.contains(KeyModifiers::CONTROL) => {
+            app.delete_to_end();
+            Ok(false)
+        }
+        (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) => {
+            app.delete_word();
+            Ok(false)
+        }
+        (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) => {
+            app.clear_input();
+            Ok(false)
+        }
+
+        // Home/End keys
+        (KeyCode::Home, _) => {
+            app.move_cursor_start();
+            Ok(false)
+        }
+        (KeyCode::End, _) => {
+            app.move_cursor_end();
+            Ok(false)
+        }
+
+        // Navigation
+        (KeyCode::Left, _) => {
+            app.move_cursor_left();
+            Ok(false)
+        }
+        (KeyCode::Right, _) => {
+            app.move_cursor_right();
+            Ok(false)
+        }
+        (KeyCode::Backspace, _) => {
+            app.delete_char();
+            Ok(false)
+        }
+
+        // Regular character input
+        (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
+            app.enter_char(c);
+            Ok(false)
+        }
+
         _ => Ok(false),
     }
 }
