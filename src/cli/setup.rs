@@ -9,9 +9,9 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use super::Args;
 
 /// Initialize logging based on arguments
-pub fn init_logging(args: &Args) -> Result<()> {
-    if args.logging_disabled() {
-        // No-op subscriber when logging is disabled
+pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
+    if args.logging_disabled() || is_interactive {
+        // No-op subscriber when logging is disabled or in interactive (TUI) mode
         tracing_subscriber::registry()
             .with(EnvFilter::new("off"))
             .init();
@@ -22,7 +22,7 @@ pub fn init_logging(args: &Args) -> Result<()> {
         let filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", log_level)));
 
-        // Always log to stderr
+        // Log to stderr in non-interactive mode
         tracing_subscriber::registry()
             .with(fmt::layer()
                 .with_writer(io::stderr)

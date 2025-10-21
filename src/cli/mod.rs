@@ -21,14 +21,17 @@ use crate::ui::App;
 pub async fn run() -> Result<()> {
     let args = Args::parse();
 
-    // Setup logging first
-    setup::init_logging(&args)?;
+    // Try to get prompt first (this reads stdin if needed)
+    let prompt = args.get_prompt()?;
+
+    // Determine if we're in interactive mode
+    let is_interactive = prompt.is_none() && args.is_interactive();
+
+    // Setup logging based on mode
+    setup::init_logging(&args, is_interactive)?;
 
     // Load settings
     let settings = Settings::load();
-
-    // Try to get prompt first (this reads stdin if needed)
-    let prompt = args.get_prompt()?;
 
     // Decide on mode based on whether we have a prompt
     if let Some(prompt) = prompt {
