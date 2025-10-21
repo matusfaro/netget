@@ -329,7 +329,6 @@ impl EventHandler {
         self.state.add_instruction(instruction).await;
 
         ui.add_llm_message(format!("Instructed to serve file '{}' ({} bytes)", name, content.len()));
-        ui.add_llm_message("LLM will use this information when handling requests".to_string());
         Ok(())
     }
 
@@ -356,7 +355,6 @@ impl EventHandler {
         self.state.add_instruction(input.clone()).await;
 
         ui.add_llm_message(format!("Instruction stored: {}", input));
-        ui.add_status_message("LLM will use this when handling connections".to_string());
 
         Ok(())
     }

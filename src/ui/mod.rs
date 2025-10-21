@@ -7,5 +7,5 @@ pub mod app;
 pub mod layout;
 pub mod events;
 
-pub use app::App;
+pub use app::{App, Focus};
 pub use events::UiEvent;
