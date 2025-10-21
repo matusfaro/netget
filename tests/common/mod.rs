@@ -88,6 +88,15 @@ pub async fn start_server_with_prompt(
         BaseStack::DataLink => {
             panic!("DataLink stack tests not yet implemented - requires network interface access");
         }
+        BaseStack::UdpRaw | BaseStack::Dns | BaseStack::Dhcp | BaseStack::Ntp | BaseStack::Snmp => {
+            // These are all UDP-based protocols, start with a simple UDP server for testing
+            // In a real test, each would have its own server implementation
+            start_tcp_server(state.clone(), listen_addr, network_tx.clone(), llm).await
+        }
+        BaseStack::Ssh | BaseStack::Irc => {
+            // These are TCP-based protocols, use TCP server for testing
+            start_tcp_server(state.clone(), listen_addr, network_tx.clone(), llm).await
+        }
     }
 
     // Spawn event processing loop
