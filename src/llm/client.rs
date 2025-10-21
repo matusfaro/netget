@@ -1,6 +1,9 @@
 //! Ollama client for LLM communication
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
@@ -68,6 +71,53 @@ impl LlmResponse {
                     ..Default::default()
                 })
             }
+        }
+    }
+}
+
+/// Structured HTTP response from the LLM
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HttpLlmResponse {
+    /// HTTP status code
+    pub status: u16,
+
+    /// Response headers
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+
+    /// Response body
+    pub body: String,
+
+    /// Optional log message for debugging
+    #[serde(default)]
+    pub log_message: Option<String>,
+}
+
+impl Default for HttpLlmResponse {
+    fn default() -> Self {
+        Self {
+            status: 200,
+            headers: HashMap::new(),
+            body: String::new(),
+            log_message: None,
+        }
+    }
+}
+
+impl HttpLlmResponse {
+    /// Parse from JSON string
+    pub fn from_str(s: &str) -> Result<Self> {
+        let trimmed = s.trim();
+        serde_json::from_str::<HttpLlmResponse>(trimmed)
+            .context("Failed to parse HTTP LLM response as JSON")
+    }
+
+    /// Convert to event HttpResponse
+    pub fn to_event_response(self) -> crate::events::types::HttpResponse {
+        crate::events::types::HttpResponse {
+            status: self.status,
+            headers: self.headers,
+            body: Bytes::from(self.body),
         }
     }
 }
