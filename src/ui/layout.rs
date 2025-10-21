@@ -61,21 +61,7 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    // Calculate scroll position
-    // App uses scroll_offset where 0 = bottom, higher = scrolled up
-    // Paragraph::scroll uses (vertical, horizontal) where higher = scrolled down
-    // So we need to invert: when app.scroll_offset is 0, scroll to a large value (bottom)
-    // When app.scroll_offset > 0, scroll less
-    let scroll_pos = if app.scroll_offset == 0 {
-        // At bottom - use very large scroll to show end of content
-        u16::MAX
-    } else {
-        // Scrolled up - approximate based on messages
-        // This is a rough estimate since we don't know wrapped line count
-        let estimated_bottom = (app.output_messages.len() * 2) as u16; // Rough estimate
-        estimated_bottom.saturating_sub(app.scroll_offset as u16)
-    };
-
+    // Build paragraph with wrapping
     let paragraph = Paragraph::new(text)
         .block(
             Block::default()
@@ -86,7 +72,7 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         )
         .style(Style::default().bg(Color::Blue).fg(Color::White))
         .wrap(Wrap { trim: false })
-        .scroll((scroll_pos, 0));
+        .scroll((app.scroll_offset as u16, 0));
 
     f.render_widget(paragraph, area);
 }

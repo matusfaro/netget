@@ -137,8 +137,9 @@ Available action types:
    {{"type": "update_instruction", "instruction": "new instruction text"}}
 
 2. **open_server**: Start a server
-   {{"type": "open_server", "port": 21, "base_stack": "tcp_raw"}}
+   {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true}}
    base_stack options: "tcp_raw", "http", "datalink"
+   send_banner: true if protocol sends greeting on connect (FTP, SMTP), false if it waits for client (HTTP, SSH)
 
 3. **open_client**: Connect as a client
    {{"type": "open_client", "address": "127.0.0.1:21", "base_stack": "tcp_raw"}}
@@ -158,7 +159,7 @@ User: "Listen on port 21 and pretend you are an FTP server"
 Response:
 {{
   "actions": [
-    {{"type": "open_server", "port": 21, "base_stack": "tcp_raw"}},
+    {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true}},
     {{"type": "update_instruction", "instruction": "Pretend you are an FTP server"}},
     {{"type": "show_message", "message": "FTP server started on port 21"}}
   ]
@@ -177,7 +178,7 @@ User: "Start an HTTP server on port 8080"
 Response:
 {{
   "actions": [
-    {{"type": "open_server", "port": 8080, "base_stack": "http"}},
+    {{"type": "open_server", "port": 8080, "base_stack": "http", "send_banner": false}},
     {{"type": "show_message", "message": "HTTP server started on port 8080"}}
   ]
 }}
