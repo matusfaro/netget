@@ -200,8 +200,6 @@ impl EventHandler {
                 let model = self.state.get_ollama_model().await;
                 let prompt = PromptBuilder::build_data_received_prompt(&self.state, connection_id, &data).await;
 
-                ui.add_status_message("Asking LLM for response...".to_string());
-
                 match self.llm.generate(&model, &prompt).await {
                     Ok(response) => {
                         let response = self.process_llm_response(&response);

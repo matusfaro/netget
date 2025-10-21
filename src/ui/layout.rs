@@ -46,24 +46,27 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    // Determine border color based on focus
-    let border_style = if app.is_output_focused() {
-        Style::default().bg(Color::Blue).fg(Color::Blue).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().bg(Color::Blue).fg(Color::Gray)
-    };
+    // All borders same color (Midnight Commander style)
+    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
 
-    let title = if app.is_output_focused() {
-        "Output [FOCUSED - Use ↑↓ or j/k to scroll, Tab to return]"
+    // Highlight the title for focused panel
+    let (title, title_style) = if app.is_output_focused() {
+        (
+            "Output",
+            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        )
     } else {
-        "Output [Tab to focus]"
+        (
+            "Output [Tab to focus]",
+            Style::default().bg(Color::Blue).fg(Color::Cyan)
+        )
     };
 
     let list = List::new(messages)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(title)
+                .title(Span::styled(title, title_style))
                 .border_style(border_style)
                 .style(Style::default().bg(Color::Blue).fg(Color::White))
         )
@@ -100,7 +103,11 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(format!("Output [{}/{}]", skip + visible_height, total_messages))
+                    .title(Span::styled(
+                        format!("Output [{}/{}]", skip + visible_height, total_messages),
+                        title_style
+                    ))
+                    .border_style(border_style)
                     .style(Style::default().bg(Color::Blue).fg(Color::White))
             )
             .style(Style::default().bg(Color::Blue).fg(Color::White))
@@ -134,17 +141,18 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
 fn render_input(f: &mut Frame, app: &App, area: Rect) {
     let title = if let Some(pos) = app.history_position {
         format!("Input [History {}/{}]", pos + 1, app.command_history.len())
-    } else if app.is_input_focused() {
-        "Input [ACTIVE]".to_string()
     } else {
         "Input".to_string()
     };
 
-    // Determine border color based on focus
-    let border_style = if app.is_input_focused() {
-        Style::default().bg(Color::Blue).fg(Color::Blue).add_modifier(Modifier::BOLD)
+    // All borders same color (Midnight Commander style)
+    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
+
+    // Highlight the title for focused panel
+    let title_style = if app.is_input_focused() {
+        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().bg(Color::Blue).fg(Color::Gray)
+        Style::default().bg(Color::Blue).fg(Color::Cyan)
     };
 
     let input = Paragraph::new(app.input.as_str())
@@ -152,7 +160,7 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(title)
+                .title(Span::styled(title, title_style))
                 .border_style(border_style)
                 .style(Style::default().bg(Color::Blue).fg(Color::White))
         );
