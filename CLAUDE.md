@@ -35,23 +35,23 @@ NetGet supports multiple base protocol stacks that determine what the LLM contro
 ### Component Layers
 
 ```
-┌─────────────────────────┐
-│   TUI (ratatui)         │  - User input
-│   4-panel interface     │  - LLM responses
-└───────────┬─────────────┘  - Connection info
-            │                - Status log
+┌───────────────────────┐
+│   TUI (ratatui)       │  - User input
+│   4-panel interface   │  - LLM responses
+└───────────┬───────────┘  - Connection info
+            │              - Status log
             ▼
-┌─────────────────────────┐
-│   Event System          │  - UserCommand
-│   (mpsc channels)       │  - NetworkEvent
-└───────────┬─────────────┘  - AppEvent
+┌───────────────────────┐
+│   Event System        │  - UserCommand
+│   (mpsc channels)     │  - NetworkEvent
+└───────────┬───────────┘  - AppEvent
             │
-      ┌─────┴─────┐
-      ▼           ▼
-┌──────────┐  ┌────────────┐
-│ TCP/IP   │  │ EventHandler│
-│ Stack    │  │ + LLM Client│
-└──────────┘  └────────────┘
+      ┌─────┴────────┐
+      ▼              ▼
+┌───────────┐ ┌──────────────┐
+│ TCP/IP    │ │ EventHandler │
+│ Stack     │ │ + LLM Client │
+└───────────┘ └──────────────┘
 ```
 
 ### Key Modules
@@ -588,3 +588,11 @@ Before committing changes:
 14. **Structured responses**: LLM returns JSON with flexible fields instead of magic strings
 15. **HTTP stack**: Uses hyper library + oneshot channels for request-response pattern with LLM
 16. **Response channels**: Tokio oneshot channels enable synchronous HTTP responses from async LLM calls
+
+## Git Commit Instructions
+
+When creating commits in this repository:
+- **DO NOT** add the "🤖 Generated with [Claude Code]" line
+- **DO NOT** add the "Co-Authored-By: Claude <noreply@anthropic.com>" signature
+- Keep commit messages clean and professional without any AI/Claude references
+- Write concise, descriptive commit messages that explain what changed and why

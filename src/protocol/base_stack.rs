@@ -18,6 +18,34 @@ pub enum BaseStack {
     /// The LLM can capture and inject packets at the data link layer
     /// Supports operations like ARP, custom Ethernet frames, etc.
     DataLink,
+
+    /// Raw UDP/IP stack - LLM controls raw UDP data
+    /// Similar to TcpRaw but for UDP-based protocols
+    UdpRaw,
+
+    /// DNS stack - DNS server using hickory-dns
+    /// The LLM generates DNS responses to queries (port 53)
+    Dns,
+
+    /// DHCP stack - DHCP server using dhcproto
+    /// The LLM handles DHCP requests and assignments (ports 67/68)
+    Dhcp,
+
+    /// NTP stack - NTP server using ntpd-rs
+    /// The LLM handles time synchronization requests (port 123)
+    Ntp,
+
+    /// SNMP stack - SNMP agent using rasn-snmp
+    /// The LLM handles SNMP get/set requests and MIB responses (port 161)
+    Snmp,
+
+    /// SSH stack - SSH server using russh
+    /// The LLM handles SSH authentication and shell sessions (port 22)
+    Ssh,
+
+    /// IRC stack - IRC server using irc crate
+    /// The LLM handles IRC chat protocol and channel management (port 6667)
+    Irc,
 }
 
 impl BaseStack {
@@ -27,12 +55,63 @@ impl BaseStack {
             Self::TcpRaw => "TCP/IP (Raw)",
             Self::Http => "HTTP",
             Self::DataLink => "Data Link (Layer 2)",
+            Self::UdpRaw => "UDP/IP (Raw)",
+            Self::Dns => "DNS",
+            Self::Dhcp => "DHCP",
+            Self::Ntp => "NTP",
+            Self::Snmp => "SNMP",
+            Self::Ssh => "SSH",
+            Self::Irc => "IRC",
         }
     }
 
     /// Parse base stack from string
     pub fn from_str(s: &str) -> Option<Self> {
         let s_lower = s.to_lowercase();
+
+        // Check for specific protocol keywords first (more specific matches)
+
+        // SSH stack
+        #[cfg(feature = "ssh")]
+        if s_lower.contains("ssh") {
+            return Some(Self::Ssh);
+        }
+
+        // DNS stack
+        #[cfg(feature = "dns")]
+        if s_lower.contains("dns") {
+            return Some(Self::Dns);
+        }
+
+        // DHCP stack
+        #[cfg(feature = "dhcp")]
+        if s_lower.contains("dhcp") {
+            return Some(Self::Dhcp);
+        }
+
+        // NTP stack
+        #[cfg(feature = "ntp")]
+        if s_lower.contains("ntp") || s_lower.contains("time") {
+            return Some(Self::Ntp);
+        }
+
+        // SNMP stack
+        #[cfg(feature = "snmp")]
+        if s_lower.contains("snmp") {
+            return Some(Self::Snmp);
+        }
+
+        // IRC stack
+        #[cfg(feature = "irc")]
+        if s_lower.contains("irc") || s_lower.contains("chat") {
+            return Some(Self::Irc);
+        }
+
+        // UDP raw stack
+        #[cfg(feature = "udp")]
+        if s_lower.contains("udp") {
+            return Some(Self::UdpRaw);
+        }
 
         // Data Link stack indicators
         if s_lower.contains("datalink")
@@ -47,6 +126,7 @@ impl BaseStack {
         }
 
         // HTTP stack indicators
+        #[cfg(feature = "http")]
         if s_lower.contains("http stack")
             || s_lower.contains("http server")
             || (s_lower.contains("via http") && !s_lower.contains("tcp"))
@@ -55,6 +135,7 @@ impl BaseStack {
         }
 
         // TCP/IP raw stack indicators
+        #[cfg(feature = "tcp")]
         if s_lower.contains("tcp")
             || s_lower.contains("raw")
             || s_lower.contains("ftp")
@@ -62,13 +143,56 @@ impl BaseStack {
             return Some(Self::TcpRaw);
         }
 
-        // Default to TCP/IP raw for backwards compatibility
-        None
+        // Default to TCP/IP raw for backwards compatibility (if available)
+        #[cfg(feature = "tcp")]
+        {
+            None
+        }
+        #[cfg(not(feature = "tcp"))]
+        {
+            None
+        }
     }
 
     /// Get default base stack
     pub fn default() -> Self {
         Self::TcpRaw
+    }
+
+    /// Get list of available base stacks based on compiled features
+    pub fn available_stacks() -> Vec<&'static str> {
+        let mut stacks = vec![];
+
+        #[cfg(feature = "tcp")]
+        stacks.push("tcp_raw");
+
+        #[cfg(feature = "http")]
+        stacks.push("http");
+
+        stacks.push("datalink"); // Always available
+
+        #[cfg(feature = "udp")]
+        stacks.push("udp_raw");
+
+        #[cfg(feature = "dns")]
+        stacks.push("dns");
+
+        #[cfg(feature = "dhcp")]
+        stacks.push("dhcp");
+
+        #[cfg(feature = "ntp")]
+        stacks.push("ntp");
+
+        #[cfg(feature = "snmp")]
+        stacks.push("snmp");
+
+        #[cfg(feature = "ssh")]
+        stacks.push("ssh");
+
+        #[cfg(feature = "irc")]
+        stacks.push("irc");
+
+        stacks
     }
 }
 
@@ -94,5 +218,50 @@ mod tests {
         assert_eq!(BaseStack::from_str("tcp"), Some(BaseStack::TcpRaw));
         assert_eq!(BaseStack::from_str("raw tcp"), Some(BaseStack::TcpRaw));
         assert_eq!(BaseStack::from_str("ftp"), Some(BaseStack::TcpRaw));
+    }
+
+    #[test]
+    fn test_parse_udp_stack() {
+        assert_eq!(BaseStack::from_str("udp"), Some(BaseStack::UdpRaw));
+        assert_eq!(BaseStack::from_str("via udp"), Some(BaseStack::UdpRaw));
+    }
+
+    #[test]
+    fn test_parse_dns_stack() {
+        assert_eq!(BaseStack::from_str("dns"), Some(BaseStack::Dns));
+        assert_eq!(BaseStack::from_str("via dns"), Some(BaseStack::Dns));
+        assert_eq!(BaseStack::from_str("dns server"), Some(BaseStack::Dns));
+    }
+
+    #[test]
+    fn test_parse_dhcp_stack() {
+        assert_eq!(BaseStack::from_str("dhcp"), Some(BaseStack::Dhcp));
+        assert_eq!(BaseStack::from_str("dhcp server"), Some(BaseStack::Dhcp));
+    }
+
+    #[test]
+    fn test_parse_ntp_stack() {
+        assert_eq!(BaseStack::from_str("ntp"), Some(BaseStack::Ntp));
+        assert_eq!(BaseStack::from_str("time server"), Some(BaseStack::Ntp));
+    }
+
+    #[test]
+    fn test_parse_snmp_stack() {
+        assert_eq!(BaseStack::from_str("snmp"), Some(BaseStack::Snmp));
+        assert_eq!(BaseStack::from_str("snmp agent"), Some(BaseStack::Snmp));
+    }
+
+    #[test]
+    fn test_parse_ssh_stack() {
+        assert_eq!(BaseStack::from_str("ssh"), Some(BaseStack::Ssh));
+        assert_eq!(BaseStack::from_str("ssh server"), Some(BaseStack::Ssh));
+        assert_eq!(BaseStack::from_str("via ssh"), Some(BaseStack::Ssh));
+    }
+
+    #[test]
+    fn test_parse_irc_stack() {
+        assert_eq!(BaseStack::from_str("irc"), Some(BaseStack::Irc));
+        assert_eq!(BaseStack::from_str("chat server"), Some(BaseStack::Irc));
+        assert_eq!(BaseStack::from_str("irc chat"), Some(BaseStack::Irc));
     }
 }
