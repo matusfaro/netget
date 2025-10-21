@@ -16,6 +16,9 @@ futures = "0.3"
 # HTTP client for Ollama
 reqwest = { version = "0.12", features = ["json"] }
 
+# Ollama Rust client
+ollama-rs = "0.3"
+
 # HTTP server
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
@@ -24,6 +27,7 @@ http-body-util = "0.1"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+schemars = "0.8"
 
 # Error handling
 anyhow = "1.0"

@@ -1,11 +1,13 @@
-//! Ollama client for LLM communication
+//! Ollama client using ollama-rs library for LLM communication
 
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use ollama_rs::generation::completion::request::GenerationRequest;
+use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 // Note: We still derive JsonSchema for development/testing purposes,
 // but at runtime we use the explicit JSON schemas in src/llm/schemas/
@@ -233,25 +235,24 @@ impl CommandInterpretation {
     }
 }
 
-/// Ollama API client
+/// Ollama API client using ollama-rs
 #[derive(Clone)]
 pub struct OllamaClient {
-    base_url: String,
-    client: reqwest::Client,
+    ollama: Ollama,
 }
 
 impl OllamaClient {
     /// Create a new Ollama client
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
-            base_url: base_url.into(),
-            client: reqwest::Client::new(),
-        }
+        let url_str = base_url.into();
+        let ollama = Ollama::new(url_str.as_str(), 11434);
+        Self { ollama }
     }
 
     /// Create a default client pointing to localhost
     pub fn default() -> Self {
-        Self::new("http://localhost:11434")
+        let ollama = Ollama::default();
+        Self { ollama }
     }
 
     /// Generate a completion from the model with optional JSON schema
@@ -266,8 +267,6 @@ impl OllamaClient {
         prompt: &str,
         format: Option<serde_json::Value>
     ) -> Result<String> {
-        let url = format!("{}/api/generate", self.base_url);
-
         debug!("Sending prompt to Ollama (model: {})", model);
         if let Some(ref schema) = format {
             debug!("Using structured output with JSON schema");
@@ -275,34 +274,23 @@ impl OllamaClient {
         }
         debug!("Prompt: {}", prompt);
 
-        let request = GenerateRequest {
-            model: model.to_string(),
-            prompt: prompt.to_string(),
-            stream: false,
-            format,
-        };
+        let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Ollama")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            error!("Ollama request failed: {} - {}", status, text);
-            anyhow::bail!("Ollama request failed: {} - {}", status, text);
+        // Add format if provided
+        if let Some(_schema) = format {
+            // For now, use plain JSON format since we need to handle structured JSON differently
+            // The ollama-rs StructuredJson format requires a schemars Schema type
+            // We'll use the simpler JSON format and rely on prompt engineering
+            use ollama_rs::generation::parameters::FormatType;
+            request = request.format(FormatType::Json);
         }
 
-        let response: GenerateResponse = response
-            .json()
+        let response = self.ollama
+            .generate(request)
             .await
-            .context("Failed to parse Ollama response")?;
+            .map_err(|e| anyhow::anyhow!("Ollama request failed: {}", e))?;
 
-        info!("Received response from Ollama ({} tokens)", response.eval_count.unwrap_or(0));
+        info!("Received response from Ollama");
         debug!("Response: {}", response.response);
 
         Ok(response.response)
@@ -310,22 +298,19 @@ impl OllamaClient {
 
     /// Generate a structured LlmResponse for data/connection events
     pub async fn generate_llm_response(&self, model: &str, prompt: &str) -> Result<LlmResponse> {
-        // NOTE: Structured outputs disabled due to Ollama compatibility issues
-        // Ollama's JSON schema support is limited and doesn't handle:
-        // - Complex union types (oneOf)
-        // - Optional fields consistently
-        // - Schema validation reliably across different models
-        //
-        // Using unstructured generation with JSON parsing as a more reliable approach
+        // Disabled structured outputs - ollama-rs FormatType::Json still causes issues
+        // Using unstructured generation with JSON parsing
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
-        // Try to parse as JSON, with fallback to legacy format
-        LlmResponse::from_str(&response_text)
+        // Parse the response with fallback
+        serde_json::from_str::<LlmResponse>(&response_text)
+            .or_else(|_| LlmResponse::from_str(&response_text))
+            .context("Failed to parse LLM response")
     }
 
     /// Generate a structured HttpLlmResponse for HTTP requests
     pub async fn generate_http_response(&self, model: &str, prompt: &str) -> Result<HttpLlmResponse> {
-        // NOTE: Structured outputs disabled - see generate_llm_response for details
+        // Disabled structured outputs - see generate_llm_response
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
         // Parse the JSON response
@@ -334,7 +319,7 @@ impl OllamaClient {
 
     /// Generate a structured CommandInterpretation for user commands
     pub async fn generate_command_interpretation(&self, model: &str, prompt: &str) -> Result<CommandInterpretation> {
-        // NOTE: Structured outputs disabled - see generate_llm_response for details
+        // Disabled structured outputs - see generate_llm_response
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
         // Parse the JSON response
@@ -343,52 +328,17 @@ impl OllamaClient {
 
     /// Check if Ollama is available
     pub async fn is_available(&self) -> bool {
-        let url = format!("{}/api/tags", self.base_url);
-        self.client.get(&url).send().await.is_ok()
+        // Try to list models as a health check
+        self.list_models().await.is_ok()
     }
 
     /// List available models
     pub async fn list_models(&self) -> Result<Vec<String>> {
-        let url = format!("{}/api/tags", self.base_url);
-
-        let response = self
-            .client
-            .get(&url)
-            .send()
+        let models = self.ollama
+            .list_local_models()
             .await
-            .context("Failed to list models")?;
+            .map_err(|e| anyhow::anyhow!("Failed to list models: {}", e))?;
 
-        let response: ListModelsResponse = response
-            .json()
-            .await
-            .context("Failed to parse models list")?;
-
-        Ok(response.models.into_iter().map(|m| m.name).collect())
+        Ok(models.into_iter().map(|m| m.name).collect())
     }
-}
-
-#[derive(Debug, Serialize)]
-struct GenerateRequest {
-    model: String,
-    prompt: String,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GenerateResponse {
-    response: String,
-    #[serde(default)]
-    eval_count: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListModelsResponse {
-    models: Vec<Model>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Model {
-    name: String,
 }
