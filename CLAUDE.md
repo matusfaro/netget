@@ -63,6 +63,52 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
 
 ## Architecture Notes
 
+### Data Queueing System
+
+**New Feature**: LLM request queueing prevents concurrent processing and allows smart data accumulation.
+
+**Connection States**:
+- **Idle**: Not processing, no queued data
+- **Processing**: LLM is currently generating a response
+- **Accumulating**: LLM requested "WAIT_FOR_MORE", data is accumulating
+
+**Data Flow**:
+1. Data arrives → **Spawn async task** to handle it (enables concurrent event processing)
+2. Task checks connection state:
+   - If **Processing**: Add to queue, send status msg to UI, exit task (prevents concurrent LLM calls)
+   - If **Idle** or **Accumulating**: Proceed to process
+3. Merge any queued data with new data, mark as Processing
+4. Call LLM with all accumulated data (may take several seconds)
+5. When LLM responds:
+   - If `WAIT_FOR_MORE`: Enter Accumulating state, send status msg to UI
+   - If `CLOSE_CONNECTION`: Close connection, send status msg to UI, remove from state
+   - If output present: Send over connection, **send "→ Sent to..." msg to UI**
+   - Otherwise: No action
+6. Check queue:
+   - If queue has data (arrived during LLM processing): Process immediately, send status msg to UI (loop back to step 4)
+   - If queue empty: Go to Idle state, exit task
+
+**Status Message Channel**:
+Spawned tasks send status messages back to the main UI loop via an unbounded channel. The main loop drains this channel every iteration and displays messages. This allows async tasks to update the UI without shared state.
+
+**Why spawn tasks?**
+Without spawning tasks, the event loop processes events sequentially - each event is fully handled (including LLM wait) before the next is pulled from the channel. This means rapid data arrivals would never queue because event 2 isn't pulled until event 1 finishes.
+
+By spawning tasks, multiple DataReceived events can be in-flight simultaneously. The first spawns a task and starts calling the LLM. While the LLM generates, subsequent events spawn their own tasks, check the status (now Processing), and queue their data instead of making concurrent LLM calls.
+
+**Benefits**:
+- No concurrent LLM calls for the same connection (state machine enforced)
+- LLM can request more data for incomplete commands (e.g., partial HTTP headers)
+- Queued data is batched and processed together
+- Prevents loss of data that arrives during LLM processing
+- Multiple connections can be processed concurrently (each has its own state)
+
+**Location**:
+- Structs: `src/main.rs:26-52`
+- Status message channel: `src/main.rs:227-228` (creation), `src/main.rs:500-503` (processing)
+- DataReceived handler: `src/main.rs:553-731` (spawns async task, sends status messages)
+- OllamaClient made Clone: `src/llm/client.rs:8`
+
 ### Connection Management
 
 **Current Implementation** (in `main.rs`):
@@ -99,6 +145,47 @@ if let Some(write_half_arc) = connections.lock().await.get(connection_id) {
 ```
 
 **Note**: The `EventHandler::add_connection()` method exists but is NOT used by main.rs. Instead, main.rs manages its own connection map directly. This is intentional to keep the connection management in the main event loop.
+
+### Structured LLM Responses
+
+**New Feature**: LLM responses are now structured JSON instead of plain text with magic strings.
+
+**Response Format**:
+```json
+{
+  "output": "220 Welcome\r\n",
+  "close_connection": false,
+  "wait_for_more": false,
+  "shutdown_server": false,
+  "log_message": "Sent FTP greeting"
+}
+```
+
+**Fields**:
+- `output` (string|null): Data to send over the wire. Use actual `\n`, `\r`, etc. Null/omitted = no output
+- `close_connection` (bool): Close this specific connection after sending output
+- `wait_for_more` (bool): Wait for more data before responding (triggers Accumulating state)
+- `shutdown_server` (bool): Shut down the entire server (not yet implemented)
+- `log_message` (string|null): Optional debug message logged with `info!()`
+
+**Benefits**:
+- **Extensible**: Easy to add new flags/fields without breaking existing code
+- **Type-safe**: JSON parsing ensures correct types
+- **Clear semantics**: No ambiguity like "is empty string = no response?"
+- **Backwards compatible**: Legacy text responses still work via fallback parser
+
+**Fallback Handling**:
+If JSON parsing fails, the parser handles legacy magic strings:
+- `"NO_RESPONSE"` → `{}`
+- `"CLOSE_CONNECTION"` → `{"close_connection": true}`
+- `"WAIT_FOR_MORE"` → `{"wait_for_more": true}`
+- Anything else → `{"output": "..."}`
+
+**Location**:
+- Struct definition: `src/llm/client.rs:7-73`
+- Parser: `src/llm/client.rs:44-73` (with fallback)
+- Prompts updated: `src/llm/prompt.rs:53-80` (data), `src/llm/prompt.rs:162-175` (connection)
+- Usage: `src/main.rs:510-548` (Connected), `src/main.rs:622-671` (DataReceived)
 
 ## Key Technical Learnings
 
@@ -355,3 +442,5 @@ Before committing changes:
 9. **CLI**: Support for initial command argument enables scripting
 10. **Logging**: Logs to file (netget.log) to avoid garbling TUI
 11. **History persistence**: Commands saved to ~/.netget_history across sessions
+12. **Data queueing**: Per-connection state machine prevents concurrent LLM calls and enables smart data accumulation with WAIT_FOR_MORE
+13. **Structured responses**: LLM returns JSON with flexible fields (output, close_connection, wait_for_more, shutdown_server, log_message) instead of magic strings
