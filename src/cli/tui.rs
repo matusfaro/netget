@@ -128,8 +128,33 @@ pub async fn run_tui(
                 }
                 // Update UI after server startup
                 update_ui_from_state(&mut app, &state).await;
+            } else if msg.starts_with("__STATS_SENT__") {
+                // Special signal to update sent bytes stats
+                if let Ok(bytes) = msg.strip_prefix("__STATS_SENT__").unwrap().parse::<u64>() {
+                    app.packet_stats.bytes_sent += bytes;
+                }
             } else {
-                app.add_status_message(msg);
+                // Filter messages by log level
+                use crate::ui::app::LogLevel;
+                let should_show = if msg.starts_with("[ERROR]") {
+                    // ERROR always shown
+                    true
+                } else if msg.starts_with("[WARN]") {
+                    app.log_level >= LogLevel::Warn
+                } else if msg.starts_with("[INFO]") {
+                    app.log_level >= LogLevel::Info
+                } else if msg.starts_with("[DEBUG]") {
+                    app.log_level >= LogLevel::Debug
+                } else if msg.starts_with("[TRACE]") {
+                    app.log_level >= LogLevel::Trace
+                } else {
+                    // Unprefixed messages always show
+                    true
+                };
+
+                if should_show {
+                    app.add_status_message(msg);
+                }
             }
         }
 
@@ -213,7 +238,7 @@ async fn handle_keyboard_event(
 
                         // Check if it's a slash command (handle immediately) or needs LLM
                         match command {
-                            UserCommand::Status | UserCommand::ShowModel | UserCommand::ChangeModel {..} | UserCommand::Quit | UserCommand::UnknownSlashCommand {..} => {
+                            UserCommand::Status | UserCommand::ShowModel | UserCommand::ChangeModel {..} | UserCommand::ShowLogLevel | UserCommand::ChangeLogLevel {..} | UserCommand::Quit | UserCommand::UnknownSlashCommand {..} => {
                                 // Handle slash commands synchronously (they're fast)
                                 match event_handler
                                     .handle_event(AppEvent::UserCommand(command), app)
@@ -324,6 +349,12 @@ async fn handle_network_event(
         }
 
         NetworkEvent::DataReceived { connection_id, data } => {
+            // Update stats
+            app.packet_stats.bytes_received += data.len() as u64;
+
+            // TRACE: Log incoming protocol data
+            let _ = status_tx.send(format!("[TRACE] Protocol Input from {}:\n{:?}", connection_id, data));
+
             // Spawn task to handle data with LLM
             let state = state.clone();
             let connections = connections.clone();
@@ -445,12 +476,12 @@ async fn handle_connection_greeting(
                     }
                 }
                 Err(e) => {
-                    let _ = status_tx.send(format!("Failed to parse LLM response: {}", e));
+                    let _ = status_tx.send(format!("[ERROR] Failed to parse greeting LLM response: {}", e));
                 }
             }
         }
         Err(e) => {
-            let _ = status_tx.send(format!("LLM error for greeting: {}", e));
+            let _ = status_tx.send(format!("[ERROR] LLM request failed for greeting: {}", e));
         }
     }
 
@@ -540,42 +571,64 @@ async fn handle_data_received(
         let model = state.get_ollama_model().await;
         let prompt = crate::llm::PromptBuilder::build_data_received_prompt(state, connection_id, &data, &conn_memory).await;
 
+        // TRACE: Log full prompt
+        let _ = status_tx.send(format!("[TRACE] LLM Prompt for {}:\n{}", connection_id, prompt));
+
         match llm.generate(&model, &prompt).await {
             Ok(raw_response) => {
+                // TRACE: Log full LLM response
+                let _ = status_tx.send(format!("[TRACE] LLM Response:\n{}", raw_response));
+
                 match LlmResponse::from_str(&raw_response) {
                     Ok(llm_response) => {
+                        // DEBUG: Log parsed LLM response structure
+                        let _ = status_tx.send(format!("[DEBUG] LLM Response: output={} bytes, close={}, wait={}",
+                            llm_response.output.as_ref().map(|o| o.len()).unwrap_or(0),
+                            llm_response.close_connection,
+                            llm_response.wait_for_more
+                        ));
+
                         // Send output if present
                         if let Some(output) = llm_response.output {
+                            // TRACE: Log protocol output content
+                            let _ = status_tx.send(format!("[TRACE] Protocol Output to {}:\n{:?}", connection_id, output));
+
                             if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
                                 use tokio::io::AsyncWriteExt;
                                 let mut write_half = write_half_arc.lock().await;
                                 if let Err(e) = write_half.write_all(output.as_bytes()).await {
-                                    let _ = status_tx.send(format!("Send error: {}", e));
+                                    let _ = status_tx.send(format!("[ERROR] Send error: {}", e));
                                 } else {
                                     let _ = write_half.flush().await;
-                                    let _ = status_tx.send(format!("→ Sent {} bytes to {}", output.len(), connection_id));
+                                    let bytes_sent = output.len();
+                                    let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
+                                    let _ = status_tx.send(format!("[INFO] → Sent {} bytes to {}", bytes_sent, connection_id));
                                 }
                             }
                         }
 
                         // Handle memory updates
-                        if let Some(mem) = llm_response.set_memory {
-                            state.set_memory(mem).await;
+                        if let Some(mem) = &llm_response.set_memory {
+                            state.set_memory(mem.clone()).await;
+                            let _ = status_tx.send(format!("[DEBUG] Set global memory: {} bytes", mem.len()));
                         }
-                        if let Some(mem) = llm_response.append_memory {
-                            state.append_memory(mem).await;
+                        if let Some(mem) = &llm_response.append_memory {
+                            state.append_memory(mem.clone()).await;
+                            let _ = status_tx.send(format!("[DEBUG] Appended to global memory: {} bytes", mem.len()));
                         }
-                        if let Some(mem) = llm_response.set_connection_memory {
+                        if let Some(mem) = &llm_response.set_connection_memory {
                             if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                                conn_state.memory = mem;
+                                conn_state.memory = mem.clone();
+                                let _ = status_tx.send(format!("[DEBUG] Set connection memory for {}: {} bytes", connection_id, mem.len()));
                             }
                         }
-                        if let Some(mem) = llm_response.append_connection_memory {
+                        if let Some(mem) = &llm_response.append_connection_memory {
                             if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
                                 if !conn_state.memory.is_empty() {
                                     conn_state.memory.push('\n');
                                 }
                                 conn_state.memory.push_str(&mem);
+                                let _ = status_tx.send(format!("[DEBUG] Appended to connection memory for {}: {} bytes", connection_id, mem.len()));
                             }
                         }
 
@@ -583,7 +636,7 @@ async fn handle_data_received(
                         if llm_response.wait_for_more {
                             if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
                                 conn_state.status = ConnectionStatus::Accumulating;
-                                let _ = status_tx.send(format!("Waiting for more data from {}", connection_id));
+                                let _ = status_tx.send(format!("[DEBUG] Action: WAIT_FOR_MORE for {}", connection_id));
                             }
                             return;
                         }
@@ -595,18 +648,18 @@ async fn handle_data_received(
                             }
                             connections.lock().await.remove(&connection_id);
                             connection_states.lock().await.remove(&connection_id);
-                            let _ = status_tx.send(format!("Closed connection {}", connection_id));
+                            let _ = status_tx.send(format!("[DEBUG] Action: CLOSE_CONNECTION for {}", connection_id));
                             return;
                         }
                     }
                     Err(e) => {
-                        let _ = status_tx.send(format!("Parse error: {}", e));
+                        let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response: {}", e));
                         // Continue to check queue and reset state
                     }
                 }
             }
             Err(e) => {
-                let _ = status_tx.send(format!("LLM error: {}", e));
+                let _ = status_tx.send(format!("[ERROR] LLM request failed: {}", e));
                 // Continue to check queue and reset state
             }
         }
@@ -769,7 +822,17 @@ async fn handle_http_request(
     connection_states: &ConnectionStateMap,
     status_tx: &mpsc::UnboundedSender<String>,
 ) {
-    let _ = status_tx.send(format!("HTTP {} {} from {}", method, uri, connection_id));
+    let _ = status_tx.send(format!("[INFO] HTTP {} {} from {}", method, uri, connection_id));
+
+    // TRACE: Log HTTP request details
+    let headers_debug = headers.iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = status_tx.send(format!("[TRACE] HTTP Request Headers:\n{}", headers_debug));
+    if !body.is_empty() {
+        let _ = status_tx.send(format!("[TRACE] HTTP Request Body:\n{:?}", body));
+    }
 
     // Get connection memory for prompt
     let conn_memory = {
@@ -791,20 +854,33 @@ async fn handle_http_request(
         &conn_memory,
     ).await;
 
+    // TRACE: Log full prompt
+    let _ = status_tx.send(format!("[TRACE] LLM Prompt for HTTP {}:\n{}", connection_id, prompt));
+
     match llm.generate(&model, &prompt).await {
         Ok(raw_response) => {
+            // TRACE: Log full LLM response
+            let _ = status_tx.send(format!("[TRACE] LLM Response:\n{}", raw_response));
+
             match HttpLlmResponse::from_str(&raw_response) {
                 Ok(http_response) => {
+                    // DEBUG: Log response structure
+                    let _ = status_tx.send(format!("[DEBUG] HTTP Response: status={}, body={} bytes",
+                        http_response.status, http_response.body.len()));
+
                     // Handle memory updates
                     if let Some(mem) = &http_response.set_memory {
                         state.set_memory(mem.clone()).await;
+                        let _ = status_tx.send(format!("[DEBUG] Set global memory: {} bytes", mem.len()));
                     }
                     if let Some(mem) = &http_response.append_memory {
                         state.append_memory(mem.clone()).await;
+                        let _ = status_tx.send(format!("[DEBUG] Appended to global memory: {} bytes", mem.len()));
                     }
                     if let Some(mem) = &http_response.set_connection_memory {
                         if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
                             conn_state.memory = mem.clone();
+                            let _ = status_tx.send(format!("[DEBUG] Set connection memory for {}: {} bytes", connection_id, mem.len()));
                         }
                     }
                     if let Some(mem) = &http_response.append_connection_memory {
@@ -813,15 +889,19 @@ async fn handle_http_request(
                                 conn_state.memory.push('\n');
                             }
                             conn_state.memory.push_str(mem);
+                            let _ = status_tx.send(format!("[DEBUG] Appended to connection memory for {}: {} bytes", connection_id, mem.len()));
                         }
                     }
 
+                    // TRACE: Log HTTP response content
+                    let _ = status_tx.send(format!("[TRACE] HTTP Response Body:\n{}", http_response.body));
+
                     let status = http_response.status;
                     let _ = response_tx.send(http_response.to_event_response());
-                    let _ = status_tx.send(format!("→ HTTP {} response to {}", status, connection_id));
+                    let _ = status_tx.send(format!("[INFO] → HTTP {} response to {}", status, connection_id));
                 }
                 Err(e) => {
-                    let _ = status_tx.send(format!("Parse error: {}", e));
+                    let _ = status_tx.send(format!("[ERROR] Failed to parse HTTP LLM response: {}", e));
                     let _ = response_tx.send(HttpResponse {
                         status: 500,
                         headers: HashMap::new(),
@@ -831,7 +911,7 @@ async fn handle_http_request(
             }
         }
         Err(e) => {
-            let _ = status_tx.send(format!("LLM error: {}", e));
+            let _ = status_tx.send(format!("[ERROR] LLM request failed for HTTP: {}", e));
             let _ = response_tx.send(HttpResponse {
                 status: 500,
                 headers: HashMap::new(),
