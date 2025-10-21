@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::network::connection::ConnectionId;
-use crate::protocol::ProtocolType;
+use crate::protocol::{BaseStack, ProtocolType};
 
 /// Operating mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,9 @@ pub struct AppState {
 struct AppStateInner {
     /// Current operating mode
     mode: Mode,
-    /// Current protocol type
+    /// Base protocol stack
+    base_stack: BaseStack,
+    /// Current protocol type (only relevant for TcpRaw stack)
     protocol_type: ProtocolType,
     /// Local listening address (for server mode)
     local_addr: Option<SocketAddr>,
@@ -74,6 +76,7 @@ impl AppState {
         Self {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
+                base_stack: BaseStack::TcpRaw,
                 protocol_type: ProtocolType::Custom,
                 local_addr: None,
                 connections: HashMap::new(),
@@ -91,6 +94,16 @@ impl AppState {
     /// Set the mode
     pub async fn set_mode(&self, mode: Mode) {
         self.inner.write().await.mode = mode;
+    }
+
+    /// Get the current base stack
+    pub async fn get_base_stack(&self) -> BaseStack {
+        self.inner.read().await.base_stack
+    }
+
+    /// Set the base stack
+    pub async fn set_base_stack(&self, base_stack: BaseStack) {
+        self.inner.write().await.base_stack = base_stack;
     }
 
     /// Get the current protocol type
@@ -173,10 +186,14 @@ impl AppState {
     /// Get a summary of current state for LLM context
     pub async fn get_summary(&self) -> String {
         let inner = self.inner.read().await;
+        let protocol_info = match inner.base_stack {
+            BaseStack::TcpRaw => format!("Stack: {}, Protocol: {}", inner.base_stack, inner.protocol_type),
+            BaseStack::Http => format!("Stack: {}", inner.base_stack),
+        };
         format!(
-            "Mode: {}, Protocol: {}, Connections: {}, Local: {}",
+            "Mode: {}, {}, Connections: {}, Local: {}",
             inner.mode,
-            inner.protocol_type,
+            protocol_info,
             inner.connections.len(),
             inner.local_addr.map(|a| a.to_string()).unwrap_or_else(|| "None".to_string())
         )

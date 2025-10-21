@@ -5,5 +5,5 @@
 pub mod client;
 pub mod prompt;
 
-pub use client::{OllamaClient, LlmResponse};
+pub use client::{HttpLlmResponse, OllamaClient, LlmResponse};
 pub use prompt::PromptBuilder;

@@ -1,13 +1,23 @@
 //! Event type definitions
 
 use bytes::Bytes;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use tokio::sync::oneshot;
 
 use crate::network::connection::ConnectionId;
-use crate::protocol::ProtocolType;
+use crate::protocol::{BaseStack, ProtocolType};
+
+/// HTTP response to be sent back to the client
+#[derive(Debug, Clone)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Bytes,
+}
 
 /// Main application event enum
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AppEvent {
     /// Network-related event
     Network(NetworkEvent),
@@ -20,7 +30,7 @@ pub enum AppEvent {
 }
 
 /// Network events
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum NetworkEvent {
     /// Server started listening on address
     Listening {
@@ -35,10 +45,19 @@ pub enum NetworkEvent {
     Disconnected {
         connection_id: ConnectionId,
     },
-    /// Data received from connection
+    /// Data received from connection (for raw TCP stack)
     DataReceived {
         connection_id: ConnectionId,
         data: Bytes,
+    },
+    /// HTTP request received (for HTTP stack)
+    HttpRequest {
+        connection_id: ConnectionId,
+        method: String,
+        uri: String,
+        headers: HashMap<String, String>,
+        body: Bytes,
+        response_tx: oneshot::Sender<HttpResponse>,
     },
     /// Data sent on connection
     DataSent {
@@ -58,11 +77,13 @@ pub enum UserCommand {
     /// Start listening on a port
     Listen {
         port: u16,
+        base_stack: BaseStack,
         protocol: ProtocolType,
     },
     /// Connect to a remote server (client mode)
     Connect {
         addr: SocketAddr,
+        base_stack: BaseStack,
         protocol: ProtocolType,
     },
     /// Close current connections
@@ -95,16 +116,19 @@ impl UserCommand {
             // Try to extract port and protocol
             if let Some(port_str) = input_lower.split_whitespace().find(|s| s.parse::<u16>().is_ok()) {
                 if let Ok(port) = port_str.parse::<u16>() {
-                    // Try to detect protocol from input
+                    // Detect base stack
+                    let base_stack = BaseStack::from_str(input).unwrap_or(BaseStack::TcpRaw);
+
+                    // Try to detect protocol from input (only relevant for TcpRaw)
                     let protocol = if input_lower.contains("ftp") {
                         ProtocolType::Ftp
-                    } else if input_lower.contains("http") {
+                    } else if input_lower.contains("http") && base_stack == BaseStack::TcpRaw {
                         ProtocolType::Http
                     } else {
                         ProtocolType::Custom
                     };
 
-                    return UserCommand::Listen { port, protocol };
+                    return UserCommand::Listen { port, base_stack, protocol };
                 }
             }
         }
