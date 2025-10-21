@@ -17,9 +17,10 @@ use tokio::time::interval;
 use tracing::{debug, info, error, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use netget::events::{AppEvent, EventHandler, NetworkEvent, UserCommand};
-use netget::llm::{LlmResponse, OllamaClient, PromptBuilder};
-use netget::network::{ConnectionId, TcpServer};
+use netget::events::{AppEvent, EventHandler, HttpResponse, NetworkEvent, UserCommand};
+use netget::llm::{HttpLlmResponse, LlmResponse, OllamaClient, PromptBuilder};
+use netget::network::{ConnectionId, HttpServer, TcpServer};
+use netget::protocol::BaseStack;
 use netget::state::app_state::AppState;
 use netget::ui::{App, layout};
 
@@ -254,7 +255,7 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
         let command = UserCommand::parse(&cmd);
 
         match command.clone() {
-            UserCommand::Listen { port, protocol: _ } => {
+            UserCommand::Listen { port, base_stack, protocol: _ } => {
                 // Handle listen command
                 if let Err(e) = event_handler.handle_event(
                     AppEvent::UserCommand(command),
@@ -262,20 +263,23 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                 ).await {
                     app.add_llm_message(format!("Error: {}", e));
                 } else {
-                    // Create a new TCP server for this listen command
-                    let mut tcp_server = TcpServer::new(network_tx.clone());
-
-                    // Start listening
                     let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse()?;
-                    if let Err(e) = tcp_server.listen(addr).await {
-                        app.add_llm_message(format!("Failed to listen: {}", e));
-                    } else {
-                        let local_addr = tcp_server.local_addr()
-                            .map(|a| a.to_string())
-                            .unwrap_or_default();
 
-                        app.connection_info.local_addr = Some(local_addr);
-                        app.connection_info.state = "Listening".to_string();
+                    match base_stack {
+                        BaseStack::TcpRaw => {
+                            // Create a new TCP server for this listen command
+                            let mut tcp_server = TcpServer::new(network_tx.clone());
+
+                            // Start listening
+                            if let Err(e) = tcp_server.listen(addr).await {
+                                app.add_llm_message(format!("Failed to listen: {}", e));
+                            } else {
+                                let local_addr = tcp_server.local_addr()
+                                    .map(|a| a.to_string())
+                                    .unwrap_or_default();
+
+                                app.connection_info.local_addr = Some(local_addr);
+                                app.connection_info.state = "Listening (TCP/IP Raw)".to_string();
 
                         // Spawn task to accept connections
                         let network_tx_clone = network_tx.clone();
@@ -344,6 +348,26 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                 }
                             }
                         });
+                            }
+                        }
+                        BaseStack::Http => {
+                            // Create a new HTTP server
+                            let http_server = HttpServer::new(addr, network_tx.clone()).await?;
+
+                            let local_addr = http_server.local_addr()
+                                .map(|a| a.to_string())
+                                .unwrap_or_default();
+
+                            app.connection_info.local_addr = Some(local_addr);
+                            app.connection_info.state = "Listening (HTTP)".to_string();
+
+                            // Spawn task to run the HTTP server
+                            tokio::spawn(async move {
+                                if let Err(e) = http_server.accept_loop().await {
+                                    error!("HTTP server error: {}", e);
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -488,7 +512,7 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
 
                                     // Special handling for listen command
                                     match command.clone() {
-                                        UserCommand::Listen { port, protocol: _ } => {
+                                        UserCommand::Listen { port, base_stack, protocol: _ } => {
                                             // Handle listen command through event handler
                                             if let Err(e) = event_handler.handle_event(
                                                 AppEvent::UserCommand(command),
@@ -499,25 +523,28 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                                 continue;
                                             }
 
-                                            app.add_message(format!("Starting server on port {}...", port));
+                                            app.add_message(format!("Starting server on port {} ({})...", port, base_stack));
 
-                                            // Create a new TCP server for this listen command
-                                            let mut tcp_server = TcpServer::new(network_tx.clone());
-
-                                            // Start listening
                                             let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
-                                            if let Err(e) = tcp_server.listen(addr).await {
-                                                app.add_message(format!("✗ Failed to listen: {}", e));
-                                                drop(app); // Release lock before continuing
-                                                continue;
-                                            }
 
-                                            let local_addr = tcp_server.local_addr()
-                                                .map(|a| a.to_string())
-                                                .unwrap_or_default();
+                                            match base_stack {
+                                                BaseStack::TcpRaw => {
+                                                    // Create a new TCP server for this listen command
+                                                    let mut tcp_server = TcpServer::new(network_tx.clone());
 
-                                            app.connection_info.local_addr = Some(local_addr);
-                                            app.connection_info.state = "Listening".to_string();
+                                                    // Start listening
+                                                    if let Err(e) = tcp_server.listen(addr).await {
+                                                        app.add_message(format!("✗ Failed to listen: {}", e));
+                                                        drop(app); // Release lock before continuing
+                                                        continue;
+                                                    }
+
+                                                    let local_addr = tcp_server.local_addr()
+                                                        .map(|a| a.to_string())
+                                                        .unwrap_or_default();
+
+                                                    app.connection_info.local_addr = Some(local_addr);
+                                                    app.connection_info.state = "Listening (TCP/IP Raw)".to_string();
 
                                             // Spawn task to accept connections
                                             let network_tx_clone = network_tx.clone();
@@ -588,6 +615,34 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                                     }
                                                 }
                                             });
+                                                }
+                                                BaseStack::Http => {
+                                                    // Create a new HTTP server
+                                                    match HttpServer::new(addr, network_tx.clone()).await {
+                                                        Ok(http_server) => {
+                                                            let local_addr = http_server.local_addr()
+                                                                .map(|a| a.to_string())
+                                                                .unwrap_or_default();
+
+                                                            app.connection_info.local_addr = Some(local_addr);
+                                                            app.connection_info.state = "Listening (HTTP)".to_string();
+
+                                                            drop(app); // Release lock before spawning
+
+                                                            // Spawn task to run the HTTP server
+                                                            tokio::spawn(async move {
+                                                                if let Err(e) = http_server.accept_loop().await {
+                                                                    error!("HTTP server error: {}", e);
+                                                                }
+                                                            });
+                                                        }
+                                                        Err(e) => {
+                                                            app.add_message(format!("✗ Failed to start HTTP server: {}", e));
+                                                            drop(app);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         _ => {
                                             // Handle other commands
@@ -628,18 +683,18 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
 
             // Check for network events and handle them with LLM
             while let Ok(net_event) = network_rx.try_recv() {
-            match &net_event {
+            match net_event {
                 NetworkEvent::Connected { connection_id, remote_addr } => {
                     app.add_status_message(format!("Connection {} from {}", connection_id, remote_addr));
 
                     // Initialize connection state
-                    connection_states.lock().await.insert(*connection_id, ConnectionState::new());
+                    connection_states.lock().await.insert(connection_id, ConnectionState::new());
 
                     // Register connection in state
                     let local_addr = state.get_local_addr().await.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
                     let conn_info = netget::state::app_state::ConnectionInfo {
-                        id: *connection_id,
-                        remote_addr: *remote_addr,
+                        id: connection_id,
+                        remote_addr,
                         local_addr,
                         bytes_sent: 0,
                         bytes_received: 0,
@@ -650,7 +705,7 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
 
                     // Call LLM for initial greeting
                     let model = state.get_ollama_model().await;
-                    let prompt = PromptBuilder::build_connection_established_prompt(&state, *connection_id).await;
+                    let prompt = PromptBuilder::build_connection_established_prompt(&state, connection_id).await;
 
                     match llm.generate(&model, &prompt).await {
                         Ok(raw_response) => {
@@ -663,7 +718,7 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
 
                             // Send output if present
                             if let Some(output) = &response.output {
-                                if let Some(write_half_arc) = connections.lock().await.get(connection_id) {
+                                if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
                                     use tokio::io::AsyncWriteExt;
                                     let mut write_half = write_half_arc.lock().await;
                                     if let Err(e) = write_half.write_all(output.as_bytes()).await {
@@ -674,18 +729,18 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                         let formatted = format_data(output.as_bytes(), 80);
                                         app.add_status_message(format!("→ Sent to {}: {}", connection_id, formatted));
                                         // Update stats
-                                        state.update_connection_stats(*connection_id, output.len() as u64, 0, 1, 0).await;
+                                        state.update_connection_stats(connection_id, output.len() as u64, 0, 1, 0).await;
                                     }
                                 }
                             }
 
                             // Handle close connection
                             if response.close_connection {
-                                if let Some(write_half_arc) = connections.lock().await.remove(connection_id) {
+                                if let Some(write_half_arc) = connections.lock().await.remove(&connection_id) {
                                     drop(write_half_arc);
                                     app.add_status_message(format!("Closed connection {}", connection_id));
                                 }
-                                connection_states.lock().await.remove(connection_id);
+                                connection_states.lock().await.remove(&connection_id);
                             }
                         }
                         Err(e) => {
@@ -699,11 +754,11 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                     app.add_status_message(format!("← Recv from {}: {}", connection_id, formatted));
 
                     // Update receive stats
-                    state.update_connection_stats(*connection_id, 0, data.len() as u64, 0, 1).await;
+                    state.update_connection_stats(connection_id, 0, data.len() as u64, 0, 1).await;
 
-                    // Clone necessary data for the spawned task
-                    let connection_id = *connection_id;
-                    let data = data.clone();
+                    // Clone necessary data for the spawned task (connection_id and data are already owned)
+                    let connection_id = connection_id;
+                    let data = data;
                     let state_clone = state.clone();
                     let llm_clone = llm.clone();
                     let connections_clone = connections.clone();
@@ -874,6 +929,68 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    });
+                }
+                NetworkEvent::HttpRequest { connection_id, method, uri, headers, body, response_tx } => {
+                    app.add_status_message(format!("HTTP {} {}", method, uri));
+
+                    // Move data for the spawned task (already owned)
+                    let connection_id = connection_id;
+                    let method = method;
+                    let uri = uri;
+                    let headers = headers;
+                    let body = body;
+                    let response_tx = response_tx;
+                    let state_clone = state.clone();
+                    let llm_clone = llm.clone();
+
+                    // Spawn task to handle HTTP request
+                    tokio::spawn(async move {
+                        // Call LLM to generate HTTP response
+                        let model = state_clone.get_ollama_model().await;
+                        let prompt = PromptBuilder::build_http_request_prompt(
+                            &state_clone,
+                            connection_id,
+                            &method,
+                            &uri,
+                            &headers,
+                            &body,
+                        ).await;
+
+                        match llm_clone.generate(&model, &prompt).await {
+                            Ok(raw_response) => {
+                                // Parse HTTP response from LLM
+                                match HttpLlmResponse::from_str(&raw_response) {
+                                    Ok(http_response) => {
+                                        // Log message if present
+                                        if let Some(msg) = &http_response.log_message {
+                                            info!("LLM: {}", msg);
+                                        }
+
+                                        // Convert to event HttpResponse and send back
+                                        let _ = response_tx.send(http_response.to_event_response());
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to parse HTTP response from LLM: {}", e);
+                                        // Send a 500 error response
+                                        let _ = response_tx.send(HttpResponse {
+                                            status: 500,
+                                            headers: std::collections::HashMap::new(),
+                                            body: bytes::Bytes::from("Internal Server Error"),
+                                        });
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("LLM error: {}", e);
+                                // Send a 500 error response
+                                let _ = response_tx.send(HttpResponse {
+                                    status: 500,
+                                    headers: std::collections::HashMap::new(),
+                                    body: bytes::Bytes::from("Internal Server Error"),
+                                });
                             }
                         }
                     });

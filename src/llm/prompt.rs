@@ -1,5 +1,7 @@
 //! Prompt building for LLM interactions
 
+use std::collections::HashMap;
+
 use bytes::Bytes;
 
 use crate::network::connection::ConnectionId;
@@ -196,6 +198,95 @@ Provide a brief (1-2 sentence) human-readable explanation of what just happened.
 
 Response:"#,
             state_summary, event_description
+        )
+    }
+
+    /// Build a prompt for handling HTTP requests
+    pub async fn build_http_request_prompt(
+        state: &AppState,
+        connection_id: ConnectionId,
+        method: &str,
+        uri: &str,
+        headers: &HashMap<String, String>,
+        body: &Bytes,
+    ) -> String {
+        let mode = state.get_mode().await;
+        let instructions = state.get_instructions().await;
+        let state_summary = state.get_summary().await;
+
+        let instructions_text = if instructions.is_empty() {
+            "No specific instructions provided yet.".to_string()
+        } else {
+            instructions.join("\n")
+        };
+
+        let headers_text = if headers.is_empty() {
+            "No headers".to_string()
+        } else {
+            headers
+                .iter()
+                .map(|(k, v)| format!("  {}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let body_text = if body.is_empty() {
+            "Empty body".to_string()
+        } else if body.len() > 1000 {
+            format!(
+                "{} bytes (preview: {}...)",
+                body.len(),
+                String::from_utf8_lossy(&body[..1000])
+            )
+        } else {
+            String::from_utf8_lossy(body).to_string()
+        };
+
+        format!(
+            r#"You are controlling an HTTP server application.
+
+Current State:
+{}
+
+Mode: {}
+Stack: HTTP
+
+User Instructions:
+{}
+
+Event: HTTP Request
+Connection ID: {}
+Method: {}
+URI: {}
+Headers:
+{}
+Body:
+{}
+
+Based on the user instructions, generate an appropriate HTTP response.
+
+IMPORTANT: Respond with a JSON object with the following structure:
+{{
+  "status": 200,
+  "headers": {{"Content-Type": "text/html"}},
+  "body": "response body content",
+  "log_message": "optional debug message"
+}}
+
+Fields:
+- "status": HTTP status code (e.g., 200, 404, 500)
+- "headers": Object containing response headers (e.g., {{"Content-Type": "application/json"}})
+- "body": The response body as a string
+- "log_message": Optional string for debugging/logging
+
+Examples:
+- Simple HTML: {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<html><body>Hello!</body></html>"}}
+- JSON API: {{"status": 200, "headers": {{"Content-Type": "application/json"}}, "body": "{{\\"message\\": \\"success\\"}}"}}
+- Not found: {{"status": 404, "headers": {{"Content-Type": "text/plain"}}, "body": "Not Found"}}
+- Echo request: {{"status": 200, "headers": {{"Content-Type": "text/plain"}}, "body": "You requested: {}"}}
+
+Response (JSON only):"#,
+            state_summary, mode, instructions_text, connection_id, method, uri, headers_text, body_text, uri
         )
     }
 }

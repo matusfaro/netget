@@ -4,9 +4,31 @@ This document captures key learnings, architectural decisions, and implementatio
 
 ## Project Overview
 
-NetGet is a Rust CLI application where an LLM (via Ollama) controls network protocols. The application provides ONLY the TCP/IP stack - all protocol logic (FTP, HTTP, etc.) is handled by the LLM.
+NetGet is a Rust CLI application where an LLM (via Ollama) controls network protocols. The application supports multiple base protocol stacks with different levels of LLM control.
 
-**Critical Design Principle**: No hardcoded protocol implementations. The LLM constructs every single datagram.
+**Critical Design Principle**: The LLM is in control - either constructing raw protocol datagrams or generating high-level responses based on the chosen stack.
+
+### Base Protocol Stacks
+
+NetGet supports multiple base protocol stacks that determine what the LLM controls:
+
+1. **TCP/IP Raw Stack** (`BaseStack::TcpRaw`)
+   - LLM controls raw TCP data
+   - LLM constructs entire protocol messages from scratch (FTP, HTTP, custom protocols)
+   - Application provides ONLY the TCP/IP stack
+   - Protocol types: FTP, HTTP, Custom
+
+2. **HTTP Stack** (`BaseStack::Http`)
+   - Uses Rust HTTP library (hyper)
+   - LLM controls HTTP responses (status, headers, body) based on requests
+   - Application handles HTTP parsing and serving
+   - LLM receives structured request data (method, URI, headers, body)
+   - LLM returns structured response data (status, headers, body)
+
+**Selection**: Users select the base stack when starting a server:
+- `listen on port 21 via ftp` → TCP/IP Raw + FTP protocol
+- `listen on port 80 via http` → HTTP Stack
+- `listen on port 8080 via http stack` → HTTP Stack (explicit)
 
 ## Architecture
 
@@ -38,18 +60,21 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
    - Midnight Commander blue theme
    - 4 panels: input, LLM responses, connection info, status
 
-2. **`network/`** - TCP/IP stack ONLY
-   - `tcp.rs` - TcpServer, accept(), listen()
+2. **`network/`** - Network stack implementations
+   - `tcp.rs` - TcpServer, accept(), listen() (for TcpRaw stack)
+   - `http.rs` - HttpServer using hyper (for HTTP stack)
    - `connection.rs` - ConnectionId tracking
-   - NO protocol logic
+   - NO protocol logic (in TCP stack)
 
-3. **`protocol/`** - Protocol TYPE definitions only
-   - `enum ProtocolType { Ftp, Http, Custom }`
-   - NO implementations
+3. **`protocol/`** - Protocol definitions
+   - `base_stack.rs` - `enum BaseStack { TcpRaw, Http }`
+   - `mod.rs` - `enum ProtocolType { Ftp, Http, Custom }` (for TcpRaw stack only)
+   - NO protocol implementations
 
 4. **`state/`** - Application state
    - Mode (Server/Client/Idle)
-   - Protocol type
+   - Base stack (TcpRaw/Http)
+   - Protocol type (for TcpRaw stack)
    - Connection tracking
    - User instructions for LLM context
 
@@ -185,7 +210,42 @@ If JSON parsing fails, the parser handles legacy magic strings:
 - Struct definition: `src/llm/client.rs:7-73`
 - Parser: `src/llm/client.rs:44-73` (with fallback)
 - Prompts updated: `src/llm/prompt.rs:53-80` (data), `src/llm/prompt.rs:162-175` (connection)
-- Usage: `src/main.rs:510-548` (Connected), `src/main.rs:622-671` (DataReceived)
+- Usage: `src/main.rs` (Connected, DataReceived events)
+
+### HTTP Stack Responses
+
+**New Feature**: For HTTP stack, LLM returns structured HTTP responses instead of raw TCP data.
+
+**Response Format**:
+```json
+{
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Hello!</body></html>",
+  "log_message": "Generated HTML response"
+}
+```
+
+**Fields**:
+- `status` (u16): HTTP status code (e.g., 200, 404, 500)
+- `headers` (HashMap<String, String>): Response headers
+- `body` (string): Response body as a string
+- `log_message` (string|null): Optional debug message logged with `info!()`
+
+**How it works**:
+1. HTTP request arrives at the server (via hyper)
+2. Request is parsed and converted to HttpRequest event with oneshot response channel
+3. LLM receives structured prompt with method, URI, headers, body
+4. LLM generates structured HTTP response JSON
+5. Response is sent back via oneshot channel to HTTP handler
+6. hyper converts structured response to actual HTTP response
+
+**Location**:
+- Struct definition: `src/llm/client.rs:78-123` (HttpLlmResponse)
+- HTTP server: `src/network/http.rs`
+- Prompt builder: `src/llm/prompt.rs:204-292` (build_http_request_prompt)
+- Event handling: `src/main.rs` (HttpRequest event)
+- Event type: `src/events/types.rs:44-61` (HttpRequest with oneshot channel)
 
 ## Key Technical Learnings
 
@@ -265,18 +325,38 @@ async fn get_available_port() -> u16 {
 ```
 This avoids port conflicts and allows parallel test execution.
 
+**HTTP Integration Tests** (`tests/http_integration_test.rs`):
+- Programmatically start HTTP server with specific LLM instructions
+- Use reqwest client to make HTTP requests (GET, POST, etc.)
+- Verify response status codes, headers, and body content
+- Tests include:
+  - `test_http_server_post_json`: POST request with JSON response
+  - `test_http_server_get_html`: GET request with HTML response
+  - `test_http_server_custom_headers`: Custom headers verification
+  - `test_http_server_404`: 404 error response
+- Each test creates a temporary server on a dynamic port
+- Tests spawn event processing loop to handle HttpRequest events
+- LLM generates structured HTTP responses based on instructions
+
 ## Implementation Notes
 
 ### Event Flow
 
+**TCP/IP Raw Stack:**
 1. **User types command** → Parse → UserCommand event
 2. **TCP connection arrives** → Accept → Connected event
 3. **Data received** → Read → DataReceived event
 4. **EventHandler processes event** → Calls LLM → Sends response
 
+**HTTP Stack:**
+1. **User types command** → Parse → UserCommand event (with BaseStack::Http)
+2. **HTTP request arrives** → hyper parses → HttpRequest event with oneshot channel
+3. **Event handler spawns task** → Calls LLM → Returns structured HTTP response
+4. **Response sent via oneshot** → hyper converts to HTTP response → Sends to client
+
 ### Prompt Engineering
 
-All prompts include:
+**TCP/IP Raw Stack Prompts** include:
 - Current mode (Server/Client)
 - Protocol type (FTP/HTTP/Custom)
 - User instructions history
@@ -291,6 +371,39 @@ Mode: Server
 Instructions: Serve file data.txt with content: hello
 Connection established. Generate the initial FTP greeting.
 Respond with the exact bytes to send, or NO_RESPONSE if nothing should be sent.
+```
+
+**HTTP Stack Prompts** include:
+- Current mode (Server)
+- Base stack (HTTP)
+- User instructions history
+- HTTP request details (method, URI, headers, body)
+
+Example HTTP prompt:
+```
+You are controlling an HTTP server application.
+
+Mode: Server
+Stack: HTTP
+
+User Instructions:
+For any POST request, return a JSON response with status 200
+
+Event: HTTP Request
+Method: POST
+URI: /api/data
+Headers:
+  Content-Type: application/json
+Body:
+{"key": "value"}
+
+IMPORTANT: Respond with a JSON object with the following structure:
+{
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "response body content",
+  "log_message": "optional debug message"
+}
 ```
 
 ### Color Scheme (Midnight Commander Blue)
@@ -418,9 +531,18 @@ Before committing changes:
 - [ ] Run unit tests: `cargo test --lib`
 - [ ] Start Ollama: `ollama serve`
 - [ ] Pull model: `ollama pull qwen3-coder:30b`
-- [ ] Run integration tests: `cargo test --test ftp_integration_test test_raw_tcp_connection`
-- [ ] Verify FTP test: `cargo test --test ftp_integration_test test_ftp_server_basic_commands`
+
+**TCP/IP Raw Stack Tests:**
+- [ ] Run raw TCP test: `cargo test --test ftp_integration_test test_raw_tcp_connection`
+- [ ] Run FTP test: `cargo test --test ftp_integration_test test_ftp_server_basic_commands`
 - [ ] Check no hardcoded protocols: `grep -r "220 FTP" src/` should return nothing
+
+**HTTP Stack Tests:**
+- [ ] Run POST JSON test: `cargo test --test http_integration_test test_http_server_post_json`
+- [ ] Run GET HTML test: `cargo test --test http_integration_test test_http_server_get_html`
+- [ ] Run custom headers test: `cargo test --test http_integration_test test_http_server_custom_headers`
+- [ ] Run 404 test: `cargo test --test http_integration_test test_http_server_404`
+- [ ] Run all HTTP tests: `cargo test --test http_integration_test`
 
 ## References
 
@@ -431,16 +553,19 @@ Before committing changes:
 
 ## Learnings Summary
 
-1. **Architecture**: LLM-only protocol handling, no hardcoded logic
-2. **Connection management**: Split streams with `tokio::io::split()` and use `Arc<Mutex<WriteHalf>>`
-3. **Testing**: Separate unit tests (no Ollama) from integration tests (requires Ollama)
-4. **Concurrency**: Avoid deadlocks by splitting read/write or using proper locking patterns
-5. **Model**: qwen3-coder:30b optimized for protocol implementation
-6. **UI**: Midnight Commander blue theme for visibility
-7. **Events**: Channel-based architecture with async event processing
-8. **UX**: Shell-like features (history, multi-line, keybindings) improve usability
-9. **CLI**: Support for initial command argument enables scripting
-10. **Logging**: Logs to file (netget.log) to avoid garbling TUI
-11. **History persistence**: Commands saved to ~/.netget_history across sessions
-12. **Data queueing**: Per-connection state machine prevents concurrent LLM calls and enables smart data accumulation with WAIT_FOR_MORE
-13. **Structured responses**: LLM returns JSON with flexible fields (output, close_connection, wait_for_more, shutdown_server, log_message) instead of magic strings
+1. **Architecture**: Multi-stack design - LLM controls either raw protocols (TcpRaw) or high-level responses (HTTP)
+2. **Base stacks**: TCP/IP Raw (full protocol control) and HTTP (response-only control)
+3. **Connection management**: Split streams with `tokio::io::split()` and use `Arc<Mutex<WriteHalf>>`
+4. **Testing**: Separate unit tests (no Ollama) from integration tests (requires Ollama)
+5. **Concurrency**: Avoid deadlocks by splitting read/write or using proper locking patterns
+6. **Model**: qwen3-coder:30b optimized for protocol implementation
+7. **UI**: Midnight Commander blue theme for visibility
+8. **Events**: Channel-based architecture with async event processing
+9. **UX**: Shell-like features (history, multi-line, keybindings) improve usability
+10. **CLI**: Support for initial command argument enables scripting
+11. **Logging**: Logs to file (netget.log) to avoid garbling TUI
+12. **History persistence**: Commands saved to ~/.netget_history across sessions
+13. **Data queueing**: Per-connection state machine prevents concurrent LLM calls and enables smart data accumulation with WAIT_FOR_MORE
+14. **Structured responses**: LLM returns JSON with flexible fields instead of magic strings
+15. **HTTP stack**: Uses hyper library + oneshot channels for request-response pattern with LLM
+16. **Response channels**: Tokio oneshot channels enable synchronous HTTP responses from async LLM calls

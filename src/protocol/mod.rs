@@ -1,9 +1,14 @@
 //! Protocol type definitions
 //!
-//! The application only implements TCP/IP stack.
-//! Protocol behavior (FTP, HTTP, etc.) is entirely controlled by the LLM.
+//! The application supports multiple base protocol stacks.
+//! Protocol behavior is controlled by the LLM based on the chosen stack.
+
+pub mod base_stack;
+
+pub use base_stack::BaseStack;
 
 /// Supported protocol types that the LLM can emulate
+/// Only relevant when using BaseStack::TcpRaw
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolType {
     /// FTP server protocol (LLM-controlled)
