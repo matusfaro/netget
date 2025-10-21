@@ -16,7 +16,7 @@ use tokio::time::interval;
 use tracing::{error, info};
 
 use crate::events::{AppEvent, EventHandler, HttpResponse, NetworkEvent, UserCommand};
-use crate::llm::OllamaClient;
+use crate::llm::{OllamaClient, LlmResponse, HttpLlmResponse};
 use crate::network::ConnectionId;
 use crate::protocol::BaseStack;
 use crate::settings::Settings;
@@ -436,42 +436,61 @@ async fn handle_connection_greeting(
     let model = state.get_ollama_model().await;
     let prompt = crate::llm::PromptBuilder::build_connection_established_prompt(state, connection_id, &conn_memory).await;
 
-    match llm.generate_llm_response(&model, &prompt).await {
-        Ok(llm_response) => {
-            // Send output if present
-            if let Some(output) = llm_response.output {
-                if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
-                    use tokio::io::AsyncWriteExt;
-                    let mut write_half = write_half_arc.lock().await;
-                    if let Err(e) = write_half.write_all(output.as_bytes()).await {
-                        let _ = status_tx.send(format!("[ERROR] Failed to send greeting: {}", e));
-                    } else {
-                        let _ = write_half.flush().await;
-                        let bytes_sent = output.len();
-                        let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
-                        let _ = status_tx.send(format!("[INFO] → Sent greeting to {}", connection_id));
-                    }
-                }
-            }
+    match llm.generate(&model, &prompt).await {
+        Ok(raw_response) => {
+            // TRACE: Log full LLM response
+            let _ = status_tx.send(format!("[TRACE] LLM Response:\n{}", raw_response));
 
-            // Handle memory updates
-            if let Some(mem) = llm_response.set_memory {
-                state.set_memory(mem).await;
-            }
-            if let Some(mem) = llm_response.append_memory {
-                state.append_memory(mem).await;
-            }
-            if let Some(mem) = llm_response.set_connection_memory {
-                if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                    conn_state.memory = mem;
-                }
-            }
-            if let Some(mem) = llm_response.append_connection_memory {
-                if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                    if !conn_state.memory.is_empty() {
-                        conn_state.memory.push('\n');
+            match LlmResponse::from_str(&raw_response) {
+                Ok(llm_response) => {
+                    // Log message from LLM if present
+                    if let Some(msg) = &llm_response.log_message {
+                        let _ = status_tx.send(format!("[INFO] LLM: {}", msg));
                     }
-                    conn_state.memory.push_str(&mem);
+
+                    // Send output if present
+                    if let Some(output) = llm_response.output {
+                        if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
+                            use tokio::io::AsyncWriteExt;
+                            let mut write_half = write_half_arc.lock().await;
+                            if let Err(e) = write_half.write_all(output.as_bytes()).await {
+                                let _ = status_tx.send(format!("[ERROR] Failed to send greeting: {}", e));
+                            } else {
+                                let _ = write_half.flush().await;
+                                let bytes_sent = output.len();
+                                let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
+                                let _ = status_tx.send(format!("[INFO] → Sent greeting to {}", connection_id));
+                            }
+                        }
+                    }
+
+                    // Handle memory updates
+                    if let Some(mem) = llm_response.set_memory {
+                        let _ = status_tx.send(format!("[TRACE] Set global memory:\n{}", mem));
+                        state.set_memory(mem).await;
+                    }
+                    if let Some(mem) = llm_response.append_memory {
+                        let _ = status_tx.send(format!("[TRACE] Append to global memory:\n{}", mem));
+                        state.append_memory(mem).await;
+                    }
+                    if let Some(mem) = llm_response.set_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            let _ = status_tx.send(format!("[TRACE] Set connection memory for {}:\n{}", connection_id, mem));
+                            conn_state.memory = mem;
+                        }
+                    }
+                    if let Some(mem) = llm_response.append_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            let _ = status_tx.send(format!("[TRACE] Append to connection memory for {}:\n{}", connection_id, mem));
+                            if !conn_state.memory.is_empty() {
+                                conn_state.memory.push('\n');
+                            }
+                            conn_state.memory.push_str(&mem);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = status_tx.send(format!("[ERROR] Failed to parse greeting LLM response: {}", e));
                 }
             }
         }
@@ -569,77 +588,97 @@ async fn handle_data_received(
         // TRACE: Log full prompt
         let _ = status_tx.send(format!("[TRACE] LLM Prompt for {}:\n{}", connection_id, prompt));
 
-        match llm.generate_llm_response(&model, &prompt).await {
-            Ok(llm_response) => {
-                // DEBUG: Log parsed LLM response structure
-                let _ = status_tx.send(format!("[DEBUG] LLM Response: output={} bytes, close={}, wait={}",
-                    llm_response.output.as_ref().map(|o| o.len()).unwrap_or(0),
-                    llm_response.close_connection,
-                    llm_response.wait_for_more
-                ));
+        match llm.generate(&model, &prompt).await {
+            Ok(raw_response) => {
+                // TRACE: Log full LLM response
+                let _ = status_tx.send(format!("[TRACE] LLM Response:\n{}", raw_response));
 
-                // Send output if present
-                if let Some(output) = llm_response.output {
-                    // TRACE: Log protocol output content
-                    let _ = status_tx.send(format!("[TRACE] Protocol Output to {}:\n{:?}", connection_id, output));
+                match LlmResponse::from_str(&raw_response) {
+                    Ok(llm_response) => {
+                        // Log message from LLM if present
+                        if let Some(msg) = &llm_response.log_message {
+                            let _ = status_tx.send(format!("[INFO] LLM: {}", msg));
+                        }
 
-                    if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
-                        use tokio::io::AsyncWriteExt;
-                        let mut write_half = write_half_arc.lock().await;
-                        if let Err(e) = write_half.write_all(output.as_bytes()).await {
-                            let _ = status_tx.send(format!("[ERROR] Send error: {}", e));
-                        } else {
-                            let _ = write_half.flush().await;
-                            let bytes_sent = output.len();
-                            let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
-                            let _ = status_tx.send(format!("[INFO] → Sent {} bytes to {}", bytes_sent, connection_id));
+                        // DEBUG: Log parsed LLM response structure
+                        let _ = status_tx.send(format!("[DEBUG] LLM Response: output={} bytes, close={}, wait={}",
+                            llm_response.output.as_ref().map(|o| o.len()).unwrap_or(0),
+                            llm_response.close_connection,
+                            llm_response.wait_for_more
+                        ));
+
+                        // Send output if present
+                        if let Some(output) = llm_response.output {
+                            // TRACE: Log protocol output content
+                            let _ = status_tx.send(format!("[TRACE] Protocol Output to {}:\n{:?}", connection_id, output));
+
+                            if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
+                                use tokio::io::AsyncWriteExt;
+                                let mut write_half = write_half_arc.lock().await;
+                                if let Err(e) = write_half.write_all(output.as_bytes()).await {
+                                    let _ = status_tx.send(format!("[ERROR] Send error: {}", e));
+                                } else {
+                                    let _ = write_half.flush().await;
+                                    let bytes_sent = output.len();
+                                    let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
+                                    let _ = status_tx.send(format!("[INFO] → Sent {} bytes to {}", bytes_sent, connection_id));
+                                }
+                            }
+                        }
+
+                        // Handle memory updates
+                        if let Some(mem) = &llm_response.set_memory {
+                            let _ = status_tx.send(format!("[DEBUG] Set global memory: {} bytes", mem.len()));
+                            let _ = status_tx.send(format!("[TRACE] Set global memory:\n{}", mem));
+                            state.set_memory(mem.clone()).await;
+                        }
+                        if let Some(mem) = &llm_response.append_memory {
+                            let _ = status_tx.send(format!("[DEBUG] Appended to global memory: {} bytes", mem.len()));
+                            let _ = status_tx.send(format!("[TRACE] Append to global memory:\n{}", mem));
+                            state.append_memory(mem.clone()).await;
+                        }
+                        if let Some(mem) = &llm_response.set_connection_memory {
+                            if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                                let _ = status_tx.send(format!("[DEBUG] Set connection memory for {}: {} bytes", connection_id, mem.len()));
+                                let _ = status_tx.send(format!("[TRACE] Set connection memory for {}:\n{}", connection_id, mem));
+                                conn_state.memory = mem.clone();
+                            }
+                        }
+                        if let Some(mem) = &llm_response.append_connection_memory {
+                            if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                                let _ = status_tx.send(format!("[DEBUG] Appended to connection memory for {}: {} bytes", connection_id, mem.len()));
+                                let _ = status_tx.send(format!("[TRACE] Append to connection memory for {}:\n{}", connection_id, mem));
+                                if !conn_state.memory.is_empty() {
+                                    conn_state.memory.push('\n');
+                                }
+                                conn_state.memory.push_str(&mem);
+                            }
+                        }
+
+                        // Handle special flags
+                        if llm_response.wait_for_more {
+                            if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                                conn_state.status = ConnectionStatus::Accumulating;
+                                let _ = status_tx.send(format!("[DEBUG] Action: WAIT_FOR_MORE for {}", connection_id));
+                            }
+                            return;
+                        }
+
+                        if llm_response.close_connection {
+                            // Cancel the read task to properly close the connection
+                            if let Some(cancel_tx) = cancellation_tokens.lock().await.remove(&connection_id) {
+                                let _ = cancel_tx.send(()); // Signal cancellation
+                            }
+                            connections.lock().await.remove(&connection_id);
+                            connection_states.lock().await.remove(&connection_id);
+                            let _ = status_tx.send(format!("[DEBUG] Action: CLOSE_CONNECTION for {}", connection_id));
+                            return;
                         }
                     }
-                }
-
-                // Handle memory updates
-                if let Some(mem) = &llm_response.set_memory {
-                    state.set_memory(mem.clone()).await;
-                    let _ = status_tx.send(format!("[DEBUG] Set global memory: {} bytes", mem.len()));
-                }
-                if let Some(mem) = &llm_response.append_memory {
-                    state.append_memory(mem.clone()).await;
-                    let _ = status_tx.send(format!("[DEBUG] Appended to global memory: {} bytes", mem.len()));
-                }
-                if let Some(mem) = &llm_response.set_connection_memory {
-                    if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                        conn_state.memory = mem.clone();
-                        let _ = status_tx.send(format!("[DEBUG] Set connection memory for {}: {} bytes", connection_id, mem.len()));
+                    Err(e) => {
+                        let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response: {}", e));
+                        // Continue to check queue and reset state
                     }
-                }
-                if let Some(mem) = &llm_response.append_connection_memory {
-                    if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                        if !conn_state.memory.is_empty() {
-                            conn_state.memory.push('\n');
-                        }
-                        conn_state.memory.push_str(&mem);
-                        let _ = status_tx.send(format!("[DEBUG] Appended to connection memory for {}: {} bytes", connection_id, mem.len()));
-                    }
-                }
-
-                // Handle special flags
-                if llm_response.wait_for_more {
-                    if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                        conn_state.status = ConnectionStatus::Accumulating;
-                        let _ = status_tx.send(format!("[DEBUG] Action: WAIT_FOR_MORE for {}", connection_id));
-                    }
-                    return;
-                }
-
-                if llm_response.close_connection {
-                    // Cancel the read task to properly close the connection
-                    if let Some(cancel_tx) = cancellation_tokens.lock().await.remove(&connection_id) {
-                        let _ = cancel_tx.send(()); // Signal cancellation
-                    }
-                    connections.lock().await.remove(&connection_id);
-                    connection_states.lock().await.remove(&connection_id);
-                    let _ = status_tx.send(format!("[DEBUG] Action: CLOSE_CONNECTION for {}", connection_id));
-                    return;
                 }
             }
             Err(e) => {
@@ -832,45 +871,69 @@ async fn handle_http_request(
     // TRACE: Log full prompt
     let _ = status_tx.send(format!("[TRACE] LLM Prompt for HTTP {}:\n{}", connection_id, prompt));
 
-    match llm.generate_http_response(&model, &prompt).await {
-        Ok(http_response) => {
-            // DEBUG: Log response structure
-            let _ = status_tx.send(format!("[DEBUG] HTTP Response: status={}, body={} bytes",
-                http_response.status, http_response.body.len()));
+    match llm.generate(&model, &prompt).await {
+        Ok(raw_response) => {
+            // TRACE: Log full LLM response
+            let _ = status_tx.send(format!("[TRACE] LLM Response:\n{}", raw_response));
 
-            // Handle memory updates
-            if let Some(mem) = &http_response.set_memory {
-                state.set_memory(mem.clone()).await;
-                let _ = status_tx.send(format!("[DEBUG] Set global memory: {} bytes", mem.len()));
-            }
-            if let Some(mem) = &http_response.append_memory {
-                state.append_memory(mem.clone()).await;
-                let _ = status_tx.send(format!("[DEBUG] Appended to global memory: {} bytes", mem.len()));
-            }
-            if let Some(mem) = &http_response.set_connection_memory {
-                if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                    conn_state.memory = mem.clone();
-                    let _ = status_tx.send(format!("[DEBUG] Set connection memory for {}: {} bytes", connection_id, mem.len()));
-                }
-            }
-            if let Some(mem) = &http_response.append_connection_memory {
-                if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
-                    if !conn_state.memory.is_empty() {
-                        conn_state.memory.push('\n');
+            match HttpLlmResponse::from_str(&raw_response) {
+                Ok(http_response) => {
+                    // Log message from LLM if present
+                    if let Some(msg) = &http_response.log_message {
+                        let _ = status_tx.send(format!("[INFO] LLM: {}", msg));
                     }
-                    conn_state.memory.push_str(mem);
-                    let _ = status_tx.send(format!("[DEBUG] Appended to connection memory for {}: {} bytes", connection_id, mem.len()));
+
+                    // DEBUG: Log response structure
+                    let _ = status_tx.send(format!("[DEBUG] HTTP Response: status={}, body={} bytes",
+                        http_response.status, http_response.body.len()));
+
+                    // Handle memory updates
+                    if let Some(mem) = &http_response.set_memory {
+                        let _ = status_tx.send(format!("[DEBUG] Set global memory: {} bytes", mem.len()));
+                        let _ = status_tx.send(format!("[TRACE] Set global memory:\n{}", mem));
+                        state.set_memory(mem.clone()).await;
+                    }
+                    if let Some(mem) = &http_response.append_memory {
+                        let _ = status_tx.send(format!("[DEBUG] Appended to global memory: {} bytes", mem.len()));
+                        let _ = status_tx.send(format!("[TRACE] Append to global memory:\n{}", mem));
+                        state.append_memory(mem.clone()).await;
+                    }
+                    if let Some(mem) = &http_response.set_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            let _ = status_tx.send(format!("[DEBUG] Set connection memory for {}: {} bytes", connection_id, mem.len()));
+                            let _ = status_tx.send(format!("[TRACE] Set connection memory for {}:\n{}", connection_id, mem));
+                            conn_state.memory = mem.clone();
+                        }
+                    }
+                    if let Some(mem) = &http_response.append_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            let _ = status_tx.send(format!("[DEBUG] Appended to connection memory for {}: {} bytes", connection_id, mem.len()));
+                            let _ = status_tx.send(format!("[TRACE] Append to connection memory for {}:\n{}", connection_id, mem));
+                            if !conn_state.memory.is_empty() {
+                                conn_state.memory.push('\n');
+                            }
+                            conn_state.memory.push_str(mem);
+                        }
+                    }
+
+                    // TRACE: Log HTTP response content
+                    let _ = status_tx.send(format!("[TRACE] HTTP Response Body:\n{}", http_response.body));
+
+                    let status = http_response.status;
+                    let bytes_sent = http_response.body.len();
+                    let _ = response_tx.send(http_response.to_event_response());
+                    let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
+                    let _ = status_tx.send(format!("[INFO] → HTTP {} response to {}", status, connection_id));
+                }
+                Err(e) => {
+                    let _ = status_tx.send(format!("[ERROR] Failed to parse HTTP LLM response: {}", e));
+                    let _ = response_tx.send(HttpResponse {
+                        status: 500,
+                        headers: HashMap::new(),
+                        body: bytes::Bytes::from("Internal Server Error"),
+                    });
                 }
             }
-
-            // TRACE: Log HTTP response content
-            let _ = status_tx.send(format!("[TRACE] HTTP Response Body:\n{}", http_response.body));
-
-            let status = http_response.status;
-            let bytes_sent = http_response.body.len();
-            let _ = response_tx.send(http_response.to_event_response());
-            let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
-            let _ = status_tx.send(format!("[INFO] → HTTP {} response to {}", status, connection_id));
         }
         Err(e) => {
             let _ = status_tx.send(format!("[ERROR] LLM request failed for HTTP: {}", e));
