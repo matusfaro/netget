@@ -46,6 +46,10 @@ struct AppStateInner {
     mode: Mode,
     /// Base protocol stack
     base_stack: BaseStack,
+    /// Server port (for server mode)
+    port: Option<u16>,
+    /// Whether to send banner on connection (for server mode)
+    send_banner: bool,
     /// Local listening address (for server mode)
     local_addr: Option<SocketAddr>,
     /// Active connections
@@ -75,6 +79,8 @@ impl AppState {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
                 base_stack: BaseStack::TcpRaw,
+                port: None,
+                send_banner: false,
                 local_addr: None,
                 connections: HashMap::new(),
                 instruction: String::new(),
@@ -103,6 +109,25 @@ impl AppState {
         self.inner.write().await.base_stack = base_stack;
     }
 
+    /// Get the server port
+    pub async fn get_port(&self) -> Option<u16> {
+        self.inner.read().await.port
+    }
+
+    /// Set the server port
+    pub async fn set_port(&self, port: u16) {
+        self.inner.write().await.port = Some(port);
+    }
+
+    /// Get whether to send banner on connection
+    pub async fn get_send_banner(&self) -> bool {
+        self.inner.read().await.send_banner
+    }
+
+    /// Set whether to send banner on connection
+    pub async fn set_send_banner(&self, send_banner: bool) {
+        self.inner.write().await.send_banner = send_banner;
+    }
 
     /// Get the local listening address
     pub async fn get_local_addr(&self) -> Option<SocketAddr> {

@@ -69,13 +69,16 @@ pub async fn run() -> Result<()> {
                                 for action in interpretation.actions {
                                     match action {
                                         Action::UpdateInstruction { instruction } => {
+                                            eprintln!("Instruction: {}", instruction);
                                             state.set_instruction(instruction).await;
                                         }
-                                        Action::OpenServer { port, base_stack: stack_str, protocol: _ } => {
+                                        Action::OpenServer { port, base_stack: stack_str, protocol: _, send_banner } => {
                                             let stack = crate::protocol::BaseStack::from_str(&stack_str)
                                                 .unwrap_or(crate::protocol::BaseStack::TcpRaw);
                                             state.set_mode(Mode::Server).await;
                                             state.set_base_stack(stack).await;
+                                            state.set_port(port).await;
+                                            state.set_send_banner(send_banner).await;
                                             eprintln!("Server will start on port {} with stack {}", port, stack);
                                         }
                                         Action::ShowMessage { message } => {

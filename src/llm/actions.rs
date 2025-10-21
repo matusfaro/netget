@@ -32,6 +32,8 @@ pub enum Action {
         base_stack: String,  // Will be parsed to BaseStack
         #[serde(default)]
         protocol: Option<String>,  // For TcpRaw stack
+        #[serde(default)]
+        send_banner: bool,  // True if server should send greeting on connect (e.g., FTP), false if it waits for client data (e.g., HTTP)
     },
 
     /// Open a client connection

@@ -140,9 +140,8 @@ pub async fn check_and_start_server(
         return Ok(());
     }
 
-    // Get instruction to find the port
-    let instruction = state.get_instruction().await;
-    let port = extract_port_from_instruction(&instruction).unwrap_or(8080);
+    // Get port from state (set by OpenServer action)
+    let port = state.get_port().await.unwrap_or(1234);
     let listen_addr: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
 
     // Store the listen address
@@ -168,10 +167,3 @@ pub async fn check_and_start_server(
     Ok(())
 }
 
-/// Extract port number from instruction text
-pub fn extract_port_from_instruction(instruction: &str) -> Option<u16> {
-    // Look for patterns like "port 8080" or "port 21"
-    instruction
-        .split_whitespace()
-        .find_map(|word| word.parse::<u16>().ok())
-}
