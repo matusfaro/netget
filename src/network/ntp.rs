@@ -11,6 +11,7 @@ use tracing::info;
 
 /// NTP packet structure (simplified)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct NtpPacket {
     pub leap_indicator: u8,
     pub version: u8,
