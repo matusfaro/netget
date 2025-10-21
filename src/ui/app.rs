@@ -1,17 +1,24 @@
-//! Application state and rendering logic for the TUI
+//! Application state for the shell interface
 
-use ratatui::{
-    layout::Rect,
-    style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
-    Frame,
-};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use tracing::{debug, warn};
 
-use super::layout::AppLayout;
+/// Which panel has focus
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// Input panel is focused (default)
+    Input,
+    /// Output panel is focused (for scrolling)
+    Output,
+}
+
+impl Default for Focus {
+    fn default() -> Self {
+        Focus::Input
+    }
+}
 
 /// Main application state for the TUI
 pub struct App {
@@ -33,6 +40,8 @@ pub struct App {
     pub packet_stats: PacketStats,
     /// Scroll offset for output (0 = bottom, higher = scrolled up)
     pub scroll_offset: usize,
+    /// Which panel currently has focus
+    pub focus: Focus,
 }
 
 #[derive(Default, Clone)]
@@ -65,6 +74,7 @@ impl Default for App {
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
             scroll_offset: 0,
+            focus: Focus::default(),
         }
     }
 }
@@ -140,13 +150,25 @@ impl App {
         self.command_history.len()
     }
 
-    /// Add a message to the output log
-    pub fn add_message(&mut self, message: String) {
-        self.output_messages.push(message);
-        // Auto-scroll to bottom when new message arrives (unless user is scrolled up)
-        if self.scroll_offset == 0 {
-            self.scroll_offset = 0; // Stay at bottom
+    /// Add a message to the output log and return true if it's new
+    pub fn add_message(&mut self, message: String) -> bool {
+        // Check if this is actually a new message
+        let is_new = self.output_messages.last() != Some(&message);
+        if is_new {
+            self.output_messages.push(message);
         }
+        is_new
+    }
+
+    /// Get the last N messages
+    pub fn get_last_messages(&self, n: usize) -> &[String] {
+        let start = self.output_messages.len().saturating_sub(n);
+        &self.output_messages[start..]
+    }
+
+    /// Get count of output messages
+    pub fn output_count(&self) -> usize {
+        self.output_messages.len()
     }
 
     /// Legacy methods for compatibility
@@ -172,6 +194,12 @@ impl App {
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+    }
+
+    /// Scroll to top
+    pub fn scroll_to_top(&mut self) {
+        let max_scroll = self.output_messages.len().saturating_sub(1);
+        self.scroll_offset = max_scroll;
     }
 
     /// Handle character input
@@ -331,116 +359,22 @@ impl App {
         self.cursor_position = 0;
     }
 
-    /// Render the UI
-    pub fn render(&mut self, frame: &mut Frame, area: Rect) {
-        let layout = AppLayout::new(area);
-
-        // Render output area (scrollable)
-        self.render_output(frame, layout.output);
-
-        // Render status bar
-        self.render_status_bar(frame, layout.status);
-
-        // Render input prompt
-        self.render_input(frame, layout.input);
-    }
-
-    /// Render the scrollable output area
-    fn render_output(&self, frame: &mut Frame, area: Rect) {
-        // Calculate which messages to show based on scroll offset
-        let available_height = area.height.saturating_sub(2) as usize; // Minus borders
-        let total_messages = self.output_messages.len();
-
-        let (start_idx, end_idx) = if total_messages <= available_height {
-            // All messages fit, show all
-            (0, total_messages)
-        } else if self.scroll_offset == 0 {
-            // At bottom, show most recent messages
-            (total_messages - available_height, total_messages)
-        } else {
-            // Scrolled up
-            let start = total_messages.saturating_sub(available_height + self.scroll_offset);
-            let end = total_messages.saturating_sub(self.scroll_offset);
-            (start, end)
+    /// Toggle focus between Input and Output panels
+    pub fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Input => Focus::Output,
+            Focus::Output => Focus::Input,
         };
-
-        let visible_messages: Vec<ListItem> = self.output_messages[start_idx..end_idx]
-            .iter()
-            .map(|m| ListItem::new(m.as_str()).style(Style::default().fg(Color::White).bg(Color::Black)))
-            .collect();
-
-        let scroll_indicator = if self.scroll_offset > 0 {
-            format!(" [↑ {} lines]", self.scroll_offset)
-        } else {
-            String::new()
-        };
-
-        let output_list = List::new(visible_messages)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!("NetGet - Output{}", scroll_indicator))
-                    .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                    .style(Style::default().bg(Color::Black)),
-            );
-
-        frame.render_widget(output_list, area);
     }
 
-    /// Render the status bar (single line)
-    fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
-        let status_text = format!(
-            " {} | {} | {} | {} | ↑{} ↓{} ",
-            if self.connection_info.mode.is_empty() { "Idle" } else { &self.connection_info.mode },
-            if self.connection_info.protocol.is_empty() { "-" } else { &self.connection_info.protocol },
-            if self.connection_info.local_addr.is_some() {
-                self.connection_info.local_addr.as_ref().unwrap()
-            } else {
-                "no connection"
-            },
-            &self.connection_info.model,
-            self.packet_stats.bytes_received,
-            self.packet_stats.bytes_sent,
-        );
-
-        let status = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD));
-
-        frame.render_widget(status, area);
+    /// Check if output panel has focus
+    pub fn is_output_focused(&self) -> bool {
+        self.focus == Focus::Output
     }
 
-    /// Render the input prompt (pinned to bottom)
-    fn render_input(&self, frame: &mut Frame, area: Rect) {
-        // Input with `> ` prompt
-        let prompt = "> ";
-        let display_text = format!("{}{}", prompt, self.input);
-
-        let input_widget = Paragraph::new(display_text.as_str())
-            .style(Style::default().fg(Color::White).bg(Color::Black))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
-                    .style(Style::default().bg(Color::Black)),
-            )
-            .wrap(Wrap { trim: false });
-
-        frame.render_widget(input_widget, area);
-
-        // Calculate cursor position (after "> " prompt)
-        let text_before_cursor = &self.input[..self.cursor_position];
-        let lines: Vec<&str> = text_before_cursor.split('\n').collect();
-        let line_count = lines.len() as u16;
-        let col_in_line = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
-
-        // Position cursor (accounting for "> " prompt and border)
-        let cursor_x = area.x + prompt.len() as u16 + col_in_line + 1;
-        let cursor_y = area.y + line_count;
-
-        // Only set cursor if it's within the visible area
-        if cursor_y < area.y + area.height - 1 {
-            frame.set_cursor_position((cursor_x, cursor_y));
-        }
+    /// Check if input panel has focus
+    pub fn is_input_focused(&self) -> bool {
+        self.focus == Focus::Input
     }
 }
 

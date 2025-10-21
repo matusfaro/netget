@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
 /// Ollama API client
+#[derive(Clone)]
 pub struct OllamaClient {
     base_url: String,
     client: reqwest::Client,
