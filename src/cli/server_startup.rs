@@ -6,6 +6,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tracing::error;
 
 use crate::events::NetworkEvent;
 use crate::network::ConnectionId;
@@ -133,7 +134,7 @@ pub async fn start_http_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = http_server.accept_loop().await {
-            eprintln!("HTTP server error: {}", e);
+            error!("HTTP server error: {}", e);
         }
     });
 
@@ -166,7 +167,7 @@ pub async fn start_udp_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = udp_server.start().await {
-            eprintln!("UDP server error: {}", e);
+            error!("UDP server error: {}", e);
         }
     });
 
@@ -199,7 +200,7 @@ pub async fn start_dns_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = dns_server.start().await {
-            eprintln!("DNS server error: {}", e);
+            error!("DNS server error: {}", e);
         }
     });
 
@@ -232,7 +233,7 @@ pub async fn start_dhcp_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = dhcp_server.start().await {
-            eprintln!("DHCP server error: {}", e);
+            error!("DHCP server error: {}", e);
         }
     });
 
@@ -265,7 +266,7 @@ pub async fn start_ntp_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = ntp_server.start().await {
-            eprintln!("NTP server error: {}", e);
+            error!("NTP server error: {}", e);
         }
     });
 
@@ -298,7 +299,7 @@ pub async fn start_snmp_agent(
     // Spawn agent loop
     tokio::spawn(async move {
         if let Err(e) = snmp_agent.start().await {
-            eprintln!("SNMP agent error: {}", e);
+            error!("SNMP agent error: {}", e);
         }
     });
 
@@ -331,7 +332,7 @@ pub async fn start_ssh_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = ssh_server.start().await {
-            eprintln!("SSH server error: {}", e);
+            error!("SSH server error: {}", e);
         }
     });
 
@@ -364,7 +365,7 @@ pub async fn start_irc_server(
     // Spawn server loop
     tokio::spawn(async move {
         if let Err(e) = irc_server.start().await {
-            eprintln!("IRC server error: {}", e);
+            error!("IRC server error: {}", e);
         }
     });
 
