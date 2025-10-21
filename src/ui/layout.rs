@@ -54,42 +54,42 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     for msg in &app.output_messages {
         let line = if msg.starts_with("[ERROR]") {
             Line::from(vec![
-                Span::styled("[ERROR]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("✗ ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
                 Span::raw(msg.strip_prefix("[ERROR]").unwrap()),
             ])
         } else if msg.starts_with("[WARN]") {
             Line::from(vec![
-                Span::styled("[WARN]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("⚠ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                 Span::raw(msg.strip_prefix("[WARN]").unwrap()),
             ])
         } else if msg.starts_with("[INFO]") {
             Line::from(vec![
-                Span::styled("[INFO]", Style::default().fg(Color::Green)),
+                Span::styled("● ", Style::default().fg(Color::Green)),
                 Span::raw(msg.strip_prefix("[INFO]").unwrap()),
             ])
         } else if msg.starts_with("[DEBUG]") {
             Line::from(vec![
-                Span::styled("[DEBUG]", Style::default().fg(Color::Cyan)),
+                Span::styled("○ ", Style::default().fg(Color::Cyan)),
                 Span::raw(msg.strip_prefix("[DEBUG]").unwrap()),
             ])
         } else if msg.starts_with("[TRACE]") {
             Line::from(vec![
-                Span::styled("[TRACE]", Style::default().fg(Color::Magenta)),
-                Span::raw(msg.strip_prefix("[TRACE]").unwrap()),
+                Span::styled("· ", Style::default().fg(Color::DarkGray)),
+                Span::styled(msg.strip_prefix("[TRACE]").unwrap(), Style::default().fg(Color::DarkGray)),
             ])
         } else if msg.starts_with("[USER]") {
             Line::from(vec![
-                Span::styled("[USER]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("▶ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                 Span::styled(msg.strip_prefix("[USER]").unwrap(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ])
         } else if msg.starts_with("[SERVER]") {
             Line::from(vec![
-                Span::styled("[SERVER]", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                Span::styled("◆ ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
                 Span::raw(msg.strip_prefix("[SERVER]").unwrap()),
             ])
         } else if msg.starts_with("[CONN]") {
             Line::from(vec![
-                Span::styled("[CONN]", Style::default().fg(Color::LightCyan)),
+                Span::styled("◇ ", Style::default().fg(Color::LightCyan)),
                 Span::raw(msg.strip_prefix("[CONN]").unwrap()),
             ])
         } else {
