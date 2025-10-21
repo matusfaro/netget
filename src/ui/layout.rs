@@ -33,6 +33,11 @@ pub fn render(f: &mut Frame, app: &App) {
 
     // Render status bar
     render_status(f, app, chunks[2]);
+
+    // Render slash command suggestions popup if active
+    if app.should_show_slash_suggestions() {
+        render_slash_suggestions(f, app, chunks[1]);
+    }
 }
 
 /// Render the scrollable output area
@@ -200,4 +205,44 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         );
 
     f.render_widget(status, area);
+}
+
+/// Render slash command suggestions popup
+fn render_slash_suggestions(f: &mut Frame, app: &App, input_area: Rect) {
+    // Calculate popup position (above the input area)
+    let height = (app.slash_suggestions.len() as u16 + 2).min(10); // +2 for borders, max 10 lines
+    let width = 60.min(input_area.width);
+
+    // Position popup above input area
+    let popup_area = Rect {
+        x: input_area.x,
+        y: input_area.y.saturating_sub(height),
+        width,
+        height,
+    };
+
+    // Create list items
+    let items: Vec<ListItem> = app
+        .slash_suggestions
+        .iter()
+        .map(|suggestion| {
+            let content = Line::from(Span::raw(suggestion));
+            ListItem::new(content)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    "Slash Commands",
+                    Style::default().bg(Color::Blue).fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                ))
+                .border_style(Style::default().bg(Color::Blue).fg(Color::Yellow))
+                .style(Style::default().bg(Color::Blue).fg(Color::White))
+        )
+        .style(Style::default().bg(Color::Blue).fg(Color::White));
+
+    f.render_widget(list, popup_area);
 }
