@@ -35,6 +35,7 @@ enum ConnectionStatus {
 struct ConnectionState {
     status: ConnectionStatus,
     queue: Vec<u8>,
+    memory: String,
 }
 
 impl ConnectionState {
@@ -42,6 +43,7 @@ impl ConnectionState {
         Self {
             status: ConnectionStatus::Idle,
             queue: Vec::new(),
+            memory: String::new(),
         }
     }
 }
@@ -106,7 +108,7 @@ pub async fn run_tui(
     info!("Entering main event loop");
     loop {
         // Draw UI
-        if let Err(e) = terminal.draw(|f| layout::render(f, &app)) {
+        if let Err(e) = terminal.draw(|f| layout::render(f, &mut app)) {
             error!("Terminal draw error: {}", e);
             return Err(e.into());
         }
@@ -649,7 +651,7 @@ async fn execute_action_background(
             state.set_instruction(instruction.clone()).await;
             let _ = status_tx.send(format!("Instruction: {}", instruction));
         }
-        Action::OpenServer { port, base_stack, protocol: _, send_banner } => {
+        Action::OpenServer { port, base_stack, protocol: _, send_banner, initial_memory } => {
             // Parse base stack
             let stack = crate::protocol::BaseStack::from_str(&base_stack)
                 .unwrap_or(BaseStack::TcpRaw);
@@ -658,6 +660,11 @@ async fn execute_action_background(
             state.set_base_stack(stack).await;
             state.set_port(port).await;
             state.set_send_banner(send_banner).await;
+
+            // Set initial memory if provided
+            if let Some(mem) = initial_memory {
+                state.set_memory(mem).await;
+            }
 
             let banner_msg = if send_banner { " (with banner)" } else { "" };
             let _ = status_tx.send(format!("Opening server on port {} with stack {}{}", port, stack, banner_msg));

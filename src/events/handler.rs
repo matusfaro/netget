@@ -361,7 +361,7 @@ impl EventHandler {
                 self.state.set_instruction(instruction.clone()).await;
                 ui.add_status_message(format!("Instruction: {}", instruction));
             }
-            Action::OpenServer { port, base_stack, protocol: _, send_banner } => {
+            Action::OpenServer { port, base_stack, protocol: _, send_banner, initial_memory } => {
                 // Parse base stack
                 let stack = crate::protocol::BaseStack::from_str(&base_stack)
                     .unwrap_or(BaseStack::TcpRaw);
@@ -370,6 +370,11 @@ impl EventHandler {
                 self.state.set_base_stack(stack).await;
                 self.state.set_port(port).await;
                 self.state.set_send_banner(send_banner).await;
+
+                // Set initial memory if provided
+                if let Some(mem) = initial_memory {
+                    self.state.set_memory(mem).await;
+                }
 
                 ui.add_llm_message(format!("Opening server on port {} with stack {}", port, stack));
                 ui.connection_info.mode = Mode::Server.to_string();

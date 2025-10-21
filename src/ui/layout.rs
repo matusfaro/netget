@@ -12,16 +12,23 @@ use ratatui::{
 use super::App;
 
 /// Render the Claude-style UI with scrollable output and fixed input
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
+
+    // Calculate how much space the input needs (with wrapping)
+    let input_inner_width = size.width.saturating_sub(2) as usize; // -2 for borders
+    let input_lines = app.calculate_input_height(input_inner_width);
+
+    // Constrain input height: minimum 3, maximum 10, +2 for borders
+    let input_height = input_lines.max(1).min(10) + 2;
 
     // Create two vertical chunks: top (output) and bottom (input + status)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(10),      // Top: scrollable output (takes remaining space)
-            Constraint::Length(3),    // Bottom: input area (3 lines)
-            Constraint::Length(1),    // Status bar
+            Constraint::Min(10),                  // Top: scrollable output (takes remaining space)
+            Constraint::Length(input_height),     // Bottom: input area (dynamic)
+            Constraint::Length(1),                // Status bar
         ])
         .split(size);
 
@@ -78,7 +85,7 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render the fixed input area
-fn render_input(f: &mut Frame, app: &App, area: Rect) {
+fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
     let title = if let Some(pos) = app.history_position {
         format!("Input [History {}/{}]", pos + 1, app.command_history.len())
     } else {
@@ -95,6 +102,49 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
         Style::default().bg(Color::Blue).fg(Color::Cyan)
     };
 
+    // Calculate cursor line for scrolling
+    let inner_width = area.width.saturating_sub(2) as usize; // -2 for borders
+    let inner_height = area.height.saturating_sub(2) as usize; // -2 for borders
+    let text_before_cursor = &app.input[..app.cursor_position];
+
+    // Count visual lines and column position
+    let mut cursor_visual_line = 0u16;
+    let mut col_in_line = 0;
+
+    for ch in text_before_cursor.chars() {
+        if ch == '\n' {
+            cursor_visual_line += 1;
+            col_in_line = 0;
+        } else {
+            // Check if adding this char would exceed width
+            if col_in_line >= inner_width {
+                cursor_visual_line += 1;
+                col_in_line = 0;
+            }
+            col_in_line += 1;
+        }
+    }
+
+    // Calculate total visual lines in the input
+    let total_visual_lines = app.calculate_input_height(inner_width);
+
+    // Auto-scroll to keep cursor visible
+    if app.is_input_focused() {
+        // If all content fits, don't scroll
+        if total_visual_lines <= inner_height as u16 {
+            app.input_scroll = 0;
+        } else {
+            // Ensure cursor is visible in the viewport
+            if cursor_visual_line < app.input_scroll {
+                // Cursor is above viewport, scroll up
+                app.input_scroll = cursor_visual_line;
+            } else if cursor_visual_line >= app.input_scroll + inner_height as u16 {
+                // Cursor is below viewport, scroll down
+                app.input_scroll = cursor_visual_line.saturating_sub(inner_height as u16 - 1);
+            }
+        }
+    }
+
     let input = Paragraph::new(app.input.as_str())
         .style(Style::default().bg(Color::Blue).fg(Color::White))
         .block(
@@ -103,15 +153,21 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
                 .title(Span::styled(title, title_style))
                 .border_style(border_style)
                 .style(Style::default().bg(Color::Blue).fg(Color::White))
-        );
+        )
+        .wrap(Wrap { trim: false })
+        .scroll((app.input_scroll, 0));
 
     f.render_widget(input, area);
 
     // Set cursor position (only when input is focused)
     if app.is_input_focused() {
-        let cursor_x = area.x + 1 + app.cursor_position as u16;
-        let cursor_y = area.y + 1;
-        f.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
+        let cursor_x = area.x + 1 + col_in_line as u16;
+        let cursor_y = area.y + 1 + cursor_visual_line.saturating_sub(app.input_scroll) as u16;
+
+        // Make sure cursor is within bounds
+        if cursor_y < area.y + area.height.saturating_sub(1) {
+            f.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
+        }
     }
 }
 
