@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use tokio::sync::oneshot;
 
 use crate::network::connection::ConnectionId;
-use crate::protocol::{BaseStack, ProtocolType};
 
 /// HTTP response to be sent back to the client
 #[derive(Debug, Clone)]
@@ -77,84 +76,68 @@ pub enum NetworkEvent {
 }
 
 /// User commands parsed from input
+/// These are ONLY slash commands - all other input goes to LLM for interpretation
 #[derive(Debug, Clone)]
 pub enum UserCommand {
-    /// Start listening on a port
-    Listen {
-        port: u16,
-        base_stack: BaseStack,
-        protocol: ProtocolType,
-    },
-    /// Connect to a remote server (client mode)
-    Connect {
-        addr: SocketAddr,
-        base_stack: BaseStack,
-        protocol: ProtocolType,
-    },
-    /// Close current connections
-    Close,
-    /// Add a file to the protocol handler (e.g., FTP)
-    AddFile {
-        name: String,
-        content: Vec<u8>,
-    },
-    /// Query current status
+    /// Query current status (slash command: /status)
     Status,
-    /// Change the Ollama model
+    /// Show current model (slash command: /model)
+    ShowModel,
+    /// Change the Ollama model (slash command: /model <name>)
     ChangeModel {
         model: String,
     },
-    /// Raw user input (let LLM decide)
-    Raw {
+    /// Quit the application (slash command: /quit)
+    Quit,
+    /// Unknown slash command (error case)
+    UnknownSlashCommand {
+        command: String,
+    },
+    /// Regular user input (not a slash command) - send to LLM for interpretation
+    Interpret {
         input: String,
     },
 }
 
 impl UserCommand {
     /// Parse a user input string into a command
-    /// This is a simple parser - the LLM will do more sophisticated parsing
+    /// Only handles slash commands - everything else goes to LLM for interpretation
     pub fn parse(input: &str) -> Self {
-        let input_lower = input.trim().to_lowercase();
+        let trimmed = input.trim();
 
-        // Simple pattern matching for common commands
-        if input_lower.starts_with("listen") || input_lower.starts_with("start") {
-            // Try to extract port and protocol
-            if let Some(port_str) = input_lower.split_whitespace().find(|s| s.parse::<u16>().is_ok()) {
-                if let Ok(port) = port_str.parse::<u16>() {
-                    // Detect base stack
-                    let base_stack = BaseStack::from_str(input).unwrap_or(BaseStack::TcpRaw);
-
-                    // Try to detect protocol from input (only relevant for TcpRaw)
-                    let protocol = if input_lower.contains("ftp") {
-                        ProtocolType::Ftp
-                    } else if input_lower.contains("http") && base_stack == BaseStack::TcpRaw {
-                        ProtocolType::Http
-                    } else {
-                        ProtocolType::Custom
-                    };
-
-                    return UserCommand::Listen { port, base_stack, protocol };
-                }
-            }
+        // Check if it's a slash command
+        if !trimmed.starts_with('/') {
+            // Not a slash command - send to LLM for interpretation
+            return UserCommand::Interpret {
+                input: trimmed.to_string(),
+            };
         }
 
-        if input_lower.starts_with("close") || input_lower.starts_with("stop") {
-            return UserCommand::Close;
-        }
+        // Parse slash commands
+        let input_lower = trimmed.to_lowercase();
 
-        if input_lower.starts_with("status") || input_lower == "?" {
+        if input_lower == "/status" || input_lower == "/?" {
             return UserCommand::Status;
         }
 
-        // Check for model change command
-        if input_lower.starts_with("model ") {
-            let model = input.trim()[6..].trim().to_string();
-            return UserCommand::ChangeModel { model };
+        if input_lower == "/quit" || input_lower == "/exit" || input_lower == "/q" {
+            return UserCommand::Quit;
         }
 
-        // Default: treat as raw input for LLM
-        UserCommand::Raw {
-            input: input.to_string(),
+        // /model command
+        if input_lower.starts_with("/model") {
+            let rest = trimmed[6..].trim();
+            if rest.is_empty() {
+                // Show current model
+                return UserCommand::ShowModel;
+            }
+            return UserCommand::ChangeModel { model: rest.to_string() };
+        }
+
+        // Unknown slash command - return error, don't send to LLM
+        // This prevents accidental LLM calls from typos like "/modle"
+        UserCommand::UnknownSlashCommand {
+            command: trimmed.to_string(),
         }
     }
 }

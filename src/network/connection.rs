@@ -19,6 +19,13 @@ impl ConnectionId {
     pub fn as_u64(&self) -> u64 {
         self.0
     }
+
+    /// Parse from string (expects format "conn-123" or just "123")
+    pub fn from_string(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let id_str = s.strip_prefix("conn-").unwrap_or(s);
+        id_str.parse::<u64>().ok().map(Self)
+    }
 }
 
 impl Default for ConnectionId {

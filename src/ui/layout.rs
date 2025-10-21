@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 
@@ -42,14 +42,8 @@ pub fn render(f: &mut Frame, app: &App) {
 
 /// Render the scrollable output area
 fn render_output(f: &mut Frame, app: &App, area: Rect) {
-    let messages: Vec<ListItem> = app
-        .output_messages
-        .iter()
-        .map(|msg| {
-            let content = Line::from(Span::raw(msg));
-            ListItem::new(content)
-        })
-        .collect();
+    // Join all messages with newlines for wrapping paragraph
+    let text = app.output_messages.join("\n");
 
     // All borders same color (Midnight Commander style)
     let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
@@ -57,7 +51,7 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     // Highlight the title for focused panel
     let (title, title_style) = if app.is_output_focused() {
         (
-            "Output",
+            "Output (↑↓ to scroll)",
             Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
         )
     } else {
@@ -67,7 +61,22 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let list = List::new(messages)
+    // Calculate scroll position
+    // App uses scroll_offset where 0 = bottom, higher = scrolled up
+    // Paragraph::scroll uses (vertical, horizontal) where higher = scrolled down
+    // So we need to invert: when app.scroll_offset is 0, scroll to a large value (bottom)
+    // When app.scroll_offset > 0, scroll less
+    let scroll_pos = if app.scroll_offset == 0 {
+        // At bottom - use very large scroll to show end of content
+        u16::MAX
+    } else {
+        // Scrolled up - approximate based on messages
+        // This is a rough estimate since we don't know wrapped line count
+        let estimated_bottom = (app.output_messages.len() * 2) as u16; // Rough estimate
+        estimated_bottom.saturating_sub(app.scroll_offset as u16)
+    };
+
+    let paragraph = Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -75,71 +84,11 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
                 .border_style(border_style)
                 .style(Style::default().bg(Color::Blue).fg(Color::White))
         )
-        .style(Style::default().bg(Color::Blue).fg(Color::White));
+        .style(Style::default().bg(Color::Blue).fg(Color::White))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_pos, 0));
 
-    // Calculate scroll position
-    // scroll_offset = 0 means at bottom (showing latest)
-    // scroll_offset > 0 means scrolled up
-    let total_messages = app.output_messages.len();
-    let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
-
-    // Calculate how many messages to skip from the top
-    // When scroll_offset = 0, we want to show the last N messages
-    let skip = if total_messages > visible_height {
-        total_messages.saturating_sub(visible_height + app.scroll_offset)
-    } else {
-        0
-    };
-
-    // Create scrollable list with offset
-    let list = if total_messages > visible_height {
-        let messages_scrolled: Vec<ListItem> = app
-            .output_messages
-            .iter()
-            .skip(skip)
-            .take(visible_height)
-            .map(|msg| {
-                let content = Line::from(Span::raw(msg));
-                ListItem::new(content)
-            })
-            .collect();
-
-        List::new(messages_scrolled)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(Span::styled(
-                        format!("Output [{}/{}]", skip + visible_height, total_messages),
-                        title_style
-                    ))
-                    .border_style(border_style)
-                    .style(Style::default().bg(Color::Blue).fg(Color::White))
-            )
-            .style(Style::default().bg(Color::Blue).fg(Color::White))
-    } else {
-        list
-    };
-
-    f.render_widget(list, area);
-
-    // Render scrollbar if content overflows
-    if total_messages > visible_height {
-        let scrollbar_fg = if app.is_output_focused() { Color::Cyan } else { Color::Gray };
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .style(Style::default().fg(scrollbar_fg).bg(Color::Blue));
-
-        let mut scrollbar_state = ScrollbarState::new(total_messages.saturating_sub(visible_height))
-            .position(total_messages.saturating_sub(visible_height + app.scroll_offset));
-
-        let scrollbar_area = Rect {
-            x: area.x + area.width - 1,
-            y: area.y + 1,
-            width: 1,
-            height: area.height.saturating_sub(2),
-        };
-
-        f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
-    }
+    f.render_widget(paragraph, area);
 }
 
 /// Render the fixed input area

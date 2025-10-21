@@ -4,8 +4,8 @@
 //! in a simple, black-box manner using only prompts.
 
 use bytes::Bytes;
-use netget::events::{HttpResponse, NetworkEvent, UserCommand};
-use netget::llm::{HttpLlmResponse, OllamaClient, PromptBuilder};
+use netget::events::{HttpResponse, NetworkEvent};
+use netget::llm::{HttpLlmResponse, LlmResponse, OllamaClient, PromptBuilder};
 use netget::network::{ConnectionId, HttpServer, TcpServer};
 use netget::protocol::BaseStack;
 use netget::state::app_state::{AppState, Mode};
@@ -40,35 +40,36 @@ pub async fn start_server_with_prompt(
 ) -> (AppState, u16, tokio::task::JoinHandle<()>) {
     let state = AppState::new();
 
-    // Parse the command to infer configuration
-    let cmd = UserCommand::parse(prompt);
+    // Infer configuration from prompt text
+    let prompt_lower = prompt.to_lowercase();
 
-    // Extract port and configuration from command
-    let (port, base_stack, protocol) = match cmd {
-        UserCommand::Listen {
-            port,
-            base_stack,
-            protocol,
-        } => (port, base_stack, protocol),
-        _ => panic!("Prompt must contain a listen command"),
-    };
+    // Extract port (default to 0 for auto-assign)
+    let port = prompt_lower
+        .split_whitespace()
+        .find(|s| s.parse::<u16>().is_ok())
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
 
-    // Get a dynamic port if not specified (port 0 = auto-assign)
+    // Get a dynamic port if not specified
     let port = if port == 0 {
         get_available_port().await
     } else {
         port
     };
 
-    // Set up state based on parsed command
+    // Infer base stack from prompt
+    let base_stack = if prompt_lower.contains("http stack") || prompt_lower.contains("via http") {
+        BaseStack::Http
+    } else if prompt_lower.contains("datalink") || prompt_lower.contains("arp") {
+        BaseStack::DataLink
+    } else {
+        BaseStack::TcpRaw
+    };
+
+    // Set up state
     state.set_mode(Mode::Server).await;
     state.set_base_stack(base_stack).await;
-    if base_stack == BaseStack::TcpRaw {
-        state.set_protocol_type(protocol).await;
-    }
-
-    // Add the full prompt as instructions for the LLM
-    state.add_instruction(prompt.to_string()).await;
+    state.set_instruction(prompt.to_string()).await;
 
     let (network_tx, mut network_rx) = mpsc::unbounded_channel::<NetworkEvent>();
     let llm = OllamaClient::default();
@@ -218,16 +219,18 @@ async fn process_events(state: &AppState, network_rx: &mut mpsc::UnboundedReceiv
                 let prompt =
                     PromptBuilder::build_connection_established_prompt(state, connection_id).await;
 
-                if let Ok(response) = llm.generate(&model, &prompt).await {
-                    let response = response.trim();
-                    if !response.is_empty() && response != "NO_RESPONSE" {
-                        if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
-                            if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
-                            {
-                                use tokio::io::AsyncWriteExt;
-                                let mut write_half = write_half_arc.lock().await;
-                                let _ = write_half.write_all(response.as_bytes()).await;
-                                let _ = write_half.flush().await;
+                if let Ok(raw_response) = llm.generate(&model, &prompt).await {
+                    if let Ok(llm_response) = LlmResponse::from_str(&raw_response) {
+                        // Send output if present
+                        if let Some(output) = llm_response.output {
+                            if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
+                                if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
+                                {
+                                    use tokio::io::AsyncWriteExt;
+                                    let mut write_half = write_half_arc.lock().await;
+                                    let _ = write_half.write_all(output.as_bytes()).await;
+                                    let _ = write_half.flush().await;
+                                }
                             }
                         }
                     }
@@ -242,16 +245,25 @@ async fn process_events(state: &AppState, network_rx: &mut mpsc::UnboundedReceiv
                 let prompt =
                     PromptBuilder::build_data_received_prompt(state, connection_id, &data).await;
 
-                if let Ok(response) = llm.generate(&model, &prompt).await {
-                    let response = response.trim();
-                    if !response.is_empty() && response != "NO_RESPONSE" {
-                        if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
-                            if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
-                            {
-                                use tokio::io::AsyncWriteExt;
-                                let mut write_half = write_half_arc.lock().await;
-                                let _ = write_half.write_all(response.as_bytes()).await;
-                                let _ = write_half.flush().await;
+                if let Ok(raw_response) = llm.generate(&model, &prompt).await {
+                    if let Ok(llm_response) = LlmResponse::from_str(&raw_response) {
+                        // Send output if present
+                        if let Some(output) = llm_response.output {
+                            if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
+                                if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
+                                {
+                                    use tokio::io::AsyncWriteExt;
+                                    let mut write_half = write_half_arc.lock().await;
+                                    let _ = write_half.write_all(output.as_bytes()).await;
+                                    let _ = write_half.flush().await;
+                                }
+                            }
+                        }
+
+                        // Handle close connection if requested
+                        if llm_response.close_connection {
+                            if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
+                                connections.lock().await.remove(&connection_id);
                             }
                         }
                     }

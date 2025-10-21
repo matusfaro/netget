@@ -35,56 +35,64 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
         // Quit
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => Ok(true),
 
-        // Newline (Shift+Enter)
-        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+        // Newline (Shift+Enter) - only in input mode
+        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) && app.is_input_focused() => {
             app.enter_char('\n');
             Ok(false)
         }
 
-        // Submit (Enter)
-        (KeyCode::Enter, _) => {
+        // Submit (Enter) - only in input mode
+        (KeyCode::Enter, _) if app.is_input_focused() => {
             // Input will be handled by the main event loop
             Ok(false)
         }
 
-        // History navigation
+        // Up/Down: History navigation in Input, scrolling in Output
         (KeyCode::Up, _) => {
-            app.history_previous();
+            if app.is_input_focused() {
+                app.history_previous();
+            } else {
+                app.scroll_up(1);
+            }
             Ok(false)
         }
         (KeyCode::Down, _) => {
-            app.history_next();
+            if app.is_input_focused() {
+                app.history_next();
+            } else {
+                app.scroll_down(1);
+            }
             Ok(false)
         }
 
-        // Shell-like keybindings
-        (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) => {
+        // Shell-like keybindings - only in input mode
+        (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
             app.move_cursor_start();
             Ok(false)
         }
-        (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) => {
+        (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
             app.move_cursor_end();
             Ok(false)
         }
-        (KeyCode::Char('k'), m) if m.contains(KeyModifiers::CONTROL) => {
+        (KeyCode::Char('k'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
             app.delete_to_end();
             Ok(false)
         }
-        (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) => {
+        (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
             app.delete_word();
             Ok(false)
         }
-        (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) => {
+        (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
             app.clear_input();
             Ok(false)
         }
 
-        // Home/End keys
-        (KeyCode::Home, _) => {
+        // Home/End keys - only in input mode
+        (KeyCode::Home, _) if app.is_input_focused() => {
             app.move_cursor_start();
             Ok(false)
         }
-        (KeyCode::End, _) => {
+        (KeyCode::End, _) if app.is_input_focused() => {
             app.move_cursor_end();
             Ok(false)
         }
@@ -103,22 +111,22 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
             Ok(false)
         }
 
-        // Navigation
-        (KeyCode::Left, _) => {
+        // Navigation - only in input mode
+        (KeyCode::Left, _) if app.is_input_focused() => {
             app.move_cursor_left();
             Ok(false)
         }
-        (KeyCode::Right, _) => {
+        (KeyCode::Right, _) if app.is_input_focused() => {
             app.move_cursor_right();
             Ok(false)
         }
-        (KeyCode::Backspace, _) => {
+        (KeyCode::Backspace, _) if app.is_input_focused() => {
             app.delete_char();
             Ok(false)
         }
 
-        // Regular character input
-        (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
+        // Regular character input - only in input mode
+        (KeyCode::Char(c), m) if app.is_input_focused() && !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
             app.enter_char(c);
             Ok(false)
         }

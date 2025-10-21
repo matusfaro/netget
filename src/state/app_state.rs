@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::network::connection::ConnectionId;
-use crate::protocol::{BaseStack, ProtocolType};
+use crate::protocol::BaseStack;
 
 /// Operating mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,14 +46,12 @@ struct AppStateInner {
     mode: Mode,
     /// Base protocol stack
     base_stack: BaseStack,
-    /// Current protocol type (only relevant for TcpRaw stack)
-    protocol_type: ProtocolType,
     /// Local listening address (for server mode)
     local_addr: Option<SocketAddr>,
     /// Active connections
     connections: HashMap<ConnectionId, ConnectionInfo>,
-    /// User instructions history
-    instructions: Vec<String>,
+    /// Current instruction for the LLM
+    instruction: String,
     /// Current Ollama model
     ollama_model: String,
 }
@@ -77,10 +75,9 @@ impl AppState {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
                 base_stack: BaseStack::TcpRaw,
-                protocol_type: ProtocolType::Custom,
                 local_addr: None,
                 connections: HashMap::new(),
-                instructions: Vec::new(),
+                instruction: String::new(),
                 ollama_model: "qwen3-coder:30b".to_string(),
             })),
         }
@@ -106,15 +103,6 @@ impl AppState {
         self.inner.write().await.base_stack = base_stack;
     }
 
-    /// Get the current protocol type
-    pub async fn get_protocol_type(&self) -> ProtocolType {
-        self.inner.read().await.protocol_type
-    }
-
-    /// Set the protocol type
-    pub async fn set_protocol_type(&self, protocol_type: ProtocolType) {
-        self.inner.write().await.protocol_type = protocol_type;
-    }
 
     /// Get the local listening address
     pub async fn get_local_addr(&self) -> Option<SocketAddr> {
@@ -163,14 +151,14 @@ impl AppState {
         }
     }
 
-    /// Add a user instruction to history
-    pub async fn add_instruction(&self, instruction: String) {
-        self.inner.write().await.instructions.push(instruction);
+    /// Set the current instruction for the LLM
+    pub async fn set_instruction(&self, instruction: String) {
+        self.inner.write().await.instruction = instruction;
     }
 
-    /// Get all instructions
-    pub async fn get_instructions(&self) -> Vec<String> {
-        self.inner.read().await.instructions.clone()
+    /// Get the current instruction
+    pub async fn get_instruction(&self) -> String {
+        self.inner.read().await.instruction.clone()
     }
 
     /// Get the Ollama model name
@@ -186,15 +174,10 @@ impl AppState {
     /// Get a summary of current state for LLM context
     pub async fn get_summary(&self) -> String {
         let inner = self.inner.read().await;
-        let protocol_info = match inner.base_stack {
-            BaseStack::TcpRaw => format!("Stack: {}, Protocol: {}", inner.base_stack, inner.protocol_type),
-            BaseStack::Http => format!("Stack: {}", inner.base_stack),
-            BaseStack::DataLink => format!("Stack: {}", inner.base_stack),
-        };
         format!(
-            "Mode: {}, {}, Connections: {}, Local: {}",
+            "Mode: {}, Stack: {}, Connections: {}, Local: {}",
             inner.mode,
-            protocol_info,
+            inner.base_stack,
             inner.connections.len(),
             inner.local_addr.map(|a| a.to_string()).unwrap_or_else(|| "None".to_string())
         )
