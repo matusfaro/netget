@@ -10,7 +10,7 @@ use super::types::{AppEvent, NetworkEvent, UserCommand};
 use crate::llm::{OllamaClient, PromptBuilder};
 use crate::network::connection::ConnectionId;
 use crate::network::tcp;
-use crate::protocol::{BaseStack, ProtocolType};
+use crate::protocol::BaseStack;
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
 
@@ -108,6 +108,7 @@ impl EventHandler {
     }
 
     /// Handle an application event
+    /// Returns Ok(true) if the application should quit
     pub async fn handle_event(&mut self, event: AppEvent, ui: &mut App) -> Result<bool> {
         match event {
             AppEvent::Network(net_event) => {
@@ -115,8 +116,7 @@ impl EventHandler {
                 Ok(false)
             }
             AppEvent::UserCommand(cmd) => {
-                self.handle_user_command(cmd, ui).await?;
-                Ok(false)
+                self.handle_user_command(cmd, ui).await
             }
             AppEvent::Tick => {
                 // Periodic updates can go here
@@ -282,95 +282,213 @@ impl EventHandler {
     }
 
     /// Handle user commands
-    async fn handle_user_command(&mut self, command: UserCommand, ui: &mut App) -> Result<()> {
+    /// Returns Ok(true) if the application should quit
+    async fn handle_user_command(&mut self, command: UserCommand, ui: &mut App) -> Result<bool> {
         match command {
-            UserCommand::Listen { port, base_stack, protocol } => {
-                self.handle_listen(port, base_stack, protocol, ui).await
-            }
-            UserCommand::Connect { addr: _, base_stack: _, protocol: _ } => {
-                ui.add_llm_message("Client mode not yet implemented".to_string());
-                Ok(())
-            }
-            UserCommand::Close => {
-                self.handle_close(ui).await
-            }
-            UserCommand::AddFile { name, content } => {
-                self.handle_add_file(name, content, ui).await
-            }
             UserCommand::Status => {
-                self.handle_status(ui).await
+                self.handle_status(ui).await?;
+                Ok(false)
+            }
+            UserCommand::ShowModel => {
+                self.handle_show_model(ui).await?;
+                Ok(false)
             }
             UserCommand::ChangeModel { model } => {
-                self.handle_change_model(model, ui).await
+                self.handle_change_model(model, ui).await?;
+                Ok(false)
             }
-            UserCommand::Raw { input } => {
-                self.handle_raw_input(input, ui).await
+            UserCommand::Quit => {
+                self.handle_quit(ui).await?;
+                Ok(true) // Signal to quit
+            }
+            UserCommand::UnknownSlashCommand { command } => {
+                ui.add_llm_message(format!("Unknown command: {}", command));
+                ui.add_llm_message("Available commands: /status, /model [name], /quit".to_string());
+                Ok(false)
+            }
+            UserCommand::Interpret { input } => {
+                self.handle_interpret(input, ui).await?;
+                Ok(false)
             }
         }
     }
 
-    async fn handle_listen(&mut self, port: u16, base_stack: BaseStack, protocol_type: ProtocolType, ui: &mut App) -> Result<()> {
-        ui.add_llm_message(format!("Starting server on port {} (stack: {})...", port, base_stack));
+    async fn handle_interpret(&mut self, input: String, ui: &mut App) -> Result<()> {
+        use crate::llm::{CommandInterpretation, PromptBuilder};
 
-        // Set mode, base stack, and protocol
-        self.state.set_mode(Mode::Server).await;
-        self.state.set_base_stack(base_stack).await;
-        self.state.set_protocol_type(protocol_type).await;
+        ui.add_status_message(format!("Interpreting: {}", input));
 
-        ui.add_status_message(format!("Protocol set to: {}", protocol_type));
-        ui.add_llm_message("LLM will handle all protocol responses".to_string());
+        // Ask LLM to interpret the command
+        let prompt = PromptBuilder::build_command_interpretation_prompt(&self.state, &input).await;
+        let model = self.state.get_ollama_model().await;
 
-        // Update UI connection info
-        ui.connection_info.mode = Mode::Server.to_string();
-        ui.connection_info.protocol = protocol_type.to_string();
-        ui.connection_info.state = "Ready to listen".to_string();
+        match self.llm.generate(&model, &prompt).await {
+            Ok(response) => {
+                // Parse the LLM response into actions
+                match CommandInterpretation::from_str(&response) {
+                    Ok(interpretation) => {
+                        // Display message if provided
+                        if let Some(msg) = &interpretation.message {
+                            ui.add_llm_message(msg.clone());
+                        }
 
-        Ok(())
-    }
-
-    async fn handle_close(&mut self, ui: &mut App) -> Result<()> {
-        ui.add_llm_message("Closing all connections...".to_string());
-
-        for (id, _) in self.connections.drain() {
-            self.state.remove_connection(id).await;
+                        // Execute each action in order
+                        for action in interpretation.actions {
+                            if let Err(e) = self.execute_action(action, ui).await {
+                                ui.add_llm_message(format!("Error executing action: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        ui.add_llm_message(format!("Failed to parse LLM response: {}", e));
+                        ui.add_llm_message(format!("Raw response: {}", response));
+                    }
+                }
+            }
+            Err(e) => {
+                ui.add_llm_message(format!("LLM error: {}", e));
+            }
         }
 
-        ui.add_status_message("All connections closed".to_string());
         Ok(())
     }
 
-    async fn handle_add_file(&mut self, name: String, content: Vec<u8>, ui: &mut App) -> Result<()> {
-        // Store as an instruction for the LLM
-        let instruction = format!("Serve file '{}' with content: {:?}", name, String::from_utf8_lossy(&content));
-        self.state.add_instruction(instruction).await;
+    async fn execute_action(&mut self, action: crate::llm::Action, ui: &mut App) -> Result<()> {
+        use crate::llm::Action;
 
-        ui.add_llm_message(format!("Instructed to serve file '{}' ({} bytes)", name, content.len()));
+        match action {
+            Action::UpdateInstruction { instruction } => {
+                self.state.set_instruction(instruction.clone()).await;
+                ui.add_status_message(format!("Instruction updated"));
+            }
+            Action::OpenServer { port, base_stack, protocol: _ } => {
+                // Parse base stack
+                let stack = crate::protocol::BaseStack::from_str(&base_stack)
+                    .unwrap_or(BaseStack::TcpRaw);
+
+                self.state.set_mode(Mode::Server).await;
+                self.state.set_base_stack(stack).await;
+
+                ui.add_llm_message(format!("Opening server on port {} with stack {}", port, stack));
+                ui.connection_info.mode = Mode::Server.to_string();
+                ui.connection_info.state = format!("Listening on port {}", port);
+
+                // Note: Actual server startup happens in main.rs after this returns
+            }
+            Action::OpenClient { address, base_stack: _, protocol: _ } => {
+                ui.add_llm_message(format!("Client mode not yet implemented ({})", address));
+            }
+            Action::CloseConnection { connection_id } => {
+                if let Some(conn_id_str) = connection_id {
+                    if let Some(conn_id) = crate::network::ConnectionId::from_string(&conn_id_str) {
+                        self.state.remove_connection(conn_id).await;
+                        ui.add_status_message(format!("Closed connection {}", conn_id));
+                    }
+                } else {
+                    // Close all connections
+                    for (id, _) in self.connections.drain() {
+                        self.state.remove_connection(id).await;
+                    }
+                    ui.add_status_message("Closed all connections".to_string());
+                }
+            }
+            Action::ShowMessage { message } => {
+                ui.add_llm_message(message);
+            }
+            Action::ChangeModel { model } => {
+                self.state.set_ollama_model(model.clone()).await;
+                ui.add_llm_message(format!("Changed model to: {}", model));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_quit(&mut self, ui: &mut App) -> Result<()> {
+        ui.add_llm_message("Quitting...".to_string());
+        // The main event loop will handle the actual quit
         Ok(())
     }
 
     async fn handle_status(&mut self, ui: &mut App) -> Result<()> {
         let summary = self.state.get_summary().await;
-        let instructions = self.state.get_instructions().await;
+        let instruction = self.state.get_instruction().await;
 
         ui.add_llm_message(format!("Status: {}", summary));
-        if !instructions.is_empty() {
-            ui.add_llm_message(format!("Instructions: {} recorded", instructions.len()));
+        if !instruction.is_empty() {
+            ui.add_llm_message(format!("Instruction: {}", instruction));
+        } else {
+            ui.add_llm_message("No instruction set".to_string());
+        }
+
+        Ok(())
+    }
+
+    async fn handle_show_model(&mut self, ui: &mut App) -> Result<()> {
+        let current_model = self.state.get_ollama_model().await;
+
+        ui.add_llm_message(format!("Current model: {}", current_model));
+        ui.add_llm_message("".to_string());
+        ui.add_llm_message("Fetching available models...".to_string());
+
+        // Fetch model list from Ollama
+        match self.llm.list_models().await {
+            Ok(models) => {
+                if models.is_empty() {
+                    ui.add_llm_message("No models found. Please pull a model first.".to_string());
+                    ui.add_llm_message("Example: ollama pull llama3.2".to_string());
+                } else {
+                    ui.add_llm_message(format!("Available models ({}):", models.len()));
+                    for model in &models {
+                        if model == &current_model {
+                            ui.add_llm_message(format!("  * {} (current)", model));
+                        } else {
+                            ui.add_llm_message(format!("    {}", model));
+                        }
+                    }
+                    ui.add_llm_message("".to_string());
+                    ui.add_llm_message("To change model, use: /model <name>".to_string());
+                }
+            }
+            Err(e) => {
+                ui.add_llm_message(format!("Failed to fetch models: {}", e));
+                ui.add_llm_message("Make sure Ollama is running.".to_string());
+            }
         }
 
         Ok(())
     }
 
     async fn handle_change_model(&mut self, model: String, ui: &mut App) -> Result<()> {
-        self.state.set_ollama_model(model.clone()).await;
-        ui.add_llm_message(format!("Changed Ollama model to: {}", model));
-        Ok(())
-    }
+        // Validate model exists
+        match self.llm.list_models().await {
+            Ok(models) => {
+                if models.contains(&model) {
+                    self.state.set_ollama_model(model.clone()).await;
+                    ui.add_llm_message(format!("✓ Changed model to: {}", model));
+                } else {
+                    ui.add_llm_message(format!("✗ Model '{}' not found", model));
+                    ui.add_llm_message("".to_string());
 
-    async fn handle_raw_input(&mut self, input: String, ui: &mut App) -> Result<()> {
-        // Store the instruction for LLM context
-        self.state.add_instruction(input.clone()).await;
-
-        ui.add_llm_message(format!("Instruction stored: {}", input));
+                    if models.is_empty() {
+                        ui.add_llm_message("No models available. Pull a model first:".to_string());
+                        ui.add_llm_message("  ollama pull llama3.2".to_string());
+                    } else {
+                        ui.add_llm_message("Available models:".to_string());
+                        for available_model in &models {
+                            ui.add_llm_message(format!("  {}", available_model));
+                        }
+                        ui.add_llm_message("".to_string());
+                        ui.add_llm_message("Or pull the model:".to_string());
+                        ui.add_llm_message(format!("  ollama pull {}", model));
+                    }
+                }
+            }
+            Err(e) => {
+                ui.add_llm_message(format!("Failed to validate model: {}", e));
+                ui.add_llm_message("Make sure Ollama is running.".to_string());
+            }
+        }
 
         Ok(())
     }
