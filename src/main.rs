@@ -18,10 +18,38 @@ use tracing::{debug, info, error, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use netget::events::{AppEvent, EventHandler, NetworkEvent, UserCommand};
-use netget::llm::{OllamaClient, PromptBuilder};
+use netget::llm::{LlmResponse, OllamaClient, PromptBuilder};
 use netget::network::{ConnectionId, TcpServer};
 use netget::state::app_state::AppState;
 use netget::ui::{App, layout};
+
+/// Connection processing state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionStatus {
+    /// Not processing, no queued data
+    Idle,
+    /// LLM is currently generating a response
+    Processing,
+    /// LLM requested to wait for more data before responding
+    Accumulating,
+}
+
+/// Per-connection state for queueing and LLM processing
+struct ConnectionState {
+    /// Current processing status
+    status: ConnectionStatus,
+    /// Queue of data that arrived while LLM was processing
+    queue: Vec<u8>,
+}
+
+impl ConnectionState {
+    fn new() -> Self {
+        Self {
+            status: ConnectionStatus::Idle,
+            queue: Vec::new(),
+        }
+    }
+}
 
 /// NetGet - LLM-Controlled Network Application
 #[derive(Parser, Debug)]
@@ -80,34 +108,32 @@ fn format_as_hex(data: &[u8], max_len: usize) -> String {
     }
 }
 
-/// Process LLM response to handle common issues
-/// - Strips b"..." wrapping if present
-/// - Unescapes common escape sequences if needed
-fn process_llm_response(response: &str) -> String {
-    let trimmed = response.trim();
-
-    // Check if wrapped in b"..." or just "..."
-    let unwrapped = if trimmed.starts_with("b\"") && trimmed.ends_with('"') {
-        warn!("LLM returned debug format b\"...\", unwrapping");
-        &trimmed[2..trimmed.len()-1]
-    } else if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 1 {
-        &trimmed[1..trimmed.len()-1]
-    } else {
-        trimmed
-    };
-
-    // Unescape common sequences if they appear to be escaped
-    // Only do this if we see literal \n or \r (not actual newlines)
-    if unwrapped.contains("\\n") || unwrapped.contains("\\r") || unwrapped.contains("\\t") {
-        warn!("LLM returned escaped sequences, unescaping");
-        unwrapped
-            .replace("\\r\\n", "\r\n")
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
-            .replace("\\\\", "\\")
-    } else {
-        unwrapped.to_string()
+/// Process LLM response - parse JSON and handle legacy formats
+fn process_llm_response(response: &str) -> LlmResponse {
+    // Try to parse as structured response
+    match LlmResponse::from_str(response) {
+        Ok(mut parsed) => {
+            // Unescape output if needed
+            if let Some(output) = &parsed.output {
+                if output.contains("\\n") || output.contains("\\r") || output.contains("\\t") {
+                    warn!("LLM output contains escaped sequences, unescaping");
+                    parsed.output = Some(
+                        output
+                            .replace("\\r\\n", "\r\n")
+                            .replace("\\n", "\n")
+                            .replace("\\r", "\r")
+                            .replace("\\t", "\t")
+                            .replace("\\\\", "\\")
+                    );
+                }
+            }
+            parsed
+        }
+        Err(e) => {
+            error!("Failed to parse LLM response: {}", e);
+            // Return default (no action)
+            LlmResponse::default()
+        }
     }
 }
 
@@ -193,7 +219,10 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
     app.add_message("".to_string());
 
     // Create event channels
-    let (network_tx, network_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let (network_tx, mut network_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+
+    // Channel for status messages from spawned tasks back to UI
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
     // Shared connection storage (write halves only, read halves are in separate tasks)
     use std::collections::HashMap;
@@ -201,6 +230,10 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
     use tokio::sync::Mutex;
     type WriteHalfMap = Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>>>;
     let connections: WriteHalfMap = Arc::new(Mutex::new(HashMap::new()));
+
+    // Per-connection state tracking for LLM processing and queueing
+    type ConnectionStateMap = Arc<Mutex<HashMap<ConnectionId, ConnectionState>>>;
+    let connection_states: ConnectionStateMap = Arc::new(Mutex::new(HashMap::new()));
 
     // Create event handler
     let mut event_handler = EventHandler::new(state.clone(), llm_for_handler);
@@ -320,130 +353,6 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
 
     // Wrap app in Arc<Mutex> for sharing between tasks
     let app_clone = Arc::new(Mutex::new(app));
-
-    // Spawn background task to handle network events immediately (with LLM processing)
-    let network_rx_bg = network_rx;
-    let app_for_task = app_clone.clone();
-    let connections_for_task = connections.clone();
-    let state_for_task = state.clone();
-    let llm_for_task = llm.clone();
-
-    tokio::spawn(async move {
-        let mut network_rx = network_rx_bg;
-        loop {
-            if let Some(net_event) = network_rx.recv().await {
-                match &net_event {
-                    NetworkEvent::Listening { addr } => {
-                        let mut app = app_for_task.lock().await;
-                        app.add_message(format!("✓ Listening on {}", addr));
-                        app.connection_info.local_addr = Some(addr.to_string());
-                        app.connection_info.state = "Listening".to_string();
-                        app.connection_info.model = state_for_task.get_ollama_model().await;
-                    }
-                    NetworkEvent::Connected { connection_id, remote_addr } => {
-                        {
-                            let mut app = app_for_task.lock().await;
-                            app.add_message(format!("✓ Connection {} from {}", connection_id, remote_addr));
-                            app.connection_info.remote_addr = Some(remote_addr.to_string());
-                            app.connection_info.state = "Connected".to_string();
-                        }
-
-                        // Call LLM for initial greeting
-                        let model = state_for_task.get_ollama_model().await;
-                        let prompt = PromptBuilder::build_connection_established_prompt(&state_for_task, *connection_id).await;
-
-                        match llm_for_task.generate(&model, &prompt).await {
-                            Ok(response) => {
-                                let response = process_llm_response(&response);
-                                if !response.is_empty() && response != "NO_RESPONSE" {
-                                    if let Some(write_half_arc) = connections_for_task.lock().await.get(connection_id) {
-                                        use tokio::io::AsyncWriteExt;
-                                        let mut write_half = write_half_arc.lock().await;
-                                        if let Err(e) = write_half.write_all(response.as_bytes()).await {
-                                            error!("Write error: {}", e);
-                                        } else if let Err(e) = write_half.flush().await {
-                                            error!("Flush error: {}", e);
-                                        } else {
-                                            let formatted = format_data(response.as_bytes(), 80);
-                                            let mut app = app_for_task.lock().await;
-                                            app.add_message(format!("→ Sent to {}: {}", connection_id, formatted));
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("LLM error: {}", e);
-                                let mut app = app_for_task.lock().await;
-                                app.add_message(format!("✗ LLM error: {}", e));
-                            }
-                        }
-                    }
-                    NetworkEvent::DataReceived { connection_id, data } => {
-                        {
-                            let formatted = format_data(data, 80);
-                            let mut app = app_for_task.lock().await;
-                            app.add_message(format!("← Recv from {}: {}", connection_id, formatted));
-                        }
-
-                        // Call LLM for response
-                        let model = state_for_task.get_ollama_model().await;
-                        let prompt = PromptBuilder::build_data_received_prompt(&state_for_task, *connection_id, data).await;
-
-                        match llm_for_task.generate(&model, &prompt).await {
-                            Ok(response) => {
-                                let response = process_llm_response(&response);
-                                if response == "CLOSE_CONNECTION" {
-                                    if let Some(write_half_arc) = connections_for_task.lock().await.remove(connection_id) {
-                                        drop(write_half_arc);
-                                        let mut app = app_for_task.lock().await;
-                                        app.add_message(format!("✗ Closed connection {}", connection_id));
-                                    }
-                                } else if !response.is_empty() && response != "NO_RESPONSE" {
-                                    if let Some(write_half_arc) = connections_for_task.lock().await.get(connection_id) {
-                                        use tokio::io::AsyncWriteExt;
-                                        let mut write_half = write_half_arc.lock().await;
-                                        if let Err(e) = write_half.write_all(response.as_bytes()).await {
-                                            error!("Write error: {}", e);
-                                        } else if let Err(e) = write_half.flush().await {
-                                            error!("Flush error: {}", e);
-                                        } else {
-                                            let formatted = format_data(response.as_bytes(), 80);
-                                            let mut app = app_for_task.lock().await;
-                                            app.add_message(format!("→ Sent to {}: {}", connection_id, formatted));
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("LLM error: {}", e);
-                                let mut app = app_for_task.lock().await;
-                                app.add_message(format!("✗ LLM error: {}", e));
-                            }
-                        }
-                    }
-                    NetworkEvent::DataSent { connection_id, data } => {
-                        let formatted = format_data(data, 80);
-                        let mut app = app_for_task.lock().await;
-                        app.add_message(format!("→ Sent to {}: {}", connection_id, formatted));
-                    }
-                    NetworkEvent::Disconnected { connection_id } => {
-                        let mut app = app_for_task.lock().await;
-                        app.add_message(format!("✗ Connection {} closed", connection_id));
-                        app.connection_info.remote_addr = None;
-                        app.connection_info.state = "Idle".to_string();
-                    }
-                    NetworkEvent::Error { connection_id, error } => {
-                        let mut app = app_for_task.lock().await;
-                        if let Some(id) = connection_id {
-                            app.add_message(format!("✗ Error on {}: {}", id, error));
-                        } else {
-                            app.add_message(format!("✗ Error: {}", error));
-                        }
-                    }
-                }
-            }
-        }
-    });
 
     // Setup terminal
     enable_raw_mode()?;
@@ -698,6 +607,270 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                     _ => {} // Ignore other events (mouse, focus, paste, resize)
                 }
             }
+        }
+
+        // Check for status messages and network events
+        {
+            let mut app = app_clone.lock().await;
+
+            // Check for status messages from spawned tasks
+            while let Ok(status_msg) = status_rx.try_recv() {
+                app.add_status_message(status_msg);
+            }
+
+            // Check for network events and handle them with LLM
+            while let Ok(net_event) = network_rx.try_recv() {
+            match &net_event {
+                NetworkEvent::Connected { connection_id, remote_addr } => {
+                    app.add_status_message(format!("Connection {} from {}", connection_id, remote_addr));
+
+                    // Initialize connection state
+                    connection_states.lock().await.insert(*connection_id, ConnectionState::new());
+
+                    // Call LLM for initial greeting
+                    let model = state.get_ollama_model().await;
+                    let prompt = PromptBuilder::build_connection_established_prompt(&state, *connection_id).await;
+
+                    match llm.generate(&model, &prompt).await {
+                        Ok(raw_response) => {
+                            let response = process_llm_response(&raw_response);
+
+                            // Log message if present
+                            if let Some(msg) = &response.log_message {
+                                info!("LLM: {}", msg);
+                            }
+
+                            // Send output if present
+                            if let Some(output) = &response.output {
+                                if let Some(write_half_arc) = connections.lock().await.get(connection_id) {
+                                    use tokio::io::AsyncWriteExt;
+                                    let mut write_half = write_half_arc.lock().await;
+                                    if let Err(e) = write_half.write_all(output.as_bytes()).await {
+                                        error!("Write error: {}", e);
+                                    } else if let Err(e) = write_half.flush().await {
+                                        error!("Flush error: {}", e);
+                                    } else {
+                                        let formatted = format_data(output.as_bytes(), 80);
+                                        app.add_status_message(format!("→ Sent to {}: {}", connection_id, formatted));
+                                    }
+                                }
+                            }
+
+                            // Handle close connection
+                            if response.close_connection {
+                                if let Some(write_half_arc) = connections.lock().await.remove(connection_id) {
+                                    drop(write_half_arc);
+                                    app.add_status_message(format!("Closed connection {}", connection_id));
+                                }
+                                connection_states.lock().await.remove(connection_id);
+                            }
+                        }
+                        Err(e) => {
+                            error!("LLM error: {}", e);
+                            app.add_llm_message(format!("LLM error: {}", e));
+                        }
+                    }
+                }
+                NetworkEvent::DataReceived { connection_id, data } => {
+                    let formatted = format_data(&data, 80);
+                    app.add_status_message(format!("← Recv from {}: {}", connection_id, formatted));
+
+                    // Clone necessary data for the spawned task
+                    let connection_id = *connection_id;
+                    let data = data.clone();
+                    let state_clone = state.clone();
+                    let llm_clone = llm.clone();
+                    let connections_clone = connections.clone();
+                    let connection_states_clone = connection_states.clone();
+                    let status_tx_clone = status_tx.clone();
+
+                    // Spawn task to handle this data (enables concurrent processing per connection)
+                    tokio::spawn(async move {
+                        // Check connection processing state
+                        let current_status = {
+                            let mut states = connection_states_clone.lock().await;
+                            let conn_state = states.entry(connection_id).or_insert_with(ConnectionState::new);
+                            conn_state.status
+                        };
+
+                        match current_status {
+                            ConnectionStatus::Processing => {
+                                // LLM is already processing for this connection, queue the data
+                                let mut states = connection_states_clone.lock().await;
+                                let conn_state = states.get_mut(&connection_id).unwrap();
+                                conn_state.queue.extend_from_slice(&data);
+                                let msg = format!(
+                                    "LLM busy, queued {} bytes for {} (queue: {} bytes)",
+                                    data.len(),
+                                    connection_id,
+                                    conn_state.queue.len()
+                                );
+                                info!("{}", msg);
+                                let _ = status_tx_clone.send(msg);
+                            }
+                            ConnectionStatus::Idle | ConnectionStatus::Accumulating => {
+                                // Merge any queued data with new data
+                                let mut data_to_process = {
+                                    let mut states = connection_states_clone.lock().await;
+                                    let conn_state = states.get_mut(&connection_id).unwrap();
+
+                                    if conn_state.queue.is_empty() {
+                                        data.to_vec()
+                                    } else {
+                                        // Append new data to queue and process all
+                                        conn_state.queue.extend_from_slice(&data);
+                                        let all_data = conn_state.queue.clone();
+                                        conn_state.queue.clear();
+                                        let msg = format!(
+                                            "Processing accumulated {} bytes for {}",
+                                            all_data.len(),
+                                            connection_id
+                                        );
+                                        info!("{}", msg);
+                                        let _ = status_tx_clone.send(msg);
+                                        all_data
+                                    }
+                                };
+
+                                // Process data with LLM in a loop (handling queued data)
+                                loop {
+                                    // Mark as processing
+                                    {
+                                        let mut states = connection_states_clone.lock().await;
+                                        let conn_state = states.get_mut(&connection_id).unwrap();
+                                        conn_state.status = ConnectionStatus::Processing;
+                                    }
+
+                                    // Call LLM
+                                    let model = state_clone.get_ollama_model().await;
+                                    let data_bytes = bytes::Bytes::copy_from_slice(&data_to_process);
+                                    let prompt = PromptBuilder::build_data_received_prompt(&state_clone, connection_id, &data_bytes).await;
+
+                                    let _ = status_tx_clone.send("Asking LLM for response...".to_string());
+
+                                    match llm_clone.generate(&model, &prompt).await {
+                                        Ok(raw_response) => {
+                                            let response = process_llm_response(&raw_response);
+
+                                            // Log message if present
+                                            if let Some(msg) = &response.log_message {
+                                                info!("LLM: {}", msg);
+                                            }
+
+                                            // Check for WAIT_FOR_MORE
+                                            if response.wait_for_more {
+                                                let mut states = connection_states_clone.lock().await;
+                                                let conn_state = states.get_mut(&connection_id).unwrap();
+                                                conn_state.status = ConnectionStatus::Accumulating;
+                                                let msg = "LLM: Waiting for more data".to_string();
+                                                info!("{}", msg);
+                                                let _ = status_tx_clone.send(msg);
+                                                break;
+                                            }
+
+                                            // Check for shutdown server
+                                            if response.shutdown_server {
+                                                info!("LLM requested server shutdown");
+                                                let _ = status_tx_clone.send("LLM requested server shutdown".to_string());
+                                                // TODO: Implement graceful shutdown
+                                                // For now, just log it
+                                                warn!("Server shutdown requested but not yet implemented");
+                                            }
+
+                                            // Send output if present
+                                            if let Some(output) = &response.output {
+                                                if let Some(write_half_arc) = connections_clone.lock().await.get(&connection_id) {
+                                                    use tokio::io::AsyncWriteExt;
+                                                    let mut write_half = write_half_arc.lock().await;
+                                                    if let Err(e) = write_half.write_all(output.as_bytes()).await {
+                                                        error!("Write error: {}", e);
+                                                    } else if let Err(e) = write_half.flush().await {
+                                                        error!("Flush error: {}", e);
+                                                    } else {
+                                                        let formatted = format_data(output.as_bytes(), 80);
+                                                        let msg = format!("→ Sent to {}: {}", connection_id, formatted);
+                                                        info!("{}", msg);
+                                                        let _ = status_tx_clone.send(msg);
+                                                    }
+                                                }
+                                            }
+
+                                            // Check for CLOSE_CONNECTION
+                                            if response.close_connection {
+                                                if let Some(write_half_arc) = connections_clone.lock().await.remove(&connection_id) {
+                                                    drop(write_half_arc);
+                                                    let msg = format!("Closed connection {}", connection_id);
+                                                    info!("{}", msg);
+                                                    let _ = status_tx_clone.send(msg);
+                                                }
+                                                connection_states_clone.lock().await.remove(&connection_id);
+                                                break;
+                                            }
+
+                                            // Check for queued data
+                                            let queued_data = {
+                                                let mut states = connection_states_clone.lock().await;
+                                                let conn_state = states.get_mut(&connection_id).unwrap();
+
+                                                if conn_state.queue.is_empty() {
+                                                    conn_state.status = ConnectionStatus::Idle;
+                                                    None
+                                                } else {
+                                                    let queued = conn_state.queue.clone();
+                                                    conn_state.queue.clear();
+                                                    let msg = format!(
+                                                        "Processing {} bytes of queued data for {}",
+                                                        queued.len(),
+                                                        connection_id
+                                                    );
+                                                    info!("{}", msg);
+                                                    let _ = status_tx_clone.send(msg);
+                                                    Some(queued)
+                                                }
+                                            };
+
+                                            if let Some(queued) = queued_data {
+                                                data_to_process = queued;
+                                                // Continue loop
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("LLM error: {}", e);
+
+                                            // Go idle on error
+                                            let mut states = connection_states_clone.lock().await;
+                                            if let Some(conn_state) = states.get_mut(&connection_id) {
+                                                conn_state.status = ConnectionStatus::Idle;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                _ => {
+                    // Handle other events with EventHandler
+                    if event_handler.handle_event(AppEvent::Network(net_event), &mut app).await? {
+                        break 'main_loop Ok(());
+                    }
+                }
+            }
+        }
+
+            // Update UI stats from state
+            if let Some(conns) = state.get_all_connections().await.first() {
+                app.packet_stats.packets_received = conns.packets_received;
+                app.packet_stats.packets_sent = conns.packets_sent;
+                app.packet_stats.bytes_received = conns.bytes_received;
+                app.packet_stats.bytes_sent = conns.bytes_sent;
+            }
+
+            // Update model display
+            app.connection_info.model = state.get_ollama_model().await;
         }
     };
 

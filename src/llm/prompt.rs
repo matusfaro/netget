@@ -48,19 +48,36 @@ Event: Data Received
 Connection ID: {}
 Data: {}
 
-Based on the protocol and user instructions, what data should be sent back (if any)?
+Based on the protocol and user instructions, what should be done?
 
-IMPORTANT: Respond with ONLY the raw text to send - NOT a debug representation, NOT wrapped in quotes, NOT prefixed with b".
-Just output the exact characters that should be sent over the wire.
-Use actual newlines (not \n), actual carriage returns (not \r).
-If no response is needed, respond with "NO_RESPONSE".
-If you need to close the connection, respond with "CLOSE_CONNECTION".
+IMPORTANT: Respond with a JSON object with the following structure:
+{{
+  "output": "data to send over the wire (or null if no output)",
+  "close_connection": false,
+  "wait_for_more": false,
+  "shutdown_server": false,
+  "log_message": "optional debug message"
+}}
 
-For FTP protocol, respond with proper FTP response codes (e.g., "220 Welcome\r\n").
+Fields:
+- "output": The raw text/bytes to send. Use actual newlines (\n), carriage returns (\r), etc. Set to null or omit if no response needed.
+- "close_connection": Set to true to close this specific connection
+- "wait_for_more": Set to true if you need more data before responding (e.g., incomplete HTTP headers)
+- "shutdown_server": Set to true to shut down the entire server
+- "log_message": Optional string for debugging/logging
+
+Examples:
+- FTP welcome: {{"output": "220 Welcome to FTP Server\r\n"}}
+- Echo response: {{"output": "Hello\r\n"}}
+- Need more data: {{"wait_for_more": true, "log_message": "Waiting for complete HTTP headers"}}
+- Close connection: {{"output": "221 Goodbye\r\n", "close_connection": true}}
+- No response: {{}}
+
+For FTP protocol, respond with proper FTP response codes.
 For Echo protocol, echo back the exact same data.
 For other protocols, follow the protocol specification.
 
-Response:"#,
+Response (JSON only):"#,
             state_summary, mode, protocol, instructions_text, connection_id, data_preview
         )
     }
@@ -142,14 +159,20 @@ Connection ID: {}
 
 Should any initial data be sent to the client? (e.g., FTP welcome message)
 
-IMPORTANT: Respond with ONLY the raw text to send - NOT a debug representation, NOT wrapped in quotes, NOT prefixed with b".
-Just output the exact characters that should be sent over the wire.
-Use actual newlines (not \n), actual carriage returns (not \r).
-If nothing should be sent, respond with "NO_RESPONSE".
+IMPORTANT: Respond with a JSON object with the following structure:
+{{
+  "output": "data to send over the wire (or null if no output)",
+  "close_connection": false,
+  "wait_for_more": false,
+  "shutdown_server": false,
+  "log_message": "optional debug message"
+}}
 
-For FTP protocol, send a proper welcome message (e.g., "220 Welcome\r\n").
+Examples:
+- FTP welcome: {{"output": "220 Welcome to FTP Server\r\n"}}
+- No initial response: {{}}
 
-Response:"#,
+Response (JSON only):"#,
             mode, protocol, instructions_text, connection_id
         )
     }
