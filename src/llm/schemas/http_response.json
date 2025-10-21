@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {"type": "integer"},
+    "headers": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "body": {"type": "string"},
+    "log_message": {"type": "string"},
+    "set_memory": {"type": "string"},
+    "append_memory": {"type": "string"},
+    "set_connection_memory": {"type": "string"},
+    "append_connection_memory": {"type": "string"}
+  },
+  "required": ["status", "body"]
+}

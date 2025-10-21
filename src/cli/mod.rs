@@ -47,32 +47,30 @@ pub async fn run() -> Result<()> {
         match command {
             UserCommand::Interpret { input } => {
                 // Use LLM to interpret and execute
-                use crate::llm::{CommandInterpretation, OllamaClient, PromptBuilder};
+                use crate::llm::{OllamaClient, PromptBuilder};
 
                 let llm = OllamaClient::default();
                 let model = state.get_ollama_model().await;
                 let prompt = PromptBuilder::build_command_interpretation_prompt(&state, &input).await;
 
-                match llm.generate(&model, &prompt).await {
-                    Ok(response) => {
-                        match CommandInterpretation::from_str(&response) {
-                            Ok(interpretation) => {
-                                // Display message
-                                if let Some(msg) = &interpretation.message {
-                                    eprintln!("LLM: {}", msg);
-                                }
+                match llm.generate_command_interpretation(&model, &prompt).await {
+                    Ok(interpretation) => {
+                        // Display message
+                        if let Some(msg) = &interpretation.message {
+                            eprintln!("LLM: {}", msg);
+                        }
 
-                                // Execute actions
-                                use crate::llm::Action;
-                                use crate::state::app_state::Mode;
+                        // Execute actions
+                        use crate::llm::CommandAction;
+                        use crate::state::app_state::Mode;
 
-                                for action in interpretation.actions {
-                                    match action {
-                                        Action::UpdateInstruction { instruction } => {
+                        for action in interpretation.actions {
+                            match action {
+                                CommandAction::UpdateInstruction { instruction } => {
                                             eprintln!("Instruction: {}", instruction);
                                             state.set_instruction(instruction).await;
                                         }
-                                        Action::OpenServer { port, base_stack: stack_str, protocol: _, send_banner, initial_memory } => {
+                                        CommandAction::OpenServer { port, base_stack: stack_str, send_banner, initial_memory } => {
                                             let stack = crate::protocol::BaseStack::from_str(&stack_str)
                                                 .unwrap_or(crate::protocol::BaseStack::TcpRaw);
                                             state.set_mode(Mode::Server).await;
@@ -87,7 +85,7 @@ pub async fn run() -> Result<()> {
 
                                             eprintln!("Server will start on port {} with stack {}", port, stack);
                                         }
-                                        Action::ShowMessage { message } => {
+                                        CommandAction::ShowMessage { message } => {
                                             eprintln!("{}", message);
                                         }
                                         _ => {
@@ -129,12 +127,6 @@ pub async fn run() -> Result<()> {
                                         // TODO: Handle events with LLM
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to parse LLM response: {}", e);
-                                return Err(e.into());
-                            }
-                        }
                     }
                     Err(e) => {
                         eprintln!("LLM error: {}", e);
