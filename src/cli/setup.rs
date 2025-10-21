@@ -3,7 +3,6 @@
 use anyhow::Result;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
-use std::fs::OpenOptions;
 use std::io;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -19,43 +18,20 @@ pub fn init_logging(args: &Args) -> Result<()> {
     } else {
         let log_level = args.effective_log_level();
 
-        // Determine output destination
-        let is_interactive = args.is_interactive();
+        // Create environment filter
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", log_level)));
 
-        if is_interactive || !args.log_level.eq_ignore_ascii_case("off") {
-            // Log to file when in interactive mode or when logging is explicitly enabled
-            let log_file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("netget.log")?;
-
-            let filter = EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", log_level)));
-
-            tracing_subscriber::registry()
-                .with(fmt::layer()
-                    .with_writer(log_file)
-                    .with_ansi(false)
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_line_number(true))
-                .with(filter)
-                .init();
-        } else {
-            // Log to stderr in non-interactive mode (unless logging is off)
-            let filter = EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", log_level)));
-
-            tracing_subscriber::registry()
-                .with(fmt::layer()
-                    .with_writer(io::stderr)
-                    .with_ansi(true)
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .with_line_number(false))
-                .with(filter)
-                .init();
-        }
+        // Always log to stderr
+        tracing_subscriber::registry()
+            .with(fmt::layer()
+                .with_writer(io::stderr)
+                .with_ansi(true)
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_line_number(false))
+            .with(filter)
+            .init();
     }
 
     Ok(())

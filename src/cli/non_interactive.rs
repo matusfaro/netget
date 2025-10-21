@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::timeout;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::events::{AppEvent, NetworkEvent, UserCommand};
 use crate::llm::{CommandAction, LlmResponse, OllamaClient, PromptBuilder};
@@ -27,8 +27,8 @@ pub async fn run_non_interactive(
     args: &super::Args,
     settings: Settings,
 ) -> Result<()> {
-    println!("Starting NetGet in non-interactive mode...");
-    println!("Prompt: {}", prompt);
+    info!("Starting NetGet in non-interactive mode");
+    debug!("Prompt: {}", prompt);
 
     // Create application state
     let state = AppState::new();
@@ -36,12 +36,9 @@ pub async fn run_non_interactive(
     // Override model if specified in args
     if let Some(model) = &args.model {
         state.set_ollama_model(model.clone()).await;
-        println!("Using model: {}", model);
+        debug!("Using model: {}", model);
     } else if !settings.model.is_empty() {
         state.set_ollama_model(settings.model.clone()).await;
-        println!("Using model from settings: {}", settings.model);
-    } else {
-        println!("Using default model: {}", state.get_ollama_model().await);
     }
 
     // Parse the command
@@ -55,19 +52,19 @@ pub async fn run_non_interactive(
             let model = state.get_ollama_model().await;
             let prompt = PromptBuilder::build_command_interpretation_prompt(&state, &input).await;
 
-            println!("Sending prompt to LLM for interpretation...");
+            debug!("Sending prompt to LLM for interpretation");
             match llm.generate_command_interpretation(&model, &prompt).await {
                 Ok(interpretation) => {
                     // Display message from LLM
                     if let Some(msg) = &interpretation.message {
-                        println!("LLM: {}", msg);
+                        println!("{}", msg);  // User-facing output
                     }
 
                     // Execute actions
                     for action in interpretation.actions {
                         match action {
                             CommandAction::UpdateInstruction { instruction } => {
-                                println!("Setting instruction: {}", instruction);
+                                debug!("Setting instruction: {}", instruction);
                                 state.set_instruction(instruction).await;
                             }
                             CommandAction::OpenServer {
@@ -88,17 +85,17 @@ pub async fn run_non_interactive(
                                     state.set_memory(mem).await;
                                 }
 
-                                println!("Starting {} server on port {}...", stack, port);
-                                println!("Listen address: {}", args.listen_addr);
+                                info!("Starting {} server on port {}", stack, port);
+                                debug!("Listen address: {}", args.listen_addr);
 
                                 // Run the server
                                 return run_server(&state, llm).await;
                             }
                             CommandAction::ShowMessage { message } => {
-                                println!("{}", message);
+                                println!("{}", message);  // User-facing output
                             }
                             CommandAction::ChangeModel { model: new_model } => {
-                                println!("Switching model to: {}", new_model);
+                                info!("Switching model to: {}", new_model);
                                 state.set_ollama_model(new_model).await;
                             }
                             _ => {
@@ -109,7 +106,7 @@ pub async fn run_non_interactive(
 
                     // If no server was started, we're done
                     if state.get_mode().await != Mode::Server {
-                        println!("Command executed successfully.");
+                        debug!("Command executed successfully");
                     }
                 }
                 Err(e) => {
@@ -120,9 +117,8 @@ pub async fn run_non_interactive(
         }
         _ => {
             // Slash commands not supported in non-interactive mode
-            println!("Slash commands are not supported in non-interactive mode.");
-            println!("Please provide a natural language prompt.");
-            return Err(anyhow::anyhow!("Unsupported command type"));
+            error!("Slash commands are not supported in non-interactive mode");
+            return Err(anyhow::anyhow!("Slash commands are not supported in non-interactive mode. Please provide a natural language prompt."));
         }
     }
 
@@ -276,13 +272,13 @@ async fn process_network_event(
                     Ok(response) => {
                         if let Some(output) = response.output {
                             if !output.is_empty() {
-                                println!("→ Sending initial response to connection {}", connection_id);
+                                debug!("Sending initial response to connection {}", connection_id);
                                 send_response(connections, connection_id, output.as_bytes()).await;
                             }
                         }
 
                         if response.close_connection {
-                            println!("→ Closing connection {} (LLM requested)", connection_id);
+                            info!("Closing connection {} (LLM requested)", connection_id);
                             close_connection(connections, connection_states, connection_id).await;
                         }
                     }
@@ -366,8 +362,8 @@ async fn process_network_event(
 
             match llm.generate_http_response(&model, &prompt).await {
                 Ok(response) => {
-                    println!(
-                        "→ Sending HTTP {} response to connection {}",
+                    debug!(
+                        "Sending HTTP {} response to connection {}",
                         response.status, connection_id
                     );
 
@@ -451,7 +447,7 @@ async fn process_data_with_llm(
                 // Handle response
                 if let Some(output) = &response.output {
                     if !output.is_empty() {
-                        println!("→ Sending response to connection {}", connection_id);
+                        debug!("Sending response to connection {}", connection_id);
                         send_response(connections, connection_id, output.as_bytes()).await;
                     }
                 }
@@ -481,7 +477,7 @@ async fn process_data_with_llm(
 
                     if response.close_connection {
                         drop(states);
-                        println!("→ Closing connection {} (LLM requested)", connection_id);
+                        info!("Closing connection {} (LLM requested)", connection_id);
                         close_connection(connections, connection_states, connection_id).await;
                         return;
                     }
