@@ -9,3 +9,4 @@ pub mod protocol;
 pub mod state;
 pub mod llm;
 pub mod events;
+pub mod settings;

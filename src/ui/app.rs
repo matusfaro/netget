@@ -42,6 +42,8 @@ pub struct App {
     pub scroll_offset: usize,
     /// Which panel currently has focus
     pub focus: Focus,
+    /// Slash command suggestions (shown when typing "/")
+    pub slash_suggestions: Vec<String>,
 }
 
 #[derive(Default, Clone)]
@@ -75,6 +77,7 @@ impl Default for App {
             packet_stats: PacketStats::default(),
             scroll_offset: 0,
             focus: Focus::default(),
+            slash_suggestions: Vec::new(),
         }
     }
 }
@@ -212,6 +215,7 @@ impl App {
 
         self.input.insert(self.cursor_position, c);
         self.cursor_position += 1;
+        self.update_slash_suggestions();
     }
 
     /// Handle backspace
@@ -225,6 +229,7 @@ impl App {
         if self.cursor_position > 0 {
             self.input.remove(self.cursor_position - 1);
             self.cursor_position -= 1;
+            self.update_slash_suggestions();
         }
     }
 
@@ -375,6 +380,35 @@ impl App {
     /// Check if input panel has focus
     pub fn is_input_focused(&self) -> bool {
         self.focus == Focus::Input
+    }
+
+    /// Update slash command suggestions based on current input
+    pub fn update_slash_suggestions(&mut self) {
+        // Only show suggestions if input starts with "/"
+        if !self.input.starts_with('/') {
+            self.slash_suggestions.clear();
+            return;
+        }
+
+        // Define all available slash commands
+        let all_commands = vec![
+            "/exit - Exit the application",
+            "/model - List available models",
+            "/model <name> - Select a model",
+        ];
+
+        // Filter commands based on current input
+        let input_lower = self.input.to_lowercase();
+        self.slash_suggestions = all_commands
+            .into_iter()
+            .filter(|cmd| cmd.to_lowercase().starts_with(&input_lower))
+            .map(|s| s.to_string())
+            .collect();
+    }
+
+    /// Check if we should show slash suggestions
+    pub fn should_show_slash_suggestions(&self) -> bool {
+        self.input.starts_with('/') && !self.slash_suggestions.is_empty()
     }
 }
 

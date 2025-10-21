@@ -20,6 +20,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use netget::events::{AppEvent, EventHandler, NetworkEvent, UserCommand};
 use netget::llm::{LlmResponse, OllamaClient, PromptBuilder};
 use netget::network::{ConnectionId, TcpServer};
+use netget::settings::Settings;
 use netget::state::app_state::AppState;
 use netget::ui::{App, layout};
 
@@ -178,8 +179,14 @@ async fn main() -> Result<()> {
 }
 
 async fn run_app(initial_command: Option<String>) -> Result<()> {
+    // Load settings from ~/.netget
+    let settings = Settings::load();
+
     // Create application state
     let state = AppState::new();
+
+    // Set model from settings
+    state.set_ollama_model(settings.model.clone()).await;
 
     // Create Ollama clients (one for event handler, one for main loop)
     let llm_for_handler = OllamaClient::default();
@@ -242,6 +249,9 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
     // Per-connection state tracking for LLM processing and queueing
     type ConnectionStateMap = Arc<Mutex<HashMap<ConnectionId, ConnectionState>>>;
     let connection_states: ConnectionStateMap = Arc::new(Mutex::new(HashMap::new()));
+
+    // Wrap settings for sharing between tasks
+    let settings = Arc::new(Mutex::new(settings));
 
     // Create event handler
     let mut event_handler = EventHandler::new(state.clone(), llm_for_handler);
@@ -482,6 +492,78 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
 
                                 if !input.trim().is_empty() {
                                     app.add_message(format!("> {}", input));
+
+                                    // Handle slash commands
+                                    if input.starts_with('/') {
+                                        let parts: Vec<&str> = input.split_whitespace().collect();
+                                        match parts.get(0).map(|s| *s) {
+                                            Some("/exit") => {
+                                                app.add_message("Exiting...".to_string());
+                                                drop(app);
+                                                break 'main_loop Ok(());
+                                            }
+                                            Some("/model") => {
+                                                if parts.len() == 1 {
+                                                    // List available models
+                                                    app.add_message("Fetching available models...".to_string());
+                                                    drop(app);
+
+                                                    match llm.list_models().await {
+                                                        Ok(models) => {
+                                                            let mut app = app_clone.lock().await;
+                                                            app.add_message("Available models:".to_string());
+                                                            for model in models {
+                                                                app.add_message(format!("  {}", model));
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            let mut app = app_clone.lock().await;
+                                                            app.add_message(format!("✗ Error fetching models: {}", e));
+                                                        }
+                                                    }
+                                                    continue;
+                                                } else {
+                                                    // Select model - validate it exists first
+                                                    let model_name = parts[1..].join(" ");
+                                                    app.add_message("Validating model...".to_string());
+                                                    drop(app);
+
+                                                    match llm.list_models().await {
+                                                        Ok(models) => {
+                                                            let mut app = app_clone.lock().await;
+                                                            if models.iter().any(|m| m == &model_name) {
+                                                                state.set_ollama_model(model_name.clone()).await;
+                                                                app.add_message(format!("✓ Model set to: {}", model_name));
+                                                                app.connection_info.model = model_name.clone();
+
+                                                                // Save to settings
+                                                                let mut settings_guard = settings.lock().await;
+                                                                if let Err(e) = settings_guard.set_model(model_name) {
+                                                                    app.add_message(format!("Warning: Failed to save settings: {}", e));
+                                                                }
+                                                            } else {
+                                                                app.add_message(format!("✗ Model '{}' not found", model_name));
+                                                                app.add_message("Available models:".to_string());
+                                                                for model in models {
+                                                                    app.add_message(format!("  {}", model));
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            let mut app = app_clone.lock().await;
+                                                            app.add_message(format!("✗ Error fetching models: {}", e));
+                                                        }
+                                                    }
+                                                    continue;
+                                                }
+                                            }
+                                            Some(unknown) => {
+                                                app.add_message(format!("✗ Unknown command: {}. Try /model or /exit", unknown));
+                                            }
+                                            None => {}
+                                        }
+                                        continue;
+                                    }
 
                                     // Parse user command
                                     let command = UserCommand::parse(&input);
@@ -887,13 +969,12 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
             }
         }
 
-            // Update UI stats from state
-            if let Some(conns) = state.get_all_connections().await.first() {
-                app.packet_stats.packets_received = conns.packets_received;
-                app.packet_stats.packets_sent = conns.packets_sent;
-                app.packet_stats.bytes_received = conns.bytes_received;
-                app.packet_stats.bytes_sent = conns.bytes_sent;
-            }
+            // Update UI stats from state - sum all connections
+            let all_conns = state.get_all_connections().await;
+            app.packet_stats.packets_received = all_conns.iter().map(|c| c.packets_received).sum();
+            app.packet_stats.packets_sent = all_conns.iter().map(|c| c.packets_sent).sum();
+            app.packet_stats.bytes_received = all_conns.iter().map(|c| c.bytes_received).sum();
+            app.packet_stats.bytes_sent = all_conns.iter().map(|c| c.bytes_sent).sum();
 
             // Update model display
             app.connection_info.model = state.get_ollama_model().await;
