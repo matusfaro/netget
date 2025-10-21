@@ -42,10 +42,6 @@ pub struct Args {
     #[clap(short = 'l', long = "log-level", value_name = "LEVEL", default_value = "off")]
     pub log_level: String,
 
-    /// Enable debug logging to netget.log (equivalent to --log-level=debug)
-    #[clap(long)]
-    pub debug: bool,
-
     /// Server listen address (for non-interactive mode)
     #[clap(long = "listen-addr", value_name = "ADDR", default_value = "127.0.0.1")]
     pub listen_addr: String,
@@ -56,12 +52,8 @@ pub struct Args {
 }
 
 impl Args {
-    /// Get the effective log level, considering both --debug and --log-level flags
+    /// Get the effective log level from --log-level flag
     pub fn effective_log_level(&self) -> Level {
-        if self.debug {
-            return Level::DEBUG;
-        }
-
         match self.log_level.to_lowercase().as_str() {
             "off" | "none" => Level::ERROR,  // We'll filter this out separately
             "error" => Level::ERROR,
@@ -75,7 +67,7 @@ impl Args {
 
     /// Check if logging should be disabled entirely
     pub fn logging_disabled(&self) -> bool {
-        !self.debug && (self.log_level == "off" || self.log_level == "none")
+        self.log_level == "off" || self.log_level == "none"
     }
 
     /// Determine if we should run in interactive mode
