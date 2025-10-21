@@ -340,9 +340,10 @@ async fn handle_network_event(
             // Spawn task to handle HTTP request with LLM
             let state = state.clone();
             let status_tx = status_tx.clone();
+            let connection_states = connection_states.clone();
 
             tokio::spawn(async move {
-                handle_http_request(connection_id, method, uri, headers, body, response_tx, &state, &status_tx).await;
+                handle_http_request(connection_id, method, uri, headers, body, response_tx, &state, &connection_states, &status_tx).await;
             });
         }
 
@@ -391,10 +392,18 @@ async fn handle_connection_greeting(
         }
     }
 
+    // Get connection memory for prompt
+    let conn_memory = {
+        let states = connection_states.lock().await;
+        states.get(&connection_id)
+            .map(|s| s.memory.clone())
+            .unwrap_or_default()
+    };
+
     // Ask LLM for greeting
     let llm = OllamaClient::default();
     let model = state.get_ollama_model().await;
-    let prompt = crate::llm::PromptBuilder::build_connection_established_prompt(state, connection_id).await;
+    let prompt = crate::llm::PromptBuilder::build_connection_established_prompt(state, connection_id, &conn_memory).await;
 
     match llm.generate(&model, &prompt).await {
         Ok(raw_response) => {
@@ -411,6 +420,27 @@ async fn handle_connection_greeting(
                                 let _ = write_half.flush().await;
                                 let _ = status_tx.send(format!("→ Sent greeting to {}", connection_id));
                             }
+                        }
+                    }
+
+                    // Handle memory updates
+                    if let Some(mem) = llm_response.set_memory {
+                        state.set_memory(mem).await;
+                    }
+                    if let Some(mem) = llm_response.append_memory {
+                        state.append_memory(mem).await;
+                    }
+                    if let Some(mem) = llm_response.set_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            conn_state.memory = mem;
+                        }
+                    }
+                    if let Some(mem) = llm_response.append_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            if !conn_state.memory.is_empty() {
+                                conn_state.memory.push('\n');
+                            }
+                            conn_state.memory.push_str(&mem);
                         }
                     }
                 }
@@ -498,9 +528,17 @@ async fn handle_data_received(
 
     // Processing loop - keep processing until queue is empty
     loop {
+        // Get connection memory for prompt
+        let conn_memory = {
+            let states = connection_states.lock().await;
+            states.get(&connection_id)
+                .map(|s| s.memory.clone())
+                .unwrap_or_default()
+        };
+
         // Ask LLM how to respond
         let model = state.get_ollama_model().await;
-        let prompt = crate::llm::PromptBuilder::build_data_received_prompt(state, connection_id, &data).await;
+        let prompt = crate::llm::PromptBuilder::build_data_received_prompt(state, connection_id, &data, &conn_memory).await;
 
         match llm.generate(&model, &prompt).await {
             Ok(raw_response) => {
@@ -517,6 +555,27 @@ async fn handle_data_received(
                                     let _ = write_half.flush().await;
                                     let _ = status_tx.send(format!("→ Sent {} bytes to {}", output.len(), connection_id));
                                 }
+                            }
+                        }
+
+                        // Handle memory updates
+                        if let Some(mem) = llm_response.set_memory {
+                            state.set_memory(mem).await;
+                        }
+                        if let Some(mem) = llm_response.append_memory {
+                            state.append_memory(mem).await;
+                        }
+                        if let Some(mem) = llm_response.set_connection_memory {
+                            if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                                conn_state.memory = mem;
+                            }
+                        }
+                        if let Some(mem) = llm_response.append_connection_memory {
+                            if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                                if !conn_state.memory.is_empty() {
+                                    conn_state.memory.push('\n');
+                                }
+                                conn_state.memory.push_str(&mem);
                             }
                         }
 
@@ -707,9 +766,18 @@ async fn handle_http_request(
     body: bytes::Bytes,
     response_tx: tokio::sync::oneshot::Sender<HttpResponse>,
     state: &AppState,
+    connection_states: &ConnectionStateMap,
     status_tx: &mpsc::UnboundedSender<String>,
 ) {
     let _ = status_tx.send(format!("HTTP {} {} from {}", method, uri, connection_id));
+
+    // Get connection memory for prompt
+    let conn_memory = {
+        let states = connection_states.lock().await;
+        states.get(&connection_id)
+            .map(|s| s.memory.clone())
+            .unwrap_or_default()
+    };
 
     let llm = OllamaClient::default();
     let model = state.get_ollama_model().await;
@@ -720,12 +788,34 @@ async fn handle_http_request(
         &uri,
         &headers,
         &body,
+        &conn_memory,
     ).await;
 
     match llm.generate(&model, &prompt).await {
         Ok(raw_response) => {
             match HttpLlmResponse::from_str(&raw_response) {
                 Ok(http_response) => {
+                    // Handle memory updates
+                    if let Some(mem) = &http_response.set_memory {
+                        state.set_memory(mem.clone()).await;
+                    }
+                    if let Some(mem) = &http_response.append_memory {
+                        state.append_memory(mem.clone()).await;
+                    }
+                    if let Some(mem) = &http_response.set_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            conn_state.memory = mem.clone();
+                        }
+                    }
+                    if let Some(mem) = &http_response.append_connection_memory {
+                        if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                            if !conn_state.memory.is_empty() {
+                                conn_state.memory.push('\n');
+                            }
+                            conn_state.memory.push_str(mem);
+                        }
+                    }
+
                     let status = http_response.status;
                     let _ = response_tx.send(http_response.to_event_response());
                     let _ = status_tx.send(format!("→ HTTP {} response to {}", status, connection_id));

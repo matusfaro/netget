@@ -163,9 +163,10 @@ Available action types:
    {{"type": "update_instruction", "instruction": "new instruction text"}}
 
 2. **open_server**: Start a server
-   {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true}}
+   {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true, "initial_memory": "files: data.txt, readme.md"}}
    base_stack options: "tcp_raw", "http", "datalink"
    send_banner: true if protocol sends greeting on connect (FTP, SMTP), false if it waits for client (HTTP, SSH)
+   initial_memory: Optional string to initialize global memory (e.g., file listings, config)
 
 3. **open_client**: Connect as a client
    {{"type": "open_client", "address": "127.0.0.1:21", "base_stack": "tcp_raw"}}
@@ -181,13 +182,13 @@ Available action types:
 
 Examples:
 
-User: "Listen on port 21 and pretend you are an FTP server"
+User: "Listen on port 21 and pretend you are an FTP server with files data.txt and readme.md"
 Response:
 {{
   "actions": [
-    {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true}},
+    {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true, "initial_memory": "Available files:\n- data.txt (100 bytes)\n- readme.md (500 bytes)"}},
     {{"type": "update_instruction", "instruction": "Pretend you are an FTP server"}},
-    {{"type": "show_message", "message": "FTP server started on port 21"}}
+    {{"type": "show_message", "message": "FTP server started on port 21 with 2 files"}}
   ]
 }}
 
@@ -237,6 +238,7 @@ Response (JSON only):"#,
     pub async fn build_connection_established_prompt(
         state: &AppState,
         connection_id: ConnectionId,
+        connection_memory: &str,
     ) -> String {
         let mode = state.get_mode().await;
         let base_stack = state.get_base_stack().await;
@@ -255,6 +257,12 @@ Response (JSON only):"#,
             memory
         };
 
+        let conn_memory_text = if connection_memory.is_empty() {
+            "No connection memory stored yet.".to_string()
+        } else {
+            connection_memory.to_string()
+        };
+
         format!(
             r#"You are controlling a network server/client application.
 
@@ -264,7 +272,10 @@ Stack: {}
 User Instructions:
 {}
 
-Memory (persistent context):
+Global Memory (shared across all connections):
+{}
+
+Connection Memory (specific to this connection):
 {}
 
 Event: New Connection Established
@@ -288,7 +299,7 @@ Examples:
 - No initial response: {{}}
 
 Response (JSON only):"#,
-            mode, base_stack, instruction_text, memory_text, connection_id
+            mode, base_stack, instruction_text, memory_text, conn_memory_text, connection_id
         )
     }
 
@@ -322,6 +333,7 @@ Response:"#,
         uri: &str,
         headers: &HashMap<String, String>,
         body: &Bytes,
+        connection_memory: &str,
     ) -> String {
         let mode = state.get_mode().await;
         let instruction = state.get_instruction().await;
@@ -338,6 +350,12 @@ Response:"#,
             "No memory stored yet.".to_string()
         } else {
             memory
+        };
+
+        let conn_memory_text = if connection_memory.is_empty() {
+            "No connection memory stored yet.".to_string()
+        } else {
+            connection_memory.to_string()
         };
 
         let headers_text = if headers.is_empty() {
@@ -413,7 +431,7 @@ Examples:
 - Echo request: {{"status": 200, "headers": {{"Content-Type": "text/plain"}}, "body": "You requested: {}"}}
 
 Response (JSON only):"#,
-            state_summary, mode, instruction_text, memory_text, connection_id, method, uri, headers_text, body_text, uri
+            state_summary, mode, instruction_text, memory_text, conn_memory_text, connection_id, method, uri, headers_text, body_text
         )
     }
 }
