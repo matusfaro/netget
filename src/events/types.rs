@@ -87,6 +87,12 @@ pub enum UserCommand {
     ChangeModel {
         model: String,
     },
+    /// Show current log level (slash command: /log)
+    ShowLogLevel,
+    /// Change log level (slash command: /log <level>)
+    ChangeLogLevel {
+        level: String,
+    },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -132,6 +138,16 @@ impl UserCommand {
                 return UserCommand::ShowModel;
             }
             return UserCommand::ChangeModel { model: rest.to_string() };
+        }
+
+        // /log command
+        if input_lower.starts_with("/log") {
+            let rest = trimmed[4..].trim();
+            if rest.is_empty() {
+                // Show current log level
+                return UserCommand::ShowLogLevel;
+            }
+            return UserCommand::ChangeLogLevel { level: rest.to_string() };
         }
 
         // Unknown slash command - return error, don't send to LLM

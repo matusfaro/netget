@@ -20,6 +20,50 @@ impl Default for Focus {
     }
 }
 
+/// Log level for output verbosity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogLevel {
+    /// ERROR: Critical errors only
+    Error,
+    /// WARN: Warnings and errors
+    Warn,
+    /// INFO: One line per request/response (default)
+    Info,
+    /// DEBUG: Detailed LLM responses, memory updates, actions
+    Debug,
+    /// TRACE: Full protocol and LLM content
+    Trace,
+}
+
+impl Default for LogLevel {
+    fn default() -> Self {
+        LogLevel::Info
+    }
+}
+
+impl LogLevel {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "error" => Some(LogLevel::Error),
+            "warn" => Some(LogLevel::Warn),
+            "info" => Some(LogLevel::Info),
+            "debug" => Some(LogLevel::Debug),
+            "trace" => Some(LogLevel::Trace),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LogLevel::Error => "ERROR",
+            LogLevel::Warn => "WARN",
+            LogLevel::Info => "INFO",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Trace => "TRACE",
+        }
+    }
+}
+
 /// Main application state for the TUI
 pub struct App {
     /// User input buffer
@@ -44,6 +88,8 @@ pub struct App {
     pub input_scroll: u16,
     /// Which panel currently has focus
     pub focus: Focus,
+    /// Current log level
+    pub log_level: LogLevel,
     /// Slash command suggestions (shown when typing "/")
     pub slash_suggestions: Vec<String>,
 }
@@ -80,6 +126,7 @@ impl Default for App {
             scroll_offset: 0,
             input_scroll: 0,
             focus: Focus::default(),
+            log_level: LogLevel::default(),
             slash_suggestions: Vec::new(),
         }
     }
@@ -161,7 +208,15 @@ impl App {
         // Check if this is actually a new message
         let is_new = self.output_messages.last() != Some(&message);
         if is_new {
+            // Auto-scroll: if we're at the bottom, keep us at the bottom
+            let was_at_bottom = self.scroll_offset == 0;
+
             self.output_messages.push(message);
+
+            // Stay at bottom if we were already there
+            if was_at_bottom {
+                self.scroll_offset = 0;
+            }
         }
         is_new
     }
@@ -184,6 +239,45 @@ impl App {
 
     pub fn add_status_message(&mut self, message: String) {
         self.add_message(message);
+    }
+
+    /// Log at ERROR level (always shown)
+    pub fn log_error(&mut self, message: String) {
+        self.add_message(format!("[ERROR] {}", message));
+    }
+
+    /// Log at WARN level (shown if level >= WARN)
+    pub fn log_warn(&mut self, message: String) {
+        if self.log_level >= LogLevel::Warn {
+            self.add_message(format!("[WARN] {}", message));
+        }
+    }
+
+    /// Log at INFO level (shown if level >= INFO)
+    pub fn log_info(&mut self, message: String) {
+        if self.log_level >= LogLevel::Info {
+            self.add_message(format!("[INFO] {}", message));
+        }
+    }
+
+    /// Log at DEBUG level (shown if level >= DEBUG)
+    pub fn log_debug(&mut self, message: String) {
+        if self.log_level >= LogLevel::Debug {
+            self.add_message(format!("[DEBUG] {}", message));
+        }
+    }
+
+    /// Log at TRACE level (shown if level >= TRACE)
+    pub fn log_trace(&mut self, message: String) {
+        if self.log_level >= LogLevel::Trace {
+            self.add_message(format!("[TRACE] {}", message));
+        }
+    }
+
+    /// Set log level
+    pub fn set_log_level(&mut self, level: LogLevel) {
+        self.log_level = level;
+        self.add_message(format!("Log level set to {}", level.as_str()));
     }
 
     /// Scroll up in the output
@@ -427,6 +521,8 @@ impl App {
             "/exit - Exit the application",
             "/model - List available models",
             "/model <name> - Select a model",
+            "/log - Show current log level",
+            "/log <level> - Set log level (error, warn, info, debug, trace)",
         ];
 
         // Filter commands based on current input

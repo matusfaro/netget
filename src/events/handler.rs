@@ -299,13 +299,26 @@ impl EventHandler {
                 self.handle_change_model(model, ui).await?;
                 Ok(false)
             }
+            UserCommand::ShowLogLevel => {
+                ui.add_llm_message(format!("Current log level: {}", ui.log_level.as_str()));
+                Ok(false)
+            }
+            UserCommand::ChangeLogLevel { level } => {
+                use crate::ui::app::LogLevel;
+                if let Some(log_level) = LogLevel::from_str(&level) {
+                    ui.set_log_level(log_level);
+                } else {
+                    ui.add_llm_message(format!("Invalid log level: {}. Use: info, debug, or trace", level));
+                }
+                Ok(false)
+            }
             UserCommand::Quit => {
                 self.handle_quit(ui).await?;
                 Ok(true) // Signal to quit
             }
             UserCommand::UnknownSlashCommand { command } => {
                 ui.add_llm_message(format!("Unknown command: {}", command));
-                ui.add_llm_message("Available commands: /status, /model [name], /quit".to_string());
+                ui.add_llm_message("Available commands: /status, /model [name], /log [level], /quit".to_string());
                 Ok(false)
             }
             UserCommand::Interpret { input } => {

@@ -68,7 +68,31 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    // Build paragraph with wrapping
+    // Calculate scroll position
+    // app.scroll_offset: 0=bottom, higher=scrolled up
+    // Paragraph::scroll: 0=top, higher=scrolled down
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let inner_height = area.height.saturating_sub(2) as usize;
+
+    // Estimate total lines (accounting for wrapping)
+    let total_lines = if inner_width == 0 {
+        app.output_messages.len()
+    } else {
+        app.output_messages.iter().map(|msg| {
+            if msg.is_empty() {
+                1
+            } else {
+                (msg.len() + inner_width - 1) / inner_width
+            }
+        }).sum::<usize>()
+    };
+
+    // Calculate scroll position from top
+    // When scroll_offset=0, show bottom (scroll to max)
+    // When scroll_offset increases, scroll up (decrease scroll from top)
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    let scroll_from_top = max_scroll.saturating_sub(app.scroll_offset);
+
     let paragraph = Paragraph::new(text)
         .block(
             Block::default()
@@ -79,7 +103,7 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         )
         .style(Style::default().bg(Color::Blue).fg(Color::White))
         .wrap(Wrap { trim: false })
-        .scroll((app.scroll_offset as u16, 0));
+        .scroll((scroll_from_top as u16, 0));
 
     f.render_widget(paragraph, area);
 }
