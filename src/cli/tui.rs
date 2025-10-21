@@ -231,7 +231,7 @@ async fn handle_keyboard_event(
                 KeyCode::Enter if app.is_input_focused() && !key.modifiers.contains(KeyModifiers::SHIFT) => {
                     let input = app.submit_input();
                     if !input.is_empty() {
-                        app.add_status_message(format!("> {}", input));
+                        app.add_status_message(format!("[USER] {}", input));
 
                         // Parse command
                         let command = UserCommand::parse(&input);
@@ -308,7 +308,7 @@ async fn update_ui_from_state(app: &mut App, state: &AppState) {
 async fn handle_network_event(
     event: NetworkEvent,
     state: &AppState,
-    _app: &mut App,
+    app: &mut App,
     connections: &WriteHalfMap,
     connection_states: &ConnectionStateMap,
     cancellation_tokens: &CancellationTokenMap,
@@ -317,7 +317,7 @@ async fn handle_network_event(
     match event {
         NetworkEvent::Listening { addr } => {
             state.set_local_addr(Some(addr)).await;
-            let msg = format!("Listening on {}", addr);
+            let msg = format!("[SERVER] Listening on {}", addr);
             info!("{}", msg);
             let _ = status_tx.send(msg);
         }
@@ -326,7 +326,7 @@ async fn handle_network_event(
             // Initialize connection state
             connection_states.lock().await.insert(connection_id, ConnectionState::new());
 
-            let msg = format!("Client connected: {} ({})", remote_addr, connection_id);
+            let msg = format!("[CONN] Client connected: {} ({})", remote_addr, connection_id);
             info!("{}", msg);
             let _ = status_tx.send(msg);
 
@@ -383,16 +383,16 @@ async fn handle_network_event(
             connection_states.lock().await.remove(&connection_id);
             cancellation_tokens.lock().await.remove(&connection_id);
 
-            let msg = format!("Client disconnected: {}", connection_id);
+            let msg = format!("[CONN] Client disconnected: {}", connection_id);
             info!("{}", msg);
             let _ = status_tx.send(msg);
         }
 
         NetworkEvent::Error { connection_id, error } => {
             let msg = if let Some(id) = connection_id {
-                format!("Error on {}: {}", id, error)
+                format!("[ERROR] Network error on {}: {}", id, error)
             } else {
-                format!("Error: {}", error)
+                format!("[ERROR] Network error: {}", error)
             };
             error!("{}", msg);
             let _ = status_tx.send(msg);
@@ -446,10 +446,12 @@ async fn handle_connection_greeting(
                             use tokio::io::AsyncWriteExt;
                             let mut write_half = write_half_arc.lock().await;
                             if let Err(e) = write_half.write_all(output.as_bytes()).await {
-                                let _ = status_tx.send(format!("Failed to send greeting: {}", e));
+                                let _ = status_tx.send(format!("[ERROR] Failed to send greeting: {}", e));
                             } else {
                                 let _ = write_half.flush().await;
-                                let _ = status_tx.send(format!("→ Sent greeting to {}", connection_id));
+                                let bytes_sent = output.len();
+                                let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
+                                let _ = status_tx.send(format!("[INFO] → Sent greeting to {}", connection_id));
                             }
                         }
                     }
@@ -794,7 +796,7 @@ async fn execute_action_background(
                         // The connection will be removed from tracking but may not close immediately
                     }
                     state.remove_connection(conn_id).await;
-                    let _ = status_tx.send(format!("Closed connection {}", conn_id));
+                    let _ = status_tx.send(format!("[CONN] Closed connection {}", conn_id));
                 }
             }
         }
@@ -897,7 +899,9 @@ async fn handle_http_request(
                     let _ = status_tx.send(format!("[TRACE] HTTP Response Body:\n{}", http_response.body));
 
                     let status = http_response.status;
+                    let bytes_sent = http_response.body.len();
                     let _ = response_tx.send(http_response.to_event_response());
+                    let _ = status_tx.send(format!("__STATS_SENT__{}", bytes_sent));
                     let _ = status_tx.send(format!("[INFO] → HTTP {} response to {}", status, connection_id));
                 }
                 Err(e) => {

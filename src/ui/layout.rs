@@ -4,7 +4,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
@@ -49,8 +49,54 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
 /// Render the scrollable output area
 fn render_output(f: &mut Frame, app: &App, area: Rect) {
-    // Join all messages with newlines for wrapping paragraph
-    let text = app.output_messages.join("\n");
+    // Convert messages to colored lines
+    let mut lines: Vec<Line> = Vec::new();
+    for msg in &app.output_messages {
+        let line = if msg.starts_with("[ERROR]") {
+            Line::from(vec![
+                Span::styled("[ERROR]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::raw(msg.strip_prefix("[ERROR]").unwrap()),
+            ])
+        } else if msg.starts_with("[WARN]") {
+            Line::from(vec![
+                Span::styled("[WARN]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::raw(msg.strip_prefix("[WARN]").unwrap()),
+            ])
+        } else if msg.starts_with("[INFO]") {
+            Line::from(vec![
+                Span::styled("[INFO]", Style::default().fg(Color::Green)),
+                Span::raw(msg.strip_prefix("[INFO]").unwrap()),
+            ])
+        } else if msg.starts_with("[DEBUG]") {
+            Line::from(vec![
+                Span::styled("[DEBUG]", Style::default().fg(Color::Cyan)),
+                Span::raw(msg.strip_prefix("[DEBUG]").unwrap()),
+            ])
+        } else if msg.starts_with("[TRACE]") {
+            Line::from(vec![
+                Span::styled("[TRACE]", Style::default().fg(Color::Magenta)),
+                Span::raw(msg.strip_prefix("[TRACE]").unwrap()),
+            ])
+        } else if msg.starts_with("[USER]") {
+            Line::from(vec![
+                Span::styled("[USER]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(msg.strip_prefix("[USER]").unwrap(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            ])
+        } else if msg.starts_with("[SERVER]") {
+            Line::from(vec![
+                Span::styled("[SERVER]", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                Span::raw(msg.strip_prefix("[SERVER]").unwrap()),
+            ])
+        } else if msg.starts_with("[CONN]") {
+            Line::from(vec![
+                Span::styled("[CONN]", Style::default().fg(Color::LightCyan)),
+                Span::raw(msg.strip_prefix("[CONN]").unwrap()),
+            ])
+        } else {
+            Line::from(Span::raw(msg.as_str()))
+        };
+        lines.push(line);
+    }
 
     // All borders same color (Midnight Commander style)
     let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
@@ -75,17 +121,22 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     let inner_height = area.height.saturating_sub(2) as usize;
 
     // Estimate total lines (accounting for wrapping)
+    // Count actual text content length, not styled spans
     let total_lines = if inner_width == 0 {
-        app.output_messages.len()
+        lines.len()
     } else {
-        app.output_messages.iter().map(|msg| {
-            if msg.is_empty() {
+        lines.iter().map(|line| {
+            let line_len = line.width();
+            if line_len == 0 {
                 1
             } else {
-                (msg.len() + inner_width - 1) / inner_width
+                (line_len + inner_width - 1) / inner_width
             }
         }).sum::<usize>()
     };
+
+    // Convert to Text AFTER calculating total_lines
+    let text = Text::from(lines);
 
     // Calculate scroll position from top
     // When scroll_offset=0, show bottom (scroll to max)

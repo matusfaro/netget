@@ -72,7 +72,7 @@ pub struct App {
     pub cursor_position: usize,
     /// Command history
     pub command_history: Vec<String>,
-    /// Current position in history (None = not browsing history)
+    /// Current position in history (None = not browsing/comp history)
     pub history_position: Option<usize>,
     /// Temporary buffer when browsing history
     pub history_temp_input: Option<String>,

@@ -308,7 +308,7 @@ impl EventHandler {
                 if let Some(log_level) = LogLevel::from_str(&level) {
                     ui.set_log_level(log_level);
                 } else {
-                    ui.add_llm_message(format!("Invalid log level: {}. Use: info, debug, or trace", level));
+                    ui.add_llm_message(format!("Invalid log level: {}. Use: error, warn, info, debug, or trace", level));
                 }
                 Ok(false)
             }
