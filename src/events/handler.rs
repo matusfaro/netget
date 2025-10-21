@@ -10,7 +10,7 @@ use super::types::{AppEvent, NetworkEvent, UserCommand};
 use crate::llm::{OllamaClient, PromptBuilder};
 use crate::network::connection::ConnectionId;
 use crate::network::tcp;
-use crate::protocol::ProtocolType;
+use crate::protocol::{BaseStack, ProtocolType};
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
 
@@ -261,16 +261,21 @@ impl EventHandler {
                 error!("{}", msg);
                 Ok(())
             }
+            NetworkEvent::HttpRequest { .. } => {
+                // HTTP requests are handled directly in main.rs
+                // This is because they need to send responses back via oneshot channel
+                Ok(())
+            }
         }
     }
 
     /// Handle user commands
     async fn handle_user_command(&mut self, command: UserCommand, ui: &mut App) -> Result<()> {
         match command {
-            UserCommand::Listen { port, protocol } => {
-                self.handle_listen(port, protocol, ui).await
+            UserCommand::Listen { port, base_stack, protocol } => {
+                self.handle_listen(port, base_stack, protocol, ui).await
             }
-            UserCommand::Connect { addr: _, protocol: _ } => {
+            UserCommand::Connect { addr: _, base_stack: _, protocol: _ } => {
                 ui.add_llm_message("Client mode not yet implemented".to_string());
                 Ok(())
             }
@@ -292,11 +297,12 @@ impl EventHandler {
         }
     }
 
-    async fn handle_listen(&mut self, port: u16, protocol_type: ProtocolType, ui: &mut App) -> Result<()> {
-        ui.add_llm_message(format!("Starting {} server on port {}...", protocol_type, port));
+    async fn handle_listen(&mut self, port: u16, base_stack: BaseStack, protocol_type: ProtocolType, ui: &mut App) -> Result<()> {
+        ui.add_llm_message(format!("Starting server on port {} (stack: {})...", port, base_stack));
 
-        // Set mode and protocol
+        // Set mode, base stack, and protocol
         self.state.set_mode(Mode::Server).await;
+        self.state.set_base_stack(base_stack).await;
         self.state.set_protocol_type(protocol_type).await;
 
         ui.add_status_message(format!("Protocol set to: {}", protocol_type));

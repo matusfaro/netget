@@ -364,8 +364,9 @@ fn test_user_command_parsing() {
     // Test command parsing
     let cmd1 = UserCommand::parse("listen on port 21 via ftp");
     match cmd1 {
-        UserCommand::Listen { port, protocol } => {
+        UserCommand::Listen { port, base_stack, protocol } => {
             assert_eq!(port, 21);
+            assert_eq!(base_stack, netget::protocol::BaseStack::TcpRaw);
             assert_eq!(protocol, ProtocolType::Ftp);
         }
         _ => panic!("Expected Listen command"),
@@ -373,8 +374,9 @@ fn test_user_command_parsing() {
 
     let cmd2 = UserCommand::parse("listen on port 80 via http");
     match cmd2 {
-        UserCommand::Listen { port, protocol } => {
+        UserCommand::Listen { port, base_stack, protocol } => {
             assert_eq!(port, 80);
+            assert_eq!(base_stack, netget::protocol::BaseStack::TcpRaw);
             assert_eq!(protocol, ProtocolType::Http);
         }
         _ => panic!("Expected Listen command"),
