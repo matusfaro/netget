@@ -116,6 +116,8 @@ Response (JSON only):"#,
         state: &AppState,
         user_input: &str,
     ) -> String {
+        use crate::protocol::BaseStack;
+
         let _mode = state.get_mode().await;
         let _base_stack = state.get_base_stack().await;
         let instruction = state.get_instruction().await;
@@ -133,6 +135,13 @@ Response (JSON only):"#,
         } else {
             "No server currently running.".to_string()
         };
+
+        // Get available base stacks
+        let available_stacks = BaseStack::available_stacks();
+        let stacks_str = available_stacks.iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         format!(
             r#"You are an AI assistant controlling a network server/client application. Your job is to interpret user commands and return structured actions.
@@ -164,12 +173,13 @@ Available action types:
 
 2. **open_server**: Start a server
    {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true, "initial_memory": "files: data.txt, readme.md"}}
-   base_stack options: "tcp_raw", "http", "datalink"
+   base_stack options: {stacks}
    send_banner: true if protocol sends greeting on connect (FTP, SMTP), false if it waits for client (HTTP, SSH)
    initial_memory: Optional string to initialize global memory (e.g., file listings, config)
 
 3. **open_client**: Connect as a client
    {{"type": "open_client", "address": "127.0.0.1:21", "base_stack": "tcp_raw"}}
+   base_stack options: same as open_server
 
 4. **close_connection**: Close connection(s)
    {{"type": "close_connection", "connection_id": "conn-1"}}  // or omit connection_id to close all
@@ -217,7 +227,8 @@ Response:
 }}
 
 Important guidelines:
-- When opening a server, always use base_stack: "tcp_raw" for protocols like FTP, custom TCP, etc.
+- Choose the appropriate base_stack from the available options: {stacks}
+- When opening a server, always use base_stack: "tcp_raw" for protocols like FTP, custom TCP, etc. (if available)
 - Use base_stack: "http" only when user explicitly wants HTTP stack (not just HTTP protocol over TCP)
 - When updating instructions, include ALL previous instructions plus the new one - don't lose context
 - Actions are executed in order
@@ -230,7 +241,8 @@ Response (JSON only):"#,
             server_status,
             user_input,
             state_summary,
-            current_instruction_text
+            current_instruction_text,
+            stacks = stacks_str
         )
     }
 
