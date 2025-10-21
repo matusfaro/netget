@@ -42,6 +42,26 @@ impl HttpServer {
         Ok(self.listener.local_addr()?)
     }
 
+    /// Spawn the HTTP server for TUI mode
+    pub async fn spawn_tui(
+        listen_addr: SocketAddr,
+        network_tx: mpsc::UnboundedSender<NetworkEvent>,
+    ) -> anyhow::Result<()> {
+        let http_server = HttpServer::new(listen_addr, network_tx.clone()).await?;
+
+        // Send listening event
+        let _ = network_tx.send(NetworkEvent::Listening { addr: listen_addr });
+
+        // Spawn server loop
+        tokio::spawn(async move {
+            if let Err(e) = http_server.accept_loop().await {
+                eprintln!("HTTP server error: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
     /// Accept and handle HTTP connections
     pub async fn accept_loop(self) -> anyhow::Result<()> {
         let event_tx = Arc::new(self.event_tx);
