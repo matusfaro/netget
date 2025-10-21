@@ -59,6 +59,11 @@ pub enum NetworkEvent {
         body: Bytes,
         response_tx: oneshot::Sender<HttpResponse>,
     },
+    /// Packet received from network interface (for DataLink stack)
+    PacketReceived {
+        interface: String,
+        data: Bytes,
+    },
     /// Data sent on connection
     DataSent {
         connection_id: ConnectionId,

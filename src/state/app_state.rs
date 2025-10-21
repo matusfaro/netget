@@ -189,6 +189,7 @@ impl AppState {
         let protocol_info = match inner.base_stack {
             BaseStack::TcpRaw => format!("Stack: {}, Protocol: {}", inner.base_stack, inner.protocol_type),
             BaseStack::Http => format!("Stack: {}", inner.base_stack),
+            BaseStack::DataLink => format!("Stack: {}", inner.base_stack),
         };
         format!(
             "Mode: {}, {}, Connections: {}, Local: {}",

@@ -263,6 +263,9 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                     let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse()?;
 
                     match base_stack {
+                        BaseStack::DataLink => {
+                            app.add_llm_message("DataLink stack not yet fully integrated with UI. Use library directly.".to_string());
+                        }
                         BaseStack::TcpRaw => {
                             // Create a new TCP server for this listen command
                             let mut tcp_server = TcpServer::new(network_tx.clone());
@@ -609,6 +612,11 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                             let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
 
                                             match base_stack {
+                                                BaseStack::DataLink => {
+                                                    app.add_message("✗ DataLink stack not yet fully integrated with UI. Use library directly.".to_string());
+                                                    drop(app);
+                                                    continue;
+                                                }
                                                 BaseStack::TcpRaw => {
                                                     // Create a new TCP server for this listen command
                                                     let mut tcp_server = TcpServer::new(network_tx.clone());

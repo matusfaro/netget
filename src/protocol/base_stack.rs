@@ -13,6 +13,11 @@ pub enum BaseStack {
     /// HTTP stack - Uses Rust HTTP library
     /// The LLM only controls HTTP responses (status, headers, body) based on requests
     Http,
+
+    /// Data Link stack - LLM controls layer 2 (Ethernet) frames
+    /// The LLM can capture and inject packets at the data link layer
+    /// Supports operations like ARP, custom Ethernet frames, etc.
+    DataLink,
 }
 
 impl BaseStack {
@@ -21,12 +26,25 @@ impl BaseStack {
         match self {
             Self::TcpRaw => "TCP/IP (Raw)",
             Self::Http => "HTTP",
+            Self::DataLink => "Data Link (Layer 2)",
         }
     }
 
     /// Parse base stack from string
     pub fn from_str(s: &str) -> Option<Self> {
         let s_lower = s.to_lowercase();
+
+        // Data Link stack indicators
+        if s_lower.contains("datalink")
+            || s_lower.contains("data link")
+            || s_lower.contains("layer 2")
+            || s_lower.contains("layer2")
+            || s_lower.contains("l2")
+            || s_lower.contains("ethernet")
+            || s_lower.contains("arp")
+            || s_lower.contains("pcap") {
+            return Some(Self::DataLink);
+        }
 
         // HTTP stack indicators
         if s_lower.contains("http stack")

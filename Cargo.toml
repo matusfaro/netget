@@ -45,6 +45,9 @@ clap = { version = "4.5", features = ["derive"] }
 # Home directory
 dirs = "5.0"
 
+# Packet capture (libpcap)
+pcap = "2.2"
+
 [dev-dependencies]
 # FTP client for integration tests
 suppaftp = "6.0"

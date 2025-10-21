@@ -266,6 +266,18 @@ impl EventHandler {
                 // This is because they need to send responses back via oneshot channel
                 Ok(())
             }
+            NetworkEvent::PacketReceived { interface, data } => {
+                // Data link packets are handled directly in main.rs
+                // This is because they may need to inject packets back
+                let formatted = self.format_data(&data, 80);
+                ui.add_status_message(format!(
+                    "← Packet on {}: {} bytes: {}",
+                    interface,
+                    data.len(),
+                    formatted
+                ));
+                Ok(())
+            }
         }
     }
 
