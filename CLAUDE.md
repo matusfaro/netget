@@ -303,40 +303,56 @@ let response = llm.generate(&model, &prompt).await?;
 
 ### 5. Testing Strategy
 
+**Philosophy**: Tests are **black-box** and **prompt-driven**. Each test provides a prompt that the LLM interprets, and validates behavior using real network clients.
+
 **Unit Tests** (`#[test]`):
 - No Ollama required
 - Test command parsing, protocol type detection
-- Example: `test_user_command_parsing()`
+- Example: `test_user_command_parsing()` in tcp_integration_test.rs
 
 **Integration Tests** (`tests/` directory):
-- Requires Ollama running
-- Uses real network clients (suppaftp for FTP)
-- Tests full system: TCP → LLM → Protocol responses
-- Example: `test_raw_tcp_connection()`, `test_ftp_server_basic_commands()`
+- Requires Ollama running with a model
+- **Simple setup**: Just provide a prompt, the system infers everything (mode, stack, protocol)
+- Uses real network clients (suppaftp for FTP, reqwest for HTTP, raw TCP sockets)
+- Tests full system: Prompt → LLM → Protocol behavior
+
+**Test Structure**:
+Each test has two clear sections:
+1. **PROMPT**: Instructions for the LLM (e.g., "listen on port 0 via ftp. Serve file data.txt")
+2. **VALIDATION**: Verify behavior using real clients
+
+Example:
+```rust
+// PROMPT: Tell the LLM to act as an FTP server
+let prompt = "listen on port 0 via ftp. Serve file data.txt with content: hello";
+let (_state, port, _handle) = common::start_server_with_prompt(prompt).await;
+
+// VALIDATION: Use real FTP client to verify behavior
+let mut ftp = FtpStream::connect(format!("127.0.0.1:{}", port))?;
+ftp.login("anonymous", "test@example.com")?;
+assert!(ftp.pwd().is_ok());
+```
+
+**Test Helper** (`tests/common/mod.rs`):
+- `start_server_with_prompt(prompt)` - Black-box server setup
+- Parses prompt using `UserCommand::parse()` to infer configuration
+- Sets up appropriate server (TCP or HTTP) based on prompt
+- Returns (state, port, handle) for cleanup
+
+**TCP Integration Tests** (`tcp_integration_test.rs`):
+- `test_ftp_server` - FTP protocol via LLM (uses suppaftp client)
+- `test_simple_echo` - Simple echo/reply behavior (raw TCP)
+- `test_custom_response` - Greeting and PING/PONG (raw TCP)
+
+**HTTP Integration Tests** (`http_integration_test.rs`):
+- `test_http_get_html` - GET request with HTML response
+- `test_http_post_json` - POST request with JSON response
+- `test_http_custom_headers` - Custom headers verification
+- `test_http_404` - 404 error response
+- `test_http_routing` - Route-based responses
 
 **Dynamic Port Allocation**:
-```rust
-async fn get_available_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
-```
-This avoids port conflicts and allows parallel test execution.
-
-**HTTP Integration Tests** (`tests/http_integration_test.rs`):
-- Programmatically start HTTP server with specific LLM instructions
-- Use reqwest client to make HTTP requests (GET, POST, etc.)
-- Verify response status codes, headers, and body content
-- Tests include:
-  - `test_http_server_post_json`: POST request with JSON response
-  - `test_http_server_get_html`: GET request with HTML response
-  - `test_http_server_custom_headers`: Custom headers verification
-  - `test_http_server_404`: 404 error response
-- Each test creates a temporary server on a dynamic port
-- Tests spawn event processing loop to handle HttpRequest events
-- LLM generates structured HTTP responses based on instructions
+Tests use port 0 in prompts, which auto-assigns an available port. This avoids port conflicts and allows parallel test execution.
 
 ## Implementation Notes
 
@@ -532,16 +548,19 @@ Before committing changes:
 - [ ] Start Ollama: `ollama serve`
 - [ ] Pull model: `ollama pull qwen3-coder:30b`
 
-**TCP/IP Raw Stack Tests:**
-- [ ] Run raw TCP test: `cargo test --test ftp_integration_test test_raw_tcp_connection`
-- [ ] Run FTP test: `cargo test --test ftp_integration_test test_ftp_server_basic_commands`
+**TCP Integration Tests** (prompt-based, black-box):
+- [ ] Run FTP test: `cargo test --test tcp_integration_test test_ftp_server`
+- [ ] Run echo test: `cargo test --test tcp_integration_test test_simple_echo`
+- [ ] Run custom response test: `cargo test --test tcp_integration_test test_custom_response`
+- [ ] Run all TCP tests: `cargo test --test tcp_integration_test`
 - [ ] Check no hardcoded protocols: `grep -r "220 FTP" src/` should return nothing
 
-**HTTP Stack Tests:**
-- [ ] Run POST JSON test: `cargo test --test http_integration_test test_http_server_post_json`
-- [ ] Run GET HTML test: `cargo test --test http_integration_test test_http_server_get_html`
-- [ ] Run custom headers test: `cargo test --test http_integration_test test_http_server_custom_headers`
-- [ ] Run 404 test: `cargo test --test http_integration_test test_http_server_404`
+**HTTP Integration Tests** (prompt-based, black-box):
+- [ ] Run GET HTML test: `cargo test --test http_integration_test test_http_get_html`
+- [ ] Run POST JSON test: `cargo test --test http_integration_test test_http_post_json`
+- [ ] Run custom headers test: `cargo test --test http_integration_test test_http_custom_headers`
+- [ ] Run 404 test: `cargo test --test http_integration_test test_http_404`
+- [ ] Run routing test: `cargo test --test http_integration_test test_http_routing`
 - [ ] Run all HTTP tests: `cargo test --test http_integration_test`
 
 ## References
