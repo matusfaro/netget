@@ -220,19 +220,6 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
     app.add_message("    Home/End - Jump to top/bottom".to_string());
     app.add_message("".to_string());
 
-    // Warm up the LLM model (first call loads model into memory)
-    app.add_status_message("Loading LLM model...".to_string());
-    let model = state.get_ollama_model().await;
-    let warmup_prompt = "Respond with just 'OK'";
-    match llm.generate(&model, warmup_prompt).await {
-        Ok(_) => {
-            app.add_status_message(format!("Model {} ready", model));
-        }
-        Err(e) => {
-            app.add_status_message(format!("Warning: Model warmup failed: {}", e));
-        }
-    }
-
     // Create event channels
     let (network_tx, mut network_rx) = mpsc::unbounded_channel::<NetworkEvent>();
 
@@ -504,56 +491,68 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                                             }
                                             Some("/model") => {
                                                 if parts.len() == 1 {
-                                                    // List available models
+                                                    // List available models - spawn in background
                                                     app.add_message("Fetching available models...".to_string());
+
+                                                    let llm_clone = llm.clone();
+                                                    let app_clone_bg = app_clone.clone();
                                                     drop(app);
 
-                                                    match llm.list_models().await {
-                                                        Ok(models) => {
-                                                            let mut app = app_clone.lock().await;
-                                                            app.add_message("Available models:".to_string());
-                                                            for model in models {
-                                                                app.add_message(format!("  {}", model));
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            let mut app = app_clone.lock().await;
-                                                            app.add_message(format!("✗ Error fetching models: {}", e));
-                                                        }
-                                                    }
-                                                    continue;
-                                                } else {
-                                                    // Select model - validate it exists first
-                                                    let model_name = parts[1..].join(" ");
-                                                    app.add_message("Validating model...".to_string());
-                                                    drop(app);
-
-                                                    match llm.list_models().await {
-                                                        Ok(models) => {
-                                                            let mut app = app_clone.lock().await;
-                                                            if models.iter().any(|m| m == &model_name) {
-                                                                state.set_ollama_model(model_name.clone()).await;
-                                                                app.add_message(format!("✓ Model set to: {}", model_name));
-                                                                app.connection_info.model = model_name.clone();
-
-                                                                // Save to settings
-                                                                let mut settings_guard = settings.lock().await;
-                                                                if let Err(e) = settings_guard.set_model(model_name) {
-                                                                    app.add_message(format!("Warning: Failed to save settings: {}", e));
-                                                                }
-                                                            } else {
-                                                                app.add_message(format!("✗ Model '{}' not found", model_name));
+                                                    tokio::spawn(async move {
+                                                        match llm_clone.list_models().await {
+                                                            Ok(models) => {
+                                                                let mut app = app_clone_bg.lock().await;
                                                                 app.add_message("Available models:".to_string());
                                                                 for model in models {
                                                                     app.add_message(format!("  {}", model));
                                                                 }
                                                             }
+                                                            Err(e) => {
+                                                                let mut app = app_clone_bg.lock().await;
+                                                                app.add_message(format!("✗ Error fetching models: {}", e));
+                                                            }
                                                         }
-                                                        Err(e) => {
-                                                            let mut app = app_clone.lock().await;
-                                                            app.add_message(format!("✗ Error fetching models: {}", e));
+                                                    });
+                                                    continue;
+                                                } else {
+                                                    // Select model - validate in background
+                                                    let model_name = parts[1..].join(" ");
+                                                    app.add_message("Validating model...".to_string());
+
+                                                    let llm_clone = llm.clone();
+                                                    let app_clone_bg = app_clone.clone();
+                                                    let state_clone = state.clone();
+                                                    let settings_clone = settings.clone();
+                                                    drop(app);
+
+                                                    tokio::spawn(async move {
+                                                        match llm_clone.list_models().await {
+                                                            Ok(models) => {
+                                                                let mut app = app_clone_bg.lock().await;
+                                                                if models.iter().any(|m| m == &model_name) {
+                                                                    state_clone.set_ollama_model(model_name.clone()).await;
+                                                                    app.add_message(format!("✓ Model set to: {}", model_name));
+                                                                    app.connection_info.model = model_name.clone();
+
+                                                                    // Save to settings
+                                                                    let mut settings_guard = settings_clone.lock().await;
+                                                                    if let Err(e) = settings_guard.set_model(model_name) {
+                                                                        app.add_message(format!("Warning: Failed to save settings: {}", e));
+                                                                    }
+                                                                } else {
+                                                                    app.add_message(format!("✗ Model '{}' not found", model_name));
+                                                                    app.add_message("Available models:".to_string());
+                                                                    for model in models {
+                                                                        app.add_message(format!("  {}", model));
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                let mut app = app_clone_bg.lock().await;
+                                                                app.add_message(format!("✗ Error fetching models: {}", e));
+                                                            }
                                                         }
-                                                    }
+                                                    });
                                                     continue;
                                                 }
                                             }
