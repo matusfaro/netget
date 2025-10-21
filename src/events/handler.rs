@@ -148,7 +148,8 @@ impl EventHandler {
 
                 // Ask LLM if we should send any initial data (e.g., FTP welcome)
                 let model = self.state.get_ollama_model().await;
-                let prompt = PromptBuilder::build_connection_established_prompt(&self.state, connection_id).await;
+                // Note: Legacy event handler doesn't support per-connection memory
+                let prompt = PromptBuilder::build_connection_established_prompt(&self.state, connection_id, "").await;
 
                 match self.llm.generate(&model, &prompt).await {
                     Ok(response) => {
@@ -198,7 +199,8 @@ impl EventHandler {
 
                 // Ask LLM what to respond with
                 let model = self.state.get_ollama_model().await;
-                let prompt = PromptBuilder::build_data_received_prompt(&self.state, connection_id, &data).await;
+                // Note: Legacy event handler doesn't support per-connection memory
+                let prompt = PromptBuilder::build_data_received_prompt(&self.state, connection_id, &data, "").await;
 
                 match self.llm.generate(&model, &prompt).await {
                     Ok(response) => {
