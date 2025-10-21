@@ -34,6 +34,8 @@ pub enum Action {
         protocol: Option<String>,  // For TcpRaw stack
         #[serde(default)]
         send_banner: bool,  // True if server should send greeting on connect (e.g., FTP), false if it waits for client data (e.g., HTTP)
+        #[serde(default)]
+        initial_memory: Option<String>,  // Initial memory to store for this server
     },
 
     /// Open a client connection

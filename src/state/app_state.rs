@@ -56,6 +56,8 @@ struct AppStateInner {
     connections: HashMap<ConnectionId, ConnectionInfo>,
     /// Current instruction for the LLM
     instruction: String,
+    /// LLM memory (persistent context across requests)
+    memory: String,
     /// Current Ollama model
     ollama_model: String,
 }
@@ -84,6 +86,7 @@ impl AppState {
                 local_addr: None,
                 connections: HashMap::new(),
                 instruction: String::new(),
+                memory: String::new(),
                 ollama_model: "qwen3-coder:30b".to_string(),
             })),
         }
@@ -184,6 +187,25 @@ impl AppState {
     /// Get the current instruction
     pub async fn get_instruction(&self) -> String {
         self.inner.read().await.instruction.clone()
+    }
+
+    /// Set the LLM memory
+    pub async fn set_memory(&self, memory: String) {
+        self.inner.write().await.memory = memory;
+    }
+
+    /// Append to the LLM memory
+    pub async fn append_memory(&self, text: String) {
+        let mut inner = self.inner.write().await;
+        if !inner.memory.is_empty() {
+            inner.memory.push('\n');
+        }
+        inner.memory.push_str(&text);
+    }
+
+    /// Get the LLM memory
+    pub async fn get_memory(&self) -> String {
+        self.inner.read().await.memory.clone()
     }
 
     /// Get the Ollama model name

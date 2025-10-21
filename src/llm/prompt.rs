@@ -16,6 +16,7 @@ impl PromptBuilder {
         state: &AppState,
         connection_id: ConnectionId,
         data: &Bytes,
+        connection_memory: &str,
     ) -> String {
         let mode = state.get_mode().await;
         let base_stack = state.get_base_stack().await;
@@ -34,6 +35,19 @@ impl PromptBuilder {
             instruction
         };
 
+        let memory = state.get_memory().await;
+        let memory_text = if memory.is_empty() {
+            "No memory stored yet.".to_string()
+        } else {
+            memory
+        };
+
+        let conn_memory_text = if connection_memory.is_empty() {
+            "No connection memory stored yet.".to_string()
+        } else {
+            connection_memory.to_string()
+        };
+
         format!(
             r#"You are controlling a network server/client application.
 
@@ -44,6 +58,12 @@ Mode: {}
 Stack: {}
 
 User Instructions:
+{}
+
+Global Memory (shared across all connections):
+{}
+
+Connection Memory (specific to this connection):
 {}
 
 Event: Data Received
@@ -58,7 +78,9 @@ IMPORTANT: Respond with a JSON object with the following structure:
   "close_connection": false,
   "wait_for_more": false,
   "shutdown_server": false,
-  "log_message": "optional debug message"
+  "log_message": "optional debug message",
+  "set_memory": "completely replace memory with this text (optional)",
+  "append_memory": "append this to existing memory (optional)"
 }}
 
 Fields:
@@ -67,6 +89,10 @@ Fields:
 - "wait_for_more": Set to true if you need more data before responding (e.g., incomplete HTTP headers)
 - "shutdown_server": Set to true to shut down the entire server
 - "log_message": Optional string for debugging/logging
+- "set_memory": Replace entire GLOBAL memory with this text. Persists across all connections. Use for server-wide state (file listings, config, etc.)
+- "append_memory": Add to existing GLOBAL memory. Use for logging server-wide events.
+- "set_connection_memory": Replace THIS CONNECTION's memory. Persists only for this connection. Use for per-user session data (logged in user, current directory, etc.)
+- "append_connection_memory": Add to THIS CONNECTION's memory. Use for logging per-connection events.
 
 Examples:
 - FTP welcome: {{"output": "220 Welcome to FTP Server\r\n"}}
@@ -80,7 +106,7 @@ For Echo protocol, echo back the exact same data.
 For other protocols, follow the protocol specification.
 
 Response (JSON only):"#,
-            state_summary, mode, base_stack, instruction_text, connection_id, data_preview
+            state_summary, mode, base_stack, instruction_text, memory_text, conn_memory_text, connection_id, data_preview
         )
     }
 
@@ -222,6 +248,13 @@ Response (JSON only):"#,
             instruction
         };
 
+        let memory = state.get_memory().await;
+        let memory_text = if memory.is_empty() {
+            "No memory stored yet.".to_string()
+        } else {
+            memory
+        };
+
         format!(
             r#"You are controlling a network server/client application.
 
@@ -229,6 +262,9 @@ Mode: {}
 Stack: {}
 
 User Instructions:
+{}
+
+Memory (persistent context):
 {}
 
 Event: New Connection Established
@@ -242,7 +278,9 @@ IMPORTANT: Respond with a JSON object with the following structure:
   "close_connection": false,
   "wait_for_more": false,
   "shutdown_server": false,
-  "log_message": "optional debug message"
+  "log_message": "optional debug message",
+  "set_memory": "completely replace memory with this text (optional)",
+  "append_memory": "append this to existing memory (optional)"
 }}
 
 Examples:
@@ -250,7 +288,7 @@ Examples:
 - No initial response: {{}}
 
 Response (JSON only):"#,
-            mode, base_stack, instruction_text, connection_id
+            mode, base_stack, instruction_text, memory_text, connection_id
         )
     }
 
@@ -295,6 +333,13 @@ Response:"#,
             instruction
         };
 
+        let memory = state.get_memory().await;
+        let memory_text = if memory.is_empty() {
+            "No memory stored yet.".to_string()
+        } else {
+            memory
+        };
+
         let headers_text = if headers.is_empty() {
             "No headers".to_string()
         } else {
@@ -329,6 +374,9 @@ Stack: HTTP
 User Instructions:
 {}
 
+Memory (persistent context):
+{}
+
 Event: HTTP Request
 Connection ID: {}
 Method: {}
@@ -345,7 +393,9 @@ IMPORTANT: Respond with a JSON object with the following structure:
   "status": 200,
   "headers": {{"Content-Type": "text/html"}},
   "body": "response body content",
-  "log_message": "optional debug message"
+  "log_message": "optional debug message",
+  "set_memory": "completely replace memory with this text (optional)",
+  "append_memory": "append this to existing memory (optional)"
 }}
 
 Fields:
@@ -353,6 +403,8 @@ Fields:
 - "headers": Object containing response headers (e.g., {{"Content-Type": "application/json"}})
 - "body": The response body as a string
 - "log_message": Optional string for debugging/logging
+- "set_memory": Replace entire memory with this text. Use for storing session data, page visit counts, etc.
+- "append_memory": Add to existing memory. Use for logging requests or accumulating data over time.
 
 Examples:
 - Simple HTML: {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<html><body>Hello!</body></html>"}}
@@ -361,7 +413,7 @@ Examples:
 - Echo request: {{"status": 200, "headers": {{"Content-Type": "text/plain"}}, "body": "You requested: {}"}}
 
 Response (JSON only):"#,
-            state_summary, mode, instruction_text, connection_id, method, uri, headers_text, body_text, uri
+            state_summary, mode, instruction_text, memory_text, connection_id, method, uri, headers_text, body_text, uri
         )
     }
 }

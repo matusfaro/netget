@@ -40,6 +40,8 @@ pub struct App {
     pub packet_stats: PacketStats,
     /// Scroll offset for output (0 = bottom, higher = scrolled up)
     pub scroll_offset: usize,
+    /// Scroll offset for input (lines scrolled from top)
+    pub input_scroll: u16,
     /// Which panel currently has focus
     pub focus: Focus,
     /// Slash command suggestions (shown when typing "/")
@@ -76,6 +78,7 @@ impl Default for App {
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
             scroll_offset: 0,
+            input_scroll: 0,
             focus: Focus::default(),
             slash_suggestions: Vec::new(),
         }
@@ -380,6 +383,35 @@ impl App {
     /// Check if input panel has focus
     pub fn is_input_focused(&self) -> bool {
         self.focus == Focus::Input
+    }
+
+    /// Calculate the number of visual lines the input will take with wrapping
+    pub fn calculate_input_height(&self, width: usize) -> u16 {
+        if self.input.is_empty() {
+            return 1;
+        }
+
+        if width == 0 {
+            return 1;
+        }
+
+        let mut lines = 1u16;
+        let mut col = 0;
+
+        for ch in self.input.chars() {
+            if ch == '\n' {
+                lines += 1;
+                col = 0;
+            } else {
+                if col >= width {
+                    lines += 1;
+                    col = 0;
+                }
+                col += 1;
+            }
+        }
+
+        lines
     }
 
     /// Update slash command suggestions based on current input
