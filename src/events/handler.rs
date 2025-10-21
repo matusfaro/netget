@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use super::types::{AppEvent, NetworkEvent, UserCommand};
 use crate::llm::{OllamaClient, PromptBuilder};
@@ -76,36 +76,6 @@ impl EventHandler {
         }
     }
 
-    /// Process LLM response to handle common issues
-    /// - Strips b"..." wrapping if present
-    /// - Unescapes common escape sequences if needed
-    fn process_llm_response(&self, response: &str) -> String {
-        let trimmed = response.trim();
-
-        // Check if wrapped in b"..." or just "..."
-        let unwrapped = if trimmed.starts_with("b\"") && trimmed.ends_with('"') {
-            warn!("LLM returned debug format b\"...\", unwrapping");
-            &trimmed[2..trimmed.len()-1]
-        } else if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 1 {
-            &trimmed[1..trimmed.len()-1]
-        } else {
-            trimmed
-        };
-
-        // Unescape common sequences if they appear to be escaped
-        // Only do this if we see literal \n or \r (not actual newlines)
-        if unwrapped.contains("\\n") || unwrapped.contains("\\r") || unwrapped.contains("\\t") {
-            warn!("LLM returned escaped sequences, unescaping");
-            unwrapped
-                .replace("\\r\\n", "\r\n")
-                .replace("\\n", "\n")
-                .replace("\\r", "\r")
-                .replace("\\t", "\t")
-                .replace("\\\\", "\\")
-        } else {
-            unwrapped.to_string()
-        }
-    }
 
     /// Handle an application event
     /// Returns Ok(true) if the application should quit
@@ -151,19 +121,25 @@ impl EventHandler {
                 // Note: Legacy event handler doesn't support per-connection memory
                 let prompt = PromptBuilder::build_connection_established_prompt(&self.state, connection_id, "").await;
 
-                match self.llm.generate(&model, &prompt).await {
-                    Ok(response) => {
-                        let response = self.process_llm_response(&response);
-                        if !response.is_empty() && response != "NO_RESPONSE" {
+                match self.llm.generate_llm_response(&model, &prompt).await {
+                    Ok(llm_response) => {
+                        if let Some(output) = llm_response.output {
                             // Send the LLM's response
                             if let Some(stream) = self.connections.get_mut(&connection_id) {
-                                tcp::send_data(stream, response.as_bytes()).await?;
-                                let formatted = self.format_data(response.as_bytes(), 80);
+                                tcp::send_data(stream, output.as_bytes()).await?;
+                                let formatted = self.format_data(output.as_bytes(), 80);
                                 ui.add_status_message(format!(
                                     "→ Sent to {}: {}",
                                     connection_id,
                                     formatted
                                 ));
+                            }
+                        }
+
+                        if llm_response.close_connection {
+                            if let Some(mut stream) = self.connections.remove(&connection_id) {
+                                let _ = stream.shutdown().await;
+                                ui.add_status_message(format!("LLM requested connection {} closure", connection_id));
                             }
                         }
                     }
@@ -202,20 +178,14 @@ impl EventHandler {
                 // Note: Legacy event handler doesn't support per-connection memory
                 let prompt = PromptBuilder::build_data_received_prompt(&self.state, connection_id, &data, "").await;
 
-                match self.llm.generate(&model, &prompt).await {
-                    Ok(response) => {
-                        let response = self.process_llm_response(&response);
-
-                        if response == "CLOSE_CONNECTION" {
-                            if let Some(mut stream) = self.connections.remove(&connection_id) {
-                                let _ = stream.shutdown().await;
-                                ui.add_status_message(format!("LLM requested connection {} closure", connection_id));
-                            }
-                        } else if !response.is_empty() && response != "NO_RESPONSE" {
+                match self.llm.generate_llm_response(&model, &prompt).await {
+                    Ok(llm_response) => {
+                        // Handle output first
+                        if let Some(output) = llm_response.output {
                             // Send LLM's response
                             if let Some(stream) = self.connections.get_mut(&connection_id) {
-                                tcp::send_data(stream, response.as_bytes()).await?;
-                                let formatted = self.format_data(response.as_bytes(), 80);
+                                tcp::send_data(stream, output.as_bytes()).await?;
+                                let formatted = self.format_data(output.as_bytes(), 80);
                                 ui.add_status_message(format!(
                                     "→ Sent to {}: {}",
                                     connection_id,
@@ -224,11 +194,30 @@ impl EventHandler {
 
                                 // Update stats
                                 self.state
-                                    .update_connection_stats(connection_id, response.len() as u64, 0, 1, 0)
+                                    .update_connection_stats(connection_id, output.len() as u64, 0, 1, 0)
                                     .await;
                             }
-                        } else {
+                        } else if !llm_response.close_connection && !llm_response.wait_for_more {
                             ui.add_status_message("LLM: No response needed".to_string());
+                        }
+
+                        // Handle connection closure
+                        if llm_response.close_connection {
+                            if let Some(mut stream) = self.connections.remove(&connection_id) {
+                                let _ = stream.shutdown().await;
+                                ui.add_status_message(format!("LLM requested connection {} closure", connection_id));
+                            }
+                        }
+
+                        // Handle wait for more
+                        if llm_response.wait_for_more {
+                            ui.add_status_message("LLM: Waiting for more data".to_string());
+                        }
+
+                        // Handle log message
+                        if let Some(log_msg) = llm_response.log_message {
+                            info!("LLM: {}", log_msg);
+                            ui.add_llm_message(log_msg);
                         }
                     }
                     Err(e) => {
@@ -316,7 +305,7 @@ impl EventHandler {
     }
 
     async fn handle_interpret(&mut self, input: String, ui: &mut App) -> Result<()> {
-        use crate::llm::{CommandInterpretation, PromptBuilder};
+        use crate::llm::PromptBuilder;
 
         ui.add_status_message(format!("Interpreting: {}", input));
 
@@ -324,26 +313,17 @@ impl EventHandler {
         let prompt = PromptBuilder::build_command_interpretation_prompt(&self.state, &input).await;
         let model = self.state.get_ollama_model().await;
 
-        match self.llm.generate(&model, &prompt).await {
-            Ok(response) => {
-                // Parse the LLM response into actions
-                match CommandInterpretation::from_str(&response) {
-                    Ok(interpretation) => {
-                        // Display message if provided
-                        if let Some(msg) = &interpretation.message {
-                            ui.add_llm_message(msg.clone());
-                        }
+        match self.llm.generate_command_interpretation(&model, &prompt).await {
+            Ok(interpretation) => {
+                // Display message if provided
+                if let Some(msg) = &interpretation.message {
+                    ui.add_llm_message(msg.clone());
+                }
 
-                        // Execute each action in order
-                        for action in interpretation.actions {
-                            if let Err(e) = self.execute_action(action, ui).await {
-                                ui.add_llm_message(format!("Error executing action: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        ui.add_llm_message(format!("Failed to parse LLM response: {}", e));
-                        ui.add_llm_message(format!("Raw response: {}", response));
+                // Execute each action in order
+                for action in interpretation.actions {
+                    if let Err(e) = self.execute_command_action(action, ui).await {
+                        ui.add_llm_message(format!("Error executing action: {}", e));
                     }
                 }
             }
@@ -355,15 +335,15 @@ impl EventHandler {
         Ok(())
     }
 
-    async fn execute_action(&mut self, action: crate::llm::Action, ui: &mut App) -> Result<()> {
-        use crate::llm::Action;
+    async fn execute_command_action(&mut self, action: crate::llm::CommandAction, ui: &mut App) -> Result<()> {
+        use crate::llm::CommandAction;
 
         match action {
-            Action::UpdateInstruction { instruction } => {
+            CommandAction::UpdateInstruction { instruction } => {
                 self.state.set_instruction(instruction.clone()).await;
                 ui.add_status_message(format!("Instruction: {}", instruction));
             }
-            Action::OpenServer { port, base_stack, protocol: _, send_banner, initial_memory } => {
+            CommandAction::OpenServer { port, base_stack, send_banner, initial_memory } => {
                 // Parse base stack
                 let stack = crate::protocol::BaseStack::from_str(&base_stack)
                     .unwrap_or(BaseStack::TcpRaw);
@@ -384,10 +364,10 @@ impl EventHandler {
 
                 // Note: Actual server startup happens in main.rs after this returns
             }
-            Action::OpenClient { address, base_stack: _, protocol: _ } => {
+            CommandAction::OpenClient { address, base_stack: _ } => {
                 ui.add_llm_message(format!("Client mode not yet implemented ({})", address));
             }
-            Action::CloseConnection { connection_id } => {
+            CommandAction::CloseConnection { connection_id } => {
                 if let Some(conn_id_str) = connection_id {
                     if let Some(conn_id) = crate::network::ConnectionId::from_string(&conn_id_str) {
                         self.state.remove_connection(conn_id).await;
@@ -401,10 +381,10 @@ impl EventHandler {
                     ui.add_status_message("Closed all connections".to_string());
                 }
             }
-            Action::ShowMessage { message } => {
+            CommandAction::ShowMessage { message } => {
                 ui.add_llm_message(message);
             }
-            Action::ChangeModel { model } => {
+            CommandAction::ChangeModel { model } => {
                 self.state.set_ollama_model(model.clone()).await;
                 ui.add_llm_message(format!("Changed model to: {}", model));
             }
