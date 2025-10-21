@@ -5,7 +5,7 @@
 
 use bytes::Bytes;
 use netget::events::{HttpResponse, NetworkEvent};
-use netget::llm::{HttpLlmResponse, LlmResponse, OllamaClient, PromptBuilder};
+use netget::llm::{OllamaClient, PromptBuilder};
 use netget::network::{ConnectionId, HttpServer, TcpServer};
 use netget::protocol::BaseStack;
 use netget::state::app_state::{AppState, Mode};
@@ -217,20 +217,18 @@ async fn process_events(state: &AppState, network_rx: &mut mpsc::UnboundedReceiv
                 // Ask LLM for initial greeting
                 let model = state.get_ollama_model().await;
                 let prompt =
-                    PromptBuilder::build_connection_established_prompt(state, connection_id).await;
+                    PromptBuilder::build_connection_established_prompt(state, connection_id, "").await;
 
-                if let Ok(raw_response) = llm.generate(&model, &prompt).await {
-                    if let Ok(llm_response) = LlmResponse::from_str(&raw_response) {
-                        // Send output if present
-                        if let Some(output) = llm_response.output {
-                            if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
-                                if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
-                                {
-                                    use tokio::io::AsyncWriteExt;
-                                    let mut write_half = write_half_arc.lock().await;
-                                    let _ = write_half.write_all(output.as_bytes()).await;
-                                    let _ = write_half.flush().await;
-                                }
+                if let Ok(llm_response) = llm.generate_llm_response(&model, &prompt).await {
+                    // Send output if present
+                    if let Some(output) = llm_response.output {
+                        if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
+                            if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
+                            {
+                                use tokio::io::AsyncWriteExt;
+                                let mut write_half = write_half_arc.lock().await;
+                                let _ = write_half.write_all(output.as_bytes()).await;
+                                let _ = write_half.flush().await;
                             }
                         }
                     }
@@ -243,28 +241,26 @@ async fn process_events(state: &AppState, network_rx: &mut mpsc::UnboundedReceiv
                 // Ask LLM how to respond
                 let model = state.get_ollama_model().await;
                 let prompt =
-                    PromptBuilder::build_data_received_prompt(state, connection_id, &data).await;
+                    PromptBuilder::build_data_received_prompt(state, connection_id, &data, "").await;
 
-                if let Ok(raw_response) = llm.generate(&model, &prompt).await {
-                    if let Ok(llm_response) = LlmResponse::from_str(&raw_response) {
-                        // Send output if present
-                        if let Some(output) = llm_response.output {
-                            if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
-                                if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
-                                {
-                                    use tokio::io::AsyncWriteExt;
-                                    let mut write_half = write_half_arc.lock().await;
-                                    let _ = write_half.write_all(output.as_bytes()).await;
-                                    let _ = write_half.flush().await;
-                                }
+                if let Ok(llm_response) = llm.generate_llm_response(&model, &prompt).await {
+                    // Send output if present
+                    if let Some(output) = llm_response.output {
+                        if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
+                            if let Some(write_half_arc) = connections.lock().await.get(&connection_id)
+                            {
+                                use tokio::io::AsyncWriteExt;
+                                let mut write_half = write_half_arc.lock().await;
+                                let _ = write_half.write_all(output.as_bytes()).await;
+                                let _ = write_half.flush().await;
                             }
                         }
+                    }
 
-                        // Handle close connection if requested
-                        if llm_response.close_connection {
-                            if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
-                                connections.lock().await.remove(&connection_id);
-                            }
+                    // Handle close connection if requested
+                    if llm_response.close_connection {
+                        if let Some(connections) = CONNECTIONS.lock().await.as_ref() {
+                            connections.lock().await.remove(&connection_id);
                         }
                     }
                 }
@@ -286,23 +282,14 @@ async fn process_events(state: &AppState, network_rx: &mut mpsc::UnboundedReceiv
                     &uri,
                     &headers,
                     &body,
+                    "",
                 )
                 .await;
 
-                match llm.generate(&model, &prompt).await {
-                    Ok(raw_response) => match HttpLlmResponse::from_str(&raw_response) {
-                        Ok(http_response) => {
-                            let _ = response_tx.send(http_response.to_event_response());
-                        }
-                        Err(_) => {
-                            // Send 500 error on parse failure
-                            let _ = response_tx.send(HttpResponse {
-                                status: 500,
-                                headers: HashMap::new(),
-                                body: Bytes::from("Internal Server Error"),
-                            });
-                        }
-                    },
+                match llm.generate_http_response(&model, &prompt).await {
+                    Ok(http_response) => {
+                        let _ = response_tx.send(http_response.to_event_response());
+                    }
                     Err(_) => {
                         // Send 500 error on LLM failure
                         let _ = response_tx.send(HttpResponse {
