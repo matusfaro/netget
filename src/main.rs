@@ -729,51 +729,65 @@ async fn run_app(initial_command: Option<String>) -> Result<()> {
                     };
                     state.add_connection(conn_info).await;
 
-                    // Call LLM for initial greeting
-                    let model = state.get_ollama_model().await;
-                    let prompt = PromptBuilder::build_connection_established_prompt(&state, *connection_id).await;
+                    // Spawn task to call LLM for initial greeting (don't block main loop)
+                    let connection_id = *connection_id;
+                    let state_clone = state.clone();
+                    let llm_clone = llm.clone();
+                    let connections_clone = connections.clone();
+                    let connection_states_clone = connection_states.clone();
+                    let status_tx_clone = status_tx.clone();
 
-                    match llm.generate(&model, &prompt).await {
-                        Ok(raw_response) => {
-                            let response = process_llm_response(&raw_response);
+                    tokio::spawn(async move {
+                        let model = state_clone.get_ollama_model().await;
+                        let prompt = PromptBuilder::build_connection_established_prompt(&state_clone, connection_id).await;
 
-                            // Log message if present
-                            if let Some(msg) = &response.log_message {
-                                info!("LLM: {}", msg);
-                            }
+                        match llm_clone.generate(&model, &prompt).await {
+                            Ok(raw_response) => {
+                                let response = process_llm_response(&raw_response);
 
-                            // Send output if present
-                            if let Some(output) = &response.output {
-                                if let Some(write_half_arc) = connections.lock().await.get(connection_id) {
-                                    use tokio::io::AsyncWriteExt;
-                                    let mut write_half = write_half_arc.lock().await;
-                                    if let Err(e) = write_half.write_all(output.as_bytes()).await {
-                                        error!("Write error: {}", e);
-                                    } else if let Err(e) = write_half.flush().await {
-                                        error!("Flush error: {}", e);
-                                    } else {
-                                        let formatted = format_data(output.as_bytes(), 80);
-                                        app.add_status_message(format!("→ Sent to {}: {}", connection_id, formatted));
-                                        // Update stats
-                                        state.update_connection_stats(*connection_id, output.len() as u64, 0, 1, 0).await;
+                                // Log message if present
+                                if let Some(msg) = &response.log_message {
+                                    info!("LLM: {}", msg);
+                                }
+
+                                // Send output if present
+                                if let Some(output) = &response.output {
+                                    if let Some(write_half_arc) = connections_clone.lock().await.get(&connection_id) {
+                                        use tokio::io::AsyncWriteExt;
+                                        let mut write_half = write_half_arc.lock().await;
+                                        if let Err(e) = write_half.write_all(output.as_bytes()).await {
+                                            error!("Write error: {}", e);
+                                        } else if let Err(e) = write_half.flush().await {
+                                            error!("Flush error: {}", e);
+                                        } else {
+                                            let formatted = format_data(output.as_bytes(), 80);
+                                            let msg = format!("→ Sent to {}: {}", connection_id, formatted);
+                                            info!("{}", msg);
+                                            let _ = status_tx_clone.send(msg);
+                                            // Update stats
+                                            state_clone.update_connection_stats(connection_id, output.len() as u64, 0, 1, 0).await;
+                                        }
                                     }
                                 }
-                            }
 
-                            // Handle close connection
-                            if response.close_connection {
-                                if let Some(write_half_arc) = connections.lock().await.remove(connection_id) {
-                                    drop(write_half_arc);
-                                    app.add_status_message(format!("Closed connection {}", connection_id));
+                                // Handle close connection
+                                if response.close_connection {
+                                    if let Some(write_half_arc) = connections_clone.lock().await.remove(&connection_id) {
+                                        drop(write_half_arc);
+                                        let msg = format!("Closed connection {}", connection_id);
+                                        info!("{}", msg);
+                                        let _ = status_tx_clone.send(msg);
+                                    }
+                                    connection_states_clone.lock().await.remove(&connection_id);
                                 }
-                                connection_states.lock().await.remove(connection_id);
+                            }
+                            Err(e) => {
+                                error!("LLM error: {}", e);
+                                let msg = format!("LLM error: {}", e);
+                                let _ = status_tx_clone.send(msg);
                             }
                         }
-                        Err(e) => {
-                            error!("LLM error: {}", e);
-                            app.add_llm_message(format!("LLM error: {}", e));
-                        }
-                    }
+                    });
                 }
                 NetworkEvent::DataReceived { connection_id, data } => {
                     let formatted = format_data(&data, 80);
