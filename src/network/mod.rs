@@ -4,6 +4,7 @@
 
 pub mod connection;
 pub mod packet;
+pub mod server_trait;
 
 #[cfg(feature = "tcp")]
 pub mod tcp;
