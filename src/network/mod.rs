@@ -5,6 +5,7 @@
 pub mod connection;
 pub mod packet;
 pub mod server_trait;
+pub mod socket_helpers;
 
 #[cfg(feature = "tcp")]
 pub mod tcp;

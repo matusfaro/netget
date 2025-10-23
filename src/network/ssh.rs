@@ -6,7 +6,6 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
@@ -45,7 +44,7 @@ impl SshServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        let listener = TcpListener::bind(listen_addr).await?;
+        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("SSH server listening on {}", local_addr);
 
@@ -196,7 +195,7 @@ impl SshServer {
         status_tx: mpsc::UnboundedSender<String>,
         send_first: bool,
     ) -> Result<SocketAddr> {
-        let listener = TcpListener::bind(listen_addr).await?;
+        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("SSH server (action-based) listening on {}", local_addr);
 

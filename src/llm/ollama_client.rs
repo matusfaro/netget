@@ -7,6 +7,7 @@ use bytes::Bytes;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
 // Note: We still derive JsonSchema for development/testing purposes,
@@ -224,6 +225,7 @@ impl CommandInterpretation {
 #[derive(Clone)]
 pub struct OllamaClient {
     ollama: Ollama,
+    status_tx: Option<mpsc::UnboundedSender<String>>,
 }
 
 impl OllamaClient {
@@ -231,13 +233,19 @@ impl OllamaClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         let url_str = base_url.into();
         let ollama = Ollama::new(url_str.as_str(), 11434);
-        Self { ollama }
+        Self { ollama, status_tx: None }
     }
 
     /// Create a default client pointing to localhost
     pub fn default() -> Self {
         let ollama = Ollama::default();
-        Self { ollama }
+        Self { ollama, status_tx: None }
+    }
+
+    /// Set the status channel for sending trace logs to TUI
+    pub fn with_status_tx(mut self, status_tx: mpsc::UnboundedSender<String>) -> Self {
+        self.status_tx = Some(status_tx);
+        self
     }
 
     /// Generate a completion from the model with optional JSON schema
@@ -259,11 +267,24 @@ impl OllamaClient {
             prompt.len(),
             if format.is_some() { "JSON" } else { "text" }
         );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[DEBUG] LLM request: model={}, prompt_len={} chars",
+                model,
+                prompt.len()
+            ));
+        }
 
         // TRACE: Full payload
         trace!("Full LLM prompt:\n{}", prompt);
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!("[TRACE] LLM prompt:\n{}", prompt));
+        }
         if let Some(ref schema) = format {
             trace!("JSON schema:\n{}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string()));
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!("[TRACE] JSON schema:\n{}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())));
+            }
         }
 
         let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
@@ -287,12 +308,25 @@ impl OllamaClient {
             "LLM response: response_len={} chars",
             response.response.len()
         );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[DEBUG] LLM response: response_len={} chars",
+                response.response.len()
+            ));
+        }
 
         // TRACE: Full payload with pretty-printed JSON if possible
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.response) {
-            trace!("Full LLM response (JSON):\n{}", serde_json::to_string_pretty(&json).unwrap_or(response.response.clone()));
+            let pretty = serde_json::to_string_pretty(&json).unwrap_or(response.response.clone());
+            trace!("Full LLM response (JSON):\n{}", pretty);
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!("[TRACE] LLM response (JSON):\n{}", pretty));
+            }
         } else {
             trace!("Full LLM response (text):\n{}", response.response);
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!("[TRACE] LLM response (text):\n{}", response.response));
+            }
         }
 
         Ok(response.response)

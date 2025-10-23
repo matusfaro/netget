@@ -36,7 +36,19 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
         // Quit
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => Ok(true),
 
-        // Up/Down: Smart navigation in Input (history at edges, cursor movement inside), scrolling in Output
+        // Tab: Cycle through panels (Input → Output → ServerConnections → Input)
+        (KeyCode::Tab, m) if !m.contains(KeyModifiers::SHIFT) => {
+            app.toggle_focus();
+            Ok(false)
+        }
+
+        // 'E' key: Toggle expand/collapse when ServerConnections is focused
+        (KeyCode::Char('e'), _) | (KeyCode::Char('E'), _) if app.is_servers_focused() => {
+            app.toggle_expand_all();
+            Ok(false)
+        }
+
+        // Up/Down: Smart navigation based on focused panel
         (KeyCode::Up, m) if !m.contains(KeyModifiers::SHIFT) => {
             if app.is_input_focused() {
                 // If cursor is on first line, navigate to previous history
@@ -46,8 +58,10 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
                 } else {
                     app.move_cursor_up();
                 }
-            } else {
+            } else if app.is_output_focused() {
                 app.scroll_up(1);
+            } else if app.is_servers_focused() {
+                app.servers_scroll_up(1);
             }
             Ok(false)
         }
@@ -60,23 +74,37 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
                 } else {
                     app.move_cursor_down();
                 }
-            } else {
+            } else if app.is_output_focused() {
                 app.scroll_down(1);
+            } else if app.is_servers_focused() {
+                app.servers_scroll_down(1);
             }
             Ok(false)
         }
 
-        // Scrolling in output
+        // PageUp/PageDown: Scroll in focused scrollable panel
         (KeyCode::PageUp, _) => {
-            app.scroll_up(10);
+            if app.is_output_focused() {
+                app.scroll_up(10);
+            } else if app.is_servers_focused() {
+                app.servers_scroll_up(10);
+            }
             Ok(false)
         }
         (KeyCode::PageDown, _) => {
-            app.scroll_down(10);
+            if app.is_output_focused() {
+                app.scroll_down(10);
+            } else if app.is_servers_focused() {
+                app.servers_scroll_down(10);
+            }
             Ok(false)
         }
+
+        // Ctrl+G: Scroll to bottom in Output panel
         (KeyCode::Char('g'), m) if m.contains(KeyModifiers::CONTROL) => {
-            app.scroll_to_bottom();
+            if app.is_output_focused() {
+                app.scroll_to_bottom();
+            }
             Ok(false)
         }
 

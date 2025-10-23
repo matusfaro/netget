@@ -8,7 +8,7 @@
 pub enum BaseStack {
     /// Raw TCP/IP stack - LLM controls raw TCP data
     /// The LLM constructs entire protocol messages (FTP, HTTP, etc.) from scratch
-    TcpRaw,
+    Tcp,
 
     /// HTTP stack - Uses Rust HTTP library
     /// The LLM only controls HTTP responses (status, headers, body) based on requests
@@ -21,7 +21,7 @@ pub enum BaseStack {
 
     /// Raw UDP/IP stack - LLM controls raw UDP data
     /// Similar to TcpRaw but for UDP-based protocols
-    UdpRaw,
+    Udp,
 
     /// DNS stack - DNS server using hickory-dns
     /// The LLM generates DNS responses to queries (port 53)
@@ -52,16 +52,16 @@ impl BaseStack {
     /// Get the stack name as a string
     pub fn name(&self) -> &'static str {
         match self {
-            Self::TcpRaw => "TCP/IP (Raw)",
-            Self::Http => "HTTP",
-            Self::DataLink => "Data Link (Layer 2)",
-            Self::UdpRaw => "UDP/IP (Raw)",
-            Self::Dns => "DNS",
-            Self::Dhcp => "DHCP",
-            Self::Ntp => "NTP",
-            Self::Snmp => "SNMP",
-            Self::Ssh => "SSH",
-            Self::Irc => "IRC",
+            Self::Tcp => "ETH>IP>TCP",
+            Self::Http => "ETH>IP>TCP>HTTP",
+            Self::DataLink => "ETH",
+            Self::Udp => "ETH>IP>UDP",
+            Self::Dns => "ETH>IP>UDP>DNS",
+            Self::Dhcp => "ETH>IP>UDP>DHCP",
+            Self::Ntp => "ETH>IP>UDP>NTP",
+            Self::Snmp => "ETH>IP>UDP>SNMP",
+            Self::Ssh => "ETH>IP>TCP>SSH",
+            Self::Irc => "ETH>IP>TCP>IRC",
         }
     }
 
@@ -110,7 +110,7 @@ impl BaseStack {
         // UDP raw stack
         #[cfg(feature = "udp")]
         if s_lower.contains("udp") {
-            return Some(Self::UdpRaw);
+            return Some(Self::Udp);
         }
 
         // Data Link stack indicators
@@ -140,7 +140,7 @@ impl BaseStack {
             || s_lower.contains("raw")
             || s_lower.contains("ftp")
             || s_lower.contains("custom") {
-            return Some(Self::TcpRaw);
+            return Some(Self::Tcp);
         }
 
         // Default to TCP/IP raw for backwards compatibility (if available)
@@ -156,7 +156,7 @@ impl BaseStack {
 
     /// Get default base stack
     pub fn default() -> Self {
-        Self::TcpRaw
+        Self::Tcp
     }
 
     /// Get list of available base stacks based on compiled features
@@ -215,15 +215,15 @@ mod tests {
 
     #[test]
     fn test_parse_tcp_stack() {
-        assert_eq!(BaseStack::from_str("tcp"), Some(BaseStack::TcpRaw));
-        assert_eq!(BaseStack::from_str("raw tcp"), Some(BaseStack::TcpRaw));
-        assert_eq!(BaseStack::from_str("ftp"), Some(BaseStack::TcpRaw));
+        assert_eq!(BaseStack::from_str("tcp"), Some(BaseStack::Tcp));
+        assert_eq!(BaseStack::from_str("raw tcp"), Some(BaseStack::Tcp));
+        assert_eq!(BaseStack::from_str("ftp"), Some(BaseStack::Tcp));
     }
 
     #[test]
     fn test_parse_udp_stack() {
-        assert_eq!(BaseStack::from_str("udp"), Some(BaseStack::UdpRaw));
-        assert_eq!(BaseStack::from_str("via udp"), Some(BaseStack::UdpRaw));
+        assert_eq!(BaseStack::from_str("udp"), Some(BaseStack::Udp));
+        assert_eq!(BaseStack::from_str("via udp"), Some(BaseStack::Udp));
     }
 
     #[test]

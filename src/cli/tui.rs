@@ -69,6 +69,15 @@ pub async fn run_tui(
     // Create tick interval for UI updates
     let mut tick_interval = interval(Duration::from_millis(100));
 
+    // Cleanup configuration constants
+    const CLEANUP_INTERVAL_SECS: u64 = 5;
+    const SERVER_CLEANUP_TIMEOUT_SECS: u64 = 30;
+    const CONNECTION_CLEANUP_TIMEOUT_SECS: u64 = 10;
+    const CONNECTIONLESS_CLEANUP_TIMEOUT_SECS: u64 = 10;
+
+    // Create cleanup interval (runs every 5 seconds to clean up old servers/connections)
+    let mut cleanup_interval = interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+
     // Main event loop
     info!("Entering main event loop");
     loop {
@@ -79,10 +88,11 @@ pub async fn run_tui(
         }
 
         // Drain status messages from spawned tasks
+        let mut ui_needs_update = false;
         while let Ok(msg) = status_rx.try_recv() {
             if msg == "__UPDATE_UI__" {
-                // Special signal to update UI from state
-                update_ui_from_state(&mut app, &state).await;
+                // Special signal to update UI from state (drain all duplicates)
+                ui_needs_update = true;
             } else if msg.starts_with("__STATS_SENT__") {
                 // Special signal to update sent bytes stats
                 if let Ok(bytes) = msg.strip_prefix("__STATS_SENT__").unwrap().parse::<u64>() {
@@ -113,6 +123,11 @@ pub async fn run_tui(
             }
         }
 
+        // Update UI once after draining all messages
+        if ui_needs_update {
+            update_ui_from_state(&mut app, &state).await;
+        }
+
         tracing::debug!("Starting select");
         tokio::select! {
             // Keyboard events
@@ -139,6 +154,16 @@ pub async fn run_tui(
             // Periodic tick for UI updates
             _ = tick_interval.tick() => {
                 // Just triggers redraw
+            }
+
+            // Periodic cleanup of old servers and connections
+            _ = cleanup_interval.tick() => {
+                // Clean up stopped/error servers
+                state.cleanup_old_servers(SERVER_CLEANUP_TIMEOUT_SECS).await;
+                // Clean up closed connections
+                state.cleanup_closed_connections(CONNECTION_CLEANUP_TIMEOUT_SECS).await;
+                // Clean up old connectionless protocol entries
+                state.cleanup_old_connections(CONNECTIONLESS_CLEANUP_TIMEOUT_SECS).await;
             }
         }
     }
@@ -263,11 +288,20 @@ async fn update_ui_from_state(app: &mut App, state: &AppState) {
     }).collect();
 
     // Update connection list (aggregate from all servers)
+    // Use global connection IDs from the app's counter
     app.connections = servers.iter().flat_map(|s| {
-        s.connections.values().map(|conn| ConnectionDisplayInfo {
-            id: conn.id.to_string(),
-            address: conn.remote_addr.to_string(),
-            state: format!("S{}", s.id.as_u32()), // Show which server it belongs to
+        s.connections.values().map(|conn| {
+            let network_conn_id = conn.id.to_string();
+            let global_id = app.get_or_allocate_connection_id(network_conn_id);
+            ConnectionDisplayInfo {
+                id: global_id,
+                server_id: format!("#{}", s.id.as_u32()),
+                address: conn.remote_addr.to_string(),
+                state: match conn.status {
+                    crate::state::server::ConnectionStatus::Active => "Active".to_string(),
+                    crate::state::server::ConnectionStatus::Closed => "Closed".to_string(),
+                },
+            }
         }).collect::<Vec<_>>()
     }).collect();
 

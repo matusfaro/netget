@@ -21,33 +21,23 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Constrain input height: minimum 3 lines, maximum 12 lines, +2 for borders
     let input_height = input_lines.max(3).min(12) + 2;
 
-    // Server/connections panel height (fixed)
-    let info_height = 8;
+    // Calculate server/connections panel height (dynamic 5-15 lines)
+    let info_height = calculate_servers_height(app);
 
     // Create main vertical layout
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(input_height),     // Input area (dynamic, 3-12 lines)
-            Constraint::Length(info_height),      // Server/Connections info (fixed 8 lines)
+            Constraint::Length(info_height),      // Server/Connections info (dynamic 5-15 lines)
             Constraint::Min(10),                  // Output (takes remaining space)
             Constraint::Length(1),                // Status bar
         ])
         .split(size);
 
-    // Split the info area horizontally for servers and connections
-    let info_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),  // Servers panel (left half)
-            Constraint::Percentage(50),  // Connections panel (right half)
-        ])
-        .split(main_chunks[1]);
-
     // Render all panels
     render_input(f, app, main_chunks[0]);
-    render_servers(f, app, info_chunks[0]);
-    render_connections(f, app, info_chunks[1]);
+    render_servers_and_connections(f, app, main_chunks[1]);
     render_output(f, app, main_chunks[2]);
     render_status(f, app, main_chunks[3]);
 
@@ -235,19 +225,72 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(status, area);
 }
 
-/// Render the servers panel
-fn render_servers(f: &mut Frame, app: &App, area: Rect) {
-    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
-    let title_style = Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD);
+/// Calculate height needed for servers/connections panel (5-15 lines + 2 for borders)
+fn calculate_servers_height(app: &App) -> u16 {
+    if app.servers.is_empty() {
+        return 7; // Minimum: 5 lines + 2 borders
+    }
 
-    // Get server list from app
-    let server_lines: Vec<Line> = if app.servers.is_empty() {
-        vec![Line::from(Span::styled(
+    let mut total_lines = 0;
+
+    for server in &app.servers {
+        // Each server takes 1 line
+        total_lines += 1;
+
+        // Count connections for this server
+        let server_connections: Vec<_> = app.connections.iter()
+            .filter(|c| c.server_id == server.id)
+            .collect();
+
+        if !server_connections.is_empty() {
+            if app.expand_all_connections {
+                // Show all connections
+                total_lines += server_connections.len();
+            } else {
+                // Show max 3 connections + "..." line if more
+                let conn_count = server_connections.len();
+                total_lines += conn_count.min(3);
+                if conn_count > 3 {
+                    total_lines += 1; // "..." line
+                }
+            }
+        }
+    }
+
+    // Constrain to 5-15 lines (+ 2 for borders)
+    let content_lines = total_lines.max(5).min(15);
+    (content_lines + 2) as u16
+}
+
+/// Render the combined servers and connections panel with hierarchical display
+fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
+    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
+
+    // Update title based on focus
+    let (title, title_style) = if app.is_servers_focused() {
+        let expand_hint = if app.expand_all_connections { "[E: collapse]" } else { "[E: expand]" };
+        (
+            format!("Servers & Connections {} | ↑↓: scroll", expand_hint),
+            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        )
+    } else {
+        (
+            "Servers & Connections [Tab to focus]".to_string(),
+            Style::default().bg(Color::Blue).fg(Color::Cyan)
+        )
+    };
+
+    // Build hierarchical list
+    let mut lines: Vec<Line> = Vec::new();
+
+    if app.servers.is_empty() {
+        lines.push(Line::from(Span::styled(
             "No servers running",
             Style::default().fg(Color::DarkGray)
-        ))]
+        )));
     } else {
-        app.servers.iter().map(|server| {
+        for server in &app.servers {
+            // Server line
             let status_color = match server.status.as_str() {
                 "Running" => Color::Green,
                 "Starting" => Color::Yellow,
@@ -256,7 +299,7 @@ fn render_servers(f: &mut Frame, app: &App, area: Rect) {
                 _ => Color::White,
             };
 
-            Line::from(vec![
+            lines.push(Line::from(vec![
                 Span::styled(
                     format!("#{} ", server.id),
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
@@ -275,68 +318,72 @@ fn render_servers(f: &mut Frame, app: &App, area: Rect) {
                     server.status.as_str(),
                     Style::default().fg(status_color)
                 ),
-            ])
-        }).collect()
-    };
+            ]));
 
-    let text = Text::from(server_lines);
+            // Connection lines (indented under server)
+            let server_connections: Vec<_> = app.connections.iter()
+                .filter(|c| c.server_id == server.id)
+                .collect();
+
+            if !server_connections.is_empty() {
+                let max_to_show = if app.expand_all_connections {
+                    server_connections.len()
+                } else {
+                    3
+                };
+
+                for conn in server_connections.iter().take(max_to_show) {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),  // Indentation
+                        Span::styled(
+                            format!("#{}", conn.id),
+                            Style::default().fg(Color::LightCyan)
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            &conn.address,
+                            Style::default().fg(Color::White)
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            &conn.state,
+                            Style::default().fg(Color::DarkGray)
+                        ),
+                    ]));
+                }
+
+                // Show "..." if there are more connections
+                if !app.expand_all_connections && server_connections.len() > 3 {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("... ({} more)", server_connections.len() - 3),
+                            Style::default().fg(Color::DarkGray)
+                        ),
+                    ]));
+                }
+            }
+        }
+    }
+
+    // Calculate scrolling
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let total_lines = lines.len();
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    let scroll_offset = app.servers_scroll_offset.min(max_scroll);
+
+    let text = Text::from(lines);
     let paragraph = Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled("Servers", title_style))
+                .title(Span::styled(title, title_style))
                 .border_style(border_style)
                 .style(Style::default().bg(Color::Blue).fg(Color::White))
         )
         .style(Style::default().bg(Color::Blue).fg(Color::White))
-        .wrap(Wrap { trim: false });
-
-    f.render_widget(paragraph, area);
-}
-
-/// Render the connections panel
-fn render_connections(f: &mut Frame, app: &App, area: Rect) {
-    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
-    let title_style = Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD);
-
-    // Get connection list from app
-    let connection_lines: Vec<Line> = if app.connections.is_empty() {
-        vec![Line::from(Span::styled(
-            "No connections",
-            Style::default().fg(Color::DarkGray)
-        ))]
-    } else {
-        app.connections.iter().take(6).map(|conn| {  // Show max 6 connections
-            Line::from(vec![
-                Span::styled(
-                    &conn.id,
-                    Style::default().fg(Color::Cyan)
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    &conn.address,
-                    Style::default().fg(Color::White)
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    &conn.state,
-                    Style::default().fg(Color::LightCyan)
-                ),
-            ])
-        }).collect()
-    };
-
-    let text = Text::from(connection_lines);
-    let paragraph = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled("Connections", title_style))
-                .border_style(border_style)
-                .style(Style::default().bg(Color::Blue).fg(Color::White))
-        )
-        .style(Style::default().bg(Color::Blue).fg(Color::White))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_offset as u16, 0));
 
     f.render_widget(paragraph, area);
 }

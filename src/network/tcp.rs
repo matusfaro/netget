@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
@@ -304,7 +304,7 @@ impl TcpServer {
         send_first: bool,
     ) -> Result<SocketAddr> {
         // Create and bind TCP server
-        let listener = TcpListener::bind(listen_addr).await?;
+        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("TCP server listening on {}", local_addr);
 
@@ -427,9 +427,10 @@ impl TcpServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         send_first: bool,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         // Create and bind TCP server
-        let listener = TcpListener::bind(listen_addr).await?;
+        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("TCP server (action-based) listening on {}", local_addr);
 
@@ -442,11 +443,35 @@ impl TcpServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new();
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("Accepted connection {} from {}", connection_id, remote_addr);
 
                         // Split stream
                         let (read_half, write_half) = tokio::io::split(stream);
                         let write_half_arc = Arc::new(Mutex::new(write_half));
+
+                        // Add connection to ServerInstance
+                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ProtocolState, ConnectionStatus};
+                        let now = std::time::Instant::now();
+                        let conn_state = ServerConnectionState {
+                            id: connection_id,
+                            remote_addr,
+                            local_addr: local_addr_conn,
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            packets_sent: 0,
+                            packets_received: 0,
+                            last_activity: now,
+                            status: ConnectionStatus::Active,
+                            status_changed_at: now,
+                            protocol_info: ProtocolConnectionInfo::Tcp {
+                                write_half: write_half_arc.clone(),
+                                state: ProtocolState::Idle,
+                                queued_data: Vec::new(),
+                            },
+                        };
+                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Handle connection (send data first if needed)
                         let llm_client_clone = llm_client.clone();
@@ -483,7 +508,9 @@ impl TcpServer {
                                     Ok(0) => {
                                         // Connection closed
                                         connections_clone.lock().await.remove(&connection_id);
+                                        app_state_clone.close_connection_on_server(server_id, connection_id).await;
                                         let _ = status_tx_clone.send(format!("✗ Connection {} closed", connection_id));
+                                        let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }
                                     Ok(n) => {

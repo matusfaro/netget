@@ -116,7 +116,7 @@ async fn execute_common_action(
             warn!("open_server action cannot be executed by action executor - must be handled by caller");
         }
 
-        CommonAction::CloseServer => {
+        CommonAction::CloseServer { .. } => {
             // This should be handled by the caller
             warn!("close_server action cannot be executed by action executor - must be handled by caller");
         }
@@ -168,7 +168,7 @@ pub fn extract_server_management_actions(
             if let Ok(common_action) = CommonAction::from_json(action) {
                 match common_action {
                     CommonAction::OpenServer { .. }
-                    | CommonAction::CloseServer
+                    | CommonAction::CloseServer { .. }
                     | CommonAction::UpdateInstruction { .. }
                     | CommonAction::ChangeModel { .. } => Some(common_action),
                     _ => None,

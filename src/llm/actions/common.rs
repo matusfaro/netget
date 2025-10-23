@@ -28,8 +28,11 @@ pub enum CommonAction {
         instruction: String,
     },
 
-    /// Close the current server
-    CloseServer,
+    /// Close a server (closes all if server_id not specified)
+    CloseServer {
+        #[serde(default)]
+        server_id: Option<u32>,
+    },
 
     /// Update the server instruction (combines with existing)
     UpdateInstruction {
