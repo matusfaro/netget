@@ -1,6 +1,9 @@
 //! Setup utilities for logging and terminal initialization
 
 use anyhow::Result;
+use crossterm::event::{
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
 use std::io;
@@ -42,14 +45,29 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
 pub fn init_terminal() -> Result<TerminalGuard> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
-    Ok(TerminalGuard)
+
+    // Enable keyboard enhancement flags for better modifier detection
+    // This allows terminals to properly report Shift+Enter, Alt+Enter, etc.
+    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+
+    // Try to enable enhanced keyboard support (not all terminals support this)
+    let enhanced_supported = execute!(io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok();
+
+    Ok(TerminalGuard { enhanced_supported })
 }
 
 /// Guard to ensure terminal cleanup happens
-pub struct TerminalGuard;
+pub struct TerminalGuard {
+    enhanced_supported: bool,
+}
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if self.enhanced_supported {
+            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+        }
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
     }

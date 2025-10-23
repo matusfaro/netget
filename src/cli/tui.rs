@@ -179,7 +179,29 @@ async fn handle_keyboard_event(
                     return Ok(false);
                 }
 
-                KeyCode::Enter if app.is_input_focused() && !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                // Any modifier + N inserts a newline (Ctrl+N, Alt+N, Cmd+N, etc.) - except Shift alone
+                // More mnemonic than Ctrl+O and works reliably across all terminals
+                KeyCode::Char('n') | KeyCode::Char('N') if app.is_input_focused() && {
+                    let mods = key.modifiers;
+                    !mods.is_empty() && mods != KeyModifiers::SHIFT
+                } => {
+                    app.insert_newline();
+                    return Ok(false);
+                }
+
+                // Shift+Enter, Alt+Enter, or Ctrl+Enter inserts a newline (for terminals that support it)
+                // Note: Many terminals don't report modifiers with Enter key
+                KeyCode::Enter if app.is_input_focused() && (
+                    key.modifiers.contains(KeyModifiers::SHIFT) ||
+                    key.modifiers.contains(KeyModifiers::ALT) ||
+                    key.modifiers.contains(KeyModifiers::CONTROL)
+                ) => {
+                    app.insert_newline();
+                    return Ok(false);
+                }
+
+                // Plain Enter submits the form
+                KeyCode::Enter if app.is_input_focused() => {
                     let input = app.submit_input();
                     if !input.is_empty() {
                         app.add_status_message(format!("[USER] {}", input));
