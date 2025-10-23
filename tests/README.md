@@ -1,313 +1,310 @@
-# NetGet Integration Tests
+# NetGet End-to-End Tests
 
-## Overview
-
-This directory contains **integration tests** for NetGet that test the full system including:
-- TCP/IP stack
-- LLM integration with Ollama
-- Protocol implementations (FTP, HTTP, etc.)
-- Real network clients
-
-## Rust Integration Test Structure
-
-In Rust, any test file in the `tests/` directory is automatically an **integration test**:
-
-```
-netget/
-├── src/           # Library code
-├── tests/         # Integration tests (separate binary)
-│   └── ftp_integration_test.rs
-└── Cargo.toml
-```
-
-**Key differences from unit tests:**
-
-| Unit Tests | Integration Tests |
-|------------|-------------------|
-| In `src/` with `#[cfg(test)]` | In `tests/` directory |
-| Test internal functions | Test public API only |
-| Part of library binary | Separate test binary |
-| Fast, isolated | Slower, full system |
-
-Our integration tests use the **public API** (`use netget::*`) just like external users would.
+This directory contains comprehensive end-to-end tests for all NetGet protocols. Tests spawn the actual NetGet binary and validate responses using real protocol client libraries.
 
 ## Test Files
 
-- `ftp_integration_test.rs` - FTP protocol integration tests using real FTP client
+| File | Tests | Client Library | Requires Root |
+|------|-------|----------------|---------------|
+| `e2e_tcp_test.rs` | 3 | suppaftp, raw TCP | No |
+| `e2e_http_test.rs` | 6 | reqwest | No |
+| `e2e_udp_test.rs` | 1 | raw UDP | No |
+| `e2e_dns_test.rs` | 4 | hickory-client | No |
+| `e2e_dhcp_test.rs` | 3 | manual DHCP packets | No |
+| `e2e_ntp_test.rs` | 4 | rsntp | No |
+| `e2e_snmp_test.rs` | 4 | snmp library, snmpget | No |
+| `e2e_ssh_test.rs` | 4 | ssh2 | No |
+| `e2e_irc_test.rs` | 5 | raw IRC protocol | No |
+| `e2e_datalink_test.rs` | 2 | pcap, arping | **YES** |
 
-## Prerequisites
-
-### Required for Integration Tests
-
-1. **Ollama must be running**:
-   ```bash
-   ollama serve
-   ```
-
-2. **A model must be installed**:
-   ```bash
-   ollama pull llama3.2:latest
-   ```
-
-3. **Available ports**: Tests use ports 21212, 21213, etc. (high ports to avoid conflicts)
+**Total:** 10 test files, 36 tests
 
 ## Running Tests
 
-### Unit Tests Only (no Ollama required)
+### Prerequisites
 
-```bash
-# Run only unit tests (in src/)
-cargo test --lib
-```
-
-This runs simple parsing tests that don't require the server or LLM.
-
-### Integration Tests (requires Ollama)
-
-**IMPORTANT**: Integration tests require Ollama to be running!
-
-**Run all tests (unit + integration):**
-```bash
-# Make sure Ollama is running first!
-ollama serve
-
-# In another terminal:
-cargo test
-```
-
-**Run only integration tests:**
-```bash
-cargo test --test ftp_integration_test
-```
-
-**Run specific integration test:**
-```bash
-cargo test test_ftp_server_basic_commands
-cargo test test_ftp_server_file_retrieval
-```
-
-### Without Ollama
-
-If Ollama is not running, integration tests will **fail** with connection errors. This is expected! To run only unit tests:
-
-```bash
-cargo test --lib
-```
-
-### Parallel Execution
-
-**Note**: Use `--test-threads=1` to avoid port conflicts:
-
-```bash
-cargo test -- --test-threads=1
-```
-
-## Test Descriptions
-
-### `test_user_command_parsing` (Unit Test)
-- **Location**: `tests/ftp_integration_test.rs` (but a unit test)
-- **Requires Ollama**: ❌ No
-- **Description**: Tests command parsing logic
-- **Verifies**:
-  - "listen on port 21 via ftp" → `Listen { port: 21, protocol: Ftp }`
-  - "listen on port 80 via http" → `Listen { port: 80, protocol: Http }`
-  - "close" → `Close`
-  - "status" → `Status`
-  - "model deepseek-coder:latest" → `ChangeModel { model: "..." }`
-
-### `test_ftp_server_basic_commands` (Integration Test)
-- **Location**: `tests/ftp_integration_test.rs`
-- **Requires Ollama**: ✅ Yes
-- **Port**: 21212
-- **Description**: Tests basic FTP protocol with real FTP client
-- **Verifies**:
-  - Server starts and binds to port
-  - TCP listener accepts connections
-  - FTP client can connect
-  - LLM generates FTP welcome message
-  - LOGIN command works (USER/PASS)
-  - PWD command works
-  - TYPE command works
-  - Clean connection teardown
-
-### `test_ftp_server_file_retrieval` (Integration Test)
-- **Location**: `tests/ftp_integration_test.rs`
-- **Requires Ollama**: ✅ Yes
-- **Port**: 21213
-- **Description**: Tests file serving via FTP protocol
-- **Verifies**:
-  - Server serves configured file (data.txt with content "hello")
-  - LIST command returns file listing
-  - LLM generates proper file listing format
-  - File appears in directory listing with correct name
-
-## How Tests Work
-
-### 1. Server Setup
-
-```rust
-let state = AppState::new();
-state.set_mode(Mode::Server).await;
-state.set_protocol_type(ProtocolType::Ftp).await;
-state.add_instruction("Serve file data.txt with content: hello").await;
-```
-
-The test configures NetGet to:
-- Run as FTP server
-- Serve a file named `data.txt`
-- File content is "hello"
-
-### 2. Server Start
-
-```rust
-let mut tcp_server = TcpServer::new(network_tx);
-tcp_server.listen("127.0.0.1:21212").await;
-```
-
-TCP server binds to localhost on test port.
-
-### 3. LLM Event Processing
-
-When the FTP client sends commands:
-1. NetGet receives the data
-2. Sends it to Ollama LLM
-3. LLM generates appropriate FTP response (e.g., "220 FTP Server Ready")
-4. NetGet sends response back to client
-
-### 4. FTP Client Verification
-
-```rust
-let mut ftp_stream = suppaftp::FtpStream::connect("127.0.0.1:21212")?;
-ftp_stream.login("anonymous", "test@example.com")?;
-let path = ftp_stream.pwd()?;
-```
-
-Uses `suppaftp` crate to connect as a real FTP client and verify responses.
-
-## Troubleshooting
-
-### "Failed to connect to Ollama"
-
-```
-Error: Failed to connect to Ollama at http://localhost:11434
-```
-
-**Solution**: Start Ollama:
-```bash
-ollama serve
-```
-
-### "Model not found"
-
-```
-Error: Model llama3.2:latest not found
-```
-
-**Solution**: Pull the model:
-```bash
-ollama pull llama3.2:latest
-```
-
-### "Address already in use"
-
-```
-Error: Address already in use (os error 48)
-```
-
-**Solution**:
-1. Another test is still running (use `--test-threads=1`)
-2. Port conflict with another process:
+1. **Build the release binary** (required for all tests):
    ```bash
-   lsof -i :21212
-   kill -9 <PID>
+   cargo build --release
    ```
 
-### Tests timeout or hang
+2. **Start Ollama with a model**:
+   ```bash
+   ollama serve
+   ollama pull qwen3-coder:30b  # or your preferred model
+   ```
 
-**Possible causes**:
-- Ollama is slow (first request can take 10+ seconds)
-- Model is too large
-- Network latency
+3. **Install protocol tools** (optional, for better coverage):
+   ```bash
+   # macOS
+   brew install arping net-snmp
 
-**Solution**:
-- Use a smaller/faster model
-- Increase test timeout in code
-- Check Ollama logs: `journalctl -u ollama -f`
+   # Linux
+   sudo apt-get install arping snmp
+   ```
 
-### LLM generates incorrect responses
+### Running All Non-Privileged Tests
 
-**This is expected behavior!** The LLM might not perfectly implement FTP protocol.
+Most tests can run without elevated privileges:
 
-Tests are designed to be tolerant of LLM variations:
-- They test basic connectivity, not perfect protocol compliance
-- Real-world use would require prompt engineering for production use
-
-## Adding New Tests
-
-### Example: HTTP Integration Test
-
-```rust
-#[tokio::test]
-#[ignore]
-async fn test_http_server() {
-    let state = AppState::new();
-    state.set_mode(Mode::Server).await;
-    state.set_protocol_type(ProtocolType::Http).await;
-    state.add_instruction("Serve HTML with 'Hello World'").await;
-
-    // Start server on port 8080...
-
-    // Use HTTP client
-    let response = reqwest::get("http://127.0.0.1:8080").await?;
-    assert!(response.status().is_success());
-    let body = response.text().await?;
-    assert!(body.contains("Hello World"));
-}
+```bash
+cargo test --features e2e-tests
 ```
 
-## CI/CD Integration
+### Running Privileged Tests (DataLink)
 
-### GitHub Actions Example
+DataLink tests require raw packet capture access. There are several approaches:
+
+#### Option 1: Run with sudo (macOS/Linux)
+
+```bash
+# Run only DataLink tests with sudo
+sudo -E cargo test --test e2e_datalink_test --features e2e-tests
+
+# The -E flag preserves environment variables (like PATH, CARGO_HOME)
+```
+
+**Pros:**
+- Simple, works on all platforms
+- Full packet capture access
+
+**Cons:**
+- Requires password entry
+- Runs cargo with root (security risk)
+- May create root-owned files in target/
+
+#### Option 2: Wireshark pcap Group (macOS/Linux with Wireshark - EASIEST)
+
+If you have Wireshark installed, you likely already have a special group for packet capture:
+
+```bash
+# Check if you're in the pcap/wireshark group
+groups | grep -E 'wireshark|pcap'
+
+# If not, add yourself (Linux)
+sudo usermod -a -G wireshark $USER
+
+# If not, add yourself (macOS - may be 'access_bpf')
+sudo dseditgroup -o edit -a $USER -t user access_bpf
+
+# Log out and back in for group changes to take effect
+# Then run tests normally - no sudo needed!
+cargo test --test e2e_datalink_test --features e2e-tests
+```
+
+**Pros:**
+- No sudo needed for test execution
+- Group membership persists across reboots
+- No need to re-apply after rebuilds
+- Works on both macOS and Linux with Wireshark
+
+**Cons:**
+- Requires Wireshark to be installed
+- Requires logout/login after adding to group (one-time)
+
+#### Option 3: Linux Capabilities (Linux only)
+
+Grant specific capabilities to the test binary without full root:
+
+```bash
+# Build the test binary first
+cargo test --test e2e_datalink_test --features e2e-tests --no-run
+
+# Find the test binary
+TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
+
+# Grant packet capture capability
+sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
+
+# Now run without sudo
+cargo test --test e2e_datalink_test --features e2e-tests
+```
+
+**Pros:**
+- No sudo needed for test execution
+- Least privilege principle (only packet access, not full root)
+- More secure than full sudo
+
+**Cons:**
+- Linux only
+- Capability needs to be re-applied after each rebuild
+- Requires initial sudo to set capabilities
+
+#### Option 4: Automation Script (RECOMMENDED)
+
+Create a helper script for privileged tests:
+
+```bash
+#!/bin/bash
+# run_privileged_tests.sh
+
+set -e
+
+echo "Building test binary..."
+cargo test --test e2e_datalink_test --features e2e-tests --no-run
+
+# Linux: Use capabilities
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    echo "Granting capabilities (Linux)..."
+    TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
+    sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
+
+    echo "Running privileged tests without sudo..."
+    cargo test --test e2e_datalink_test --features e2e-tests
+
+# macOS: Use sudo
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "Running with sudo (macOS)..."
+    sudo -E cargo test --test e2e_datalink_test --features e2e-tests
+
+else
+    echo "Unsupported OS: $OSTYPE"
+    exit 1
+fi
+
+echo "✓ Privileged tests completed"
+```
+
+Make it executable:
+```bash
+chmod +x run_privileged_tests.sh
+./run_privileged_tests.sh
+```
+
+#### Option 5: Separate CI/CD Workflow
+
+For CI/CD systems, create a separate workflow for privileged tests:
 
 ```yaml
-name: Tests
+# .github/workflows/e2e-privileged.yml
+name: E2E Privileged Tests
 
 on: [push, pull_request]
 
 jobs:
-  test:
+  datalink-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
-      - name: Install Ollama
+      - name: Build binary
+        run: cargo build --release
+
+      - name: Start Ollama
         run: |
           curl https://ollama.ai/install.sh | sh
           ollama serve &
           sleep 5
+          ollama pull qwen3-coder:30b
 
-      - name: Pull Model
-        run: ollama pull llama3.2:latest
-
-      - name: Run Unit Tests
-        run: cargo test
-
-      - name: Run Integration Tests
-        run: cargo test -- --ignored --test-threads=1
+      - name: Run privileged tests
+        run: |
+          cargo test --test e2e_datalink_test --features e2e-tests --no-run
+          TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
+          sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
+          cargo test --test e2e_datalink_test --features e2e-tests
 ```
 
-## Performance Notes
+### Running Individual Protocol Tests
 
-- **Integration tests are slow**: LLM calls take 1-10 seconds each
-- **First test is slowest**: Ollama loads model on first request
-- **Use smaller models for tests**: `ollama pull llama3.2:1b` for faster tests
-- **Mock LLM for unit tests**: Consider mocking LLM for faster unit testing
+Run tests for specific protocols:
 
-## Future Improvements
+```bash
+# DNS tests
+cargo test --test e2e_dns_test --features e2e-tests
 
-- [ ] Mock LLM client for fast unit tests
-- [ ] Test helpers for common setup
-- [ ] Snapshot testing for LLM responses
-- [ ] Performance benchmarks
-- [ ] Parallel test execution (with port management)
-- [ ] Docker container for consistent test environment
+# HTTP tests
+cargo test --test e2e_http_test --features e2e-tests
+
+# SSH tests
+cargo test --test e2e_ssh_test --features e2e-tests
+
+# IRC tests
+cargo test --test e2e_irc_test --features e2e-tests
+
+# etc.
+```
+
+### Running Specific Tests
+
+Run individual test functions:
+
+```bash
+cargo test --test e2e_dns_test --features e2e-tests test_dns_a_record_query
+cargo test --test e2e_http_test --features e2e-tests test_http_json_api
+```
+
+## Test Structure
+
+All e2e tests follow the same pattern:
+
+1. **PROMPT**: Define what the LLM should do
+2. **Start Server**: Spawn NetGet binary with the prompt
+3. **VALIDATION**: Use real protocol client library to test
+4. **Cleanup**: Stop server
+
+Example:
+```rust
+#[tokio::test]
+async fn test_dns_a_record_query() -> E2EResult<()> {
+    // PROMPT: Tell LLM to act as DNS server
+    let port = helpers::get_available_port().await?;
+    let prompt = format!("listen on port {} via dns. Respond to A queries with 1.2.3.4", port);
+
+    // Start server
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+
+    // VALIDATION: Use hickory-client to query
+    let client = SyncClient::new(UdpClientConnection::new(address)?);
+    let response = client.query(&name, DNSClass::IN, RecordType::A)?;
+    assert!(!response.answers().is_empty());
+
+    // Cleanup
+    server.stop().await?;
+    Ok(())
+}
+```
+
+## Troubleshooting
+
+### Tests timeout
+- Ensure Ollama is running: `ollama serve`
+- Check model is available: `ollama list`
+- Increase timeout in test if LLM is slow
+
+### Permission denied (DataLink tests)
+- Use one of the privileged test approaches above
+- Ensure you have admin/root access on the system
+
+### Port already in use
+- Tests use dynamic port allocation (port 0)
+- If still failing, check for zombie processes: `pkill netget`
+
+### Test fails with "binary not found"
+- Build the release binary first: `cargo build --release`
+- Check it exists: `ls -la target/release/netget`
+
+### Capability persists after rebuild (Linux)
+- Capabilities are removed when binary is modified
+- Re-run `setcap` command after each `cargo build`
+- Use the automation script to handle this automatically
+
+## Best Practices
+
+1. **Always build release binary first** - Tests spawn the actual binary
+2. **Use debug logging for failing tests** - Add `.with_log_level("debug")` to ServerConfig
+3. **Run non-privileged tests frequently** - They're safe and fast
+4. **Run privileged tests separately** - Use the automation script or CI/CD
+5. **Don't run cargo with sudo unless necessary** - Prefer capabilities on Linux
+6. **Clean up zombie processes** - Kill any hanging netget processes between test runs
+
+## Contributing
+
+When adding new protocol tests:
+
+1. Create a new `e2e_<protocol>_test.rs` file
+2. Use a proper protocol client library (not raw bytes)
+3. Follow the existing test pattern (prompt → spawn → validate → cleanup)
+4. Add at least 3-4 tests covering different protocol features
+5. Document if the test requires special privileges
+6. Update this README with the new test file
