@@ -4,6 +4,7 @@
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
+use tui_textarea::Input;
 
 /// UI events that can occur
 #[derive(Debug, Clone)]
@@ -35,65 +36,33 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
         // Quit
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => Ok(true),
 
-        // Newline (Shift+Enter) - only in input mode
-        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) && app.is_input_focused() => {
-            app.enter_char('\n');
-            Ok(false)
-        }
-
-        // Submit (Enter) - only in input mode
-        (KeyCode::Enter, _) if app.is_input_focused() => {
-            // Input will be handled by the main event loop
-            Ok(false)
-        }
-
-        // Up/Down: History navigation in Input, scrolling in Output
-        (KeyCode::Up, _) => {
+        // Up/Down: Smart navigation in Input (history at edges, cursor movement inside), scrolling in Output
+        (KeyCode::Up, m) if !m.contains(KeyModifiers::SHIFT) => {
             if app.is_input_focused() {
-                app.history_previous();
+                // If cursor is on first line, navigate to previous history
+                // Otherwise, move cursor up within the text
+                if app.is_cursor_on_first_line() {
+                    app.history_previous();
+                } else {
+                    app.move_cursor_up();
+                }
             } else {
                 app.scroll_up(1);
             }
             Ok(false)
         }
-        (KeyCode::Down, _) => {
+        (KeyCode::Down, m) if !m.contains(KeyModifiers::SHIFT) => {
             if app.is_input_focused() {
-                app.history_next();
+                // If cursor is on last line, navigate to next history
+                // Otherwise, move cursor down within the text
+                if app.is_cursor_on_last_line() {
+                    app.history_next();
+                } else {
+                    app.move_cursor_down();
+                }
             } else {
                 app.scroll_down(1);
             }
-            Ok(false)
-        }
-
-        // Shell-like keybindings - only in input mode
-        (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
-            app.move_cursor_start();
-            Ok(false)
-        }
-        (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
-            app.move_cursor_end();
-            Ok(false)
-        }
-        (KeyCode::Char('k'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
-            app.delete_to_end();
-            Ok(false)
-        }
-        (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
-            app.delete_word();
-            Ok(false)
-        }
-        (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) && app.is_input_focused() => {
-            app.clear_input();
-            Ok(false)
-        }
-
-        // Home/End keys - only in input mode
-        (KeyCode::Home, _) if app.is_input_focused() => {
-            app.move_cursor_start();
-            Ok(false)
-        }
-        (KeyCode::End, _) if app.is_input_focused() => {
-            app.move_cursor_end();
             Ok(false)
         }
 
@@ -111,23 +80,12 @@ pub fn handle_key_event(app: &mut super::App, key: KeyEvent) -> anyhow::Result<b
             Ok(false)
         }
 
-        // Navigation - only in input mode
-        (KeyCode::Left, _) if app.is_input_focused() => {
-            app.move_cursor_left();
-            Ok(false)
-        }
-        (KeyCode::Right, _) if app.is_input_focused() => {
-            app.move_cursor_right();
-            Ok(false)
-        }
-        (KeyCode::Backspace, _) if app.is_input_focused() => {
-            app.delete_char();
-            Ok(false)
-        }
-
-        // Regular character input - only in input mode
-        (KeyCode::Char(c), m) if app.is_input_focused() && !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
-            app.enter_char(c);
+        // All other input handled by TextArea when input is focused
+        _ if app.is_input_focused() => {
+            // Convert crossterm KeyEvent to tui-textarea Input
+            let input = Input::from(key);
+            app.textarea.input(input);
+            app.update_slash_suggestions();
             Ok(false)
         }
 
