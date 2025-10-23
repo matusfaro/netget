@@ -12,7 +12,6 @@ use std::process::Command;
 use std::time::Duration;
 
 #[tokio::test]
-#[ignore] // Requires root/admin privileges for packet capture
 async fn test_arp_responder() -> E2EResult<()> {
     println!("\n=== E2E Test: ARP Responder ===");
 
