@@ -157,6 +157,21 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     // We'll check stdout first
     let mut reader = BufReader::new(stdout).lines();
 
+    // Parse the prompt to find the expected port and stack
+    let expected_port = extract_port_from_prompt(&config.prompt);
+    let expected_stack = extract_stack_from_prompt(&config.prompt);
+
+    // Wait for the server to start and parse the actual configuration
+    let (actual_port, actual_stack) = wait_for_server_startup(&mut reader).await?;
+
+    // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
+    // Without this, the server will crash with "Broken pipe" when stdout buffer fills
+    tokio::spawn(async move {
+        while let Some(line) = reader.next_line().await.ok().flatten() {
+            println!("[DEBUG] Server output: {}", line);
+        }
+    });
+
     // Also spawn a task to read stderr for debugging
     tokio::spawn(async move {
         let mut stderr_reader = BufReader::new(stderr).lines();
@@ -164,13 +179,6 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
             println!("[DEBUG stderr] {}", line);
         }
     });
-
-    // Parse the prompt to find the expected port and stack
-    let expected_port = extract_port_from_prompt(&config.prompt);
-    let expected_stack = extract_stack_from_prompt(&config.prompt);
-
-    // Wait for the server to start and parse the actual configuration
-    let (actual_port, actual_stack) = wait_for_server_startup(&mut reader).await?;
 
     // Validate that the server started with the expected stack
     if let Some(expected) = &expected_stack {

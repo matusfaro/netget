@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -113,6 +113,19 @@ impl IrcServer {
                             while let Ok(n) = reader.read_line(&mut line).await {
                                 if n == 0 { break; }
 
+                                // DEBUG: Log summary with text preview
+                                let preview = if line.len() > 100 {
+                                    format!("{}...", &line[..100])
+                                } else {
+                                    line.to_string()
+                                };
+                                debug!("IRC received {} bytes on connection {}: {}", n, connection_id, preview.trim());
+                                let _ = status_clone.send(format!("[DEBUG] IRC received {} bytes on connection {}: {}", n, connection_id, preview.trim()));
+
+                                // TRACE: Log full text payload
+                                trace!("IRC data (text): {:?}", line.trim());
+                                let _ = status_clone.send(format!("[TRACE] IRC data (text): {:?}", line.trim()));
+
                                 let event_description = format!("IRC message: {}", line.trim());
                                 let context = NetworkContext::IrcConnection { connection_id, write_half: write_half_arc.clone(), status_tx: status_clone.clone() };
                                 let protocol_actions = protocol_clone.get_sync_actions(&context);
@@ -137,6 +150,19 @@ impl IrcServer {
                                                         let mut write = write_half_arc.lock().await;
                                                         let _ = write.write_all(formatted.as_bytes()).await;
                                                         let _ = write.flush().await;
+
+                                                        // DEBUG: Log summary with text preview
+                                                        let preview = if formatted.len() > 100 {
+                                                            format!("{}...", &formatted[..100])
+                                                        } else {
+                                                            formatted.clone()
+                                                        };
+                                                        debug!("IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim());
+                                                        let _ = status_clone.send(format!("[DEBUG] IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim()));
+
+                                                        // TRACE: Log full text payload
+                                                        trace!("IRC sent (text): {:?}", formatted.trim());
+                                                        let _ = status_clone.send(format!("[TRACE] IRC sent (text): {:?}", formatted.trim()));
                                                     }
                                                     ActionResult::CloseConnection => break,
                                                     _ => {}
@@ -181,11 +207,19 @@ async fn handle_irc_with_llm(
                 let _ = status_tx.send(format!("✗ IRC connection {} closed", connection_id));
                 break;
             }
-            Ok(_) => {
+            Ok(n) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
+
+                // DEBUG: Log summary
+                debug!("IRC received {} bytes on connection {}", n, connection_id);
+                let _ = status_tx.send(format!("[DEBUG] IRC received {} bytes on connection {}", n, connection_id));
+
+                // TRACE: Log full payload (IRC is text)
+                trace!("IRC data (text): {:?}", trimmed);
+                let _ = status_tx.send(format!("[TRACE] IRC data (text): {:?}", trimmed));
 
                 // Call LLM with the IRC line
                 let model = app_state.get_ollama_model().await;
@@ -226,6 +260,15 @@ async fn handle_irc_with_llm(
                                 error!("Failed to flush IRC response: {}", e);
                                 break;
                             }
+
+                            // DEBUG: Log summary
+                            debug!("IRC sent {} bytes on connection {}", formatted.len(), connection_id);
+                            let _ = status_tx.send(format!("[DEBUG] IRC sent {} bytes on connection {}", formatted.len(), connection_id));
+
+                            // TRACE: Log full payload (IRC is text)
+                            trace!("IRC sent (text): {:?}", formatted.trim());
+                            let _ = status_tx.send(format!("[TRACE] IRC sent (text): {:?}", formatted.trim()));
+
                             let _ = status_tx.send(format!("→ IRC to {}: {}", connection_id, formatted.trim()));
                         }
 

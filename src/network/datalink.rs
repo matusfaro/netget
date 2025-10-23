@@ -8,7 +8,7 @@ use bytes::Bytes;
 use pcap::{Capture, Device};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -99,6 +99,15 @@ impl DataLinkServer {
                         let data = Bytes::copy_from_slice(packet.data);
                         let connection_id = ConnectionId::new();
 
+                        // DEBUG: Log summary
+                        debug!("Datalink received {} bytes", data.len());
+                        let _ = status_tx.send(format!("[DEBUG] Datalink received {} bytes", data.len()));
+
+                        // TRACE: Log full payload (always hex for datalink)
+                        let hex_str = hex::encode(&data);
+                        trace!("Datalink data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] Datalink data (hex): {}", hex_str));
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -123,10 +132,21 @@ impl DataLinkServer {
 
                             match llm_clone.generate(&model, &prompt).await {
                                 Ok(llm_output) => {
+                                    let output_data = llm_output.as_bytes();
+
+                                    // DEBUG: Log summary (no actual send for datalink capture)
+                                    debug!("Datalink processed {} bytes → {} bytes response", data.len(), output_data.len());
+                                    let _ = status_clone.send(format!("[DEBUG] Datalink processed {} bytes → {} bytes response", data.len(), output_data.len()));
+
+                                    // TRACE: Log full payload (always hex for datalink)
+                                    let hex_str = hex::encode(output_data);
+                                    trace!("Datalink response (hex): {}", hex_str);
+                                    let _ = status_clone.send(format!("[TRACE] Datalink response (hex): {}", hex_str));
+
                                     let _ = status_clone.send(format!(
                                         "→ Datalink packet processed: {} bytes → {} bytes response",
                                         data.len(),
-                                        llm_output.len()
+                                        output_data.len()
                                     ));
                                     // Note: Injecting packets back would require mutable cap access
                                 }

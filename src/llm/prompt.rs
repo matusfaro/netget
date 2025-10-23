@@ -258,15 +258,25 @@ Instructions: {}
 
 {}
 
-IMPORTANT: Respond with a JSON array of actions:
+IMPORTANT: Respond with a JSON object containing an "actions" array.
+The "actions" field MUST ALWAYS be an array, even for a single action.
+
+For a single action:
 {{
   "actions": [
-    {{"type": "action_name", "param1": "value1", ...}},
-    {{"type": "another_action", "param2": "value2", ...}}
+    {{"type": "action_name", "param1": "value1", ...}}
   ]
 }}
 
-The actions will be executed in order. You can include multiple actions in one response.
+For multiple actions:
+{{
+  "actions": [
+    {{"type": "first_action", "param1": "value1", ...}},
+    {{"type": "second_action", "param2": "value2", ...}}
+  ]
+}}
+
+The actions will be executed in order.
 
 Response (JSON only):"#,
             current_state, trigger_reason, instructions, actions_text

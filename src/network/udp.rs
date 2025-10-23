@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -53,6 +53,30 @@ impl UdpServer {
                         let data = buffer[..n].to_vec();
                         let connection_id = ConnectionId::new();
 
+                        // DEBUG: Log summary with data preview
+                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                            let data_str = String::from_utf8_lossy(&data);
+                            let preview = if data_str.len() > 100 {
+                                format!("{}...", &data_str[..100])
+                            } else {
+                                data_str.to_string()
+                            };
+                            debug!("UDP received {} bytes from {}: {}", n, peer_addr, preview);
+                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {}: {}", n, peer_addr, preview));
+
+                            // TRACE: Log full text payload
+                            trace!("UDP data (text): {:?}", data_str);
+                            let _ = status_tx.send(format!("[TRACE] UDP data (text): {:?}", data_str));
+                        } else {
+                            debug!("UDP received {} bytes from {} (binary data)", n, peer_addr);
+                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {} (binary data)", n, peer_addr));
+
+                            // TRACE: Log full hex payload
+                            let hex_str = hex::encode(&data);
+                            trace!("UDP data (hex): {}", hex_str);
+                            let _ = status_tx.send(format!("[TRACE] UDP data (hex): {}", hex_str));
+                        }
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -81,9 +105,33 @@ impl UdpServer {
 
                             match llm_clone.generate(&model, &prompt).await {
                                 Ok(llm_output) => {
-                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                    let output_bytes = llm_output.as_bytes();
+                                    if let Err(e) = socket_clone.send_to(output_bytes, peer_addr).await {
                                         error!("Failed to send UDP response: {}", e);
                                     } else {
+                                        // DEBUG: Log summary with data preview
+                                        if output_bytes.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                            let preview = if llm_output.len() > 100 {
+                                                format!("{}...", &llm_output[..100])
+                                            } else {
+                                                llm_output.clone()
+                                            };
+                                            debug!("UDP sent {} bytes to {}: {}", output_bytes.len(), peer_addr, preview);
+                                            let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {}: {}", output_bytes.len(), peer_addr, preview));
+
+                                            // TRACE: Log full text payload
+                                            trace!("UDP sent (text): {:?}", llm_output);
+                                            let _ = status_clone.send(format!("[TRACE] UDP sent (text): {:?}", llm_output));
+                                        } else {
+                                            debug!("UDP sent {} bytes to {} (binary data)", output_bytes.len(), peer_addr);
+                                            let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {} (binary data)", output_bytes.len(), peer_addr));
+
+                                            // TRACE: Log full hex payload
+                                            let hex_str = hex::encode(output_bytes);
+                                            trace!("UDP sent (hex): {}", hex_str);
+                                            let _ = status_clone.send(format!("[TRACE] UDP sent (hex): {}", hex_str));
+                                        }
+
                                         let _ = status_clone.send(format!(
                                             "→ UDP response to {} ({} bytes)",
                                             peer_addr, llm_output.len()
@@ -128,6 +176,30 @@ impl UdpServer {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
                         let _connection_id = ConnectionId::new();
+
+                        // DEBUG: Log summary with data preview
+                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                            let data_str = String::from_utf8_lossy(&data);
+                            let preview = if data_str.len() > 100 {
+                                format!("{}...", &data_str[..100])
+                            } else {
+                                data_str.to_string()
+                            };
+                            debug!("UDP received {} bytes from {}: {}", n, peer_addr, preview);
+                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {}: {}", n, peer_addr, preview));
+
+                            // TRACE: Log full text payload
+                            trace!("UDP data (text): {:?}", data_str);
+                            let _ = status_tx.send(format!("[TRACE] UDP data (text): {:?}", data_str));
+                        } else {
+                            debug!("UDP received {} bytes from {} (binary data)", n, peer_addr);
+                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {} (binary data)", n, peer_addr));
+
+                            // TRACE: Log full hex payload
+                            let hex_str = hex::encode(&data);
+                            trace!("UDP data (hex): {}", hex_str);
+                            let _ = status_tx.send(format!("[TRACE] UDP data (hex): {}", hex_str));
+                        }
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -192,6 +264,30 @@ impl UdpServer {
                                                             if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
                                                                 error!("Failed to send UDP response: {}", e);
                                                             } else {
+                                                                // DEBUG: Log summary with data preview
+                                                                if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                                                    let data_str = String::from_utf8_lossy(output_data);
+                                                                    let preview = if data_str.len() > 100 {
+                                                                        format!("{}...", &data_str[..100])
+                                                                    } else {
+                                                                        data_str.to_string()
+                                                                    };
+                                                                    debug!("UDP sent {} bytes to {}: {}", output_data.len(), peer_addr, preview);
+                                                                    let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {}: {}", output_data.len(), peer_addr, preview));
+
+                                                                    // TRACE: Log full text payload
+                                                                    trace!("UDP sent (text): {:?}", data_str);
+                                                                    let _ = status_clone.send(format!("[TRACE] UDP sent (text): {:?}", data_str));
+                                                                } else {
+                                                                    debug!("UDP sent {} bytes to {} (binary data)", output_data.len(), peer_addr);
+                                                                    let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {} (binary data)", output_data.len(), peer_addr));
+
+                                                                    // TRACE: Log full hex payload
+                                                                    let hex_str = hex::encode(output_data);
+                                                                    trace!("UDP sent (hex): {}", hex_str);
+                                                                    let _ = status_clone.send(format!("[TRACE] UDP sent (hex): {}", hex_str));
+                                                                }
+
                                                                 let _ = status_clone.send(format!(
                                                                     "→ UDP response to {} ({} bytes)",
                                                                     peer_addr, output_data.len()

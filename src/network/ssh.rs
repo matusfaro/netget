@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -73,6 +73,30 @@ impl SshServer {
                                     Ok(n) => {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
 
+                                        // DEBUG: Log summary with data preview
+                                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                            let data_str = String::from_utf8_lossy(&data);
+                                            let preview = if data_str.len() > 100 {
+                                                format!("{}...", &data_str[..100])
+                                            } else {
+                                                data_str.to_string()
+                                            };
+                                            debug!("SSH received {} bytes on connection {}: {}", n, connection_id, preview);
+                                            let _ = status_clone.send(format!("[DEBUG] SSH received {} bytes on connection {}: {}", n, connection_id, preview));
+
+                                            // TRACE: Log full text payload
+                                            trace!("SSH data (text): {:?}", data_str);
+                                            let _ = status_clone.send(format!("[TRACE] SSH data (text): {:?}", data_str));
+                                        } else {
+                                            debug!("SSH received {} bytes on connection {} (binary data)", n, connection_id);
+                                            let _ = status_clone.send(format!("[DEBUG] SSH received {} bytes on connection {} (binary data)", n, connection_id));
+
+                                            // TRACE: Log full hex payload
+                                            let hex_str = hex::encode(&data);
+                                            trace!("SSH data (hex): {}", hex_str);
+                                            let _ = status_clone.send(format!("[TRACE] SSH data (hex): {}", hex_str));
+                                        }
+
                                         let model = state_clone.get_ollama_model().await;
                                         let prompt_config = get_llm_protocol_prompt();
 
@@ -101,11 +125,37 @@ impl SshServer {
 
                                                 // Send output
                                                 if let Some(output) = processed.output {
-                                                    if let Err(e) = write_half.write_all(output.as_bytes()).await {
+                                                    let output_data = output.as_bytes();
+                                                    if let Err(e) = write_half.write_all(output_data).await {
                                                         error!("Failed to send SSH response: {}", e);
                                                         break;
                                                     }
-                                                    let _ = status_clone.send(format!("→ SSH to {}: {} bytes", connection_id, output.len()));
+
+                                                    // DEBUG: Log summary with data preview
+                                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                                        let data_str = String::from_utf8_lossy(output_data);
+                                                        let preview = if data_str.len() > 100 {
+                                                            format!("{}...", &data_str[..100])
+                                                        } else {
+                                                            data_str.to_string()
+                                                        };
+                                                        debug!("SSH sent {} bytes on connection {}: {}", output_data.len(), connection_id, preview);
+                                                        let _ = status_clone.send(format!("[DEBUG] SSH sent {} bytes on connection {}: {}", output_data.len(), connection_id, preview));
+
+                                                        // TRACE: Log full text payload
+                                                        trace!("SSH sent (text): {:?}", data_str);
+                                                        let _ = status_clone.send(format!("[TRACE] SSH sent (text): {:?}", data_str));
+                                                    } else {
+                                                        debug!("SSH sent {} bytes on connection {} (binary data)", output_data.len(), connection_id);
+                                                        let _ = status_clone.send(format!("[DEBUG] SSH sent {} bytes on connection {} (binary data)", output_data.len(), connection_id));
+
+                                                        // TRACE: Log full hex payload
+                                                        let hex_str = hex::encode(output_data);
+                                                        trace!("SSH sent (hex): {}", hex_str);
+                                                        let _ = status_clone.send(format!("[TRACE] SSH sent (hex): {}", hex_str));
+                                                    }
+
+                                                    let _ = status_clone.send(format!("→ SSH to {}: {} bytes", connection_id, output_data.len()));
                                                 }
 
                                                 // Handle close
@@ -196,6 +246,31 @@ impl SshServer {
                                     Ok(0) => break,
                                     Ok(n) => {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
+
+                                        // DEBUG: Log summary with data preview
+                                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                            let data_str = String::from_utf8_lossy(&data);
+                                            let preview = if data_str.len() > 100 {
+                                                format!("{}...", &data_str[..100])
+                                            } else {
+                                                data_str.to_string()
+                                            };
+                                            debug!("SSH received {} bytes on connection {}: {}", n, connection_id, preview);
+                                            let _ = status_clone.send(format!("[DEBUG] SSH received {} bytes on connection {}: {}", n, connection_id, preview));
+
+                                            // TRACE: Log full text payload
+                                            trace!("SSH data (text): {:?}", data_str);
+                                            let _ = status_clone.send(format!("[TRACE] SSH data (text): {:?}", data_str));
+                                        } else {
+                                            debug!("SSH received {} bytes on connection {} (binary data)", n, connection_id);
+                                            let _ = status_clone.send(format!("[DEBUG] SSH received {} bytes on connection {} (binary data)", n, connection_id));
+
+                                            // TRACE: Log full hex payload
+                                            let hex_str = hex::encode(&data);
+                                            trace!("SSH data (hex): {}", hex_str);
+                                            let _ = status_clone.send(format!("[TRACE] SSH data (hex): {}", hex_str));
+                                        }
+
                                         let event_description = format!("SSH data received: {:?}", data);
                                         let context = NetworkContext::SshConnection { connection_id, write_half: write_half_arc.clone(), status_tx: status_clone.clone() };
                                         let protocol_actions = protocol_clone.get_sync_actions(&context);
@@ -211,6 +286,21 @@ impl SshServer {
                                                             ActionResult::Output(data) => {
                                                                 let mut write = write_half_arc.lock().await;
                                                                 let _ = write.write_all(&data).await;
+
+                                                                // DEBUG: Log summary
+                                                                debug!("SSH sent {} bytes on connection {}", data.len(), connection_id);
+                                                                let _ = status_clone.send(format!("[DEBUG] SSH sent {} bytes on connection {}", data.len(), connection_id));
+
+                                                                // TRACE: Log full payload
+                                                                if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                                                    let data_str = String::from_utf8_lossy(&data);
+                                                                    trace!("SSH sent (text): {:?}", data_str);
+                                                                    let _ = status_clone.send(format!("[TRACE] SSH sent (text): {:?}", data_str));
+                                                                } else {
+                                                                    let hex_str = hex::encode(&data);
+                                                                    trace!("SSH sent (hex): {}", hex_str);
+                                                                    let _ = status_clone.send(format!("[TRACE] SSH sent (hex): {}", hex_str));
+                                                                }
                                                             }
                                                             ActionResult::CloseConnection => break,
                                                             _ => {}

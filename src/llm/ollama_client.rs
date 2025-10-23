@@ -7,7 +7,7 @@ use bytes::Bytes;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, trace};
 
 // Note: We still derive JsonSchema for development/testing purposes,
 // but at runtime we use the explicit JSON schemas in src/llm/schemas/
@@ -252,12 +252,19 @@ impl OllamaClient {
         prompt: &str,
         format: Option<serde_json::Value>
     ) -> Result<String> {
-        debug!("Sending prompt to Ollama (model: {})", model);
+        // DEBUG: Summary
+        debug!(
+            "LLM request: model={}, prompt_len={} chars, format={}",
+            model,
+            prompt.len(),
+            if format.is_some() { "JSON" } else { "text" }
+        );
+
+        // TRACE: Full payload
+        trace!("Full LLM prompt:\n{}", prompt);
         if let Some(ref schema) = format {
-            debug!("Using structured output with JSON schema");
-            debug!("Schema: {}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string()));
+            trace!("JSON schema:\n{}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string()));
         }
-        debug!("Prompt: {}", prompt);
 
         let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
 
@@ -275,8 +282,18 @@ impl OllamaClient {
             .await
             .map_err(|e| anyhow::anyhow!("Ollama request failed: {}", e))?;
 
-        info!("Received response from Ollama");
-        debug!("Response: {}", response.response);
+        // DEBUG: Summary
+        debug!(
+            "LLM response: response_len={} chars",
+            response.response.len()
+        );
+
+        // TRACE: Full payload with pretty-printed JSON if possible
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.response) {
+            trace!("Full LLM response (JSON):\n{}", serde_json::to_string_pretty(&json).unwrap_or(response.response.clone()));
+        } else {
+            trace!("Full LLM response (text):\n{}", response.response);
+        }
 
         Ok(response.response)
     }
