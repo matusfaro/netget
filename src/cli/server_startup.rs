@@ -289,7 +289,7 @@ async fn spawn_snmp_agent(
     listen_addr: SocketAddr,
     network_tx: mpsc::UnboundedSender<NetworkEvent>,
 ) -> Result<()> {
-    use crate::network::SnmpAgent;
+    use crate::network::SnmpServer;
 
     // Create adapter from NetworkEvent to AppEvent
     let (app_tx, mut app_rx) = mpsc::unbounded_channel::<AppEvent>();
@@ -304,11 +304,11 @@ async fn spawn_snmp_agent(
         }
     });
 
-    let snmp_agent = SnmpAgent::new(listen_addr, app_tx).await?;
+    let snmp_server = SnmpServer::new(listen_addr, app_tx).await?;
 
     // Spawn agent loop
     tokio::spawn(async move {
-        if let Err(e) = snmp_agent.start().await {
+        if let Err(e) = snmp_server.start().await {
             error!("SNMP agent error: {}", e);
         }
     });

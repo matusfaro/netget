@@ -28,6 +28,12 @@ pub enum AppEvent {
     Shutdown,
 }
 
+/// UDP response to be sent back
+#[derive(Debug, Clone)]
+pub struct UdpResponse {
+    pub data: Vec<u8>,
+}
+
 /// Network events
 #[derive(Debug)]
 pub enum NetworkEvent {
@@ -57,6 +63,13 @@ pub enum NetworkEvent {
         headers: HashMap<String, String>,
         body: Bytes,
         response_tx: oneshot::Sender<HttpResponse>,
+    },
+    /// UDP request received (for UDP-based protocols like SNMP, DNS, etc.)
+    UdpRequest {
+        connection_id: ConnectionId,
+        peer_addr: SocketAddr,
+        data: Bytes,
+        response_tx: oneshot::Sender<UdpResponse>,
     },
     /// Packet received from network interface (for DataLink stack)
     PacketReceived {

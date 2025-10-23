@@ -398,6 +398,17 @@ async fn handle_network_event(
             let _ = status_tx.send(msg);
         }
 
+        NetworkEvent::UdpRequest { connection_id, peer_addr, data, response_tx } => {
+            // Spawn task to handle UDP request with LLM
+            let state = state.clone();
+            let status_tx = status_tx.clone();
+            let connection_states = connection_states.clone();
+
+            tokio::spawn(async move {
+                handle_udp_request(connection_id, peer_addr, data, response_tx, &state, &connection_states, &status_tx).await;
+            });
+        }
+
         _ => {}
     }
 }
@@ -941,6 +952,139 @@ async fn handle_http_request(
                 status: 500,
                 headers: HashMap::new(),
                 body: bytes::Bytes::from("Internal Server Error"),
+            });
+        }
+    }
+}
+
+/// Handle UDP request with LLM
+async fn handle_udp_request(
+    connection_id: ConnectionId,
+    peer_addr: std::net::SocketAddr,
+    data: bytes::Bytes,
+    response_tx: tokio::sync::oneshot::Sender<crate::events::types::UdpResponse>,
+    state: &AppState,
+    connection_states: &ConnectionStateMap,
+    status_tx: &mpsc::UnboundedSender<String>,
+) {
+    let _ = status_tx.send(format!("[UDP] Request from {} ({} bytes)", peer_addr, data.len()));
+
+    // Get connection memory for prompt
+    let conn_memory = {
+        let states = connection_states.lock().await;
+        states.get(&connection_id)
+            .map(|s| s.memory.clone())
+            .unwrap_or_default()
+    };
+
+    // Build proper UDP prompt with protocol detection
+    let llm = OllamaClient::default();
+    let model = state.get_ollama_model().await;
+    let prompt = crate::llm::PromptBuilder::build_udp_request_prompt(
+        state,
+        connection_id,
+        peer_addr,
+        &data,
+        &conn_memory,
+    ).await;
+
+    match llm.generate(&model, &prompt).await {
+        Ok(raw_response) => {
+            // TRACE: Log full LLM response
+            let _ = status_tx.send(format!("[TRACE] LLM Response:\n{}", raw_response));
+
+            // Try to parse as JSON first to check for SNMP-specific response
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw_response) {
+                // Check if this is an SNMP response with structured data
+                if json.get("snmp_response").is_some() {
+                    // Parse the SNMP message to get version, request ID, and community
+                    #[cfg(feature = "snmp")]
+                    {
+                        if let Ok(parsed) = crate::network::snmp::SnmpServer::parse_snmp_message(&data) {
+                            // Build SNMP response using the structured data
+                            match crate::network::snmp::SnmpServer::build_snmp_response(
+                                &raw_response,
+                                parsed.version,
+                                parsed.request_id,
+                                &parsed.community,
+                            ) {
+                                Ok(response_data) => {
+                                    let _ = response_tx.send(crate::events::types::UdpResponse {
+                                        data: response_data,
+                                    });
+                                    let _ = status_tx.send(format!("[INFO] → SNMP response sent to {}", peer_addr));
+                                }
+                                Err(e) => {
+                                    let _ = status_tx.send(format!("[ERROR] Failed to build SNMP response: {}", e));
+                                    let _ = response_tx.send(crate::events::types::UdpResponse {
+                                        data: Vec::new(),
+                                    });
+                                }
+                            }
+                        } else {
+                            let _ = status_tx.send(format!("[ERROR] Failed to parse SNMP request"));
+                            let _ = response_tx.send(crate::events::types::UdpResponse {
+                                data: Vec::new(),
+                            });
+                        }
+                    }
+                    #[cfg(not(feature = "snmp"))]
+                    {
+                        let _ = response_tx.send(crate::events::types::UdpResponse {
+                            data: Vec::new(),
+                        });
+                    }
+                } else if let Some(output) = json.get("output").and_then(|v| v.as_str()) {
+                    // Regular UDP response with raw output
+                    let _ = response_tx.send(crate::events::types::UdpResponse {
+                        data: output.as_bytes().to_vec(),
+                    });
+                    let _ = status_tx.send(format!("[INFO] → UDP response sent to {}", peer_addr));
+                } else {
+                    // No output specified
+                    let _ = response_tx.send(crate::events::types::UdpResponse {
+                        data: Vec::new(),
+                    });
+                    let _ = status_tx.send("[INFO] LLM: No UDP response needed".to_string());
+                }
+
+                // Handle memory updates
+                if let Some(mem) = json.get("set_memory").and_then(|v| v.as_str()) {
+                    let _ = status_tx.send(format!("[TRACE] Set global memory:\n{}", mem));
+                    state.set_memory(mem.to_string()).await;
+                }
+                if let Some(mem) = json.get("append_memory").and_then(|v| v.as_str()) {
+                    let _ = status_tx.send(format!("[TRACE] Append to global memory:\n{}", mem));
+                    state.append_memory(mem.to_string()).await;
+                }
+                if let Some(mem) = json.get("set_connection_memory").and_then(|v| v.as_str()) {
+                    if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                        let _ = status_tx.send(format!("[TRACE] Set connection memory for {}:\n{}", connection_id, mem));
+                        conn_state.memory = mem.to_string();
+                    }
+                }
+                if let Some(mem) = json.get("append_connection_memory").and_then(|v| v.as_str()) {
+                    if let Some(conn_state) = connection_states.lock().await.get_mut(&connection_id) {
+                        let _ = status_tx.send(format!("[TRACE] Append to connection memory for {}:\n{}", connection_id, mem));
+                        if !conn_state.memory.is_empty() {
+                            conn_state.memory.push('\n');
+                        }
+                        conn_state.memory.push_str(mem);
+                    }
+                }
+            } else {
+                // Not JSON, treat as raw output (backward compatibility)
+                let _ = response_tx.send(crate::events::types::UdpResponse {
+                    data: raw_response.as_bytes().to_vec(),
+                });
+                let _ = status_tx.send(format!("[INFO] → UDP response sent to {}", peer_addr));
+            }
+        }
+        Err(e) => {
+            let _ = status_tx.send(format!("[ERROR] LLM request failed for UDP: {}", e));
+            // Send empty response on error
+            let _ = response_tx.send(crate::events::types::UdpResponse {
+                data: Vec::new(),
             });
         }
     }

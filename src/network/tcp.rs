@@ -168,58 +168,6 @@ impl TcpServer {
     }
 }
 
-/// Handle a TCP connection
-pub async fn handle_connection(
-    mut stream: TcpStream,
-    remote_addr: SocketAddr,
-    connection_id: ConnectionId,
-    event_tx: mpsc::UnboundedSender<NetworkEvent>,
-) -> Result<()> {
-    debug!("Handling connection {} from {}", connection_id, remote_addr);
-
-    // Send connection established event
-    let _ = event_tx.send(NetworkEvent::Connected {
-        connection_id,
-        remote_addr,
-    });
-
-    let mut buffer = vec![0u8; 8192];
-
-    loop {
-        match stream.read(&mut buffer).await {
-            Ok(0) => {
-                // Connection closed
-                info!("Connection {} closed by remote", connection_id);
-                let _ = event_tx.send(NetworkEvent::Disconnected { connection_id });
-                break;
-            }
-            Ok(n) => {
-                let data = Bytes::copy_from_slice(&buffer[..n]);
-                debug!(
-                    "Received {} bytes from connection {}",
-                    n, connection_id
-                );
-
-                // Send data received event
-                let _ = event_tx.send(NetworkEvent::DataReceived {
-                    connection_id,
-                    data,
-                });
-            }
-            Err(e) => {
-                error!("Error reading from connection {}: {}", connection_id, e);
-                let _ = event_tx.send(NetworkEvent::Error {
-                    connection_id: Some(connection_id),
-                    error: e.to_string(),
-                });
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Send data on a TCP connection
 pub async fn send_data(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
     stream

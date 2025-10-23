@@ -42,10 +42,6 @@ pub struct Args {
     #[clap(short = 'l', long = "log-level", value_name = "LEVEL", default_value = "off")]
     pub log_level: String,
 
-    /// Server listen address (for non-interactive mode)
-    #[clap(long = "listen-addr", value_name = "ADDR", default_value = "127.0.0.1")]
-    pub listen_addr: String,
-
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,
