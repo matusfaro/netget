@@ -22,9 +22,8 @@ pub struct ProcessedResponse {
 pub async fn handle_llm_response(
     response: LlmResponse,
     app_state: &Arc<AppState>,
-    connection_memory: &mut String,
 ) -> ProcessedResponse {
-    // Handle global memory updates
+    // Handle memory updates
     if let Some(set_mem) = response.set_memory {
         app_state.set_memory(set_mem).await;
     }
@@ -36,17 +35,6 @@ pub async fn handle_llm_response(
             format!("{}\n{}", current, append_mem)
         };
         app_state.set_memory(new_memory).await;
-    }
-
-    // Handle connection memory updates
-    if let Some(set_mem) = response.set_connection_memory {
-        *connection_memory = set_mem;
-    }
-    if let Some(append_mem) = response.append_connection_memory {
-        if !connection_memory.is_empty() {
-            connection_memory.push('\n');
-        }
-        connection_memory.push_str(&append_mem);
     }
 
     // Handle log messages

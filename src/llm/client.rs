@@ -46,14 +46,6 @@ pub struct LlmResponse {
     /// Append to memory (added to end with newline separator)
     #[serde(default)]
     pub append_memory: Option<String>,
-
-    /// Update per-connection memory - completely replace
-    #[serde(default)]
-    pub set_connection_memory: Option<String>,
-
-    /// Append to per-connection memory
-    #[serde(default)]
-    pub append_connection_memory: Option<String>,
 }
 
 impl Default for LlmResponse {
@@ -66,8 +58,6 @@ impl Default for LlmResponse {
             log_message: None,
             set_memory: None,
             append_memory: None,
-            set_connection_memory: None,
-            append_connection_memory: None,
         }
     }
 }
@@ -132,14 +122,6 @@ pub struct HttpLlmResponse {
     /// Append to memory (added to end with newline separator)
     #[serde(default)]
     pub append_memory: Option<String>,
-
-    /// Update per-connection memory - completely replace
-    #[serde(default)]
-    pub set_connection_memory: Option<String>,
-
-    /// Append to per-connection memory
-    #[serde(default)]
-    pub append_connection_memory: Option<String>,
 }
 
 impl Default for HttpLlmResponse {
@@ -151,8 +133,6 @@ impl Default for HttpLlmResponse {
             log_message: None,
             set_memory: None,
             append_memory: None,
-            set_connection_memory: None,
-            append_connection_memory: None,
         }
     }
 }

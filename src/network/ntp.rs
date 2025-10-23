@@ -10,10 +10,12 @@ use tracing::{error, info};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
+use crate::llm::{ActionResponse, execute_actions, NetworkContext, ProtocolActions};
+use crate::network::NtpProtocol;
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for NTP stack
-pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
     let context = r#"You are handling NTP time synchronization requests (port 123).
 Respond with current time in NTP format (seconds since 1900-01-01)."#;
 
@@ -111,8 +113,7 @@ impl NtpServer {
 
                         tokio::spawn(async move {
                             let model = state_clone.get_ollama_model().await;
-                            let prompt_config = get_llm_prompt_config();
-                            let conn_memory = String::new();
+                            let prompt_config = get_llm_protocol_prompt();
 
                             // Build event description
                             let event_description = format!(
@@ -123,7 +124,6 @@ impl NtpServer {
                             let prompt = PromptBuilder::build_network_event_prompt(
                                 &state_clone,
                                 connection_id,
-                                &conn_memory,
                                 &event_description,
                                 prompt_config,
                             ).await;
@@ -142,6 +142,76 @@ impl NtpServer {
                                 Err(e) => {
                                     error!("LLM error for NTP: {}", e);
                                     let _ = status_clone.send(format!("✗ LLM error for NTP: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("NTP receive error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(local_addr)
+    }
+
+    /// Spawn NTP server with integrated LLM actions
+    pub async fn spawn_with_llm_actions(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
+        let local_addr = socket.local_addr()?;
+        info!("NTP server (action-based) listening on {}", local_addr);
+
+        let protocol = Arc::new(NtpProtocol::new());
+
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 48];
+
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
+                        let protocol_clone = protocol.clone();
+
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let event_description = format!("NTP request from {} ({} bytes)", peer_addr, data.len());
+
+                            let context = NetworkContext::NtpRequest {
+                                peer_addr,
+                                socket: socket_clone.clone(),
+                                request_data: data,
+                                status_tx: status_clone.clone(),
+                            };
+
+                            let protocol_actions = protocol_clone.get_sync_actions(&context);
+                            let prompt = PromptBuilder::build_network_event_action_prompt(
+                                &state_clone, &event_description, protocol_actions).await;
+
+                            if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
+                                if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
+                                    if let Ok(result) = execute_actions(action_response.actions, &state_clone,
+                                        Some(protocol_clone.as_ref()), Some(&context)).await {
+                                        for msg in result.messages {
+                                            let _ = status_clone.send(msg);
+                                        }
+                                        for protocol_result in result.protocol_results {
+                                            if let Some(output_data) = protocol_result.get_all_output().first() {
+                                                let _ = socket_clone.send_to(output_data, peer_addr).await;
+                                                let _ = status_clone.send(format!("→ NTP response to {} ({} bytes)", peer_addr, output_data.len()));
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         });

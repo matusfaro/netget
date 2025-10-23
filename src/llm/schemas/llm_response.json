@@ -7,8 +7,6 @@
     "shutdown_server": {"type": "boolean"},
     "log_message": {"type": "string"},
     "set_memory": {"type": "string"},
-    "append_memory": {"type": "string"},
-    "set_connection_memory": {"type": "string"},
-    "append_connection_memory": {"type": "string"}
+    "append_memory": {"type": "string"}
   }
 }

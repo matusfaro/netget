@@ -14,10 +14,12 @@ use rasn::{ber, types::Integer};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
+use crate::llm::{ActionResponse, execute_actions, NetworkContext, ProtocolActions};
+use crate::network::SnmpProtocol;
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for SNMP stack
-pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
     let context = r#"You are handling SNMP requests. Return appropriate SNMP responses with OID values.
 Common OIDs:
 - 1.3.6.1.2.1.1.1.0: System description
@@ -41,8 +43,7 @@ For errors, respond with:
   "error": true,
   "error_message": "Error description"
 }
-
-You can also return plain text which will be treated as a simple string value for the first requested OID."#;
+"#;
 
     (context, output_format)
 }
@@ -103,8 +104,7 @@ impl SnmpServer {
                         // Spawn task to handle request with LLM
                         tokio::spawn(async move {
                             let model = state_clone.get_ollama_model().await;
-                            let prompt_config = get_llm_prompt_config();
-                            let conn_memory = String::new();
+                            let protocol_prompt = get_llm_protocol_prompt();
 
                             // Build event description
                             let event_description = format!(
@@ -120,9 +120,8 @@ impl SnmpServer {
                             let prompt = PromptBuilder::build_network_event_prompt(
                                 &state_clone,
                                 connection_id,
-                                &conn_memory,
                                 &event_description,
-                                prompt_config,
+                                protocol_prompt,
                             ).await;
 
                             match llm_clone.generate(&model, &prompt).await {
@@ -154,6 +153,148 @@ impl SnmpServer {
                                             if let Ok(error_response) = Self::build_error_response(version, request_id, &community) {
                                                 let _ = socket_clone.send_to(&error_response, peer_addr).await;
                                             }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("LLM error for SNMP request: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for SNMP: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("SNMP receive error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(local_addr)
+    }
+
+    /// Spawn SNMP agent with integrated LLM actions
+    pub async fn spawn_with_llm_actions(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
+        let local_addr = socket.local_addr()?;
+        info!("SNMP agent (action-based) listening on {}", local_addr);
+
+        let protocol = Arc::new(SnmpProtocol::new());
+
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 65535];
+
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let _connection_id = ConnectionId::new();
+
+                        // Parse the SNMP message
+                        let parsed = match Self::parse_snmp_message(&data) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("Failed to parse SNMP message: {}", e);
+                                continue;
+                            }
+                        };
+
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
+                        let protocol_clone = protocol.clone();
+                        let version = parsed.version;
+                        let request_id = parsed.request_id;
+                        let community = parsed.community.clone();
+                        let requested_oids = parsed.requested_oids.clone();
+
+                        // Spawn task to handle request with LLM
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+
+                            // Build event description
+                            let event_description = format!(
+                                "SNMP {} from {}:\n{}Request ID: {}\nCommunity: {}\nOIDs: {}",
+                                parsed.request_type,
+                                peer_addr,
+                                parsed.description,
+                                parsed.request_id,
+                                String::from_utf8_lossy(&parsed.community),
+                                parsed.requested_oids.join(", ")
+                            );
+
+                            // Create network context
+                            let context = NetworkContext::SnmpRequest {
+                                peer_addr,
+                                socket: socket_clone.clone(),
+                                version,
+                                request_id,
+                                community,
+                                requested_oids,
+                                status_tx: status_clone.clone(),
+                            };
+
+                            // Get protocol sync actions
+                            let protocol_actions = protocol_clone.get_sync_actions(&context);
+
+                            // Build prompt
+                            let prompt = PromptBuilder::build_network_event_action_prompt(
+                                &state_clone,
+                                &event_description,
+                                protocol_actions,
+                            ).await;
+
+                            // Call LLM
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    debug!("LLM SNMP response: {}", llm_output);
+
+                                    // Parse action response
+                                    match ActionResponse::from_str(&llm_output) {
+                                        Ok(action_response) => {
+                                            // Execute actions
+                                            match execute_actions(
+                                                action_response.actions,
+                                                &state_clone,
+                                                Some(protocol_clone.as_ref()),
+                                                Some(&context),
+                                            ).await {
+                                                Ok(result) => {
+                                                    // Display messages
+                                                    for msg in result.messages {
+                                                        let _ = status_clone.send(msg);
+                                                    }
+
+                                                    // Handle protocol results (send SNMP response)
+                                                    for protocol_result in result.protocol_results {
+                                                        if let Some(output_data) = protocol_result.get_all_output().first() {
+                                                            if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
+                                                                error!("Failed to send SNMP response: {}", e);
+                                                            } else {
+                                                                let _ = status_clone.send(format!(
+                                                                    "→ SNMP response to {} ({} bytes)",
+                                                                    peer_addr, output_data.len()
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to execute actions: {}", e);
+                                                    let _ = status_clone.send(format!("✗ Action execution error: {}", e));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to parse action response: {}", e);
+                                            let _ = status_clone.send(format!("✗ Parse error: {}", e));
                                         }
                                     }
                                 }

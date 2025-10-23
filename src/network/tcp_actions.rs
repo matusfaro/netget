@@ -1,0 +1,262 @@
+//! TCP protocol actions implementation
+
+use crate::llm::actions::{
+    protocol_trait::{ActionResult, ProtocolActions},
+    context::NetworkContext,
+    ActionDefinition, Parameter,
+};
+use crate::network::connection::ConnectionId;
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Connection data for TCP protocol
+pub struct ConnectionData {
+    pub write_half: Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
+}
+
+/// TCP protocol action handler
+pub struct TcpProtocol {
+    /// Map of active connections (for async actions)
+    connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+}
+
+impl TcpProtocol {
+    pub fn new() -> Self {
+        Self {
+            connections: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_connections(
+        connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+    ) -> Self {
+        Self { connections }
+    }
+
+    /// Add a connection to the protocol handler
+    pub async fn add_connection(
+        &self,
+        connection_id: ConnectionId,
+        write_half: Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
+    ) {
+        self.connections.lock().await.insert(
+            connection_id,
+            ConnectionData { write_half },
+        );
+    }
+
+    /// Remove a connection from the protocol handler
+    pub async fn remove_connection(&self, connection_id: &ConnectionId) {
+        self.connections.lock().await.remove(connection_id);
+    }
+
+    /// Get list of active connection IDs
+    pub async fn list_connection_ids(&self) -> Vec<ConnectionId> {
+        self.connections.lock().await.keys().copied().collect()
+    }
+}
+
+impl ProtocolActions for TcpProtocol {
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            send_to_connection_action(),
+            close_connection_action(),
+            list_connections_action(),
+        ]
+    }
+
+    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
+        match context {
+            NetworkContext::TcpConnection { .. } => vec![
+                send_tcp_data_action(),
+                wait_for_more_action(),
+                close_this_connection_action(),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn execute_action(
+        &self,
+        action: serde_json::Value,
+        context: Option<&NetworkContext>,
+    ) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_to_connection" => {
+                // Async action - not fully implemented here, needs to be handled by caller
+                // because we need async context to send data
+                let connection_id_str = action
+                    .get("connection_id")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'connection_id' parameter")?;
+
+                let data = action
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'data' parameter")?;
+
+                let _connection_id = ConnectionId::from_string(connection_id_str)
+                    .context("Invalid connection_id format")?;
+
+                // Return the data with connection ID embedded
+                // The caller will need to handle actually sending it
+                Ok(ActionResult::Output(data.as_bytes().to_vec()))
+            }
+            "close_connection" => {
+                // Async action - signal that connection should be closed
+                let connection_id_str = action
+                    .get("connection_id")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'connection_id' parameter")?;
+
+                let _connection_id = ConnectionId::from_string(connection_id_str)
+                    .context("Invalid connection_id format")?;
+
+                Ok(ActionResult::CloseConnection)
+            }
+            "list_connections" => {
+                // This needs to be handled specially by the caller
+                Ok(ActionResult::NoAction)
+            }
+            "send_tcp_data" => self.execute_send_tcp_data(action, context),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_this_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown TCP action: {}", action_type)),
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "TCP"
+    }
+}
+
+impl TcpProtocol {
+    /// Execute send_tcp_data sync action
+    fn execute_send_tcp_data(
+        &self,
+        action: serde_json::Value,
+        context: Option<&NetworkContext>,
+    ) -> Result<ActionResult> {
+        let data = action
+            .get("data")
+            .and_then(|v| v.as_str())
+            .context("Missing 'data' parameter")?;
+
+        // Verify we have TCP context
+        if let Some(NetworkContext::TcpConnection { .. }) = context {
+            Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        } else {
+            Err(anyhow::anyhow!(
+                "send_tcp_data requires TcpConnection context"
+            ))
+        }
+    }
+}
+
+/// Action definition for send_to_connection (async)
+fn send_to_connection_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_to_connection".to_string(),
+        description: "Send data to a specific TCP connection (async action)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "connection_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Connection ID to send to".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Data to send".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "send_to_connection",
+            "connection_id": "conn_12345",
+            "data": "Hello from TCP"
+        }),
+    }
+}
+
+/// Action definition for close_connection (async)
+fn close_connection_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_connection".to_string(),
+        description: "Close a specific TCP connection (async action)".to_string(),
+        parameters: vec![Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID to close".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "close_connection",
+            "connection_id": "conn_12345"
+        }),
+    }
+}
+
+/// Action definition for list_connections (async)
+fn list_connections_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_connections".to_string(),
+        description: "List all active TCP connections (async action)".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_connections"
+        }),
+    }
+}
+
+/// Action definition for send_tcp_data (sync)
+fn send_tcp_data_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_tcp_data".to_string(),
+        description: "Send data over the current TCP connection".to_string(),
+        parameters: vec![Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "Data to send".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "send_tcp_data",
+            "data": "220 Welcome\r\n"
+        }),
+    }
+}
+
+/// Action definition for wait_for_more (sync)
+fn wait_for_more_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "wait_for_more".to_string(),
+        description: "Wait for more data before responding (accumulate incomplete protocol data)".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "wait_for_more"
+        }),
+    }
+}
+
+/// Action definition for close_this_connection (sync)
+fn close_this_connection_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_this_connection".to_string(),
+        description: "Close the current TCP connection".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "close_this_connection"
+        }),
+    }
+}
