@@ -16,7 +16,7 @@ use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for DataLink stack
-pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
     let context = r#"You are handling Data Link layer (Layer 2) packets via pcap.
 You can capture and inject Ethernet frames, handle ARP requests/responses, and work with raw MAC addresses.
 Common use cases: ARP spoofing detection, custom Ethernet protocols, network monitoring."#;
@@ -106,8 +106,7 @@ impl DataLinkServer {
                         // Spawn async task to handle packet with LLM
                         runtime.spawn(async move {
                             let model = state_clone.get_ollama_model().await;
-                            let prompt_config = get_llm_prompt_config();
-                            let conn_memory = String::new();
+                            let prompt_config = get_llm_protocol_prompt();
 
                             // Build event description
                             let event_description = format!(
@@ -118,7 +117,6 @@ impl DataLinkServer {
                             let prompt = PromptBuilder::build_network_event_prompt(
                                 &state_clone,
                                 connection_id,
-                                &conn_memory,
                                 &event_description,
                                 prompt_config,
                             ).await;

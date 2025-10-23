@@ -48,7 +48,7 @@ pub async fn check_and_start_server(
                 use crate::network::tcp::TcpServer;
                 let state_arc = Arc::new(state.clone());
                 let send_first = state.get_send_first().await;
-                TcpServer::spawn_with_llm(
+                TcpServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -66,7 +66,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::http::HttpServer;
                 let state_arc = Arc::new(state.clone());
-                HttpServer::spawn_with_llm(
+                HttpServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -86,7 +86,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::UdpServer;
                 let state_arc = Arc::new(state.clone());
-                UdpServer::spawn_with_llm(
+                UdpServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -103,7 +103,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::DnsServer;
                 let state_arc = Arc::new(state.clone());
-                DnsServer::spawn_with_llm(
+                DnsServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -120,7 +120,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::DhcpServer;
                 let state_arc = Arc::new(state.clone());
-                DhcpServer::spawn_with_llm(
+                DhcpServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -137,7 +137,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::NtpServer;
                 let state_arc = Arc::new(state.clone());
-                NtpServer::spawn_with_llm(
+                NtpServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -154,7 +154,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::SnmpServer;
                 let state_arc = Arc::new(state.clone());
-                SnmpServer::spawn_with_llm(
+                SnmpServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
@@ -171,11 +171,13 @@ pub async fn check_and_start_server(
             {
                 use crate::network::SshServer;
                 let state_arc = Arc::new(state.clone());
-                SshServer::spawn_with_llm(
+                let send_first = state.get_send_first().await;
+                SshServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    send_first,
                 ).await?;
             }
             #[cfg(not(feature = "ssh"))]
@@ -188,7 +190,7 @@ pub async fn check_and_start_server(
             {
                 use crate::network::IrcServer;
                 let state_arc = Arc::new(state.clone());
-                IrcServer::spawn_with_llm(
+                IrcServer::spawn_with_llm_actions(
                     listen_addr,
                     llm_client.clone(),
                     state_arc,

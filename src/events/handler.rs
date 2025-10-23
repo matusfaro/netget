@@ -2,10 +2,11 @@
 
 use anyhow::Result;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::types::{AppEvent, UserCommand};
 use crate::llm::OllamaClient;
+use crate::llm::{ActionResponse, CommonAction, execute_actions, ProtocolActions};
 use crate::protocol::BaseStack;
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
@@ -123,6 +124,143 @@ impl EventHandler {
             Err(e) => {
                 let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
             }
+        }
+
+        Ok(())
+    }
+
+    /// Handle interpret command using NEW action-based system
+    /// This method can be spawned in a task without blocking the UI
+    pub async fn handle_interpret_with_actions(
+        &mut self,
+        input: String,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Option<Box<dyn ProtocolActions + Send>>,
+    ) -> Result<()> {
+        use crate::llm::PromptBuilder;
+
+        let _ = status_tx.send(format!("[INFO] Interpreting: {}", input));
+
+        // Get protocol async actions if available
+        let protocol_async_actions = if let Some(ref proto) = protocol {
+            proto.get_async_actions(&self.state)
+        } else {
+            Vec::new()
+        };
+
+        // Build prompt with new action system
+        let prompt = PromptBuilder::build_user_input_action_prompt(
+            &self.state,
+            &input,
+            protocol_async_actions,
+        ).await;
+        let model = self.state.get_ollama_model().await;
+
+        // Call LLM
+        match self.llm.generate(&model, &prompt).await {
+            Ok(llm_output) => {
+                // Parse action response
+                match ActionResponse::from_str(&llm_output) {
+                    Ok(action_response) => {
+                        // Execute actions
+                        // Convert protocol reference properly
+                        let protocol_ref: Option<&dyn ProtocolActions> = protocol.as_ref()
+                            .map(|p| p.as_ref() as &dyn ProtocolActions);
+
+                        match execute_actions(
+                            action_response.actions.clone(),
+                            &self.state,
+                            protocol_ref,
+                            None, // No network context for user commands
+                        ).await {
+                            Ok(result) => {
+                                // Display messages
+                                for msg in result.messages {
+                                    let _ = status_tx.send(msg);
+                                }
+
+                                // Handle server management actions separately
+                                for action_value in &action_response.actions {
+                                    if let Ok(common_action) = CommonAction::from_json(action_value) {
+                                        if let Err(e) = self.execute_server_management_action(common_action, &status_tx).await {
+                                            let _ = status_tx.send(format!("[ERROR] Error executing action: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse action response, falling back to old system: {}", e);
+                        // Fall back to old system
+                        return self.handle_interpret(input, status_tx).await;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute server management actions (open_server, close_server, etc.)
+    async fn execute_server_management_action(
+        &mut self,
+        action: CommonAction,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        match action {
+            CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction } => {
+                // Parse base stack
+                let stack = BaseStack::from_str(&base_stack)
+                    .unwrap_or(BaseStack::TcpRaw);
+
+                self.state.set_mode(Mode::Server).await;
+                self.state.set_base_stack(stack).await;
+                self.state.set_port(port).await;
+                self.state.set_send_first(send_first).await;
+                self.state.set_instruction(instruction).await;
+
+                // Set initial memory if provided
+                if let Some(mem) = initial_memory {
+                    self.state.set_memory(mem).await;
+                }
+
+                let _ = status_tx.send(format!("Opening server on port {} with stack {}", port, stack));
+
+                // Signal main loop to check for server startup and update UI
+                let _ = status_tx.send("__CHECK_SERVER_STARTUP__".to_string());
+            }
+            CommonAction::CloseServer => {
+                self.state.set_mode(Mode::Idle).await;
+                self.state.set_port(0).await;
+                let _ = status_tx.send("[INFO] Server closed".to_string());
+
+                // Signal main loop to update UI
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
+            CommonAction::UpdateInstruction { instruction } => {
+                self.state.set_instruction(instruction.clone()).await;
+                let _ = status_tx.send(format!("[INFO] Instruction: {}", instruction));
+            }
+            CommonAction::ChangeModel { model } => {
+                self.state.set_ollama_model(model.clone()).await;
+                let _ = status_tx.send(format!("Changed model to: {}", model));
+
+                // Signal main loop to update UI
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
+            CommonAction::ShowMessage { message } => {
+                let _ = status_tx.send(message);
+            }
+            // Memory actions are handled by execute_actions, so no-op here
+            CommonAction::SetMemory { .. }
+            | CommonAction::AppendMemory { .. } => {}
         }
 
         Ok(())

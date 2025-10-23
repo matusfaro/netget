@@ -12,10 +12,12 @@ use tracing::{error, info};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
+use crate::llm::{ActionResponse, execute_actions, NetworkContext, ProtocolActions, ActionResult};
+use crate::network::SshProtocol;
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for SSH stack
-pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
     let context = r#"You are handling SSH protocol (port 22).
 Handle SSH handshake, authentication, and shell sessions.
 Respond with appropriate SSH protocol messages."#;
@@ -25,8 +27,8 @@ Respond with appropriate SSH protocol messages."#;
   "output": "SSH protocol data to send (null if no response)",
   "close_connection": false,  // Close this connection after sending
   "message": null,  // Optional message for user
-  "set_connection_memory": null,  // Replace connection memory
-  "append_connection_memory": null  // Append to connection memory
+  "set_memory": null,  // Replace memory
+  "append_memory": null  // Append to memory
 }"#;
 
     (context, output_format)
@@ -61,7 +63,6 @@ impl SshServer {
                         tokio::spawn(async move {
                             let (mut read_half, mut write_half) = stream.into_split();
                             let mut buffer = vec![0u8; 8192];
-                            let mut connection_memory = String::new();
 
                             loop {
                                 match read_half.read(&mut buffer).await {
@@ -73,7 +74,7 @@ impl SshServer {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
 
                                         let model = state_clone.get_ollama_model().await;
-                                        let prompt_config = get_llm_prompt_config();
+                                        let prompt_config = get_llm_protocol_prompt();
 
                                         // Build event description
                                         let event_description = {
@@ -88,16 +89,15 @@ impl SshServer {
                                         let prompt = PromptBuilder::build_network_event_prompt(
                                             &state_clone,
                                             connection_id,
-                                            &connection_memory,
                                             &event_description,
                                             prompt_config,
                                         ).await;
 
                                         match llm_clone.generate_llm_response(&model, &prompt).await {
                                             Ok(response) => {
-                                                // Handle common actions and update connection memory
+                                                // Handle common actions
                                                 use crate::llm::response_handler;
-                                                let processed = response_handler::handle_llm_response(response, &state_clone, &mut connection_memory).await;
+                                                let processed = response_handler::handle_llm_response(response, &state_clone).await;
 
                                                 // Send output
                                                 if let Some(output) = processed.output {
@@ -123,6 +123,104 @@ impl SshServer {
                                         error!("SSH read error: {}", e);
                                         break;
                                     }
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to accept SSH connection: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(local_addr)
+    }
+
+    /// Spawn SSH server with integrated LLM actions
+    pub async fn spawn_with_llm_actions(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        send_first: bool,
+    ) -> Result<SocketAddr> {
+        let listener = TcpListener::bind(listen_addr).await?;
+        let local_addr = listener.local_addr()?;
+        info!("SSH server (action-based) listening on {}", local_addr);
+
+        let protocol = Arc::new(SshProtocol::new());
+
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _remote_addr)) => {
+                        let connection_id = ConnectionId::new();
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let protocol_clone = protocol.clone();
+
+                        tokio::spawn(async move {
+                            let (mut read_half, write_half) = tokio::io::split(stream);
+                            let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
+                            let model = state_clone.get_ollama_model().await;
+
+                            // Send banner if requested
+                            if send_first {
+                                let context = NetworkContext::SshConnection { connection_id, write_half: write_half_arc.clone(), status_tx: status_clone.clone() };
+                                let protocol_actions = protocol_clone.get_sync_actions(&context);
+                                let prompt = PromptBuilder::build_network_event_action_prompt(
+                                    &state_clone, "SSH connection opened", protocol_actions).await;
+
+                                if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
+                                    if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
+                                        if let Ok(result) = execute_actions(action_response.actions, &state_clone,
+                                            Some(protocol_clone.as_ref()), Some(&context)).await {
+                                            for protocol_result in result.protocol_results {
+                                                if let ActionResult::Output(data) = protocol_result {
+                                                    let mut write = write_half_arc.lock().await;
+                                                    let _ = write.write_all(&data).await;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Read loop
+                            let mut buffer = vec![0u8; 8192];
+                            loop {
+                                match read_half.read(&mut buffer).await {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        let data = Bytes::copy_from_slice(&buffer[..n]);
+                                        let event_description = format!("SSH data received: {:?}", data);
+                                        let context = NetworkContext::SshConnection { connection_id, write_half: write_half_arc.clone(), status_tx: status_clone.clone() };
+                                        let protocol_actions = protocol_clone.get_sync_actions(&context);
+                                        let prompt = PromptBuilder::build_network_event_action_prompt(
+                                            &state_clone, &event_description, protocol_actions).await;
+
+                                        if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
+                                            if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
+                                                if let Ok(result) = execute_actions(action_response.actions, &state_clone,
+                                                    Some(protocol_clone.as_ref()), Some(&context)).await {
+                                                    for protocol_result in result.protocol_results {
+                                                        match protocol_result {
+                                                            ActionResult::Output(data) => {
+                                                                let mut write = write_half_arc.lock().await;
+                                                                let _ = write.write_all(&data).await;
+                                                            }
+                                                            ActionResult::CloseConnection => break,
+                                                            _ => {}
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(_) => break,
                                 }
                             }
                         });

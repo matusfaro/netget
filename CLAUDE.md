@@ -247,6 +247,227 @@ If JSON parsing fails, the parser handles legacy magic strings:
 - Event handling: `src/main.rs` (HttpRequest event)
 - Event type: `src/events/types.rs:44-61` (HttpRequest with oneshot channel)
 
+### Action-Based Prompt System (NEW)
+
+**Major Refactoring**: Redesigned the entire prompt and response system to use a unified action-based architecture.
+
+**Core Concept**: Both user input and network events now return arrays of actions `{actions: [...]}` instead of nested structures. Each action is self-describing and can be executed independently.
+
+#### Architecture Components
+
+**1. Action System** (`src/llm/actions/`)
+
+Core structures for defining and executing actions:
+
+- **`ActionDefinition`**: Self-describing action with name, description, parameters, and example
+- **`Parameter`**: Type-safe parameter definition (name, type, description, required)
+- **`ActionResponse`**: LLM response format: `{actions: [action, action]}`
+- **`NetworkContext`**: Context enum for all protocol types (TcpConnection, UdpDatagram, HttpRequest, SnmpRequest, etc.)
+- **`ProtocolActions` trait**: Interface for protocol-specific action systems
+- **`CommonAction` enum**: 9 common actions available across all contexts
+- **Action executor**: Parses action array and executes in order
+
+**2. Action Categories**
+
+Actions are categorized by when they can be executed:
+
+- **Common Actions**: Available in both user input and network events
+  - `show_message` - Display message to user
+  - `open_server` - Start a new server
+  - `close_server` - Stop current server
+  - `update_instruction` - Update server instruction
+  - `change_model` - Switch LLM model
+  - `set_memory` / `append_memory` - Memory operations
+
+- **Protocol Async Actions**: Executable anytime from user input (no network context required)
+  - TCP: `send_to_connection(connection_id, data)`, `close_connection(connection_id)`, `list_connections()`
+  - SNMP: `send_trap(target, variables)`
+  - UDP: `send_to_address(address, data)`
+  - User can say "send hello to connection X" and it executes immediately
+
+- **Protocol Sync Actions**: Require network context (only available during network events)
+  - TCP: `send_tcp_data(data)`, `wait_for_more()`, `close_this_connection()`
+  - HTTP: `send_http_response(status, headers, body)`
+  - SNMP: `send_snmp_response(variables)`, `send_snmp_error(error_message)`
+  - UDP: `send_udp_response(data)`, `ignore_datagram()`
+  - DNS, DHCP, NTP: `send_X_response(data)`, `ignore_request()`
+  - SSH, IRC: `send_X_data(data)`, `wait_for_more()`, `close_connection()`
+
+**3. Unified Prompt Builder** (`src/llm/prompt.rs`)
+
+Three prompt building functions that share the same underlying structure:
+
+```rust
+// Core unified builder
+build_action_prompt(state, trigger_reason, instructions, available_actions) -> String
+
+// User input (includes common + protocol async actions)
+build_user_input_action_prompt(state, user_input, protocol_async_actions) -> String
+
+// Network events (includes common subset + protocol sync actions)
+build_network_event_action_prompt(state, event_description, protocol_sync_actions) -> String
+```
+
+**Prompt Structure**:
+1. **Current State**: Server status, port, stack, memory
+2. **Trigger Reason**: "User input: X" or "Event: TCP data received"
+3. **Instructions**: How to handle (user instructions or protocol requirements)
+4. **Available Actions**: Auto-generated list with examples for each available action
+5. **Response Format**: `{actions: [...]}`
+
+#### Protocol Implementation Pattern
+
+Each protocol implements `ProtocolActions` trait:
+
+```rust
+// Example: UDP Protocol
+impl ProtocolActions for UdpProtocol {
+    fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition> {
+        // Actions user can trigger anytime
+        vec![send_to_address_action()]
+    }
+
+    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
+        // Actions only available when handling network events
+        match context {
+            NetworkContext::UdpDatagram { .. } => vec![
+                send_udp_response_action(),
+                ignore_datagram_action()
+            ],
+            _ => Vec::new()
+        }
+    }
+
+    fn execute_action(&self, action: serde_json::Value, context: Option<&NetworkContext>) -> Result<ActionResult> {
+        // Parse and execute the action
+        let action_type = action.get("type").and_then(|v| v.as_str())?;
+        match action_type {
+            "send_udp_response" => self.execute_send_udp_response(action, context),
+            "ignore_datagram" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow!("Unknown UDP action: {}", action_type))
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str { "UDP" }
+}
+```
+
+#### Protocol Action Files
+
+Each protocol has dedicated action handler:
+- `src/network/udp_actions.rs` - UdpProtocol
+- `src/network/tcp_actions.rs` - TcpProtocol
+- `src/network/http_actions.rs` - HttpProtocol
+- `src/network/snmp_actions.rs` - SnmpProtocol
+- `src/network/dns_actions.rs` - DnsProtocol
+- `src/network/dhcp_actions.rs` - DhcpProtocol
+- `src/network/ntp_actions.rs` - NtpProtocol
+- `src/network/ssh_actions.rs` - SshProtocol
+- `src/network/irc_actions.rs` - IrcProtocol
+
+#### User Command Integration
+
+**Event Handler** (`src/events/handler.rs`):
+
+```rust
+// New action-based handler
+handle_interpret_with_actions(input, status_tx, protocol) -> Result<()>
+```
+
+Flow:
+1. User types command
+2. Get protocol async actions if server is running
+3. Build prompt with `build_user_input_action_prompt()`
+4. LLM returns `{actions: [...]}`
+5. Execute actions via `execute_actions()`
+6. Handle server management actions separately (open/close server)
+7. Falls back to old system if parsing fails
+
+#### Benefits
+
+**Context-Aware Actions**:
+- Async actions only shown when they make sense (e.g., TCP `send_to_connection` only if connections exist)
+- Sync actions only available during network events (e.g., UDP `send_udp_response` needs peer address)
+
+**Protocol-Specific**:
+- Each protocol defines exactly the actions it needs
+- No hardcoded protocol logic in prompts
+- Easy to add new protocols
+
+**Type-Safe**:
+- Structured action definitions with parameter validation
+- Compile-time checks for action types
+
+**Unified**:
+- Same prompt structure for all protocols
+- Same action execution flow
+- Consistent user experience
+
+**Extensible**:
+- Add new actions without changing core system
+- Protocols can add arbitrary actions based on runtime state
+- Actions execute in defined order
+
+**User-Friendly**:
+- Users can interact with protocols naturally: "send hello to connection X"
+- Protocol async actions bridge the gap between user commands and network operations
+
+#### Example: UDP with New System
+
+**User Input**:
+```
+User: "send 'ping' to 192.168.1.100:8080"
+```
+
+**LLM Sees** (via `build_user_input_action_prompt`):
+- Common actions (show_message, open_server, etc.)
+- UDP async actions (send_to_address)
+- No UDP sync actions (no network context)
+
+**LLM Returns**:
+```json
+{
+  "actions": [
+    {"type": "send_to_address", "address": "192.168.1.100:8080", "data": "ping"}
+  ]
+}
+```
+
+**Network Event**:
+```
+UDP datagram received from 192.168.1.100:8080
+```
+
+**LLM Sees** (via `build_network_event_action_prompt`):
+- Common actions (show_message, memory operations)
+- UDP sync actions (send_udp_response, ignore_datagram)
+- NetworkContext with peer address
+
+**LLM Returns**:
+```json
+{
+  "actions": [
+    {"type": "send_udp_response", "data": "pong"}
+  ]
+}
+```
+
+#### Migration Notes
+
+**Current Status**:
+- ✅ All protocols have action implementations
+- ✅ Unified prompt builder complete
+- ✅ Action executor working
+- ✅ User command handler integrated
+- ✅ UDP proof-of-concept functional
+- ⏳ Old system remains as fallback during transition
+
+**Location**:
+- Core system: `src/llm/actions/`
+- Protocol actions: `src/network/*_actions.rs`
+- Prompt builder: `src/llm/prompt.rs:200-337` (new functions)
+- User handler: `src/events/handler.rs:132-267` (handle_interpret_with_actions)
+
 ## Key Technical Learnings
 
 ### 1. TcpStream Sharing Problem
@@ -518,27 +739,33 @@ This is useful for scripting and automation.
 
 ## Known Limitations
 
-1. **No concurrent connections**: EventHandler processes events sequentially
-2. **No streaming LLM**: Each response waits for full LLM generation
-3. **No error recovery**: LLM errors just log, don't retry
-4. **No TLS/SSL**: Plain TCP only
-5. **No UDP support**: TCP only
+1. **No streaming LLM**: Each response waits for full LLM generation
+2. **No error recovery**: LLM errors just log, don't retry
+3. **No TLS/SSL**: Plain TCP only
+4. **Protocol integration incomplete**: New action system implemented but not fully integrated into all protocol servers (only UDP has `spawn_with_llm_actions` currently)
 
 ## Future Work
 
 ### High Priority
 
-- Implement connection pooling with Arc<Mutex<HashMap<>>>
+- Integrate action system into all protocol servers (TCP, HTTP, SNMP, DNS, DHCP, NTP, SSH, IRC)
+- Migrate network event handlers to use `build_network_event_action_prompt()`
 - Add streaming LLM support for faster responses
 - Add retry logic for LLM failures
-- Support multiple concurrent connections properly
+- Update integration tests to use new action system
+
+### Medium Priority
+
+- Remove old response structures and prompt functions after migration complete
+- Add more protocol async actions (e.g., SSH `send_to_connection`, IRC `broadcast_message`)
+- Implement dynamic action availability based on state (e.g., TCP `list_connections` only if connections exist)
 
 ### Low Priority
 
 - TLS/SSL support
-- UDP protocol support
 - WebSocket support
 - Client mode implementation
+- Action composition (actions that trigger other actions)
 
 ## Testing Checklist
 
@@ -588,6 +815,11 @@ Before committing changes:
 14. **Structured responses**: LLM returns JSON with flexible fields instead of magic strings
 15. **HTTP stack**: Uses hyper library + oneshot channels for request-response pattern with LLM
 16. **Response channels**: Tokio oneshot channels enable synchronous HTTP responses from async LLM calls
+17. **Action-based prompts**: Unified action system where LLM returns `{actions: [...]}` for both user input and network events
+18. **Async vs Sync actions**: Protocol actions categorized by context requirement - async (no context) vs sync (requires network context)
+19. **Protocol-specific actions**: Each protocol defines its own actions via `ProtocolActions` trait with `get_async_actions()` and `get_sync_actions()`
+20. **Context-aware prompts**: Actions auto-included in prompts based on availability (e.g., TCP `send_to_connection` only if server running)
+21. **User protocol control**: TCP async actions enable users to send data to specific connections directly from CLI
 
 ## Git Commit Instructions
 
