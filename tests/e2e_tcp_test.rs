@@ -12,7 +12,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::time::Duration;
 
 #[tokio::test]
-#[ignore] // FTP protocol is complex and requires more sophisticated LLM handling
 async fn test_ftp_server() -> E2EResult<()> {
     println!("\n=== E2E Test: FTP Server ===");
 
