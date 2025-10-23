@@ -315,28 +315,6 @@ Response (JSON only):"#,
         )
     }
 
-    /// Build a simple status explanation prompt
-    pub async fn build_status_prompt(
-        state: &AppState,
-        event_description: &str,
-    ) -> String {
-        let state_summary = state.get_summary().await;
-
-        format!(
-            r#"You are monitoring a network application.
-
-Current State:
-{}
-
-Event: {}
-
-Provide a brief (1-2 sentence) human-readable explanation of what just happened.
-
-Response:"#,
-            state_summary, event_description
-        )
-    }
-
     /// Build a prompt for handling HTTP requests
     pub async fn build_http_request_prompt(
         state: &AppState,
@@ -444,6 +422,103 @@ Examples:
 
 Response (JSON only):"#,
             state_summary, mode, instruction_text, memory_text, conn_memory_text, connection_id, method, uri, headers_text, body_text
+        )
+    }
+
+    /// Build prompt for UDP request (SNMP, DNS, etc.)
+    pub async fn build_udp_request_prompt(
+        state: &AppState,
+        connection_id: ConnectionId,
+        peer_addr: std::net::SocketAddr,
+        data: &bytes::Bytes,
+        connection_memory: &str,
+    ) -> String {
+        let mode = state.get_mode().await;
+        let mut state_summary = format!("Mode: {}\n", mode);
+
+        // Get global memory
+        let memory = state.get_memory().await;
+        let memory_text = if memory.is_empty() {
+            String::new()
+        } else {
+            format!("\nGlobal Memory:\n{}\n", memory)
+        };
+
+        // Get user instructions
+        let instruction = state.get_instruction().await;
+        let instruction_text = if instruction.is_empty() {
+            String::new()
+        } else {
+            format!("\nUser Instructions:\n{}\n", instruction)
+        };
+
+        // Format connection memory if present
+        let conn_memory_text = if connection_memory.is_empty() {
+            String::new()
+        } else {
+            format!("\nConnection Memory:\n{}\n", connection_memory)
+        };
+
+        // Format the data as hex dump for debugging
+        let data_hex = data.chunks(16)
+            .map(|chunk| {
+                let hex = chunk.iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let ascii = chunk.iter()
+                    .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
+                    .collect::<String>();
+                format!("  {} | {}", hex, ascii)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            r#"You are controlling a UDP-based network application.
+
+{}{}{}{}
+
+Event: UDP Request
+Connection ID: {}
+Peer Address: {}
+Data Length: {} bytes
+Data (hex):
+{}
+
+Analyze the UDP packet and generate an appropriate response. Common UDP protocols:
+- SNMP (port 161): Simple Network Management Protocol
+- DNS (port 53): Domain Name System
+- DHCP (port 67/68): Dynamic Host Configuration Protocol
+- NTP (port 123): Network Time Protocol
+
+IMPORTANT: Respond with a JSON object with the following structure:
+{{
+  "output": "raw bytes to send back (use actual \\n, \\r, etc. for control chars)",
+  "close_connection": false,
+  "wait_for_more": false,
+  "log_message": "optional debug message",
+  "set_connection_memory": "completely replace connection memory (optional)",
+  "append_connection_memory": "append to existing connection memory (optional)"
+}}
+
+For SNMP specifically, you should:
+1. Parse the SNMP request to understand what OIDs are being requested
+2. Return a JSON with variable bindings like:
+{{
+  "output": null,
+  "snmp_response": {{
+    "variables": [
+      {{"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "System Description"}},
+      {{"oid": "1.3.6.1.2.1.1.3.0", "type": "timeticks", "value": 123456}}
+    ]
+  }},
+  "log_message": "SNMP GetRequest processed"
+}}
+
+Response (JSON only):"#,
+            state_summary, instruction_text, memory_text, conn_memory_text,
+            connection_id, peer_addr, data.len(), data_hex
         )
     }
 }

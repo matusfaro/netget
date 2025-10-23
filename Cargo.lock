@@ -1150,7 +1150,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 dependencies = [
  "ahash",
- "allocator-api2",
 ]
 
 [[package]]
@@ -1852,7 +1851,7 @@ dependencies = [
  "nix",
  "ollama-rs",
  "pcap",
- "rasn 0.22.2",
+ "rasn",
  "rasn-snmp",
  "ratatui",
  "reqwest",
@@ -2377,31 +2376,9 @@ dependencies = [
  "num-integer",
  "num-traits",
  "once_cell",
- "rasn-derive 0.18.0",
+ "rasn-derive",
  "serde_json",
- "snafu 0.7.5",
-]
-
-[[package]]
-name = "rasn"
-version = "0.22.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c1d1ed06b066a36d0492d65daaa5f40b7101c24a1228e0af2709712ef1a86e1"
-dependencies = [
- "bitvec",
- "bitvec-nom2",
- "bytes",
- "chrono",
- "either",
- "hashbrown 0.14.5",
- "nom",
- "num-bigint",
- "num-integer",
- "num-traits",
- "once_cell",
- "rasn-derive 0.22.2",
- "serde_json",
- "snafu 0.8.9",
+ "snafu",
 ]
 
 [[package]]
@@ -2420,38 +2397,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "rasn-derive"
-version = "0.22.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f35fecd68ee4d5850baa37ee4520456bbae761fdd42a7fcb95701c268500a93"
-dependencies = [
- "proc-macro2",
- "rasn-derive-impl",
- "syn 2.0.107",
-]
-
-[[package]]
-name = "rasn-derive-impl"
-version = "0.22.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "355eedbab62312d9474e1c2e7963ce5fad99bded7e9abd42ae4f040762a2c5f6"
-dependencies = [
- "either",
- "itertools",
- "proc-macro2",
- "quote",
- "syn 2.0.107",
- "uuid",
-]
-
-[[package]]
 name = "rasn-smi"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0926e42d607b6d944ad8a715772acb12761aeab6b70269ec9b6d3a4b161de168"
 dependencies = [
  "chrono",
- "rasn 0.18.0",
+ "rasn",
 ]
 
 [[package]]
@@ -2460,7 +2412,7 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "836f917c9f0c173c1e3ff37edb4bd1b51378945339637ecbe7ab624b5098ef86"
 dependencies = [
- "rasn 0.18.0",
+ "rasn",
  "rasn-smi",
 ]
 
@@ -3139,16 +3091,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4de37ad025c587a29e8f3f5605c00f70b98715ef90b9061a815b9e59e9042d6"
 dependencies = [
  "doc-comment",
- "snafu-derive 0.7.5",
-]
-
-[[package]]
-name = "snafu"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
-dependencies = [
- "snafu-derive 0.8.9",
+ "snafu-derive",
 ]
 
 [[package]]
@@ -3161,18 +3104,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "snafu-derive"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.107",
 ]
 
 [[package]]

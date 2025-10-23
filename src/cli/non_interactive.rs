@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
-use crate::events::{AppEvent, NetworkEvent, UserCommand};
+use crate::events::types::{AppEvent, NetworkEvent, UserCommand, UdpResponse, HttpResponse};
 use crate::llm::{CommandAction, LlmResponse, OllamaClient, PromptBuilder};
 use crate::network::ConnectionId;
 use crate::protocol::BaseStack;
@@ -85,8 +85,7 @@ pub async fn run_non_interactive(
                                     state.set_memory(mem).await;
                                 }
 
-                                info!("Starting {} server on port {}", stack, port);
-                                debug!("Listen address: {}", args.listen_addr);
+                                info!("Starting {} server on {}", stack, port);
 
                                 // Run the server
                                 return run_server(&state, llm).await;
@@ -367,7 +366,7 @@ async fn process_network_event(
                         response.status, connection_id
                     );
 
-                    let _ = response_tx.send(crate::events::HttpResponse {
+                    let _ = response_tx.send(HttpResponse {
                         status: response.status,
                         headers: response.headers,
                         body: Bytes::from(response.body),
@@ -376,10 +375,89 @@ async fn process_network_event(
                 Err(e) => {
                     error!("Failed to generate HTTP response: {}", e);
                     // Send a 500 error response
-                    let _ = response_tx.send(crate::events::HttpResponse {
+                    let _ = response_tx.send(HttpResponse {
                         status: 500,
                         headers: HashMap::new(),
                         body: Bytes::from("Internal Server Error"),
+                    });
+                }
+            }
+        }
+
+        NetworkEvent::UdpRequest {
+            connection_id,
+            peer_addr,
+            data,
+            response_tx,
+        } => {
+            println!("[UDP] Request from {} ({})", peer_addr, data.len());
+
+            // Generate UDP response with LLM
+            let model = state.get_ollama_model().await;
+            let prompt = PromptBuilder::build_udp_request_prompt(
+                state, connection_id, peer_addr, &data, "",
+            )
+            .await;
+
+            match llm.generate(&model, &prompt).await {
+                Ok(llm_text) => {
+                    // Try to parse as JSON first to check for SNMP-specific response
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&llm_text) {
+                        // Check if this is an SNMP response with structured data
+                        if json.get("snmp_response").is_some() {
+                            // Parse the SNMP message to get version, request ID, and community
+                            if let Ok(parsed) = crate::network::snmp::SnmpServer::parse_snmp_message(&data) {
+                                // Build SNMP response using the structured data
+                                match crate::network::snmp::SnmpServer::build_snmp_response(
+                                    &llm_text,
+                                    parsed.version,
+                                    parsed.request_id,
+                                    &parsed.community,
+                                ) {
+                                    Ok(response_data) => {
+                                        debug!("Sending SNMP response to {} ({} bytes)", peer_addr, response_data.len());
+                                        let _ = response_tx.send(UdpResponse {
+                                            data: response_data,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to build SNMP response: {}", e);
+                                        let _ = response_tx.send(UdpResponse {
+                                            data: Vec::new(),
+                                        });
+                                    }
+                                }
+                            } else {
+                                error!("Failed to parse SNMP request");
+                                let _ = response_tx.send(UdpResponse {
+                                    data: Vec::new(),
+                                });
+                            }
+                        } else if let Some(output) = json.get("output").and_then(|v| v.as_str()) {
+                            // Regular UDP response with raw output
+                            debug!("Sending UDP response to {}", peer_addr);
+                            let _ = response_tx.send(UdpResponse {
+                                data: output.as_bytes().to_vec(),
+                            });
+                        } else {
+                            // No output specified
+                            let _ = response_tx.send(UdpResponse {
+                                data: Vec::new(),
+                            });
+                        }
+                    } else {
+                        // Not JSON, treat as raw output (backward compatibility)
+                        debug!("Sending UDP response to {}", peer_addr);
+                        let _ = response_tx.send(UdpResponse {
+                            data: llm_text.as_bytes().to_vec(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to generate UDP response: {}", e);
+                    // Send empty response on error
+                    let _ = response_tx.send(UdpResponse {
+                        data: Vec::new(),
                     });
                 }
             }

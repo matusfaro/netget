@@ -257,6 +257,109 @@ impl EventHandler {
                 // This is because they need to send responses back via oneshot channel
                 Ok(())
             }
+            NetworkEvent::UdpRequest { connection_id, peer_addr, data, response_tx } => {
+                // UDP requests (SNMP, DNS, etc.) need to send responses via oneshot channel
+                let formatted = self.format_data(&data, 80);
+                ui.add_status_message(format!(
+                    "← UDP from {}: {}",
+                    peer_addr,
+                    formatted
+                ));
+
+                // Build proper UDP prompt with protocol detection
+                let model = self.state.get_ollama_model().await;
+                let prompt = crate::llm::PromptBuilder::build_udp_request_prompt(
+                    &self.state,
+                    connection_id,
+                    peer_addr,
+                    &data,
+                    "",  // No connection memory for UDP
+                ).await;
+
+                match self.llm.generate(&model, &prompt).await {
+                    Ok(llm_text) => {
+                        // Try to parse as JSON first to check for SNMP-specific response
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&llm_text) {
+                            // Check if this is an SNMP response with structured data
+                            if json.get("snmp_response").is_some() {
+                                // Parse the SNMP message to get version, request ID, and community
+                                #[cfg(feature = "snmp")]
+                                {
+                                    if let Ok(parsed) = crate::network::snmp::SnmpServer::parse_snmp_message(&data) {
+                                        // Build SNMP response using the structured data
+                                        match crate::network::snmp::SnmpServer::build_snmp_response(
+                                            &llm_text,
+                                            parsed.version,
+                                            parsed.request_id,
+                                            &parsed.community,
+                                        ) {
+                                            Ok(response_data) => {
+                                                let udp_response = crate::events::types::UdpResponse {
+                                                    data: response_data,
+                                                };
+                                                let _ = response_tx.send(udp_response);
+                                                ui.add_status_message(format!("→ SNMP response sent to {}", peer_addr));
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to build SNMP response: {}", e);
+                                                let udp_response = crate::events::types::UdpResponse {
+                                                    data: Vec::new(),
+                                                };
+                                                let _ = response_tx.send(udp_response);
+                                            }
+                                        }
+                                    } else {
+                                        error!("Failed to parse SNMP request");
+                                        let udp_response = crate::events::types::UdpResponse {
+                                            data: Vec::new(),
+                                        };
+                                        let _ = response_tx.send(udp_response);
+                                    }
+                                }
+                                #[cfg(not(feature = "snmp"))]
+                                {
+                                    let udp_response = crate::events::types::UdpResponse {
+                                        data: Vec::new(),
+                                    };
+                                    let _ = response_tx.send(udp_response);
+                                }
+                            } else if let Some(output) = json.get("output").and_then(|v| v.as_str()) {
+                                // Regular UDP response with raw output
+                                let udp_response = crate::events::types::UdpResponse {
+                                    data: output.as_bytes().to_vec(),
+                                };
+                                let _ = response_tx.send(udp_response);
+                                ui.add_status_message(format!("→ UDP response sent to {}", peer_addr));
+                            } else {
+                                // No output specified
+                                let udp_response = crate::events::types::UdpResponse {
+                                    data: Vec::new(),
+                                };
+                                let _ = response_tx.send(udp_response);
+                                ui.add_status_message("LLM: No UDP response needed".to_string());
+                            }
+                        } else {
+                            // Not JSON, treat as raw output (backward compatibility)
+                            let udp_response = crate::events::types::UdpResponse {
+                                data: llm_text.as_bytes().to_vec(),
+                            };
+                            let _ = response_tx.send(udp_response);
+                            ui.add_status_message(format!("→ UDP response sent to {}", peer_addr));
+                        }
+                    }
+                    Err(e) => {
+                        error!("LLM error processing UDP request: {}", e);
+                        ui.add_llm_message(format!("LLM error: {}", e));
+                        // Send empty response on error
+                        let udp_response = crate::events::types::UdpResponse {
+                            data: Vec::new(),
+                        };
+                        let _ = response_tx.send(udp_response);
+                    }
+                }
+
+                Ok(())
+            }
             NetworkEvent::PacketReceived { interface, data } => {
                 // Data link packets are handled directly in main.rs
                 // This is because they may need to inject packets back

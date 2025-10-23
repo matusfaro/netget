@@ -74,7 +74,7 @@ dhcproto = { version = "0.12", optional = true }
 
 # SNMP agent
 rasn-snmp = { version = "0.18", optional = true }
-rasn = { version = "0.22", optional = true }
+rasn = { version = "0.18", optional = true }
 
 # SSH server
 russh = { version = "0.45", optional = true }

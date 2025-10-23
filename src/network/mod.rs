@@ -42,7 +42,7 @@ pub use ntp::NtpServer;
 #[cfg(feature = "snmp")]
 pub mod snmp;
 #[cfg(feature = "snmp")]
-pub use snmp::SnmpAgent;
+pub use snmp::SnmpServer;
 
 #[cfg(feature = "ssh")]
 pub mod ssh;
