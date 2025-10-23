@@ -128,6 +128,7 @@ impl DhcpServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
@@ -142,6 +143,28 @@ impl DhcpServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
+                        let connection_id = ConnectionId::new();
+
+                        // Add connection to ServerInstance (DHCP "connection" = recent request)
+                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        let now = std::time::Instant::now();
+                        let conn_state = ServerConnectionState {
+                            id: connection_id,
+                            remote_addr: peer_addr,
+                            local_addr: local_addr,
+                            bytes_sent: 0,
+                            bytes_received: n as u64,
+                            packets_sent: 0,
+                            packets_received: 1,
+                            last_activity: now,
+                            status: ConnectionStatus::Active,
+                            status_changed_at: now,
+                            protocol_info: ProtocolConnectionInfo::Dhcp {
+                                recent_requests: vec![("request".to_string(), now)],
+                            },
+                        };
+                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
                         debug!("DHCP received {} bytes from {}", n, peer_addr);

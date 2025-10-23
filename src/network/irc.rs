@@ -86,6 +86,7 @@ impl IrcServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
@@ -96,8 +97,9 @@ impl IrcServer {
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
-                    Ok((stream, _remote_addr)) => {
+                    Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new();
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -106,6 +108,30 @@ impl IrcServer {
                         tokio::spawn(async move {
                             let (read_half, write_half) = tokio::io::split(stream);
                             let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
+
+                            // Add connection to ServerInstance
+                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus, ProtocolState};
+                            let now = std::time::Instant::now();
+                            let conn_state = ServerConnectionState {
+                                id: connection_id,
+                                remote_addr,
+                                local_addr: local_addr_conn,
+                                bytes_sent: 0,
+                                bytes_received: 0,
+                                packets_sent: 0,
+                                packets_received: 0,
+                                last_activity: now,
+                                status: ConnectionStatus::Active,
+                                status_changed_at: now,
+                                protocol_info: ProtocolConnectionInfo::Irc {
+                                    write_half: write_half_arc.clone(),
+                                    state: ProtocolState::Idle,
+                                    queued_data: Vec::new(),
+                                },
+                            };
+                            state_clone.add_connection_to_server(server_id, conn_state).await;
+                            let _ = status_clone.send("__UPDATE_UI__".to_string());
+
                             let mut reader = BufReader::new(read_half);
                             let mut line = String::new();
                             let model = state_clone.get_ollama_model().await;
@@ -173,6 +199,10 @@ impl IrcServer {
                                 }
                                 line.clear();
                             }
+
+                            // Connection closed - mark as closed
+                            state_clone.close_connection_on_server(server_id, connection_id).await;
+                            let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
