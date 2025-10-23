@@ -15,19 +15,18 @@ use super::App;
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
 
-    // Calculate how much space the input needs (with wrapping)
-    let input_inner_width = size.width.saturating_sub(2) as usize; // -2 for borders
-    let input_lines = app.calculate_input_height(input_inner_width);
+    // Calculate how much space the input needs
+    let input_lines = app.calculate_input_height(0);
 
-    // Constrain input height: minimum 3, maximum 10, +2 for borders
-    let input_height = input_lines.max(1).min(10) + 2;
+    // Constrain input height: minimum 3 lines, maximum 12 lines, +2 for borders
+    let input_height = input_lines.max(3).min(12) + 2;
 
     // Create two vertical chunks: top (output) and bottom (input + status)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(10),                  // Top: scrollable output (takes remaining space)
-            Constraint::Length(input_height),     // Bottom: input area (dynamic)
+            Constraint::Length(input_height),     // Bottom: input area (dynamic, 3-12 lines)
             Constraint::Length(1),                // Status bar
         ])
         .split(size);
@@ -162,9 +161,9 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
 /// Render the fixed input area
 fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
     let title = if let Some(pos) = app.history_position {
-        format!("Input [History {}/{}]", pos + 1, app.command_history.len())
+        format!("Input [History {}/{}] | ↑↓: history | Enter: submit", pos + 1, app.command_history.len())
     } else {
-        "Input".to_string()
+        "Input | ↑↓: history | Enter: submit | Ctrl+N: newline".to_string()
     };
 
     // All borders same color (Midnight Commander style)
@@ -177,73 +176,25 @@ fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
         Style::default().bg(Color::Blue).fg(Color::Cyan)
     };
 
-    // Calculate cursor line for scrolling
-    let inner_width = area.width.saturating_sub(2) as usize; // -2 for borders
-    let inner_height = area.height.saturating_sub(2) as usize; // -2 for borders
-    let text_before_cursor = &app.input[..app.cursor_position];
+    // Style the textarea to match the Midnight Commander theme
+    let mut textarea = app.textarea.clone();
+    textarea.set_block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(title, title_style))
+            .border_style(border_style)
+            .style(Style::default().bg(Color::Blue).fg(Color::White))
+    );
+    textarea.set_style(Style::default().bg(Color::Blue).fg(Color::White));
 
-    // Count visual lines and column position
-    let mut cursor_visual_line = 0u16;
-    let mut col_in_line = 0;
-
-    for ch in text_before_cursor.chars() {
-        if ch == '\n' {
-            cursor_visual_line += 1;
-            col_in_line = 0;
-        } else {
-            // Check if adding this char would exceed width
-            if col_in_line >= inner_width {
-                cursor_visual_line += 1;
-                col_in_line = 0;
-            }
-            col_in_line += 1;
-        }
-    }
-
-    // Calculate total visual lines in the input
-    let total_visual_lines = app.calculate_input_height(inner_width);
-
-    // Auto-scroll to keep cursor visible
+    // Set cursor style - make it visible
     if app.is_input_focused() {
-        // If all content fits, don't scroll
-        if total_visual_lines <= inner_height as u16 {
-            app.input_scroll = 0;
-        } else {
-            // Ensure cursor is visible in the viewport
-            if cursor_visual_line < app.input_scroll {
-                // Cursor is above viewport, scroll up
-                app.input_scroll = cursor_visual_line;
-            } else if cursor_visual_line >= app.input_scroll + inner_height as u16 {
-                // Cursor is below viewport, scroll down
-                app.input_scroll = cursor_visual_line.saturating_sub(inner_height as u16 - 1);
-            }
-        }
+        textarea.set_cursor_line_style(Style::default().bg(Color::Blue).fg(Color::White));
+        textarea.set_cursor_style(Style::default().bg(Color::White).fg(Color::Blue));
     }
 
-    let input = Paragraph::new(app.input.as_str())
-        .style(Style::default().bg(Color::Blue).fg(Color::White))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(title, title_style))
-                .border_style(border_style)
-                .style(Style::default().bg(Color::Blue).fg(Color::White))
-        )
-        .wrap(Wrap { trim: false })
-        .scroll((app.input_scroll, 0));
-
-    f.render_widget(input, area);
-
-    // Set cursor position (only when input is focused)
-    if app.is_input_focused() {
-        let cursor_x = area.x + 1 + col_in_line as u16;
-        let cursor_y = area.y + 1 + cursor_visual_line.saturating_sub(app.input_scroll) as u16;
-
-        // Make sure cursor is within bounds
-        if cursor_y < area.y + area.height.saturating_sub(1) {
-            f.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
-        }
-    }
+    // TextArea automatically scrolls to keep the cursor visible
+    f.render_widget(&textarea, area);
 }
 
 /// Render the status bar

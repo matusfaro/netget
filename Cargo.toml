@@ -27,6 +27,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 ratatui = { version = "0.29", features = ["crossterm"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
+tui-textarea = "0.7"
 
 # HTTP client for Ollama
 reqwest = { version = "0.12", features = ["json"] }
