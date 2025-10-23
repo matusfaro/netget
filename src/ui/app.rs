@@ -4,6 +4,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use tracing::{debug, warn};
+use tui_textarea::TextArea;
 
 /// Which panel has focus
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,10 +67,8 @@ impl LogLevel {
 
 /// Main application state for the TUI
 pub struct App {
-    /// User input buffer
-    pub input: String,
-    /// Cursor position in input
-    pub cursor_position: usize,
+    /// User input buffer (using tui-textarea for better editing)
+    pub textarea: TextArea<'static>,
     /// Command history
     pub command_history: Vec<String>,
     /// Current position in history (None = not browsing/comp history)
@@ -84,8 +83,6 @@ pub struct App {
     pub packet_stats: PacketStats,
     /// Scroll offset for output (0 = bottom, higher = scrolled up)
     pub scroll_offset: usize,
-    /// Scroll offset for input (lines scrolled from top)
-    pub input_scroll: u16,
     /// Which panel currently has focus
     pub focus: Focus,
     /// Current log level
@@ -115,8 +112,7 @@ pub struct PacketStats {
 impl Default for App {
     fn default() -> Self {
         Self {
-            input: String::new(),
-            cursor_position: 0,
+            textarea: TextArea::default(),
             command_history: Vec::new(),
             history_position: None,
             history_temp_input: None,
@@ -124,7 +120,6 @@ impl Default for App {
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
             scroll_offset: 0,
-            input_scroll: 0,
             focus: Focus::default(),
             log_level: LogLevel::default(),
             slash_suggestions: Vec::new(),
@@ -139,6 +134,40 @@ impl App {
             path.push(".netget_history");
             path
         })
+    }
+
+    /// Escape newlines and other special characters for storage
+    fn escape_for_storage(s: &str) -> String {
+        s.replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    }
+
+    /// Unescape newlines and other special characters from storage
+    fn unescape_from_storage(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut chars = s.chars();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('\\') => result.push('\\'),
+                    Some(c) => {
+                        result.push('\\');
+                        result.push(c);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
     }
 
     /// Load command history from file
@@ -160,6 +189,7 @@ impl App {
                     .lines()
                     .filter_map(|line| line.ok())
                     .filter(|line| !line.trim().is_empty())
+                    .map(|line| Self::unescape_from_storage(&line))
                     .collect();
                 debug!("Loaded {} commands from history", history.len());
                 history
@@ -184,7 +214,7 @@ impl App {
             .open(&path)?;
 
         for command in &self.command_history {
-            writeln!(file, "{}", command)?;
+            writeln!(file, "{}", Self::escape_for_storage(command))?;
         }
 
         debug!("Saved {} commands to history", self.command_history.len());
@@ -302,51 +332,43 @@ impl App {
         self.scroll_offset = max_scroll;
     }
 
-    /// Handle character input
-    pub fn enter_char(&mut self, c: char) {
-        // Exit history mode when typing
-        if self.history_position.is_some() {
-            self.history_position = None;
-            self.history_temp_input = None;
-        }
+    /// Get the current input text
+    pub fn get_input(&self) -> String {
+        self.textarea.lines().join("\n")
+    }
 
-        self.input.insert(self.cursor_position, c);
-        self.cursor_position += 1;
+    /// Insert a newline at the current cursor position
+    pub fn insert_newline(&mut self) {
+        self.textarea.insert_newline();
         self.update_slash_suggestions();
     }
 
-    /// Handle backspace
-    pub fn delete_char(&mut self) {
-        // Exit history mode when editing
-        if self.history_position.is_some() {
-            self.history_position = None;
-            self.history_temp_input = None;
-        }
-
-        if self.cursor_position > 0 {
-            self.input.remove(self.cursor_position - 1);
-            self.cursor_position -= 1;
-            self.update_slash_suggestions();
-        }
+    /// Check if cursor is on the first line of the textarea
+    pub fn is_cursor_on_first_line(&self) -> bool {
+        let (row, _) = self.textarea.cursor();  // cursor() returns (row, col)
+        row == 0
     }
 
-    /// Move cursor left
-    pub fn move_cursor_left(&mut self) {
-        if self.cursor_position > 0 {
-            self.cursor_position -= 1;
-        }
+    /// Check if cursor is on the last line of the textarea
+    pub fn is_cursor_on_last_line(&self) -> bool {
+        let (row, _) = self.textarea.cursor();  // cursor() returns (row, col)
+        let total_lines = self.textarea.lines().len();
+        row >= total_lines.saturating_sub(1)
     }
 
-    /// Move cursor right
-    pub fn move_cursor_right(&mut self) {
-        if self.cursor_position < self.input.len() {
-            self.cursor_position += 1;
-        }
+    /// Move cursor up within the textarea
+    pub fn move_cursor_up(&mut self) {
+        self.textarea.move_cursor(tui_textarea::CursorMove::Up);
+    }
+
+    /// Move cursor down within the textarea
+    pub fn move_cursor_down(&mut self) {
+        self.textarea.move_cursor(tui_textarea::CursorMove::Down);
     }
 
     /// Submit current input and return it
     pub fn submit_input(&mut self) -> String {
-        let input = self.input.clone();
+        let input = self.get_input();
 
         // Add to history if not empty and different from last entry
         if !input.trim().is_empty() &&
@@ -356,10 +378,10 @@ impl App {
         }
 
         // Reset input and history navigation
-        self.input.clear();
-        self.cursor_position = 0;
+        self.textarea = TextArea::default();
         self.history_position = None;
         self.history_temp_input = None;
+        self.update_slash_suggestions();
 
         input
     }
@@ -373,21 +395,24 @@ impl App {
         match self.history_position {
             None => {
                 // Starting history navigation - save current input
-                if !self.input.is_empty() {
-                    self.history_temp_input = Some(self.input.clone());
+                let current = self.get_input();
+                if !current.is_empty() {
+                    self.history_temp_input = Some(current);
                 }
                 // Go to most recent command
                 let pos = self.command_history.len() - 1;
                 self.history_position = Some(pos);
-                self.input = self.command_history[pos].clone();
-                self.cursor_position = self.input.len();
+                self.textarea = TextArea::from(self.command_history[pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                // Move cursor to beginning of first line when going back in history
+                self.textarea.move_cursor(tui_textarea::CursorMove::Top);
             }
             Some(pos) if pos > 0 => {
                 // Go to older command
                 let new_pos = pos - 1;
                 self.history_position = Some(new_pos);
-                self.input = self.command_history[new_pos].clone();
-                self.cursor_position = self.input.len();
+                self.textarea = TextArea::from(self.command_history[new_pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                // Move cursor to beginning of first line when going back in history
+                self.textarea.move_cursor(tui_textarea::CursorMove::Top);
             }
             _ => {
                 // Already at oldest command, do nothing
@@ -402,14 +427,19 @@ impl App {
                 // Go to newer command
                 let new_pos = pos + 1;
                 self.history_position = Some(new_pos);
-                self.input = self.command_history[new_pos].clone();
-                self.cursor_position = self.input.len();
+                self.textarea = TextArea::from(self.command_history[new_pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                // Move cursor to end of last line when going forward in history
+                self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
+                self.textarea.move_cursor(tui_textarea::CursorMove::End);
             }
             Some(_) => {
                 // At newest command, restore temp input or clear
                 self.history_position = None;
-                self.input = self.history_temp_input.take().unwrap_or_default();
-                self.cursor_position = self.input.len();
+                let temp = self.history_temp_input.take().unwrap_or_default();
+                self.textarea = TextArea::from(temp.lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                // Move cursor to end of last line
+                self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
+                self.textarea.move_cursor(tui_textarea::CursorMove::End);
             }
             None => {
                 // Not in history mode, do nothing
@@ -417,49 +447,7 @@ impl App {
         }
     }
 
-    /// Move cursor to start of line
-    pub fn move_cursor_start(&mut self) {
-        self.cursor_position = 0;
-    }
-
-    /// Move cursor to end of line
-    pub fn move_cursor_end(&mut self) {
-        self.cursor_position = self.input.len();
-    }
-
-    /// Delete from cursor to end of line
-    pub fn delete_to_end(&mut self) {
-        self.input.truncate(self.cursor_position);
-    }
-
-    /// Delete word before cursor
-    pub fn delete_word(&mut self) {
-        if self.cursor_position == 0 {
-            return;
-        }
-
-        let before = &self.input[..self.cursor_position];
-        let trimmed = before.trim_end();
-
-        if trimmed.is_empty() {
-            self.cursor_position = 0;
-            self.input = self.input[self.cursor_position..].to_string();
-            return;
-        }
-
-        let last_space = trimmed.rfind(char::is_whitespace);
-        let new_pos = last_space.map(|p| p + 1).unwrap_or(0);
-
-        let after = &self.input[self.cursor_position..];
-        self.input = format!("{}{}", &before[..new_pos], after);
-        self.cursor_position = new_pos;
-    }
-
-    /// Clear the entire input
-    pub fn clear_input(&mut self) {
-        self.input.clear();
-        self.cursor_position = 0;
-    }
+    // Cursor movement methods removed - TextArea handles these internally
 
     /// Toggle focus between Input and Output panels
     pub fn toggle_focus(&mut self) {
@@ -479,39 +467,16 @@ impl App {
         self.focus == Focus::Input
     }
 
-    /// Calculate the number of visual lines the input will take with wrapping
-    pub fn calculate_input_height(&self, width: usize) -> u16 {
-        if self.input.is_empty() {
-            return 1;
-        }
-
-        if width == 0 {
-            return 1;
-        }
-
-        let mut lines = 1u16;
-        let mut col = 0;
-
-        for ch in self.input.chars() {
-            if ch == '\n' {
-                lines += 1;
-                col = 0;
-            } else {
-                if col >= width {
-                    lines += 1;
-                    col = 0;
-                }
-                col += 1;
-            }
-        }
-
-        lines
+    /// Calculate the number of visual lines the input will take
+    pub fn calculate_input_height(&self, _width: usize) -> u16 {
+        self.textarea.lines().len().max(1) as u16
     }
 
     /// Update slash command suggestions based on current input
     pub fn update_slash_suggestions(&mut self) {
+        let input = self.get_input();
         // Only show suggestions if input starts with "/"
-        if !self.input.starts_with('/') {
+        if !input.starts_with('/') {
             self.slash_suggestions.clear();
             return;
         }
@@ -526,7 +491,7 @@ impl App {
         ];
 
         // Filter commands based on current input
-        let input_lower = self.input.to_lowercase();
+        let input_lower = input.to_lowercase();
         self.slash_suggestions = all_commands
             .into_iter()
             .filter(|cmd| cmd.to_lowercase().starts_with(&input_lower))
@@ -536,7 +501,8 @@ impl App {
 
     /// Check if we should show slash suggestions
     pub fn should_show_slash_suggestions(&self) -> bool {
-        self.input.starts_with('/') && !self.slash_suggestions.is_empty()
+        let input = self.get_input();
+        input.starts_with('/') && !self.slash_suggestions.is_empty()
     }
 }
 
@@ -553,22 +519,61 @@ mod tests {
     }
 
     #[test]
+    fn test_escape_unescape_newlines() {
+        // Test simple newline
+        let original = "line 1\nline 2";
+        let escaped = App::escape_for_storage(original);
+        assert_eq!(escaped, "line 1\\nline 2");
+        let unescaped = App::unescape_from_storage(&escaped);
+        assert_eq!(unescaped, original);
+
+        // Test multiple special characters
+        let original = "line 1\nline 2\r\nline 3\ttab\\backslash";
+        let escaped = App::escape_for_storage(original);
+        let unescaped = App::unescape_from_storage(&escaped);
+        assert_eq!(unescaped, original);
+
+        // Test empty string
+        let original = "";
+        let escaped = App::escape_for_storage(original);
+        let unescaped = App::unescape_from_storage(&escaped);
+        assert_eq!(unescaped, original);
+
+        // Test no special characters
+        let original = "just plain text";
+        let escaped = App::escape_for_storage(original);
+        assert_eq!(escaped, original);
+        let unescaped = App::unescape_from_storage(&escaped);
+        assert_eq!(unescaped, original);
+    }
+
+    #[test]
+    fn test_multiline_command_in_history() {
+        let mut app = App::default();
+
+        // Submit a multi-line command
+        app.textarea = TextArea::from(vec!["line 1".to_string(), "line 2".to_string(), "line 3".to_string()]);
+        let result = app.submit_input();
+
+        assert_eq!(result, "line 1\nline 2\nline 3");
+        assert_eq!(app.command_history.len(), 1);
+        assert_eq!(app.command_history[0], "line 1\nline 2\nline 3");
+    }
+
+    #[test]
     fn test_submit_input_adds_to_history() {
         let mut app = App::default();
 
         // Submit first command
-        app.input = "listen on port 21".to_string();
-        app.cursor_position = app.input.len();
+        app.textarea = TextArea::from(vec!["listen on port 21".to_string()]);
         let result = app.submit_input();
 
         assert_eq!(result, "listen on port 21");
         assert_eq!(app.command_history.len(), 1);
-        assert_eq!(app.input, "");
-        assert_eq!(app.cursor_position, 0);
+        assert_eq!(app.get_input(), "");
 
         // Submit second command
-        app.input = "status".to_string();
-        app.cursor_position = app.input.len();
+        app.textarea = TextArea::from(vec!["status".to_string()]);
         app.submit_input();
 
         assert_eq!(app.command_history.len(), 2);
@@ -578,11 +583,11 @@ mod tests {
     fn test_submit_duplicate_not_added() {
         let mut app = App::default();
 
-        app.input = "listen on port 21".to_string();
+        app.textarea = TextArea::from(vec!["listen on port 21".to_string()]);
         app.submit_input();
 
         // Same command again
-        app.input = "listen on port 21".to_string();
+        app.textarea = TextArea::from(vec!["listen on port 21".to_string()]);
         app.submit_input();
 
         // Should only have one entry
@@ -600,22 +605,22 @@ mod tests {
 
         // Navigate up - should show command3
         app.history_previous();
-        assert_eq!(app.input, "command3");
+        assert_eq!(app.get_input(), "command3");
         assert_eq!(app.history_position, Some(2));
 
         // Navigate up again - should show command2
         app.history_previous();
-        assert_eq!(app.input, "command2");
+        assert_eq!(app.get_input(), "command2");
         assert_eq!(app.history_position, Some(1));
 
         // Navigate down - should show command3
         app.history_next();
-        assert_eq!(app.input, "command3");
+        assert_eq!(app.get_input(), "command3");
         assert_eq!(app.history_position, Some(2));
 
         // Navigate down again - should clear
         app.history_next();
-        assert_eq!(app.input, "");
+        assert_eq!(app.get_input(), "");
         assert_eq!(app.history_position, None);
     }
 
@@ -625,15 +630,14 @@ mod tests {
         app.command_history = vec!["old_command".to_string()];
 
         // Type something
-        app.input = "new text".to_string();
-        app.cursor_position = app.input.len();
+        app.textarea = TextArea::from(vec!["new text".to_string()]);
 
         // Navigate up - should save current input
         app.history_previous();
-        assert_eq!(app.input, "old_command");
+        assert_eq!(app.get_input(), "old_command");
 
         // Navigate down - should restore saved input
         app.history_next();
-        assert_eq!(app.input, "new text");
+        assert_eq!(app.get_input(), "new text");
     }
 }
