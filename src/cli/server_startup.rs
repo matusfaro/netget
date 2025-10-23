@@ -39,7 +39,7 @@ pub async fn start_server_by_id(
     use crate::state::server::ServerStatus;
 
     match base_stack {
-        BaseStack::TcpRaw => {
+        BaseStack::Tcp => {
             #[cfg(feature = "tcp")]
             {
                 use crate::network::tcp::TcpServer;
@@ -52,15 +52,18 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     false, // send_first - default to false for now
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         // Update server with actual listen address
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] TCP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start TCP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -83,14 +86,17 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] HTTP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start HTTP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -104,7 +110,7 @@ pub async fn start_server_by_id(
         BaseStack::DataLink => {
             let _ = status_tx.send("DataLink server not yet implemented in TUI".to_string());
         }
-        BaseStack::UdpRaw => {
+        BaseStack::Udp => {
             #[cfg(feature = "udp")]
             {
                 use crate::network::UdpServer;
@@ -120,10 +126,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] UDP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start UDP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -150,10 +158,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] DNS server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start DNS server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -180,10 +190,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] DHCP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start DHCP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -210,10 +222,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] NTP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start NTP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -240,10 +254,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] SNMP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start SNMP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -271,10 +287,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] SSH server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start SSH server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }
@@ -301,10 +319,12 @@ pub async fn start_server_by_id(
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
                         let _ = status_tx.send(format!("[SERVER] IRC server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
                         state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
                         let _ = status_tx.send(format!("[ERROR] Failed to start IRC server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
                 }

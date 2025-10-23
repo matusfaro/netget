@@ -119,6 +119,7 @@ impl AppState {
                 connections: s.connections.clone(),
                 handle: None,
                 created_at: s.created_at,
+                status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
             }
         })
@@ -142,6 +143,7 @@ impl AppState {
                 connections: s.connections.clone(),
                 handle: None,
                 created_at: s.created_at,
+                status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
             }
         }).collect()
@@ -151,6 +153,7 @@ impl AppState {
     pub async fn update_server_status(&self, id: ServerId, status: super::server::ServerStatus) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&id) {
             server.status = status;
+            server.status_changed_at = std::time::Instant::now();
         }
     }
 
@@ -215,11 +218,82 @@ impl AppState {
         self.inner.read().await.servers.get(&server_id).map(|s| s.base_stack)
     }
 
-    /// Cleanup old connections across all servers
+    /// Cleanup old connections across all servers (connectionless protocols like UDP)
     pub async fn cleanup_old_connections(&self, max_age_secs: u64) {
         let mut inner = self.inner.write().await;
         for server in inner.servers.values_mut() {
             server.cleanup_old_connections(max_age_secs);
+        }
+    }
+
+    /// Cleanup old closed connections (removes connections that have been closed for more than max_age_secs)
+    pub async fn cleanup_closed_connections(&self, max_age_secs: u64) {
+        use super::server::ConnectionStatus;
+        let now = std::time::Instant::now();
+
+        let mut inner = self.inner.write().await;
+        for server in inner.servers.values_mut() {
+            let to_remove: Vec<crate::network::connection::ConnectionId> = server.connections.iter()
+                .filter(|(_, conn)| {
+                    conn.status == ConnectionStatus::Closed &&
+                    now.duration_since(conn.status_changed_at).as_secs() >= max_age_secs
+                })
+                .map(|(id, _)| *id)
+                .collect();
+
+            for id in to_remove {
+                server.remove_connection(id);
+            }
+        }
+    }
+
+    /// Cleanup old stopped/error servers (removes servers that have been stopped/error for more than max_age_secs)
+    pub async fn cleanup_old_servers(&self, max_age_secs: u64) {
+        use super::server::ServerStatus;
+        let now = std::time::Instant::now();
+
+        let mut inner = self.inner.write().await;
+        let to_remove: Vec<ServerId> = inner.servers.iter()
+            .filter(|(_, server)| {
+                // Remove if stopped/error and status changed more than max_age_secs ago
+                matches!(server.status, ServerStatus::Stopped | ServerStatus::Error(_)) &&
+                now.duration_since(server.status_changed_at).as_secs() >= max_age_secs
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in to_remove {
+            inner.servers.remove(&id);
+        }
+
+        // Set mode to Idle if no more servers
+        if inner.servers.is_empty() {
+            inner.mode = Mode::Idle;
+        }
+    }
+
+    /// Add a connection to a specific server
+    pub async fn add_connection_to_server(&self, server_id: ServerId, connection: super::server::ConnectionState) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            server.add_connection(connection);
+        }
+    }
+
+    /// Mark a connection as closed (instead of removing it immediately)
+    pub async fn close_connection_on_server(&self, server_id: ServerId, connection_id: crate::network::connection::ConnectionId) {
+        use super::server::ConnectionStatus;
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.get_connection_mut(connection_id) {
+                conn.status = ConnectionStatus::Closed;
+                conn.status_changed_at = std::time::Instant::now();
+            }
+        }
+    }
+
+    /// Remove a connection from a specific server (used by cleanup task)
+    pub async fn remove_connection_from_server(&self, server_id: ServerId, connection_id: crate::network::connection::ConnectionId) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            server.remove_connection(connection_id);
         }
     }
 

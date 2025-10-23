@@ -134,6 +134,15 @@ pub enum ProtocolConnectionInfo {
     },
 }
 
+/// Connection status
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    /// Connection is active
+    Active,
+    /// Connection has been closed
+    Closed,
+}
+
 /// Connection state within a server
 #[derive(Debug, Clone)]
 pub struct ConnectionState {
@@ -153,6 +162,10 @@ pub struct ConnectionState {
     pub packets_received: u64,
     /// Last activity timestamp
     pub last_activity: Instant,
+    /// Connection status (Active/Closed)
+    pub status: ConnectionStatus,
+    /// When status last changed (for cleanup reaper)
+    pub status_changed_at: Instant,
     /// Protocol-specific information
     pub protocol_info: ProtocolConnectionInfo,
 }
@@ -178,6 +191,8 @@ pub struct ServerInstance {
     pub handle: Option<JoinHandle<()>>,
     /// When the server was created
     pub created_at: Instant,
+    /// When the server status last changed (for cleanup reaper)
+    pub status_changed_at: Instant,
     /// Local listening address
     pub local_addr: Option<SocketAddr>,
 }
@@ -190,6 +205,7 @@ impl ServerInstance {
         base_stack: BaseStack,
         instruction: String,
     ) -> Self {
+        let now = Instant::now();
         Self {
             id,
             port,
@@ -199,7 +215,8 @@ impl ServerInstance {
             status: ServerStatus::Starting,
             connections: HashMap::new(),
             handle: None,
-            created_at: Instant::now(),
+            created_at: now,
+            status_changed_at: now,
             local_addr: None,
         }
     }

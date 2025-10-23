@@ -13,6 +13,8 @@ pub enum Focus {
     Input,
     /// Output panel is focused (for scrolling)
     Output,
+    /// Server/Connections panel is focused (for scrolling and expand/collapse)
+    ServerConnections,
 }
 
 impl Default for Focus {
@@ -93,6 +95,14 @@ pub struct App {
     pub servers: Vec<ServerDisplayInfo>,
     /// Connection list for display
     pub connections: Vec<ConnectionDisplayInfo>,
+    /// Scroll offset for servers/connections panel (0 = top, higher = scrolled down)
+    pub servers_scroll_offset: usize,
+    /// Whether to expand all connections (E key toggle)
+    pub expand_all_connections: bool,
+    /// Next global connection ID to assign
+    pub next_global_connection_id: u32,
+    /// Mapping from network ConnectionId to global UI ID
+    pub connection_id_map: std::collections::HashMap<String, u32>,
 }
 
 /// Server information for display in the UI
@@ -114,7 +124,8 @@ impl ServerDisplayInfo {
 /// Connection information for display in the UI
 #[derive(Debug, Clone)]
 pub struct ConnectionDisplayInfo {
-    pub id: String,
+    pub id: u32,  // Global connection ID
+    pub server_id: String,  // Which server this connection belongs to
     pub address: String,
     pub state: String,
 }
@@ -153,6 +164,10 @@ impl Default for App {
             slash_suggestions: Vec::new(),
             servers: Vec::new(),
             connections: Vec::new(),
+            servers_scroll_offset: 0,
+            expand_all_connections: false,
+            next_global_connection_id: 1,
+            connection_id_map: std::collections::HashMap::new(),
         }
     }
 }
@@ -481,10 +496,11 @@ impl App {
 
     // Cursor movement methods removed - TextArea handles these internally
 
-    /// Toggle focus between Input and Output panels
+    /// Toggle focus between Input, Output, and ServerConnections panels
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::Input => Focus::Output,
+            Focus::Input => Focus::ServerConnections,
+            Focus::ServerConnections => Focus::Output,
             Focus::Output => Focus::Input,
         };
     }
@@ -497,6 +513,43 @@ impl App {
     /// Check if input panel has focus
     pub fn is_input_focused(&self) -> bool {
         self.focus == Focus::Input
+    }
+
+    /// Check if server/connections panel has focus
+    pub fn is_servers_focused(&self) -> bool {
+        self.focus == Focus::ServerConnections
+    }
+
+    /// Scroll up in the servers/connections panel
+    pub fn servers_scroll_up(&mut self, lines: usize) {
+        self.servers_scroll_offset = self.servers_scroll_offset.saturating_add(lines);
+    }
+
+    /// Scroll down in the servers/connections panel
+    pub fn servers_scroll_down(&mut self, lines: usize) {
+        self.servers_scroll_offset = self.servers_scroll_offset.saturating_sub(lines);
+    }
+
+    /// Toggle expand all connections
+    pub fn toggle_expand_all(&mut self) {
+        self.expand_all_connections = !self.expand_all_connections;
+    }
+
+    /// Get or allocate a global connection ID for a network connection
+    pub fn get_or_allocate_connection_id(&mut self, network_conn_id: String) -> u32 {
+        if let Some(&id) = self.connection_id_map.get(&network_conn_id) {
+            id
+        } else {
+            let id = self.next_global_connection_id;
+            self.next_global_connection_id += 1;
+            self.connection_id_map.insert(network_conn_id, id);
+            id
+        }
+    }
+
+    /// Remove a connection from the ID map (when connection closes)
+    pub fn remove_connection_id(&mut self, network_conn_id: &str) {
+        self.connection_id_map.remove(network_conn_id);
     }
 
     /// Calculate the number of visual lines the input will take

@@ -108,7 +108,10 @@ impl EventHandler {
         let prompt = PromptBuilder::build_user_input_prompt(&self.state, &input).await;
         let model = self.state.get_ollama_model().await;
 
-        match self.llm.generate_command_interpretation(&model, &prompt).await {
+        // Create LLM client with status channel for trace logs
+        let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());
+
+        match llm_with_status.generate_command_interpretation(&model, &prompt).await {
             Ok(interpretation) => {
                 // Display message if provided
                 if let Some(msg) = &interpretation.message {
@@ -157,8 +160,11 @@ impl EventHandler {
         ).await;
         let model = self.state.get_ollama_model().await;
 
+        // Create LLM client with status channel for trace logs
+        let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());
+
         // Call LLM
-        match self.llm.generate(&model, &prompt).await {
+        match llm_with_status.generate(&model, &prompt).await {
             Ok(llm_output) => {
                 // Parse action response
                 match ActionResponse::from_str(&llm_output) {
@@ -221,7 +227,7 @@ impl EventHandler {
 
                 // Parse base stack
                 let stack = BaseStack::from_str(&base_stack)
-                    .unwrap_or(BaseStack::TcpRaw);
+                    .unwrap_or(BaseStack::Tcp);
 
                 // Create a new server instance
                 let mut server = ServerInstance::new(
@@ -248,17 +254,32 @@ impl EventHandler {
                     let _ = status_tx.send(format!("[ERROR] Failed to start server #{}: {}", server_id.as_u32(), e));
                 }
             }
-            CommonAction::CloseServer => {
-                // For now, close all servers (TODO: support targeting specific server ID)
-                let server_ids = self.state.get_all_server_ids().await;
+            CommonAction::CloseServer { server_id } => {
+                use crate::state::server::ServerStatus;
+
+                let server_ids = if let Some(sid) = server_id {
+                    // Close specific server
+                    vec![crate::state::ServerId::new(sid)]
+                } else {
+                    // Close all servers
+                    self.state.get_all_server_ids().await
+                };
+
                 for server_id in server_ids {
-                    self.state.remove_server(server_id).await;
-                    let _ = status_tx.send(format!("[SERVER] Closed server #{}", server_id.as_u32()));
-                    let _ = status_tx.send(format!("__STOP_SERVER__:{}", server_id.as_u32()));
+                    // Mark server as Stopped instead of removing it (reaper will clean up after 10s)
+                    self.state.update_server_status(server_id, ServerStatus::Stopped).await;
+                    let _ = status_tx.send(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
                 }
-                if self.state.get_all_server_ids().await.is_empty() {
+
+                // Check if all servers are stopped/error
+                let all_stopped = self.state.get_all_servers().await.iter()
+                    .all(|s| matches!(s.status, ServerStatus::Stopped | ServerStatus::Error(_)));
+
+                if all_stopped {
                     self.state.set_mode(Mode::Idle).await;
                 }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::UpdateInstruction { instruction } => {
                 // Update instruction for first server (TODO: support targeting specific server ID)
@@ -315,7 +336,7 @@ impl EventHandler {
             CommandAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction } => {
                 // Parse base stack
                 let stack = crate::protocol::BaseStack::from_str(&base_stack)
-                    .unwrap_or(BaseStack::TcpRaw);
+                    .unwrap_or(BaseStack::Tcp);
 
                 // Create a new server instance
                 let mut server = ServerInstance::new(

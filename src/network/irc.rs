@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
@@ -42,7 +42,7 @@ impl IrcServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        let listener = TcpListener::bind(listen_addr).await?;
+        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("IRC server listening on {}", local_addr);
 
@@ -87,7 +87,7 @@ impl IrcServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        let listener = TcpListener::bind(listen_addr).await?;
+        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("IRC server (action-based) listening on {}", local_addr);
 
