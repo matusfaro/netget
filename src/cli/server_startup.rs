@@ -122,6 +122,7 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
@@ -154,6 +155,7 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
@@ -186,6 +188,7 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
@@ -218,6 +221,7 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
@@ -250,6 +254,7 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
@@ -283,6 +288,7 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     false, // send_first - SSH waits for client
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
@@ -315,6 +321,7 @@ pub async fn start_server_by_id(
                     llm_client.clone(),
                     state_arc,
                     status_tx.clone(),
+                    server_id,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;
