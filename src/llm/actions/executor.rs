@@ -132,19 +132,23 @@ async fn execute_common_action(
         }
 
         CommonAction::SetMemory { value } => {
-            state.set_memory(value).await;
-            debug!("Global memory set");
+            if let Some(server_id) = state.get_first_server_id().await {
+                state.set_memory(server_id, value).await;
+                debug!("Server #{} memory set", server_id.as_u32());
+            }
         }
 
         CommonAction::AppendMemory { value } => {
-            let current = state.get_memory().await;
-            let new_memory = if current.is_empty() {
-                value
-            } else {
-                format!("{}\n{}", current, value)
-            };
-            state.set_memory(new_memory).await;
-            debug!("Global memory appended");
+            if let Some(server_id) = state.get_first_server_id().await {
+                let current = state.get_memory(server_id).await.unwrap_or_default();
+                let new_memory = if current.is_empty() {
+                    value
+                } else {
+                    format!("{}\n{}", current, value)
+                };
+                state.set_memory(server_id, new_memory).await;
+                debug!("Server #{} memory appended", server_id.as_u32());
+            }
         }
     }
 

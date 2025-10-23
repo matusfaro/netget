@@ -171,6 +171,7 @@ pub enum CommandAction {
         send_first: bool,
         #[serde(default)]
         initial_memory: Option<String>,
+        instruction: String,
     },
     OpenClient {
         address: String,

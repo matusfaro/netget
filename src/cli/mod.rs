@@ -2,7 +2,7 @@
 
 mod args;
 mod non_interactive;
-mod server_startup;
+pub mod server_startup;
 mod setup;
 mod terminal_cleanup;
 mod tui;

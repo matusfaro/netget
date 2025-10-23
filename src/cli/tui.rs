@@ -25,7 +25,7 @@ pub async fn run_tui(
     state: AppState,
     mut app: App,
     mut event_handler: EventHandler,
-    llm_client: OllamaClient,
+    _llm_client: OllamaClient,
     settings: Settings,
     args: &super::Args,
 ) -> Result<()> {
@@ -80,18 +80,7 @@ pub async fn run_tui(
 
         // Drain status messages from spawned tasks
         while let Ok(msg) = status_rx.try_recv() {
-            if msg == "__CHECK_SERVER_STARTUP__" {
-                // Special signal to check if we need to start a server
-                if let Err(e) = super::server_startup::check_and_start_server(
-                    &state,
-                    &llm_client,
-                    &status_tx,
-                ).await {
-                    app.add_status_message(format!("Server startup error: {}", e));
-                }
-                // Update UI after server startup
-                update_ui_from_state(&mut app, &state).await;
-            } else if msg == "__UPDATE_UI__" {
+            if msg == "__UPDATE_UI__" {
                 // Special signal to update UI from state
                 update_ui_from_state(&mut app, &state).await;
             } else if msg.starts_with("__STATS_SENT__") {
@@ -258,12 +247,36 @@ async fn handle_keyboard_event(
 
 /// Update UI with current application state
 async fn update_ui_from_state(app: &mut App, state: &AppState) {
+    use crate::ui::app::{ServerDisplayInfo, ConnectionDisplayInfo};
+
     app.connection_info.mode = format!("{}", state.get_mode().await);
-    app.connection_info.protocol = format!("{}", state.get_base_stack().await);
     app.connection_info.model = state.get_ollama_model().await;
 
-    if let Some(addr) = state.get_local_addr().await {
-        app.connection_info.local_addr = Some(addr.to_string());
+    // Update server list
+    let servers = state.get_all_servers().await;
+    app.servers = servers.iter().map(|s| ServerDisplayInfo {
+        id: format!("#{}", s.id.as_u32()),
+        protocol: s.base_stack.to_string(),
+        port: s.port,
+        status: s.status.to_string(),
+        connections: s.connections.len(),
+    }).collect();
+
+    // Update connection list (aggregate from all servers)
+    app.connections = servers.iter().flat_map(|s| {
+        s.connections.values().map(|conn| ConnectionDisplayInfo {
+            id: conn.id.to_string(),
+            address: conn.remote_addr.to_string(),
+            state: format!("S{}", s.id.as_u32()), // Show which server it belongs to
+        }).collect::<Vec<_>>()
+    }).collect();
+
+    // Update legacy fields for backwards compatibility
+    if let Some(first_server) = servers.first() {
+        app.connection_info.protocol = first_server.base_stack.to_string();
+        if let Some(addr) = first_server.local_addr {
+            app.connection_info.local_addr = Some(addr.to_string());
+        }
     }
 }
 

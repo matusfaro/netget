@@ -15,8 +15,6 @@ use crate::llm::OllamaClient;
 use crate::settings::Settings;
 use crate::state::app_state::{AppState, Mode};
 
-use super::server_startup;
-
 /// Run NetGet in non-interactive mode with the given prompt
 pub async fn run_non_interactive(
     prompt: String,
@@ -41,57 +39,24 @@ pub async fn run_non_interactive(
     let llm = OllamaClient::default();
     let mut event_handler = EventHandler::new(state.clone(), llm.clone());
 
-    // Create status channel for messages
+    // Create status channel for messages from spawned servers
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
-    // Spawn a task to handle the interpretation
-    let status_tx_clone = status_tx.clone();
-    let mut interpret_handle = tokio::spawn(async move {
-        event_handler.handle_interpret(prompt, status_tx_clone).await
-    });
+    // Call handler directly - no need for separate task!
+    // The handler will spawn servers directly now
+    event_handler.handle_interpret(prompt, status_tx.clone()).await?;
 
-    // Process status messages from the handler
-    let mut handle_completed = false;
-    loop {
-        tokio::select! {
-            msg = status_rx.recv() => {
-                match msg {
-                    Some(msg) => {
-                        if msg == "__CHECK_SERVER_STARTUP__" {
-                            // Server should be started - break to main server loop
-                            break;
-                        } else if msg == "__UPDATE_UI__" {
-                            // Ignore in non-interactive mode
-                        } else if msg.starts_with("__STATS_SENT__") {
-                            // Ignore in non-interactive mode
-                        } else {
-                            // Print status message (strip log level prefix for cleaner output)
-                            let clean_msg = msg
-                                .strip_prefix("[INFO] ").unwrap_or(&msg)
-                                .strip_prefix("[ERROR] ").unwrap_or(&msg)
-                                .strip_prefix("[WARN] ").unwrap_or(&msg)
-                                .strip_prefix("[DEBUG] ").unwrap_or(&msg);
-                            println!("{}", clean_msg);
-                        }
-                    }
-                    None => {
-                        // Channel closed - handler finished
-                        break;
-                    }
-                }
-            }
-            result = &mut interpret_handle => {
-                // Handler completed - save result and mark as completed
-                result??;
-                handle_completed = true;
-                break;
-            }
+    // Print any status messages that were sent
+    while let Ok(msg) = status_rx.try_recv() {
+        // Skip internal control messages (shouldn't have any now, but just in case)
+        if !msg.starts_with("__") {
+            let clean_msg = msg
+                .strip_prefix("[INFO] ").unwrap_or(&msg)
+                .strip_prefix("[ERROR] ").unwrap_or(&msg)
+                .strip_prefix("[WARN] ").unwrap_or(&msg)
+                .strip_prefix("[DEBUG] ").unwrap_or(&msg);
+            println!("{}", clean_msg);
         }
-    }
-
-    // Wait for handler to finish (only if it hasn't completed yet)
-    if !handle_completed {
-        interpret_handle.await??;
     }
 
     // Check if we're in server mode
@@ -106,17 +71,20 @@ pub async fn run_non_interactive(
 /// Run a server in non-interactive mode
 async fn run_server(
     state: &AppState,
-    llm: OllamaClient,
+    _llm: OllamaClient,
     mut status_rx: mpsc::UnboundedReceiver<String>,
 ) -> Result<()> {
     // Create status channel for server messages
-    let (status_tx, mut server_status_rx) = mpsc::unbounded_channel::<String>();
+    let (_status_tx, mut server_status_rx) = mpsc::unbounded_channel::<String>();
 
-    // Start the server
-    server_startup::check_and_start_server(state, &llm, &status_tx).await?;
-
-    println!("Server is running. Press Ctrl+C to stop.");
-    println!("Waiting for connections...\n");
+    // Server should already be started by the interpret loop above
+    // Just verify it exists and print status
+    if let Some(server_id) = state.get_first_server_id().await {
+        println!("Server #{} is running. Press Ctrl+C to stop.", server_id.as_u32());
+        println!("Waiting for connections...\n");
+    } else {
+        return Err(anyhow::anyhow!("No server configured. Use a command like 'listen on port 8080 via http'"));
+    }
 
     // Set up Ctrl+C handler
     let shutdown = Arc::new(Mutex::new(false));

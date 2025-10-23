@@ -23,18 +23,25 @@ pub async fn handle_llm_response(
     response: LlmResponse,
     app_state: &Arc<AppState>,
 ) -> ProcessedResponse {
+    // Get first server ID for memory updates (legacy support)
+    let server_id = app_state.get_first_server_id().await;
+
     // Handle memory updates
     if let Some(set_mem) = response.set_memory {
-        app_state.set_memory(set_mem).await;
+        if let Some(sid) = server_id {
+            app_state.set_memory(sid, set_mem).await;
+        }
     }
     if let Some(append_mem) = response.append_memory {
-        let current = app_state.get_memory().await;
-        let new_memory = if current.is_empty() {
-            append_mem
-        } else {
-            format!("{}\n{}", current, append_mem)
-        };
-        app_state.set_memory(new_memory).await;
+        if let Some(sid) = server_id {
+            let current = app_state.get_memory(sid).await.unwrap_or_default();
+            let new_memory = if current.is_empty() {
+                append_mem
+            } else {
+                format!("{}\n{}", current, append_mem)
+            };
+            app_state.set_memory(sid, new_memory).await;
+        }
     }
 
     // Handle log messages
