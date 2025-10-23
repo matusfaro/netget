@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{error, info, debug};
+use tracing::{debug, error, info, trace};
 
 // SNMP protocol support
 use rasn_snmp::{v1, v2c, v2};
@@ -83,6 +83,15 @@ impl SnmpServer {
                         let data = buffer[..n].to_vec();
                         let connection_id = ConnectionId::new();
 
+                        // DEBUG: Log summary
+                        debug!("SNMP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] SNMP received {} bytes from {}", n, peer_addr));
+
+                        // TRACE: Log full payload
+                        let hex_str = hex::encode(&data);
+                        trace!("SNMP data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] SNMP data (hex): {}", hex_str));
+
                         // Parse the SNMP message
                         let parsed = match Self::parse_snmp_message(&data) {
                             Ok(p) => p,
@@ -131,16 +140,21 @@ impl SnmpServer {
                                     // Build SNMP response from LLM output
                                     match Self::build_snmp_response(&llm_output, version, request_id, &community, &requested_oids) {
                                         Ok(snmp_response) => {
-                                            // Debug: log hex dump of response
-                                            let hex_dump: String = snmp_response.iter()
-                                                .map(|b| format!("{:02X}", b))
-                                                .collect::<Vec<_>>()
-                                                .join(" ");
-                                            debug!("Sending SNMP response ({} bytes): {}", snmp_response.len(), hex_dump);
-
                                             if let Err(e) = socket_clone.send_to(&snmp_response, peer_addr).await {
                                                 error!("Failed to send SNMP response: {}", e);
                                             } else {
+                                                // DEBUG: Log summary
+                                                debug!("SNMP sent {} bytes to {}", snmp_response.len(), peer_addr);
+                                                let _ = status_clone.send(format!("[DEBUG] SNMP sent {} bytes to {}", snmp_response.len(), peer_addr));
+
+                                                // TRACE: Log full payload
+                                                let hex_dump: String = snmp_response.iter()
+                                                    .map(|b| format!("{:02X}", b))
+                                                    .collect::<Vec<_>>()
+                                                    .join(" ");
+                                                trace!("SNMP sent (hex): {}", hex_dump);
+                                                let _ = status_clone.send(format!("[TRACE] SNMP sent (hex): {}", hex_dump));
+
                                                 let _ = status_clone.send(format!(
                                                     "→ SNMP response to {} ({} bytes)",
                                                     peer_addr, snmp_response.len()
@@ -196,6 +210,15 @@ impl SnmpServer {
                         let data = buffer[..n].to_vec();
                         let _connection_id = ConnectionId::new();
 
+                        // DEBUG: Log summary
+                        debug!("SNMP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] SNMP received {} bytes from {}", n, peer_addr));
+
+                        // TRACE: Log full payload
+                        let hex_str = hex::encode(&data);
+                        trace!("SNMP data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] SNMP data (hex): {}", hex_str));
+
                         // Parse the SNMP message
                         let parsed = match Self::parse_snmp_message(&data) {
                             Ok(p) => p,
@@ -229,6 +252,10 @@ impl SnmpServer {
                                 String::from_utf8_lossy(&parsed.community),
                                 parsed.requested_oids.join(", ")
                             );
+
+                            // Clone for BER encoding later
+                            let requested_oids_clone = requested_oids.clone();
+                            let community_clone = community.clone();
 
                             // Create network context
                             let context = NetworkContext::SnmpRequest {
@@ -275,13 +302,35 @@ impl SnmpServer {
                                                     // Handle protocol results (send SNMP response)
                                                     for protocol_result in result.protocol_results {
                                                         if let Some(output_data) = protocol_result.get_all_output().first() {
-                                                            if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
-                                                                error!("Failed to send SNMP response: {}", e);
-                                                            } else {
-                                                                let _ = status_clone.send(format!(
-                                                                    "→ SNMP response to {} ({} bytes)",
-                                                                    peer_addr, output_data.len()
-                                                                ));
+                                                            // Parse JSON response and convert to SNMP BER format
+                                                            let json_str = String::from_utf8_lossy(output_data);
+                                                            match Self::build_snmp_response(&json_str, version, request_id, &community_clone, &requested_oids_clone) {
+                                                                Ok(snmp_response) => {
+                                                                    if let Err(e) = socket_clone.send_to(&snmp_response, peer_addr).await {
+                                                                        error!("Failed to send SNMP response: {}", e);
+                                                                    } else {
+                                                                        // DEBUG: Log summary
+                                                                        debug!("SNMP sent {} bytes to {}", snmp_response.len(), peer_addr);
+                                                                        let _ = status_clone.send(format!("[DEBUG] SNMP sent {} bytes to {}", snmp_response.len(), peer_addr));
+
+                                                                        // TRACE: Log full payload
+                                                                        let hex_dump: String = snmp_response.iter()
+                                                                            .map(|b| format!("{:02X}", b))
+                                                                            .collect::<Vec<_>>()
+                                                                            .join(" ");
+                                                                        trace!("SNMP sent (hex): {}", hex_dump);
+                                                                        let _ = status_clone.send(format!("[TRACE] SNMP sent (hex): {}", hex_dump));
+
+                                                                        let _ = status_clone.send(format!(
+                                                                            "→ SNMP response to {} ({} bytes)",
+                                                                            peer_addr, snmp_response.len()
+                                                                        ));
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Failed to build SNMP BER response: {}", e);
+                                                                    let _ = status_clone.send(format!("✗ SNMP encoding error: {}", e));
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -550,6 +599,15 @@ impl SnmpServer {
                         let value_type = var["type"].as_str().unwrap_or("null");
                         let value = &var["value"];
 
+                        // DEBUG: Log the actual value being returned
+                        let value_str = match value_type {
+                            "string" => format!("\"{}\"", value.as_str().unwrap_or("")),
+                            "integer" => format!("{}", value.as_i64().unwrap_or(0)),
+                            "counter" | "gauge" | "timeticks" => format!("{}", value.as_u64().unwrap_or(0)),
+                            "null" | _ => "null".to_string(),
+                        };
+                        debug!("SNMP response: {} = {} ({})", oid_str, value_str, value_type);
+
                         // Encode each variable binding
                         let var_bind = Self::encode_var_bind(oid_str, value_type, value)?;
                         var_binds.push(var_bind);
@@ -570,9 +628,11 @@ impl SnmpServer {
 
                     // Try to parse as integer first
                     let var_bind = if let Ok(num) = output_str.trim().parse::<i32>() {
+                        debug!("SNMP response: {} = {} (integer)", oid, num);
                         Self::encode_var_bind(oid, "integer", &serde_json::Value::from(num))?
                     } else {
                         // Treat as string
+                        debug!("SNMP response: {} = \"{}\" (string)", oid, output_str);
                         Self::encode_var_bind(oid, "string", &serde_json::Value::from(output_str))?
                     };
 
@@ -593,9 +653,11 @@ impl SnmpServer {
 
         // Try to parse as integer first
         let var_bind = if let Ok(num) = trimmed.parse::<i32>() {
+            debug!("SNMP response: {} = {} (integer)", oid, num);
             Self::encode_var_bind(oid, "integer", &serde_json::Value::from(num))?
         } else {
             // Treat as string
+            debug!("SNMP response: {} = \"{}\" (string)", oid, trimmed);
             Self::encode_var_bind(oid, "string", &serde_json::Value::from(trimmed))?
         };
 

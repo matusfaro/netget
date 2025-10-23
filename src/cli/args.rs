@@ -39,7 +39,7 @@ pub struct Args {
     pub model: Option<String>,
 
     /// Log level (off, error, warn, info, debug, trace)
-    #[clap(short = 'l', long = "log-level", value_name = "LEVEL", default_value = "off")]
+    #[clap(short = 'l', long = "log-level", value_name = "LEVEL", default_value = "info")]
     pub log_level: String,
 
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)

@@ -14,7 +14,7 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::network::connection::ConnectionId;
 use crate::network::HttpProtocol;
@@ -185,14 +185,7 @@ async fn handle_http_request_with_llm(
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    debug!(
-        "HTTP request: {} {} from {:?}",
-        req.method(),
-        req.uri(),
-        connection_id
-    );
-
-    // Extract request details
+    // Extract request details first for logging
     let method = req.method().to_string();
     let uri = req.uri().to_string();
 
@@ -212,6 +205,42 @@ async fn handle_http_request_with_llm(
             Bytes::new()
         }
     };
+
+    // DEBUG: Log request summary to both file and TUI
+    debug!(
+        "HTTP request: {} {} ({} bytes) from {:?}",
+        method,
+        uri,
+        body_bytes.len(),
+        connection_id
+    );
+    let _ = status_tx.send(format!(
+        "[DEBUG] HTTP request: {} {} ({} bytes)",
+        method, uri, body_bytes.len()
+    ));
+
+    // TRACE: Log full request details
+    trace!("HTTP request headers:");
+    for (name, value) in &headers {
+        trace!("  {}: {}", name, value);
+        let _ = status_tx.send(format!("[TRACE] HTTP header: {}: {}", name, value));
+    }
+    if !body_bytes.is_empty() {
+        if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
+            // Try to pretty-print if it's JSON
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
+                let pretty = serde_json::to_string_pretty(&json).unwrap_or(body_str.to_string());
+                trace!("HTTP request body (JSON):\n{}", pretty);
+                let _ = status_tx.send(format!("[TRACE] HTTP request body (JSON):\n{}", pretty));
+            } else {
+                trace!("HTTP request body:\n{}", body_str);
+                let _ = status_tx.send(format!("[TRACE] HTTP request body:\n{}", body_str));
+            }
+        } else {
+            trace!("HTTP request body (binary): {} bytes", body_bytes.len());
+            let _ = status_tx.send(format!("[TRACE] HTTP request body (binary): {} bytes", body_bytes.len()));
+        }
+    }
 
     // Build event description for HTTP request
     let headers_text = headers.iter()
@@ -271,6 +300,38 @@ async fn handle_http_request_with_llm(
                 method, uri, llm_response.status, llm_response.body.len()
             ));
 
+            // DEBUG: Log response summary to both file and TUI
+            debug!(
+                "HTTP response: {} ({} bytes, {} headers)",
+                llm_response.status,
+                llm_response.body.len(),
+                llm_response.headers.len()
+            );
+            let _ = status_tx.send(format!(
+                "[DEBUG] HTTP response: {} ({} bytes, {} headers)",
+                llm_response.status,
+                llm_response.body.len(),
+                llm_response.headers.len()
+            ));
+
+            // TRACE: Log full response details
+            trace!("HTTP response headers:");
+            for (name, value) in &llm_response.headers {
+                trace!("  {}: {}", name, value);
+                let _ = status_tx.send(format!("[TRACE] HTTP header: {}: {}", name, value));
+            }
+            if !llm_response.body.is_empty() {
+                // Try to pretty-print if it's JSON
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&llm_response.body) {
+                    let pretty = serde_json::to_string_pretty(&json).unwrap_or(llm_response.body.clone());
+                    trace!("HTTP response body (JSON):\n{}", pretty);
+                    let _ = status_tx.send(format!("[TRACE] HTTP response body (JSON):\n{}", pretty));
+                } else {
+                    trace!("HTTP response body:\n{}", llm_response.body);
+                    let _ = status_tx.send(format!("[TRACE] HTTP response body:\n{}", llm_response.body));
+                }
+            }
+
             // Build the HTTP response
             let mut response = Response::builder().status(llm_response.status);
 
@@ -302,14 +363,7 @@ async fn handle_http_request_with_llm_actions(
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<HttpProtocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    debug!(
-        "HTTP request (action-based): {} {} from {:?}",
-        req.method(),
-        req.uri(),
-        connection_id
-    );
-
-    // Extract request details
+    // Extract request details first for logging
     let method = req.method().to_string();
     let uri = req.uri().to_string();
 
@@ -329,6 +383,42 @@ async fn handle_http_request_with_llm_actions(
             Bytes::new()
         }
     };
+
+    // DEBUG: Log request summary to both file and TUI
+    debug!(
+        "HTTP request (action-based): {} {} ({} bytes) from {:?}",
+        method,
+        uri,
+        body_bytes.len(),
+        connection_id
+    );
+    let _ = status_tx.send(format!(
+        "[DEBUG] HTTP request: {} {} ({} bytes)",
+        method, uri, body_bytes.len()
+    ));
+
+    // TRACE: Log full request details
+    trace!("HTTP request headers:");
+    for (name, value) in &headers {
+        trace!("  {}: {}", name, value);
+        let _ = status_tx.send(format!("[TRACE] HTTP header: {}: {}", name, value));
+    }
+    if !body_bytes.is_empty() {
+        if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
+            // Try to pretty-print if it's JSON
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
+                let pretty = serde_json::to_string_pretty(&json).unwrap_or(body_str.to_string());
+                trace!("HTTP request body (JSON):\n{}", pretty);
+                let _ = status_tx.send(format!("[TRACE] HTTP request body (JSON):\n{}", pretty));
+            } else {
+                trace!("HTTP request body:\n{}", body_str);
+                let _ = status_tx.send(format!("[TRACE] HTTP request body:\n{}", body_str));
+            }
+        } else {
+            trace!("HTTP request body (binary): {} bytes", body_bytes.len());
+            let _ = status_tx.send(format!("[TRACE] HTTP request body (binary): {} bytes", body_bytes.len()));
+        }
+    }
 
     // Build event description for HTTP request
     let headers_text = headers.iter()

@@ -1843,6 +1843,7 @@ dependencies = [
  "dhcproto",
  "dirs",
  "futures",
+ "hex",
  "hickory-proto",
  "hickory-server",
  "http-body-util",

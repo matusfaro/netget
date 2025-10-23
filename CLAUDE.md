@@ -654,6 +654,75 @@ All panels: Blue background (`Color::Blue`)
 
 User explicitly requested this after initial white-on-black was not visible.
 
+### Logging
+
+NetGet uses structured logging with different levels for different purposes. Logging behavior differs between interactive (TUI) and non-interactive modes.
+
+**Logging Levels:**
+
+1. **ERROR** - Critical errors that prevent functionality
+   - Server startup failures
+   - Fatal LLM errors
+   - Configuration errors
+
+2. **WARN** - Non-fatal issues that may need attention
+   - Missing configuration files (falling back to defaults)
+   - LLM response parsing failures (with fallback)
+   - Connection errors that are recovered
+
+3. **INFO** - Major events in the application lifecycle
+   - Server started/stopped (with port, protocol)
+   - Connection established/closed (with peer address)
+   - Mode changes (Idle → Server)
+   - Model changes
+   - User instruction updates
+
+4. **DEBUG** - Protocol-level request/response summaries
+   - Each network request with summary (protocol-dependent)
+   - Each LLM request with summary (model, prompt length)
+   - Each protocol response with summary (status code, size)
+   - Each LLM response with summary (action count, flags)
+   - Action execution results
+
+5. **TRACE** - Full payloads for debugging
+   - Complete protocol request payloads
+   - Complete protocol response payloads
+   - Complete LLM prompts
+   - Complete LLM responses (with pretty-printed JSON)
+   - Raw network data (hex dumps for binary protocols)
+
+**Default Levels:**
+- **Non-interactive mode**: INFO (use `-l debug` or `-l trace` to increase)
+- **Interactive mode**: TRACE (logged to `netget.log`)
+
+**Configuration:**
+```bash
+# Non-interactive with default (INFO)
+netget listen on port 80 via http
+
+# Non-interactive with debug logging
+netget -l debug listen on port 80 via http
+
+# Non-interactive with trace logging
+netget -l trace listen on port 80 via http
+
+# Interactive mode (always logs TRACE to netget.log)
+netget
+```
+
+**Log Format:**
+- **Non-interactive**: Logs to stderr with timestamps and levels
+- **Interactive**: Logs to `netget.log` file to avoid garbling TUI
+
+**JSON Pretty-Printing:**
+All JSON in trace logs is automatically pretty-printed for readability:
+- LLM responses (action arrays)
+- HTTP request/response bodies (if JSON)
+- SNMP variable bindings
+- Any other JSON payloads
+
+**Location**: `src/cli/setup.rs`, `src/cli/args.rs`
+
 ## User Interface Features
 
 ### Command History

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use super::connection::ConnectionId;
 use crate::llm::ollama_client::OllamaClient;
@@ -17,7 +17,6 @@ use crate::llm::response_handler;
 use crate::llm::{ActionResponse, execute_actions, NetworkContext, ActionResult, ProtocolActions};
 use crate::network::TcpProtocol;
 use crate::state::app_state::AppState;
-use tracing::debug;
 
 /// Get LLM context and output format instructions for TCP stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -103,10 +102,33 @@ impl TcpServer {
                     let processed = response_handler::handle_llm_response(response, &app_state).await;
 
                     if let Some(output) = processed.output {
+                        let output_bytes = output.as_bytes();
                         let mut write = write_half.lock().await;
-                        if let Err(e) = write.write_all(output.as_bytes()).await {
+                        if let Err(e) = write.write_all(output_bytes).await {
                             error!("Failed to send banner: {}", e);
                         } else {
+                            // DEBUG: Log summary with data preview
+                            if output_bytes.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                let preview = if output.len() > 100 {
+                                    format!("{}...", &output[..100])
+                                } else {
+                                    output.clone()
+                                };
+                                debug!("TCP sent {} bytes to {}: {}", output_bytes.len(), connection_id, preview);
+                                let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_bytes.len(), connection_id, preview));
+
+                                // TRACE: Log full text payload
+                                trace!("TCP sent (text): {:?}", output);
+                                let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", output));
+                            } else {
+                                debug!("TCP sent {} bytes to {} (binary data)", output_bytes.len(), connection_id);
+                                let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_bytes.len(), connection_id));
+
+                                // TRACE: Log full hex payload
+                                let hex_str = hex::encode(output_bytes);
+                                trace!("TCP sent (hex): {}", hex_str);
+                                let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
+                            }
                             let _ = status_tx.send(format!("→ Sent banner to {}", connection_id));
                         }
                     }
@@ -213,10 +235,24 @@ impl TcpServer {
                         };
 
                         if let Some(write_half) = write_half {
+                            let output_bytes = output.as_bytes();
                             let mut write = write_half.lock().await;
-                            if let Err(e) = write.write_all(output.as_bytes()).await {
+                            if let Err(e) = write.write_all(output_bytes).await {
                                 error!("Failed to send response: {}", e);
                             } else {
+                                // DEBUG: Log summary to both file and TUI
+                                debug!("TCP sent {} bytes to {}", output_bytes.len(), connection_id);
+                                let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", output_bytes.len(), connection_id));
+
+                                // TRACE: Log full payload
+                                if output_bytes.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                    trace!("TCP sent (text): {:?}", output);
+                                    let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", output));
+                                } else {
+                                    let hex_str = hex::encode(output_bytes);
+                                    trace!("TCP sent (hex): {}", hex_str);
+                                    let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
+                                }
                                 let _ = status_tx.send(format!("→ Sent {} bytes to {}", output.len(), connection_id));
                             }
                         }
@@ -324,6 +360,30 @@ impl TcpServer {
                                     Ok(n) => {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
 
+                                        // DEBUG: Log summary with data preview
+                                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                            let data_str = String::from_utf8_lossy(&data);
+                                            let preview = if data_str.len() > 100 {
+                                                format!("{}...", &data_str[..100])
+                                            } else {
+                                                data_str.to_string()
+                                            };
+                                            debug!("TCP received {} bytes on {}: {}", n, connection_id, preview);
+                                            let _ = status_tx_clone.send(format!("[DEBUG] TCP received {} bytes on {}: {}", n, connection_id, preview));
+
+                                            // TRACE: Log full text payload
+                                            trace!("TCP data (text): {:?}", data_str);
+                                            let _ = status_tx_clone.send(format!("[TRACE] TCP data (text): {:?}", data_str));
+                                        } else {
+                                            debug!("TCP received {} bytes on {} (binary data)", n, connection_id);
+                                            let _ = status_tx_clone.send(format!("[DEBUG] TCP received {} bytes on {} (binary data)", n, connection_id));
+
+                                            // TRACE: Log full hex payload
+                                            let hex_str = hex::encode(&data);
+                                            trace!("TCP data (hex): {}", hex_str);
+                                            let _ = status_tx_clone.send(format!("[TRACE] TCP data (hex): {}", hex_str));
+                                        }
+
                                         // Handle data in separate task
                                         let llm_clone = llm_client_clone.clone();
                                         let state_clone = app_state_clone.clone();
@@ -428,6 +488,30 @@ impl TcpServer {
                                     }
                                     Ok(n) => {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
+
+                                        // DEBUG: Log summary with data preview
+                                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                            let data_str = String::from_utf8_lossy(&data);
+                                            let preview = if data_str.len() > 100 {
+                                                format!("{}...", &data_str[..100])
+                                            } else {
+                                                data_str.to_string()
+                                            };
+                                            debug!("TCP received {} bytes on {}: {}", n, connection_id, preview);
+                                            let _ = status_tx_clone.send(format!("[DEBUG] TCP received {} bytes on {}: {}", n, connection_id, preview));
+
+                                            // TRACE: Log full text payload
+                                            trace!("TCP data (text): {:?}", data_str);
+                                            let _ = status_tx_clone.send(format!("[TRACE] TCP data (text): {:?}", data_str));
+                                        } else {
+                                            debug!("TCP received {} bytes on {} (binary data)", n, connection_id);
+                                            let _ = status_tx_clone.send(format!("[DEBUG] TCP received {} bytes on {} (binary data)", n, connection_id));
+
+                                            // TRACE: Log full hex payload
+                                            let hex_str = hex::encode(&data);
+                                            trace!("TCP data (hex): {}", hex_str);
+                                            let _ = status_tx_clone.send(format!("[TRACE] TCP data (hex): {}", hex_str));
+                                        }
 
                                         // Handle data in separate task
                                         let llm_clone = llm_client_clone.clone();
@@ -537,6 +621,29 @@ impl TcpServer {
                                                 if let Err(e) = write.write_all(&output_data).await {
                                                     error!("Failed to send banner: {}", e);
                                                 } else {
+                                                    // DEBUG: Log summary with data preview
+                                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                                        let data_str = String::from_utf8_lossy(&output_data);
+                                                        let preview = if data_str.len() > 100 {
+                                                            format!("{}...", &data_str[..100])
+                                                        } else {
+                                                            data_str.to_string()
+                                                        };
+                                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+
+                                                        // TRACE: Log full text payload
+                                                        trace!("TCP sent (text): {:?}", data_str);
+                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
+                                                    } else {
+                                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+
+                                                        // TRACE: Log full hex payload
+                                                        let hex_str = hex::encode(&output_data);
+                                                        trace!("TCP sent (hex): {}", hex_str);
+                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
+                                                    }
                                                     let _ = status_tx.send(format!("→ Sent banner to {}", connection_id));
                                                 }
                                             }
@@ -691,6 +798,29 @@ impl TcpServer {
                                                 if let Err(e) = write.write_all(&output_data).await {
                                                     error!("Failed to send response: {}", e);
                                                 } else {
+                                                    // DEBUG: Log summary with data preview
+                                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                                        let data_str = String::from_utf8_lossy(&output_data);
+                                                        let preview = if data_str.len() > 100 {
+                                                            format!("{}...", &data_str[..100])
+                                                        } else {
+                                                            data_str.to_string()
+                                                        };
+                                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+
+                                                        // TRACE: Log full text payload
+                                                        trace!("TCP sent (text): {:?}", data_str);
+                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
+                                                    } else {
+                                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+
+                                                        // TRACE: Log full hex payload
+                                                        let hex_str = hex::encode(&output_data);
+                                                        trace!("TCP sent (hex): {}", hex_str);
+                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
+                                                    }
                                                     let _ = status_tx.send(format!("→ Sent {} bytes to {}", output_data.len(), connection_id));
                                                 }
                                             }

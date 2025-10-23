@@ -225,6 +225,8 @@ impl App {
     pub fn new() -> Self {
         let mut app = Self::default();
         app.command_history = Self::load_history();
+        // Interactive mode defaults to TRACE logging (logged to netget.log)
+        app.log_level = LogLevel::Trace;
         app
     }
 

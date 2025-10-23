@@ -51,6 +51,7 @@ thiserror = "2.0"
 
 # Byte manipulation
 bytes = "1.8"
+hex = "0.4"
 
 # Logging
 tracing = "0.1"

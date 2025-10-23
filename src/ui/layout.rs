@@ -63,12 +63,12 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
             ])
         } else if msg.starts_with("[INFO]") {
             Line::from(vec![
-                Span::styled("● ", Style::default().fg(Color::Green)),
+                Span::styled("● ", Style::default().fg(Color::Blue)),
                 Span::raw(msg.strip_prefix("[INFO]").unwrap()),
             ])
         } else if msg.starts_with("[DEBUG]") {
             Line::from(vec![
-                Span::styled("○ ", Style::default().fg(Color::Cyan)),
+                Span::styled("○ ", Style::default().fg(Color::LightBlue)),
                 Span::raw(msg.strip_prefix("[DEBUG]").unwrap()),
             ])
         } else if msg.starts_with("[TRACE]") {
@@ -78,12 +78,12 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
             ])
         } else if msg.starts_with("[USER]") {
             Line::from(vec![
-                Span::styled("▶ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("▶ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
                 Span::styled(msg.strip_prefix("[USER]").unwrap(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ])
         } else if msg.starts_with("[SERVER]") {
             Line::from(vec![
-                Span::styled("◆ ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                Span::styled("◆ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                 Span::raw(msg.strip_prefix("[SERVER]").unwrap()),
             ])
         } else if msg.starts_with("[CONN]") {
@@ -103,12 +103,12 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     // Highlight the title for focused panel
     let (title, title_style) = if app.is_output_focused() {
         (
-            "Output (↑↓ to scroll)",
+            format!("Output | Log: {} | ↑↓: scroll", app.log_level.as_str()),
             Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
         )
     } else {
         (
-            "Output [Tab to focus]",
+            format!("Output | Log: {} | [Tab to focus]", app.log_level.as_str()),
             Style::default().bg(Color::Blue).fg(Color::Cyan)
         )
     };

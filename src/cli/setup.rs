@@ -6,19 +6,105 @@ use crossterm::event::{
 };
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
-use std::io;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
+use tracing::Level;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use super::Args;
 
+/// Custom writer that applies bright cyan color to TRACE level logs
+struct ColoredLogWriter {
+    inner: Arc<Mutex<File>>,
+}
+
+impl ColoredLogWriter {
+    fn new(file: File) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(file)),
+        }
+    }
+}
+
+impl Write for ColoredLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Convert to string to check for TRACE level
+        if let Ok(s) = std::str::from_utf8(buf) {
+            // Replace purple/magenta TRACE color (35m) with bright cyan (96m)
+            // ANSI color codes: 35 = magenta, 96 = bright cyan
+            let modified = s.replace("\x1b[35m TRACE", "\x1b[96m TRACE");
+            self.inner.lock().unwrap().write_all(modified.as_bytes())?;
+            Ok(buf.len())
+        } else {
+            self.inner.lock().unwrap().write(buf)
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.lock().unwrap().flush()
+    }
+}
+
+impl Clone for ColoredLogWriter {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+/// MakeWriter implementation for ColoredLogWriter
+struct ColoredLogWriterMaker {
+    writer: ColoredLogWriter,
+}
+
+impl ColoredLogWriterMaker {
+    fn new(file: File) -> Self {
+        Self {
+            writer: ColoredLogWriter::new(file),
+        }
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ColoredLogWriterMaker {
+    type Writer = ColoredLogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.writer.clone()
+    }
+}
+
 /// Initialize logging based on arguments
 pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
-    if args.logging_disabled() || is_interactive {
-        // No-op subscriber when logging is disabled or in interactive (TUI) mode
+    if args.logging_disabled() {
+        // No-op subscriber when logging is explicitly disabled
         tracing_subscriber::registry()
             .with(EnvFilter::new("off"))
             .init();
+    } else if is_interactive {
+        // Interactive (TUI) mode: log TRACE to netget.log file with bright cyan color
+        let log_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("netget.log")?;
+
+        let colored_writer = ColoredLogWriterMaker::new(log_file);
+
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", Level::TRACE)));
+
+        tracing_subscriber::registry()
+            .with(fmt::layer()
+                .with_writer(colored_writer)
+                .with_ansi(true)
+                .with_target(true)
+                .with_thread_ids(false)
+                .with_line_number(true))
+            .with(filter)
+            .init();
     } else {
+        // Non-interactive mode: log to stderr with configured level
         let log_level = args.effective_log_level();
 
         // Create environment filter

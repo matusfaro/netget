@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -52,6 +52,15 @@ impl DhcpServer {
                         let data = buffer[..n].to_vec();
                         let connection_id = ConnectionId::new();
 
+                        // DEBUG: Log summary
+                        debug!("DHCP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] DHCP received {} bytes from {}", n, peer_addr));
+
+                        // TRACE: Log full payload (always hex for DHCP)
+                        let hex_str = hex::encode(&data);
+                        trace!("DHCP data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] DHCP data (hex): {}", hex_str));
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -76,12 +85,22 @@ impl DhcpServer {
 
                             match llm_clone.generate(&model, &prompt).await {
                                 Ok(llm_output) => {
-                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                    let output_data = llm_output.as_bytes();
+                                    if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
                                         error!("Failed to send DHCP response: {}", e);
                                     } else {
+                                        // DEBUG: Log summary
+                                        debug!("DHCP sent {} bytes to {}", output_data.len(), peer_addr);
+                                        let _ = status_clone.send(format!("[DEBUG] DHCP sent {} bytes to {}", output_data.len(), peer_addr));
+
+                                        // TRACE: Log full payload (always hex for DHCP)
+                                        let hex_str = hex::encode(output_data);
+                                        trace!("DHCP sent (hex): {}", hex_str);
+                                        let _ = status_clone.send(format!("[TRACE] DHCP sent (hex): {}", hex_str));
+
                                         let _ = status_clone.send(format!(
                                             "→ DHCP response to {} ({} bytes)",
-                                            peer_addr, llm_output.len()
+                                            peer_addr, output_data.len()
                                         ));
                                     }
                                 }
@@ -123,6 +142,16 @@ impl DhcpServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
+
+                        // DEBUG: Log summary
+                        debug!("DHCP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] DHCP received {} bytes from {}", n, peer_addr));
+
+                        // TRACE: Log full payload (always hex for DHCP)
+                        let hex_str = hex::encode(&data);
+                        trace!("DHCP data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] DHCP data (hex): {}", hex_str));
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -154,6 +183,16 @@ impl DhcpServer {
                                         for protocol_result in result.protocol_results {
                                             if let Some(output_data) = protocol_result.get_all_output().first() {
                                                 let _ = socket_clone.send_to(output_data, peer_addr).await;
+
+                                                // DEBUG: Log summary
+                                                debug!("DHCP sent {} bytes to {}", output_data.len(), peer_addr);
+                                                let _ = status_clone.send(format!("[DEBUG] DHCP sent {} bytes to {}", output_data.len(), peer_addr));
+
+                                                // TRACE: Log full payload (always hex for DHCP)
+                                                let hex_str = hex::encode(output_data);
+                                                trace!("DHCP sent (hex): {}", hex_str);
+                                                let _ = status_clone.send(format!("[TRACE] DHCP sent (hex): {}", hex_str));
+
                                                 let _ = status_clone.send(format!("→ DHCP response to {} ({} bytes)", peer_addr, output_data.len()));
                                             }
                                         }

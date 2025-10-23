@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -52,6 +52,15 @@ impl DnsServer {
                         let data = buffer[..n].to_vec();
                         let connection_id = ConnectionId::new();
 
+                        // DEBUG: Log summary
+                        debug!("DNS received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] DNS received {} bytes from {}", n, peer_addr));
+
+                        // TRACE: Log full payload (always hex for DNS)
+                        let hex_str = hex::encode(&data);
+                        trace!("DNS data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] DNS data (hex): {}", hex_str));
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -79,12 +88,22 @@ impl DnsServer {
                                 Ok(llm_output) => {
                                     // LLM should return DNS response bytes
                                     // For now, send the output as-is
-                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                    let output_data = llm_output.as_bytes();
+                                    if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
                                         error!("Failed to send DNS response: {}", e);
                                     } else {
+                                        // DEBUG: Log summary
+                                        debug!("DNS sent {} bytes to {}", output_data.len(), peer_addr);
+                                        let _ = status_clone.send(format!("[DEBUG] DNS sent {} bytes to {}", output_data.len(), peer_addr));
+
+                                        // TRACE: Log full payload (always hex for DNS)
+                                        let hex_str = hex::encode(output_data);
+                                        trace!("DNS sent (hex): {}", hex_str);
+                                        let _ = status_clone.send(format!("[TRACE] DNS sent (hex): {}", hex_str));
+
                                         let _ = status_clone.send(format!(
                                             "→ DNS response to {} ({} bytes)",
-                                            peer_addr, llm_output.len()
+                                            peer_addr, output_data.len()
                                         ));
                                     }
                                 }
@@ -127,6 +146,15 @@ impl DnsServer {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
                         let _connection_id = ConnectionId::new();
+
+                        // DEBUG: Log summary
+                        debug!("DNS received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] DNS received {} bytes from {}", n, peer_addr));
+
+                        // TRACE: Log full payload (always hex for DNS)
+                        let hex_str = hex::encode(&data);
+                        trace!("DNS data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] DNS data (hex): {}", hex_str));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -187,6 +215,15 @@ impl DnsServer {
                                                             if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
                                                                 error!("Failed to send DNS response: {}", e);
                                                             } else {
+                                                                // DEBUG: Log summary
+                                                                debug!("DNS sent {} bytes to {}", output_data.len(), peer_addr);
+                                                                let _ = status_clone.send(format!("[DEBUG] DNS sent {} bytes to {}", output_data.len(), peer_addr));
+
+                                                                // TRACE: Log full payload (always hex for DNS)
+                                                                let hex_str = hex::encode(output_data);
+                                                                trace!("DNS sent (hex): {}", hex_str);
+                                                                let _ = status_clone.send(format!("[TRACE] DNS sent (hex): {}", hex_str));
+
                                                                 let _ = status_clone.send(format!(
                                                                     "→ DNS response to {} ({} bytes)",
                                                                     peer_addr, output_data.len()
