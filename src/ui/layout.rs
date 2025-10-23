@@ -11,7 +11,7 @@ use ratatui::{
 
 use super::App;
 
-/// Render the Claude-style UI with scrollable output and fixed input
+/// Render the 6-panel UI layout
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
 
@@ -21,28 +21,39 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Constrain input height: minimum 3 lines, maximum 12 lines, +2 for borders
     let input_height = input_lines.max(3).min(12) + 2;
 
-    // Create two vertical chunks: top (output) and bottom (input + status)
-    let chunks = Layout::default()
+    // Server/connections panel height (fixed)
+    let info_height = 8;
+
+    // Create main vertical layout
+    let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(10),                  // Top: scrollable output (takes remaining space)
-            Constraint::Length(input_height),     // Bottom: input area (dynamic, 3-12 lines)
+            Constraint::Length(input_height),     // Input area (dynamic, 3-12 lines)
+            Constraint::Length(info_height),      // Server/Connections info (fixed 8 lines)
+            Constraint::Min(10),                  // Output (takes remaining space)
             Constraint::Length(1),                // Status bar
         ])
         .split(size);
 
-    // Render scrollable output in the top chunk
-    render_output(f, app, chunks[0]);
+    // Split the info area horizontally for servers and connections
+    let info_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),  // Servers panel (left half)
+            Constraint::Percentage(50),  // Connections panel (right half)
+        ])
+        .split(main_chunks[1]);
 
-    // Render fixed input at the bottom
-    render_input(f, app, chunks[1]);
-
-    // Render status bar
-    render_status(f, app, chunks[2]);
+    // Render all panels
+    render_input(f, app, main_chunks[0]);
+    render_servers(f, app, info_chunks[0]);
+    render_connections(f, app, info_chunks[1]);
+    render_output(f, app, main_chunks[2]);
+    render_status(f, app, main_chunks[3]);
 
     // Render slash command suggestions popup if active
     if app.should_show_slash_suggestions() {
-        render_slash_suggestions(f, app, chunks[1]);
+        render_slash_suggestions(f, app, main_chunks[0]);
     }
 }
 
@@ -222,6 +233,112 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         );
 
     f.render_widget(status, area);
+}
+
+/// Render the servers panel
+fn render_servers(f: &mut Frame, app: &App, area: Rect) {
+    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
+    let title_style = Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD);
+
+    // Get server list from app
+    let server_lines: Vec<Line> = if app.servers.is_empty() {
+        vec![Line::from(Span::styled(
+            "No servers running",
+            Style::default().fg(Color::DarkGray)
+        ))]
+    } else {
+        app.servers.iter().map(|server| {
+            let status_color = match server.status.as_str() {
+                "Running" => Color::Green,
+                "Starting" => Color::Yellow,
+                "Stopped" => Color::DarkGray,
+                "Error" => Color::Red,
+                _ => Color::White,
+            };
+
+            Line::from(vec![
+                Span::styled(
+                    format!("#{} ", server.id),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                ),
+                Span::styled(
+                    &server.protocol,
+                    Style::default().fg(Color::White)
+                ),
+                Span::raw(" :"),
+                Span::styled(
+                    format!("{}", server.port),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                ),
+                Span::raw(" - "),
+                Span::styled(
+                    server.status.as_str(),
+                    Style::default().fg(status_color)
+                ),
+            ])
+        }).collect()
+    };
+
+    let text = Text::from(server_lines);
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("Servers", title_style))
+                .border_style(border_style)
+                .style(Style::default().bg(Color::Blue).fg(Color::White))
+        )
+        .style(Style::default().bg(Color::Blue).fg(Color::White))
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(paragraph, area);
+}
+
+/// Render the connections panel
+fn render_connections(f: &mut Frame, app: &App, area: Rect) {
+    let border_style = Style::default().bg(Color::Blue).fg(Color::Cyan);
+    let title_style = Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD);
+
+    // Get connection list from app
+    let connection_lines: Vec<Line> = if app.connections.is_empty() {
+        vec![Line::from(Span::styled(
+            "No connections",
+            Style::default().fg(Color::DarkGray)
+        ))]
+    } else {
+        app.connections.iter().take(6).map(|conn| {  // Show max 6 connections
+            Line::from(vec![
+                Span::styled(
+                    &conn.id,
+                    Style::default().fg(Color::Cyan)
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    &conn.address,
+                    Style::default().fg(Color::White)
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    &conn.state,
+                    Style::default().fg(Color::LightCyan)
+                ),
+            ])
+        }).collect()
+    };
+
+    let text = Text::from(connection_lines);
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("Connections", title_style))
+                .border_style(border_style)
+                .style(Style::default().bg(Color::Blue).fg(Color::White))
+        )
+        .style(Style::default().bg(Color::Blue).fg(Color::White))
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(paragraph, area);
 }
 
 /// Render slash command suggestions popup

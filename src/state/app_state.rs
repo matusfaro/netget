@@ -1,17 +1,16 @@
 //! Application state management
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::network::connection::ConnectionId;
 use crate::protocol::BaseStack;
+use super::server::{ServerId, ServerInstance};
 
 /// Operating mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Server mode - listening for incoming connections
+    /// Server mode - one or more servers listening
     Server,
     /// Client mode - connecting to remote servers
     Client,
@@ -44,34 +43,12 @@ pub struct AppState {
 struct AppStateInner {
     /// Current operating mode
     mode: Mode,
-    /// Base protocol stack
-    base_stack: BaseStack,
-    /// Server port (for server mode)
-    port: Option<u16>,
-    /// Whether to send data first on connection (for server mode)
-    send_first: bool,
-    /// Local listening address (for server mode)
-    local_addr: Option<SocketAddr>,
-    /// Active connections
-    connections: HashMap<ConnectionId, ConnectionInfo>,
-    /// Current instruction for the LLM
-    instruction: String,
-    /// LLM memory (persistent context across requests)
-    memory: String,
+    /// All server instances
+    servers: HashMap<ServerId, ServerInstance>,
+    /// Next server ID to assign
+    next_server_id: u32,
     /// Current Ollama model
     ollama_model: String,
-}
-
-/// Information about a connection
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    pub id: ConnectionId,
-    pub remote_addr: SocketAddr,
-    pub local_addr: SocketAddr,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub packets_sent: u64,
-    pub packets_received: u64,
 }
 
 impl AppState {
@@ -80,13 +57,8 @@ impl AppState {
         Self {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
-                base_stack: BaseStack::TcpRaw,
-                port: None,
-                send_first: false,
-                local_addr: None,
-                connections: HashMap::new(),
-                instruction: String::new(),
-                memory: String::new(),
+                servers: HashMap::new(),
+                next_server_id: 1,
                 ollama_model: "qwen3-coder:30b".to_string(),
             })),
         }
@@ -102,110 +74,118 @@ impl AppState {
         self.inner.write().await.mode = mode;
     }
 
-    /// Get the current base stack
-    pub async fn get_base_stack(&self) -> BaseStack {
-        self.inner.read().await.base_stack
-    }
-
-    /// Set the base stack
-    pub async fn set_base_stack(&self, base_stack: BaseStack) {
-        self.inner.write().await.base_stack = base_stack;
-    }
-
-    /// Get the server port
-    pub async fn get_port(&self) -> Option<u16> {
-        self.inner.read().await.port
-    }
-
-    /// Set the server port
-    pub async fn set_port(&self, port: u16) {
-        self.inner.write().await.port = Some(port);
-    }
-
-    /// Get whether to send data first on connection
-    pub async fn get_send_first(&self) -> bool {
-        self.inner.read().await.send_first
-    }
-
-    /// Set whether to send data first on connection
-    pub async fn set_send_first(&self, send_first: bool) {
-        self.inner.write().await.send_first = send_first;
-    }
-
-    /// Get the local listening address
-    pub async fn get_local_addr(&self) -> Option<SocketAddr> {
-        self.inner.read().await.local_addr
-    }
-
-    /// Set the local listening address
-    pub async fn set_local_addr(&self, addr: Option<SocketAddr>) {
-        self.inner.write().await.local_addr = addr;
-    }
-
-    /// Add a new connection
-    pub async fn add_connection(&self, info: ConnectionInfo) {
-        self.inner.write().await.connections.insert(info.id, info);
-    }
-
-    /// Remove a connection
-    pub async fn remove_connection(&self, id: ConnectionId) {
-        self.inner.write().await.connections.remove(&id);
-    }
-
-    /// Get connection info
-    pub async fn get_connection(&self, id: ConnectionId) -> Option<ConnectionInfo> {
-        self.inner.read().await.connections.get(&id).cloned()
-    }
-
-    /// Get all connections
-    pub async fn get_all_connections(&self) -> Vec<ConnectionInfo> {
-        self.inner.read().await.connections.values().cloned().collect()
-    }
-
-    /// Update connection stats
-    pub async fn update_connection_stats(
-        &self,
-        id: ConnectionId,
-        bytes_sent: u64,
-        bytes_received: u64,
-        packets_sent: u64,
-        packets_received: u64,
-    ) {
-        if let Some(conn) = self.inner.write().await.connections.get_mut(&id) {
-            conn.bytes_sent += bytes_sent;
-            conn.bytes_received += bytes_received;
-            conn.packets_sent += packets_sent;
-            conn.packets_received += packets_received;
-        }
-    }
-
-    /// Set the current instruction for the LLM
-    pub async fn set_instruction(&self, instruction: String) {
-        self.inner.write().await.instruction = instruction;
-    }
-
-    /// Get the current instruction
-    pub async fn get_instruction(&self) -> String {
-        self.inner.read().await.instruction.clone()
-    }
-
-    /// Set the LLM memory
-    pub async fn set_memory(&self, memory: String) {
-        self.inner.write().await.memory = memory;
-    }
-
-    /// Append to the LLM memory
-    pub async fn append_memory(&self, text: String) {
+    /// Add a new server instance and return its ID
+    pub async fn add_server(&self, mut server: ServerInstance) -> ServerId {
         let mut inner = self.inner.write().await;
-        if !inner.memory.is_empty() {
-            inner.memory.push('\n');
+        let id = ServerId::new(inner.next_server_id);
+        inner.next_server_id += 1;
+        server.id = id;
+        inner.servers.insert(id, server);
+
+        // Set mode to Server if this is the first server
+        if inner.mode == Mode::Idle {
+            inner.mode = Mode::Server;
         }
-        inner.memory.push_str(&text);
+
+        id
     }
 
-    /// Get the LLM memory
-    pub async fn get_memory(&self) -> String {
-        self.inner.read().await.memory.clone()
+    /// Remove a server instance
+    pub async fn remove_server(&self, id: ServerId) -> Option<ServerInstance> {
+        let mut inner = self.inner.write().await;
+        let server = inner.servers.remove(&id);
+
+        // Set mode to Idle if no more servers
+        if inner.servers.is_empty() {
+            inner.mode = Mode::Idle;
+        }
+
+        server
+    }
+
+    /// Get a server instance (cloned)
+    pub async fn get_server(&self, id: ServerId) -> Option<ServerInstance> {
+        // Note: ServerInstance doesn't impl Clone because it contains JoinHandle
+        // We'll need to provide specific access methods instead
+        self.inner.read().await.servers.get(&id).map(|s| {
+            // Create a lightweight copy without the handle
+            ServerInstance {
+                id: s.id,
+                port: s.port,
+                base_stack: s.base_stack,
+                instruction: s.instruction.clone(),
+                memory: s.memory.clone(),
+                status: s.status.clone(),
+                connections: s.connections.clone(),
+                handle: None,
+                created_at: s.created_at,
+                local_addr: s.local_addr,
+            }
+        })
+    }
+
+    /// Get all server IDs
+    pub async fn get_all_server_ids(&self) -> Vec<ServerId> {
+        self.inner.read().await.servers.keys().copied().collect()
+    }
+
+    /// Get all servers (lightweight copies without handles)
+    pub async fn get_all_servers(&self) -> Vec<ServerInstance> {
+        self.inner.read().await.servers.values().map(|s| {
+            ServerInstance {
+                id: s.id,
+                port: s.port,
+                base_stack: s.base_stack,
+                instruction: s.instruction.clone(),
+                memory: s.memory.clone(),
+                status: s.status.clone(),
+                connections: s.connections.clone(),
+                handle: None,
+                created_at: s.created_at,
+                local_addr: s.local_addr,
+            }
+        }).collect()
+    }
+
+    /// Update server status
+    pub async fn update_server_status(&self, id: ServerId, status: super::server::ServerStatus) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&id) {
+            server.status = status;
+        }
+    }
+
+    /// Get instruction for a specific server
+    pub async fn get_instruction(&self, server_id: ServerId) -> Option<String> {
+        self.inner.read().await.servers.get(&server_id).map(|s| s.instruction.clone())
+    }
+
+    /// Set instruction for a specific server
+    pub async fn set_instruction(&self, server_id: ServerId, instruction: String) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            server.instruction = instruction;
+        }
+    }
+
+    /// Get memory for a specific server
+    pub async fn get_memory(&self, server_id: ServerId) -> Option<String> {
+        self.inner.read().await.servers.get(&server_id).map(|s| s.memory.clone())
+    }
+
+    /// Set memory for a specific server
+    pub async fn set_memory(&self, server_id: ServerId, memory: String) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            server.memory = memory;
+        }
+    }
+
+    /// Append to memory for a specific server
+    pub async fn append_memory(&self, server_id: ServerId, text: String) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if !server.memory.is_empty() {
+                server.memory.push('\n');
+            }
+            server.memory.push_str(&text);
+        }
     }
 
     /// Get the Ollama model name
@@ -221,13 +201,65 @@ impl AppState {
     /// Get a summary of current state for LLM context
     pub async fn get_summary(&self) -> String {
         let inner = self.inner.read().await;
+        let total_connections: usize = inner.servers.values().map(|s| s.connections.len()).sum();
         format!(
-            "Mode: {}, Stack: {}, Connections: {}, Local: {}",
+            "Mode: {}, Servers: {}, Total Connections: {}",
             inner.mode,
-            inner.base_stack,
-            inner.connections.len(),
-            inner.local_addr.map(|a| a.to_string()).unwrap_or_else(|| "None".to_string())
+            inner.servers.len(),
+            total_connections
         )
+    }
+
+    /// Get base stack for a server
+    pub async fn get_base_stack(&self, server_id: ServerId) -> Option<BaseStack> {
+        self.inner.read().await.servers.get(&server_id).map(|s| s.base_stack)
+    }
+
+    /// Cleanup old connections across all servers
+    pub async fn cleanup_old_connections(&self, max_age_secs: u64) {
+        let mut inner = self.inner.write().await;
+        for server in inner.servers.values_mut() {
+            server.cleanup_old_connections(max_age_secs);
+        }
+    }
+
+    // ========== Backwards Compatibility Methods ==========
+    // These methods help bridge old single-server code to new multi-server architecture
+    // They typically operate on "the first server" or aggregate across all servers
+
+    /// Get the first server's port (for backwards compat)
+    pub async fn get_port(&self) -> Option<u16> {
+        self.inner.read().await.servers.values().next().map(|s| s.port)
+    }
+
+    /// Get the first server's base stack (for backwards compat)
+    pub async fn get_first_base_stack(&self) -> Option<BaseStack> {
+        self.inner.read().await.servers.values().next().map(|s| s.base_stack)
+    }
+
+    /// Get the first server's instruction (for backwards compat)
+    pub async fn get_first_instruction(&self) -> String {
+        self.inner.read().await.servers.values().next()
+            .map(|s| s.instruction.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get the first server's memory (for backwards compat)
+    pub async fn get_first_memory(&self) -> String {
+        self.inner.read().await.servers.values().next()
+            .map(|s| s.memory.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get the first server's ID (for backwards compat)
+    pub async fn get_first_server_id(&self) -> Option<ServerId> {
+        self.inner.read().await.servers.keys().next().copied()
+    }
+
+    /// Get local address of first server (for backwards compat)
+    pub async fn get_local_addr(&self) -> Option<std::net::SocketAddr> {
+        self.inner.read().await.servers.values().next()
+            .and_then(|s| s.local_addr)
     }
 }
 

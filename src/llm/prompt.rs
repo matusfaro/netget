@@ -6,6 +6,7 @@
 
 use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::state::ServerId;
 use crate::llm::actions::{ActionDefinition, get_user_input_common_actions, get_network_event_common_actions};
 
 /// Builder for constructing LLM prompts
@@ -20,27 +21,28 @@ impl PromptBuilder {
     ) -> String {
         // Get current state
         let mode = state.get_mode().await;
-        let base_stack = state.get_base_stack().await;
-        let port = state.get_port().await;
-        let instruction = state.get_instruction().await;
-        let memory = state.get_memory().await;
+        let servers = state.get_all_servers().await;
 
-        let current_state = if mode == crate::state::app_state::Mode::Server {
-            format!(
-                r#"Current server state:
-- Mode: Server
-- Stack: {}
-- Port: {:?}
-- Current instruction: {}
-- Memory: {}
-"#,
-                base_stack,
-                port,
-                if instruction.is_empty() { "(none)" } else { &instruction },
-                if memory.is_empty() { "(empty)" } else { &memory }
-            )
+        let current_state = if mode == crate::state::app_state::Mode::Server && !servers.is_empty() {
+            let mut state_text = String::from("Current servers:\n");
+            for server in &servers {
+                state_text.push_str(&format!(
+                    "- Server #{}: {} on port {}, status: {}\n",
+                    server.id.as_u32(),
+                    server.base_stack,
+                    server.port,
+                    server.status
+                ));
+                if !server.instruction.is_empty() {
+                    state_text.push_str(&format!("  Instruction: {}\n", server.instruction));
+                }
+                if !server.memory.is_empty() {
+                    state_text.push_str(&format!("  Memory: {}\n", server.memory));
+                }
+            }
+            state_text
         } else {
-            "No server currently running.".to_string()
+            "No servers currently running.".to_string()
         };
 
         format!(
@@ -66,7 +68,7 @@ Available actions:
 {{
   "type": "open_server",
   "port": 8080,  // Port number
-  "base_stack": "tcp",  // Stack: tcp, http, udp, snmp, dns, dhcp, ntp, ssh, irc
+  "base_stack": "tcp",  // Stack: "tcp" (raw TCP), "http stack" (HTTP server), "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc"
   "send_first": true,  // True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
   "initial_memory": null,  // Optional initial memory
   "instruction": "Detailed instructions for handling network events..."
@@ -97,6 +99,21 @@ Note: Combine the old instruction with the new requirement.
 }}
 
 Examples:
+
+User: "start an HTTP server on port 8080"
+Response:
+{{
+  "message": "Starting HTTP server on port 8080...",
+  "actions": [
+    {{
+      "type": "open_server",
+      "port": 8080,
+      "base_stack": "http stack",
+      "send_first": false,
+      "instruction": "You are an HTTP server. Respond to all requests with status 200 and a friendly message."
+    }}
+  ]
+}}
 
 User: "start an FTP server"
 Response:
@@ -143,23 +160,58 @@ Response (JSON only):"#,
         )
     }
 
-    /// Build prompt for handling network events
+    /// Build prompt for handling network events (legacy - no server_id)
     ///
-    /// # Arguments
-    /// * `state` - Application state
-    /// * `connection_id` - Connection identifier
-    /// * `event_description` - Description of the event (built by protocol-specific code)
-    /// * `protocol_prompt` - (stack_context, output_format) tuple from protocol's get_llm_protocol_prompt()
+    /// DEPRECATED: Use build_network_event_prompt_for_server instead
+    /// This uses the first available server's context
+    #[allow(dead_code)]
     pub async fn build_network_event_prompt(
         state: &AppState,
         _connection_id: ConnectionId,
         event_description: &str,
         protocol_prompt: (&str, &str),
     ) -> String {
-        let base_stack = state.get_base_stack().await;
-        let port = state.get_port().await.unwrap_or(0);
-        let instruction = state.get_instruction().await;
-        let memory = state.get_memory().await;
+        // Get first server ID as fallback
+        let server_id = state.get_first_server_id().await
+            .unwrap_or(ServerId::new(1)); // Fallback to ID 1 if no servers
+
+        Self::build_network_event_prompt_for_server(
+            state,
+            server_id,
+            _connection_id,
+            event_description,
+            protocol_prompt,
+        ).await
+    }
+
+    /// Build prompt for handling network events
+    ///
+    /// # Arguments
+    /// * `state` - Application state
+    /// * `server_id` - ID of the server handling this event
+    /// * `connection_id` - Connection identifier
+    /// * `event_description` - Description of the event (built by protocol-specific code)
+    /// * `protocol_prompt` - (stack_context, output_format) tuple from protocol's get_llm_protocol_prompt()
+    pub async fn build_network_event_prompt_for_server(
+        state: &AppState,
+        server_id: ServerId,
+        _connection_id: ConnectionId,
+        event_description: &str,
+        protocol_prompt: (&str, &str),
+    ) -> String {
+        let server = state.get_server(server_id).await;
+
+        let (base_stack, port, instruction, memory) = if let Some(server) = server {
+            (
+                server.base_stack.to_string(),
+                server.port,
+                server.instruction,
+                server.memory,
+            )
+        } else {
+            // Fallback if server not found
+            ("Unknown".to_string(), 0, String::new(), String::new())
+        };
 
         let (stack_context, output_format) = protocol_prompt;
 
@@ -167,6 +219,7 @@ Response (JSON only):"#,
             r#"You are controlling a network server application.
 
 Server configuration:
+- Server ID: #{}
 - Stack: {}
 - Port: {}
 - Memory: {}
@@ -183,6 +236,7 @@ Based on the instruction and the event, determine the appropriate response.
 {}
 
 Response (JSON only):"#,
+            server_id.as_u32(),
             base_stack,
             port,
             if memory.is_empty() { "(empty)" } else { &memory },
@@ -201,39 +255,57 @@ Response (JSON only):"#,
     ///
     /// # Arguments
     /// * `state` - Application state for context
+    /// * `server_id` - Optional server ID for context
     /// * `trigger_reason` - Why this prompt is being called (e.g., "User said: X" or "TCP data received")
     /// * `instructions` - How to handle the situation
     /// * `available_actions` - List of actions the LLM can use
     pub async fn build_action_prompt(
         state: &AppState,
+        server_id: Option<ServerId>,
         trigger_reason: &str,
         instructions: &str,
         available_actions: Vec<ActionDefinition>,
     ) -> String {
         // Get current state
         let mode = state.get_mode().await;
-        let base_stack = state.get_base_stack().await;
-        let port = state.get_port().await;
-        let global_memory = state.get_memory().await;
+        let servers = state.get_all_servers().await;
 
-        let current_state = if mode == crate::state::app_state::Mode::Server {
-            format!(
-                r#"Current server state:
-- Mode: Server
+        let current_state = if let Some(sid) = server_id {
+            // Specific server context
+            if let Some(server) = servers.iter().find(|s| s.id == sid) {
+                format!(
+                    r#"Current server state:
+- Server ID: #{}
 - Stack: {}
-- Port: {:?}
+- Port: {}
+- Status: {}
 - Memory: {}
 "#,
-                base_stack,
-                port,
-                if global_memory.is_empty() {
-                    "(empty)"
-                } else {
-                    &global_memory
-                }
-            )
+                    server.id.as_u32(),
+                    server.base_stack,
+                    server.port,
+                    server.status,
+                    if server.memory.is_empty() {
+                        "(empty)"
+                    } else {
+                        &server.memory
+                    }
+                )
+            } else {
+                "Server not found.".to_string()
+            }
+        } else if mode == crate::state::app_state::Mode::Server && !servers.is_empty() {
+            // All servers context
+            let mut state_text = String::from("Current servers:\n");
+            for server in &servers {
+                state_text.push_str(&format!(
+                    "- Server #{}: {} on port {} ({})\n",
+                    server.id.as_u32(), server.base_stack, server.port, server.status
+                ));
+            }
+            state_text
         } else {
-            "No server currently running.".to_string()
+            "No servers currently running.".to_string()
         };
 
         // Build actions section
@@ -301,24 +373,48 @@ Response (JSON only):"#,
         let instructions =
             "Interpret what the user wants and respond with appropriate actions.";
 
-        Self::build_action_prompt(state, &trigger, instructions, actions).await
+        Self::build_action_prompt(state, None, &trigger, instructions, actions).await
+    }
+
+    /// Build prompt for network events using new action system (legacy - no server_id)
+    ///
+    /// DEPRECATED: Use build_network_event_action_prompt_for_server instead
+    /// This uses the first available server's context
+    #[allow(dead_code)]
+    pub async fn build_network_event_action_prompt(
+        state: &AppState,
+        event_description: &str,
+        protocol_sync_actions: Vec<ActionDefinition>,
+    ) -> String {
+        // Get first server ID as fallback
+        let server_id = state.get_first_server_id().await
+            .unwrap_or(ServerId::new(1)); // Fallback to ID 1 if no servers
+
+        Self::build_network_event_action_prompt_for_server(
+            state,
+            server_id,
+            event_description,
+            protocol_sync_actions,
+        ).await
     }
 
     /// Build prompt for network events using new action system
     ///
     /// # Arguments
     /// * `state` - Application state
+    /// * `server_id` - ID of the server handling this event
     /// * `event_description` - Description of the network event
     /// * `protocol_sync_actions` - Sync actions from protocol (with context)
-    pub async fn build_network_event_action_prompt(
+    pub async fn build_network_event_action_prompt_for_server(
         state: &AppState,
+        server_id: ServerId,
         event_description: &str,
         protocol_sync_actions: Vec<ActionDefinition>,
     ) -> String {
         let mut actions = get_network_event_common_actions();
         actions.extend(protocol_sync_actions);
 
-        let instruction = state.get_instruction().await;
+        let instruction = state.get_instruction(server_id).await.unwrap_or_default();
         let instructions = if instruction.is_empty() {
             "No specific instruction provided. Use your best judgment based on the protocol and event."
         } else {
@@ -327,7 +423,7 @@ Response (JSON only):"#,
 
         let trigger = format!("Event: {}", event_description);
 
-        Self::build_action_prompt(state, &trigger, instructions, actions).await
+        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, actions).await
     }
 
 }

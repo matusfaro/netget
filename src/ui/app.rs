@@ -77,9 +77,9 @@ pub struct App {
     pub history_temp_input: Option<String>,
     /// All output messages (combined log)
     pub output_messages: Vec<String>,
-    /// Connection information
+    /// Connection information (legacy, kept for compatibility)
     pub connection_info: ConnectionInfo,
-    /// Packet statistics
+    /// Packet statistics (legacy, kept for compatibility)
     pub packet_stats: PacketStats,
     /// Scroll offset for output (0 = bottom, higher = scrolled up)
     pub scroll_offset: usize,
@@ -89,6 +89,34 @@ pub struct App {
     pub log_level: LogLevel,
     /// Slash command suggestions (shown when typing "/")
     pub slash_suggestions: Vec<String>,
+    /// Server list for display
+    pub servers: Vec<ServerDisplayInfo>,
+    /// Connection list for display
+    pub connections: Vec<ConnectionDisplayInfo>,
+}
+
+/// Server information for display in the UI
+#[derive(Debug, Clone)]
+pub struct ServerDisplayInfo {
+    pub id: String,
+    pub protocol: String,
+    pub port: u16,
+    pub status: String,
+    pub connections: usize,
+}
+
+impl ServerDisplayInfo {
+    pub fn status_as_str(&self) -> &str {
+        &self.status
+    }
+}
+
+/// Connection information for display in the UI
+#[derive(Debug, Clone)]
+pub struct ConnectionDisplayInfo {
+    pub id: String,
+    pub address: String,
+    pub state: String,
 }
 
 #[derive(Default, Clone)]
@@ -123,6 +151,8 @@ impl Default for App {
             focus: Focus::default(),
             log_level: LogLevel::default(),
             slash_suggestions: Vec::new(),
+            servers: Vec::new(),
+            connections: Vec::new(),
         }
     }
 }

@@ -278,16 +278,20 @@ async fn handle_http_request_with_llm(
         Ok(llm_response) => {
             // Handle memory updates (HTTP response doesn't use ProcessedResponse, handle manually)
             if let Some(set_global) = llm_response.set_memory.clone() {
-                app_state.set_memory(set_global).await;
+                if let Some(server_id) = app_state.get_first_server_id().await {
+                    app_state.set_memory(server_id, set_global).await;
+                }
             }
             if let Some(append_global) = llm_response.append_memory.clone() {
-                let current = app_state.get_memory().await;
-                let new_memory = if current.is_empty() {
-                    append_global
-                } else {
-                    format!("{}\n{}", current, append_global)
-                };
-                app_state.set_memory(new_memory).await;
+                if let Some(server_id) = app_state.get_first_server_id().await {
+                    let current = app_state.get_memory(server_id).await.unwrap_or_default();
+                    let new_memory = if current.is_empty() {
+                        append_global
+                    } else {
+                        format!("{}\n{}", current, append_global)
+                    };
+                    app_state.set_memory(server_id, new_memory).await;
+                }
             }
 
             // Log if requested

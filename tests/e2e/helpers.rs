@@ -283,8 +283,8 @@ async fn wait_for_server_startup(
         while let Some(line) = reader.next_line().await? {
             println!("[DEBUG] Server output: {}", line); // Debug output
 
-            // Look for STATUS message pattern: "[STATUS] Starting <STACK> server on <ADDRESS>:<PORT>"
-            if line.contains("[STATUS]") && line.contains("Starting") && line.contains("server on") {
+            // Look for SERVER message pattern: "[SERVER] Starting server #N (<STACK>) on <ADDRESS>:<PORT>"
+            if line.contains("[SERVER]") && line.contains("Starting server") && line.contains("on ") {
                 let mut stack = "Unknown".to_string();
                 let mut port = 0u16;
 

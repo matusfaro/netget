@@ -31,9 +31,39 @@ impl Write for ColoredLogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // Convert to string to check for TRACE level
         if let Ok(s) = std::str::from_utf8(buf) {
-            // Replace purple/magenta TRACE color (35m) with bright cyan (96m)
-            // ANSI color codes: 35 = magenta, 96 = bright cyan
-            let modified = s.replace("\x1b[35m TRACE", "\x1b[96m TRACE");
+            // Replace any ANSI color code before " TRACE" with bright cyan
+            // Look for the pattern: ESC[<numbers>m TRACE
+            let mut modified = String::with_capacity(s.len());
+            let mut chars = s.chars().peekable();
+
+            while let Some(ch) = chars.next() {
+                if ch == '\x1b' {
+                    // Start of ANSI sequence
+                    let mut seq = String::from("\x1b");
+
+                    // Collect the ANSI sequence
+                    while let Some(&next_ch) = chars.peek() {
+                        seq.push(next_ch);
+                        chars.next();
+                        if next_ch == 'm' {
+                            break;
+                        }
+                    }
+
+                    // Check if this is followed by " TRACE"
+                    let remaining: String = chars.clone().collect();
+                    if remaining.starts_with(" TRACE") {
+                        // Replace with bright cyan
+                        modified.push_str("\x1b[96m");
+                    } else {
+                        // Keep original sequence
+                        modified.push_str(&seq);
+                    }
+                } else {
+                    modified.push(ch);
+                }
+            }
+
             self.inner.lock().unwrap().write_all(modified.as_bytes())?;
             Ok(buf.len())
         } else {

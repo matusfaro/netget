@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use super::types::{AppEvent, UserCommand};
+use crate::cli::server_startup;
 use crate::llm::OllamaClient;
 use crate::llm::{ActionResponse, CommonAction, execute_actions, ProtocolActions};
 use crate::protocol::BaseStack;
@@ -215,38 +216,58 @@ impl EventHandler {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match action {
-            CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction } => {
+            CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction } => {
+                use crate::state::server::{ServerInstance, ServerStatus};
+
                 // Parse base stack
                 let stack = BaseStack::from_str(&base_stack)
                     .unwrap_or(BaseStack::TcpRaw);
 
-                self.state.set_mode(Mode::Server).await;
-                self.state.set_base_stack(stack).await;
-                self.state.set_port(port).await;
-                self.state.set_send_first(send_first).await;
-                self.state.set_instruction(instruction).await;
+                // Create a new server instance
+                let mut server = ServerInstance::new(
+                    crate::state::ServerId::new(0), // Temporary ID, will be replaced by add_server
+                    port,
+                    stack,
+                    instruction,
+                );
 
                 // Set initial memory if provided
                 if let Some(mem) = initial_memory {
-                    self.state.set_memory(mem).await;
+                    server.memory = mem;
                 }
 
-                let _ = status_tx.send(format!("Opening server on port {} with stack {}", port, stack));
+                server.status = ServerStatus::Starting;
 
-                // Signal main loop to check for server startup and update UI
-                let _ = status_tx.send("__CHECK_SERVER_STARTUP__".to_string());
+                // Add server to state (this assigns the real ID)
+                let server_id = self.state.add_server(server).await;
+
+                let _ = status_tx.send(format!("[SERVER] Opening server #{} on port {} with stack {}", server_id.as_u32(), port, stack));
+
+                // Spawn the server directly (no more message passing!)
+                if let Err(e) = server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx).await {
+                    let _ = status_tx.send(format!("[ERROR] Failed to start server #{}: {}", server_id.as_u32(), e));
+                }
             }
             CommonAction::CloseServer => {
-                self.state.set_mode(Mode::Idle).await;
-                self.state.set_port(0).await;
-                let _ = status_tx.send("[INFO] Server closed".to_string());
-
-                // Signal main loop to update UI
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                // For now, close all servers (TODO: support targeting specific server ID)
+                let server_ids = self.state.get_all_server_ids().await;
+                for server_id in server_ids {
+                    self.state.remove_server(server_id).await;
+                    let _ = status_tx.send(format!("[SERVER] Closed server #{}", server_id.as_u32()));
+                    let _ = status_tx.send(format!("__STOP_SERVER__:{}", server_id.as_u32()));
+                }
+                if self.state.get_all_server_ids().await.is_empty() {
+                    self.state.set_mode(Mode::Idle).await;
+                }
             }
             CommonAction::UpdateInstruction { instruction } => {
-                self.state.set_instruction(instruction.clone()).await;
-                let _ = status_tx.send(format!("[INFO] Instruction: {}", instruction));
+                // Update instruction for first server (TODO: support targeting specific server ID)
+                if let Some(server_id) = self.state.get_first_server_id().await {
+                    self.state.set_instruction(server_id, instruction.clone()).await;
+                    let _ = status_tx.send(format!("[INFO] Server #{} instruction: {}", server_id.as_u32(), instruction));
+                } else {
+                    let _ = status_tx.send("[WARN] No server to update instruction for".to_string());
+                }
             }
             CommonAction::ChangeModel { model } => {
                 self.state.set_ollama_model(model.clone()).await;
@@ -258,9 +279,17 @@ impl EventHandler {
             CommonAction::ShowMessage { message } => {
                 let _ = status_tx.send(message);
             }
-            // Memory actions are handled by execute_actions, so no-op here
-            CommonAction::SetMemory { .. }
-            | CommonAction::AppendMemory { .. } => {}
+            // Memory actions need server_id context
+            CommonAction::SetMemory { value } => {
+                if let Some(server_id) = self.state.get_first_server_id().await {
+                    self.state.set_memory(server_id, value).await;
+                }
+            }
+            CommonAction::AppendMemory { value } => {
+                if let Some(server_id) = self.state.get_first_server_id().await {
+                    self.state.append_memory(server_id, value).await;
+                }
+            }
         }
 
         Ok(())
@@ -274,49 +303,69 @@ impl EventHandler {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::CommandAction;
+        use crate::state::server::{ServerInstance, ServerStatus};
 
         match action {
             CommandAction::UpdateInstruction { instruction } => {
-                self.state.set_instruction(instruction.clone()).await;
-                let _ = status_tx.send(format!("[INFO] Instruction: {}", instruction));
+                if let Some(server_id) = self.state.get_first_server_id().await {
+                    self.state.set_instruction(server_id, instruction.clone()).await;
+                    let _ = status_tx.send(format!("[INFO] Server #{} instruction: {}", server_id.as_u32(), instruction));
+                }
             }
-            CommandAction::OpenServer { port, base_stack, send_first, initial_memory, instruction } => {
+            CommandAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction } => {
                 // Parse base stack
                 let stack = crate::protocol::BaseStack::from_str(&base_stack)
                     .unwrap_or(BaseStack::TcpRaw);
 
-                self.state.set_mode(Mode::Server).await;
-                self.state.set_base_stack(stack).await;
-                self.state.set_port(port).await;
-                self.state.set_send_first(send_first).await;
-                self.state.set_instruction(instruction).await;
+                // Create a new server instance
+                let mut server = ServerInstance::new(
+                    crate::state::ServerId::new(0), // Temporary ID, will be replaced by add_server
+                    port,
+                    stack,
+                    instruction,
+                );
 
                 // Set initial memory if provided
                 if let Some(mem) = initial_memory {
-                    self.state.set_memory(mem).await;
+                    server.memory = mem;
                 }
 
-                let _ = status_tx.send(format!("Opening server on port {} with stack {}", port, stack));
+                server.status = ServerStatus::Starting;
 
-                // Signal main loop to check for server startup and update UI
-                let _ = status_tx.send("__CHECK_SERVER_STARTUP__".to_string());
+                // Add server to state (this assigns the real ID)
+                let server_id = self.state.add_server(server).await;
+
+                let _ = status_tx.send(format!("[SERVER] Opening server #{} on port {} with stack {}", server_id.as_u32(), port, stack));
+
+                // Spawn the server directly (no more message passing!)
+                if let Err(e) = server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx).await {
+                    let _ = status_tx.send(format!("[ERROR] Failed to start server #{}: {}", server_id.as_u32(), e));
+                }
             }
             CommandAction::OpenClient { address, base_stack: _ } => {
                 let _ = status_tx.send(format!("Client mode not yet implemented ({})", address));
             }
             CommandAction::CloseConnection { connection_id } => {
+                // TODO: Update this to work with per-server connections
                 if let Some(conn_id_str) = connection_id {
-                    if let Some(conn_id) = crate::network::ConnectionId::from_string(&conn_id_str) {
-                        self.state.remove_connection(conn_id).await;
-                        let _ = status_tx.send(format!("[INFO] Closed connection {}", conn_id));
+                    if let Some(_conn_id) = crate::network::ConnectionId::from_string(&conn_id_str) {
+                        let _ = status_tx.send("[WARN] Close connection not yet implemented for multi-server".to_string());
                     }
                 } else {
                     let _ = status_tx.send("[INFO] Close all connections not supported".to_string());
                 }
             }
             CommandAction::CloseServer => {
-                self.state.set_mode(Mode::Idle).await;
-                self.state.set_port(0).await;
+                // Close all servers
+                let server_ids = self.state.get_all_server_ids().await;
+                for server_id in server_ids {
+                    self.state.remove_server(server_id).await;
+                    let _ = status_tx.send(format!("[SERVER] Closed server #{}", server_id.as_u32()));
+                    let _ = status_tx.send(format!("__STOP_SERVER__:{}", server_id.as_u32()));
+                }
+                if self.state.get_all_server_ids().await.is_empty() {
+                    self.state.set_mode(Mode::Idle).await;
+                }
                 let _ = status_tx.send("[INFO] Server closed".to_string());
 
                 // Signal main loop to update UI
@@ -345,13 +394,17 @@ impl EventHandler {
 
     async fn handle_status(&mut self, ui: &mut App) -> Result<()> {
         let summary = self.state.get_summary().await;
-        let instruction = self.state.get_instruction().await;
-
         ui.add_llm_message(format!("Status: {}", summary));
-        if !instruction.is_empty() {
-            ui.add_llm_message(format!("Instruction: {}", instruction));
+
+        // Show instruction for first server
+        if let Some(server_id) = self.state.get_first_server_id().await {
+            if let Some(instruction) = self.state.get_instruction(server_id).await {
+                if !instruction.is_empty() {
+                    ui.add_llm_message(format!("Server #{} instruction: {}", server_id.as_u32(), instruction));
+                }
+            }
         } else {
-            ui.add_llm_message("No instruction set".to_string());
+            ui.add_llm_message("No servers running".to_string());
         }
 
         Ok(())
