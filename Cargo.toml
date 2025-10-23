@@ -86,3 +86,7 @@ async-trait = { version = "0.1", optional = true }
 suppaftp = "6.0"
 # For async tests
 tokio-test = "0.4"
+# For e2e test setup/teardown
+ctor = "0.2"
+# For process management in e2e tests (Unix signals)
+nix = { version = "0.29", features = ["signal", "process"] }
