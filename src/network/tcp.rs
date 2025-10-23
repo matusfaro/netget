@@ -7,164 +7,359 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tracing::{debug, error, info};
+use tokio::sync::{mpsc, Mutex};
+use tracing::{error, info};
 
 use super::connection::ConnectionId;
-use crate::events::types::NetworkEvent;
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::llm::response_handler;
+use crate::state::app_state::AppState;
 
-/// TCP server that listens for incoming connections
-pub struct TcpServer {
-    listener: Option<TcpListener>,
-    local_addr: Option<SocketAddr>,
-    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+/// Get LLM context and output format instructions for TCP stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling raw TCP data. Common protocols over TCP:
+- FTP (port 21): Commands like USER, PASS, LIST, RETR, QUIT with numeric response codes
+- HTTP (port 80/8080): GET/POST requests with status codes and headers
+- SMTP (port 25): Mail commands with numeric codes
+- Custom text protocols"#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "data to send back (null if no response needed)",
+  "close_connection": false,  // Close this connection after sending
+  "wait_for_more": false,  // Wait for more data before responding
+  "shutdown_server": false,  // Shutdown the entire server
+  "message": null,  // Optional message to show user
+  "set_memory": null,  // Replace global memory
+  "append_memory": null,  // Append to global memory
+  "set_connection_memory": null,  // Replace connection memory
+  "append_connection_memory": null  // Append to connection memory
 }
 
+Examples:
+- FTP greeting: {"output": "220 Welcome to FTP Server\r\n"}
+- HTTP response: {"output": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello"}
+- Wait for more: {"wait_for_more": true, "append_connection_memory": "Partial: GET /pa"}
+- Close after response: {"output": "221 Goodbye\r\n", "close_connection": true}"#;
+
+    (context, output_format)
+}
+
+/// Connection state for LLM processing
+#[derive(Debug, Clone, PartialEq)]
+enum ConnectionState {
+    Idle,
+    Processing,
+    Accumulating,
+}
+
+/// Per-connection data for LLM handling
+struct ConnectionData {
+    state: ConnectionState,
+    queued_data: Vec<u8>,
+    memory: String,
+    write_half: Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+}
+
+/// TCP server that listens for incoming connections
+pub struct TcpServer;
+
 impl TcpServer {
-    /// Create a new TCP server (not yet listening)
-    pub fn new(event_tx: mpsc::UnboundedSender<NetworkEvent>) -> Self {
-        Self {
-            listener: None,
-            local_addr: None,
-            event_tx,
+    /// Handle new connection with LLM
+    async fn handle_connection(
+        connection_id: ConnectionId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        send_first: bool,
+        connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        write_half: Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    ) {
+        // Add connection to tracking
+        connections.lock().await.insert(connection_id, ConnectionData {
+            state: ConnectionState::Idle,
+            queued_data: Vec::new(),
+            memory: String::new(),
+            write_half: write_half.clone(),
+        });
+
+        // Send data first if requested
+        if send_first {
+            let model = app_state.get_ollama_model().await;
+            let prompt_config = get_llm_prompt_config();
+            let event_description = format!("New connection opened: {}", connection_id);
+
+            let prompt = PromptBuilder::build_network_event_prompt(
+                &app_state,
+                connection_id,
+                "",
+                &event_description,
+                prompt_config,
+            ).await;
+
+            match llm_client.generate_llm_response(&model, &prompt).await {
+                Ok(response) => {
+                    let mut conn_memory = String::new();
+                    let processed = response_handler::handle_llm_response(response, &app_state, &mut conn_memory).await;
+
+                    if let Some(output) = processed.output {
+                        let mut write = write_half.lock().await;
+                        if let Err(e) = write.write_all(output.as_bytes()).await {
+                            error!("Failed to send banner: {}", e);
+                        } else {
+                            let _ = status_tx.send(format!("→ Sent banner to {}", connection_id));
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error generating banner: {}", e);
+                }
+            }
         }
     }
 
-    /// Start listening on the specified address
-    pub async fn listen(&mut self, addr: impl Into<SocketAddr>) -> Result<()> {
-        let addr = addr.into();
-        let listener = TcpListener::bind(addr)
-            .await
-            .context("Failed to bind TCP listener")?;
+    /// Handle data received on a connection with LLM
+    async fn handle_data(
+        connection_id: ConnectionId,
+        data: Bytes,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+    ) {
+        // Check connection state
+        let current_state = {
+            let conns = connections.lock().await;
+            if let Some(conn_data) = conns.get(&connection_id) {
+                conn_data.state.clone()
+            } else {
+                return; // Connection not found
+            }
+        };
 
+        // If processing, queue the data
+        if current_state == ConnectionState::Processing {
+            connections.lock().await
+                .entry(connection_id)
+                .and_modify(|conn| {
+                    conn.queued_data.extend_from_slice(&data);
+                });
+            let _ = status_tx.send(format!("⏸ Queued {} bytes for {}", data.len(), connection_id));
+            return;
+        }
+
+        // Merge any queued data with new data
+        let all_data = {
+            let mut conns = connections.lock().await;
+            let conn_data = conns.get_mut(&connection_id).unwrap();
+            conn_data.state = ConnectionState::Processing;
+            let mut merged = conn_data.queued_data.clone();
+            merged.extend_from_slice(&data);
+            conn_data.queued_data.clear();
+            Bytes::from(merged)
+        };
+
+        loop {
+            // Get model and memory
+            let model = app_state.get_ollama_model().await;
+            let mut memory = {
+                let conns = connections.lock().await;
+                conns.get(&connection_id).map(|c| c.memory.clone()).unwrap_or_default()
+            };
+
+            // Build event description
+            let prompt_config = get_llm_prompt_config();
+            let event_description = {
+                let data_preview = if all_data.len() > 200 {
+                    format!("{} bytes (preview: {:?}...)", all_data.len(), &all_data[..200])
+                } else {
+                    format!("{:?}", all_data)
+                };
+                format!("Data received on connection {}: {}", connection_id, data_preview)
+            };
+
+            // Build prompt and call LLM
+            let prompt = PromptBuilder::build_network_event_prompt(
+                &app_state,
+                connection_id,
+                &memory,
+                &event_description,
+                prompt_config,
+            ).await;
+
+            match llm_client.generate_llm_response(&model, &prompt).await {
+                Ok(response) => {
+                    // Handle common actions and update connection memory
+                    let processed = response_handler::handle_llm_response(response, &app_state, &mut memory).await;
+
+                    // Update connection memory in the map
+                    connections.lock().await
+                        .entry(connection_id)
+                        .and_modify(|conn| conn.memory = memory.clone());
+
+                    // Handle wait_for_more
+                    if processed.wait_for_more {
+                        connections.lock().await
+                            .entry(connection_id)
+                            .and_modify(|conn| conn.state = ConnectionState::Accumulating);
+                        let _ = status_tx.send(format!("⏳ Waiting for more data from {}", connection_id));
+                        return;
+                    }
+
+                    // Send output if present
+                    if let Some(output) = processed.output {
+                        let write_half = {
+                            let conns = connections.lock().await;
+                            conns.get(&connection_id).map(|c| c.write_half.clone())
+                        };
+
+                        if let Some(write_half) = write_half {
+                            let mut write = write_half.lock().await;
+                            if let Err(e) = write.write_all(output.as_bytes()).await {
+                                error!("Failed to send response: {}", e);
+                            } else {
+                                let _ = status_tx.send(format!("→ Sent {} bytes to {}", output.len(), connection_id));
+                            }
+                        }
+                    }
+
+                    // Handle close_connection
+                    if processed.close_connection {
+                        connections.lock().await.remove(&connection_id);
+                        let _ = status_tx.send(format!("✗ Closed connection {}", connection_id));
+                        return;
+                    }
+
+                    // Check for queued data
+                    let has_queued = {
+                        let conns = connections.lock().await;
+                        conns.get(&connection_id)
+                            .map(|c| !c.queued_data.is_empty())
+                            .unwrap_or(false)
+                    };
+
+                    if has_queued {
+                        let _ = status_tx.send(format!("▶ Processing queued data for {}", connection_id));
+                        // Loop continues to process queued data
+                    } else {
+                        // Go to Idle state
+                        connections.lock().await
+                            .entry(connection_id)
+                            .and_modify(|conn| conn.state = ConnectionState::Idle);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error: {}", e);
+                    connections.lock().await
+                        .entry(connection_id)
+                        .and_modify(|conn| conn.state = ConnectionState::Idle);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Spawn the TCP server with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        send_first: bool,
+    ) -> Result<SocketAddr> {
+        // Create and bind TCP server
+        let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("TCP server listening on {}", local_addr);
 
-        self.listener = Some(listener);
-        self.local_addr = Some(local_addr);
-
-        // Send listening event
-        let _ = self.event_tx.send(NetworkEvent::Listening { addr: local_addr });
-
-        Ok(())
-    }
-
-    /// Accept a new connection
-    pub async fn accept(&mut self) -> Result<Option<(TcpStream, SocketAddr)>> {
-        if let Some(listener) = &self.listener {
-            match listener.accept().await {
-                Ok((stream, addr)) => {
-                    info!("Accepted connection from {}", addr);
-                    Ok(Some((stream, addr)))
-                }
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
-                    Err(e.into())
-                }
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Get the local address the server is listening on
-    pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.local_addr
-    }
-
-    /// Check if the server is listening
-    pub fn is_listening(&self) -> bool {
-        self.listener.is_some()
-    }
-
-    /// Close the server
-    pub fn close(&mut self) {
-        if self.listener.is_some() {
-            info!("Closing TCP server");
-            self.listener = None;
-            self.local_addr = None;
-        }
-    }
-
-    /// Spawn the TCP server for TUI mode with connection management
-    pub async fn spawn_tui(
-        listen_addr: SocketAddr,
-        network_tx: mpsc::UnboundedSender<NetworkEvent>,
-        connections: Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>>>>,
-        cancellation_tokens: Arc<Mutex<HashMap<ConnectionId, oneshot::Sender<()>>>>,
-    ) -> Result<()> {
-        // Create and bind TCP server
-        let mut tcp_server = TcpServer::new(network_tx.clone());
-        tcp_server.listen(listen_addr).await?;
-
-        // Send listening event
-        let _ = network_tx.send(NetworkEvent::Listening { addr: listen_addr });
+        let connections = Arc::new(Mutex::new(HashMap::new()));
 
         // Spawn accept loop
         tokio::spawn(async move {
             loop {
-                match tcp_server.accept().await {
-                    Ok(Some((stream, remote_addr))) => {
+                match listener.accept().await {
+                    Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new();
+                        info!("Accepted connection {} from {}", connection_id, remote_addr);
 
                         // Split stream
                         let (read_half, write_half) = tokio::io::split(stream);
                         let write_half_arc = Arc::new(Mutex::new(write_half));
-                        connections.lock().await.insert(connection_id, write_half_arc);
 
-                        // Create cancellation channel for this connection
-                        let (cancel_tx, mut cancel_rx) = oneshot::channel();
-                        cancellation_tokens.lock().await.insert(connection_id, cancel_tx);
-
-                        // Send connected event
-                        let _ = network_tx.send(NetworkEvent::Connected {
-                            connection_id,
-                            remote_addr,
+                        // Handle connection (send data first if needed)
+                        let llm_client_clone = llm_client.clone();
+                        let app_state_clone = app_state.clone();
+                        let status_tx_clone = status_tx.clone();
+                        let connections_clone = connections.clone();
+                        let write_half_for_conn = write_half_arc.clone();
+                        tokio::spawn(async move {
+                            Self::handle_connection(
+                                connection_id,
+                                llm_client_clone,
+                                app_state_clone,
+                                status_tx_clone,
+                                send_first,
+                                connections_clone,
+                                write_half_for_conn,
+                            ).await;
                         });
 
-                        // Spawn reader task with cancellation
-                        let network_tx_inner = network_tx.clone();
+                        // Spawn reader task
+                        let llm_client_clone = llm_client.clone();
+                        let app_state_clone = app_state.clone();
+                        let status_tx_clone = status_tx.clone();
+                        let connections_clone = connections.clone();
                         tokio::spawn(async move {
-                            use tokio::io::AsyncReadExt;
                             let mut buffer = vec![0u8; 8192];
                             let mut read_half = read_half;
 
                             loop {
-                                tokio::select! {
-                                    // Check for cancellation
-                                    _ = &mut cancel_rx => {
-                                        // Connection was explicitly closed
-                                        let _ = network_tx_inner.send(NetworkEvent::Disconnected { connection_id });
+                                match read_half.read(&mut buffer).await {
+                                    Ok(0) => {
+                                        // Connection closed
+                                        connections_clone.lock().await.remove(&connection_id);
+                                        let _ = status_tx_clone.send(format!("✗ Connection {} closed", connection_id));
                                         break;
                                     }
-                                    // Read data
-                                    result = read_half.read(&mut buffer) => {
-                                        match result {
-                                            Ok(0) => {
-                                                let _ = network_tx_inner.send(NetworkEvent::Disconnected { connection_id });
-                                                break;
-                                            }
-                                            Ok(n) => {
-                                                let data = bytes::Bytes::copy_from_slice(&buffer[..n]);
-                                                let _ = network_tx_inner.send(NetworkEvent::DataReceived {
-                                                    connection_id,
-                                                    data,
-                                                });
-                                            }
-                                            Err(_) => break,
-                                        }
+                                    Ok(n) => {
+                                        let data = Bytes::copy_from_slice(&buffer[..n]);
+
+                                        // Handle data in separate task
+                                        let llm_clone = llm_client_clone.clone();
+                                        let state_clone = app_state_clone.clone();
+                                        let status_clone = status_tx_clone.clone();
+                                        let conns_clone = connections_clone.clone();
+                                        tokio::spawn(async move {
+                                            Self::handle_data(
+                                                connection_id,
+                                                data,
+                                                llm_clone,
+                                                state_clone,
+                                                status_clone,
+                                                conns_clone,
+                                            ).await;
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!("Read error on {}: {}", connection_id, e);
+                                        connections_clone.lock().await.remove(&connection_id);
+                                        break;
                                     }
                                 }
                             }
                         });
                     }
-                    Ok(None) => break,
-                    Err(_) => break,
+                    Err(e) => {
+                        error!("Accept error: {}", e);
+                        break;
+                    }
                 }
             }
         });
 
-        Ok(())
+        Ok(local_addr)
     }
 }
 

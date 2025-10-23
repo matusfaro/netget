@@ -1,82 +1,105 @@
 //! DHCP server implementation - simplified UDP-based
 
-use crate::events::types::{AppEvent, NetworkEvent};
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
-use bytes::Bytes;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{error, info};
 
-/// DHCP server that forwards requests to LLM
-pub struct DhcpServer {
-    addr: SocketAddr,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::state::app_state::AppState;
+
+/// Get LLM context and output format instructions for DHCP stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling DHCP requests (ports 67/68). Respond to DHCP DISCOVER, REQUEST, and other messages.
+Provide IP address assignments, subnet masks, gateways, and DNS servers."#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "DHCP response data (null if no response)",
+  "message": null  // Optional message for user
+}"#;
+
+    (context, output_format)
 }
 
+/// DHCP server that forwards requests to LLM
+pub struct DhcpServer;
+
 impl DhcpServer {
-    /// Create a new DHCP server
-    pub async fn new(
-        addr: SocketAddr,
-        event_tx: mpsc::UnboundedSender<AppEvent>,
-    ) -> Result<Self> {
-        Ok(Self { addr, event_tx })
-    }
+    /// Spawn DHCP server with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
+        let local_addr = socket.local_addr()?;
+        info!("DHCP server listening on {}", local_addr);
 
-    /// Start the DHCP server
-    pub async fn start(self) -> Result<()> {
-        // DHCP typically uses ports 67 (server) and 68 (client)
-        let socket = UdpSocket::bind(self.addr).await?;
-        info!("DHCP server listening on {}", socket.local_addr()?);
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 1500]; // Standard MTU size
 
-        // Send listening event
-        self.event_tx.send(AppEvent::Network(NetworkEvent::Listening {
-            addr: socket.local_addr()?,
-        }))?;
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let connection_id = ConnectionId::new();
 
-        let mut buffer = vec![0u8; 1500]; // Standard MTU size
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
 
-        loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((n, peer_addr)) => {
-                    // Create connection ID for this DHCP transaction
-                    let connection_id = ConnectionId::new();
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let prompt_config = get_llm_prompt_config();
+                            let conn_memory = String::new();
 
-                    // Send connection event
-                    let _ = self.event_tx.send(AppEvent::Network(NetworkEvent::Connected {
-                        connection_id,
-                        remote_addr: peer_addr,
-                    }));
+                            // Build event description
+                            let event_description = format!(
+                                "DHCP request from {} ({} bytes)",
+                                peer_addr, data.len()
+                            );
 
-                    // Parse basic DHCP info
-                    // DHCP has a specific packet format, but for simplicity,
-                    // just check for some basic indicators
-                    let dhcp_info = if n >= 240 {
-                        // Minimal DHCP packet is 240 bytes (without options)
-                        let op = buffer[0]; // 1 = request, 2 = reply
-                        let _htype = buffer[1]; // Hardware type (1 = Ethernet)
-                        let xid = u32::from_be_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
+                            let prompt = PromptBuilder::build_network_event_prompt(
+                                &state_clone,
+                                connection_id,
+                                &conn_memory,
+                                &event_description,
+                                prompt_config,
+                            ).await;
 
-                        let op_str = if op == 1 { "REQUEST" } else if op == 2 { "REPLY" } else { "UNKNOWN" };
-
-                        format!("DHCP {}: Transaction ID 0x{:08x}, {} bytes", op_str, xid, n)
-                    } else {
-                        format!("DHCP packet: {} bytes (too small)", n)
-                    };
-
-                    // Send data received event
-                    let _ = self
-                        .event_tx
-                        .send(AppEvent::Network(NetworkEvent::DataReceived {
-                            connection_id,
-                            data: Bytes::from(dhcp_info),
-                        }));
-                }
-                Err(e) => {
-                    tracing::error!("DHCP receive error: {}", e);
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                        error!("Failed to send DHCP response: {}", e);
+                                    } else {
+                                        let _ = status_clone.send(format!(
+                                            "→ DHCP response to {} ({} bytes)",
+                                            peer_addr, llm_output.len()
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("LLM error for DHCP: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for DHCP: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("DHCP receive error: {}", e);
+                        break;
+                    }
                 }
             }
-        }
+        });
+
+        Ok(local_addr)
     }
 }

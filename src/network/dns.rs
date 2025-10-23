@@ -1,82 +1,108 @@
 //! DNS server implementation - simplified UDP-based
 
-use crate::events::types::{AppEvent, NetworkEvent};
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
-use bytes::Bytes;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{error, info};
 
-/// DNS server that forwards queries to LLM
-pub struct DnsServer {
-    addr: SocketAddr,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::state::app_state::AppState;
+
+/// Get LLM context and output format instructions for DNS stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling DNS queries (port 53). Parse DNS queries and generate DNS responses.
+Common query types: A (IPv4), AAAA (IPv6), MX (mail), NS (nameserver), TXT (text records)"#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "DNS response data as hex or base64 (null if no response)",
+  "message": null  // Optional message for user
+}"#;
+
+    (context, output_format)
 }
 
+/// DNS server that forwards queries to LLM
+pub struct DnsServer;
+
 impl DnsServer {
-    /// Create a new DNS server
-    pub async fn new(
-        addr: SocketAddr,
-        event_tx: mpsc::UnboundedSender<AppEvent>,
-    ) -> Result<Self> {
-        Ok(Self { addr, event_tx })
-    }
+    /// Spawn DNS server with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
+        let local_addr = socket.local_addr()?;
+        info!("DNS server listening on {}", local_addr);
 
-    /// Start the DNS server
-    pub async fn start(self) -> Result<()> {
-        // DNS typically uses port 53
-        let socket = UdpSocket::bind(self.addr).await?;
-        info!("DNS server listening on {}", socket.local_addr()?);
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 512]; // Standard DNS packet size
 
-        // Send listening event
-        self.event_tx.send(AppEvent::Network(NetworkEvent::Listening {
-            addr: socket.local_addr()?,
-        }))?;
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let connection_id = ConnectionId::new();
 
-        let mut buffer = vec![0u8; 512]; // Standard DNS packet size
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
 
-        loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((n, peer_addr)) => {
-                    // Create connection ID for this DNS query
-                    let connection_id = ConnectionId::new();
+                        // Spawn task to handle DNS query with LLM
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let prompt_config = get_llm_prompt_config();
+                            let conn_memory = String::new();
 
-                    // Send connection event
-                    let _ = self.event_tx.send(AppEvent::Network(NetworkEvent::Connected {
-                        connection_id,
-                        remote_addr: peer_addr,
-                    }));
+                            // Build event description
+                            let event_description = format!(
+                                "DNS query from {} ({} bytes)",
+                                peer_addr, data.len()
+                            );
 
-                    // Parse DNS query header to get basic info
-                    let query_info = if n >= 12 {
-                        // DNS header is at least 12 bytes
-                        let id = u16::from_be_bytes([buffer[0], buffer[1]]);
-                        let flags = u16::from_be_bytes([buffer[2], buffer[3]]);
-                        let qd_count = u16::from_be_bytes([buffer[4], buffer[5]]);
-                        let an_count = u16::from_be_bytes([buffer[6], buffer[7]]);
+                            let prompt = PromptBuilder::build_network_event_prompt(
+                                &state_clone,
+                                connection_id,
+                                &conn_memory,
+                                &event_description,
+                                prompt_config,
+                            ).await;
 
-                        format!(
-                            "DNS Query: ID={}, Flags=0x{:04x}, Questions={}, Answers={}",
-                            id, flags, qd_count, an_count
-                        )
-                    } else {
-                        format!("DNS Query: {} bytes (too small for valid DNS)", n)
-                    };
-
-                    // Send data received event
-                    let _ = self
-                        .event_tx
-                        .send(AppEvent::Network(NetworkEvent::DataReceived {
-                            connection_id,
-                            data: Bytes::from(query_info),
-                        }));
-                }
-                Err(e) => {
-                    tracing::error!("DNS receive error: {}", e);
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    // LLM should return DNS response bytes
+                                    // For now, send the output as-is
+                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                        error!("Failed to send DNS response: {}", e);
+                                    } else {
+                                        let _ = status_clone.send(format!(
+                                            "→ DNS response to {} ({} bytes)",
+                                            peer_addr, llm_output.len()
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("LLM error for DNS query: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for DNS: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("DNS receive error: {}", e);
+                        break;
+                    }
                 }
             }
-        }
+        });
+
+        Ok(local_addr)
     }
 }

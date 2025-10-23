@@ -191,7 +191,14 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     }
 
     // Wait for the port to actually open
-    wait_for_port_open("127.0.0.1", actual_port).await?;
+    // Determine if this is a UDP-based protocol
+    let is_udp = actual_stack.to_lowercase().contains("snmp")
+        || actual_stack.to_lowercase().contains("dns")
+        || actual_stack.to_lowercase().contains("dhcp")
+        || actual_stack.to_lowercase().contains("ntp")
+        || actual_stack.to_lowercase().contains("udp");
+
+    wait_for_port_open("127.0.0.1", actual_port, is_udp).await?;
 
     Ok(NetGetServer {
         child,
@@ -276,12 +283,22 @@ async fn wait_for_server_startup(
                 // Extract stack type
                 if line.contains("HTTP") {
                     stack = "HTTP".to_string();
+                } else if line.contains("SNMP") {
+                    stack = "SNMP".to_string();
+                } else if line.contains("DNS") {
+                    stack = "DNS".to_string();
+                } else if line.contains("DHCP") {
+                    stack = "DHCP".to_string();
+                } else if line.contains("NTP") {
+                    stack = "NTP".to_string();
+                } else if line.contains("SSH") {
+                    stack = "SSH".to_string();
+                } else if line.contains("IRC") {
+                    stack = "IRC".to_string();
                 } else if line.contains("TCP") || line.contains("TCP/IP") {
                     stack = "TCP".to_string();
                 } else if line.contains("UDP") {
                     stack = "UDP".to_string();
-                } else if line.contains("DNS") {
-                    stack = "DNS".to_string();
                 } else if line.contains("FTP") {
                     stack = "FTP".to_string();
                 }
@@ -322,16 +339,34 @@ async fn wait_for_server_startup(
 
 
 /// Wait for a port to be open and accepting connections
-async fn wait_for_port_open(host: &str, port: u16) -> E2EResult<()> {
+async fn wait_for_port_open(host: &str, port: u16, is_udp: bool) -> E2EResult<()> {
     let addr = format!("{}:{}", host, port);
 
     for _ in 0..100 {  // Try for up to 10 seconds (LLM processing can take time)
-        match tokio::net::TcpStream::connect(&addr).await {
-            Ok(_) => {
-                println!("[DEBUG] Port {} is now open and accepting connections", port);
-                return Ok(());
-            },
-            Err(_) => sleep(Duration::from_millis(100)).await,
+        if is_udp {
+            // For UDP, we can't "connect" like TCP, so we just try to bind a socket to verify
+            // the port is in use. If bind fails with "address in use", the server is running.
+            // Or we can just wait a bit and assume the server message means it's ready.
+            match std::net::UdpSocket::bind(&addr) {
+                Ok(_) => {
+                    // Port is free, server not started yet
+                    sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    println!("[DEBUG] UDP port {} is now bound and ready", port);
+                    return Ok(());
+                }
+                Err(_) => sleep(Duration::from_millis(100)).await,
+            }
+        } else {
+            // For TCP, try to connect
+            match tokio::net::TcpStream::connect(&addr).await {
+                Ok(_) => {
+                    println!("[DEBUG] TCP port {} is now open and accepting connections", port);
+                    return Ok(());
+                },
+                Err(_) => sleep(Duration::from_millis(100)).await,
+            }
         }
     }
 

@@ -4,18 +4,14 @@
 //! processing a single prompt and outputting results to stdout/stderr.
 
 use anyhow::Result;
-use bytes::Bytes;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
-use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tokio::sync::mpsc;
+use tokio::sync::Mutex;
+use tracing::{debug, info};
 
-use crate::events::types::{AppEvent, NetworkEvent, UserCommand, UdpResponse, HttpResponse};
-use crate::llm::{CommandAction, LlmResponse, OllamaClient, PromptBuilder};
-use crate::network::ConnectionId;
-use crate::protocol::BaseStack;
+use crate::events::EventHandler;
+use crate::llm::OllamaClient;
 use crate::settings::Settings;
 use crate::state::app_state::{AppState, Mode};
 
@@ -41,120 +37,83 @@ pub async fn run_non_interactive(
         state.set_ollama_model(settings.model.clone()).await;
     }
 
-    // Parse the command
-    let command = UserCommand::parse(&prompt);
+    // Create event handler and LLM client
+    let llm = OllamaClient::default();
+    let mut event_handler = EventHandler::new(state.clone(), llm.clone());
 
-    // Process based on command type
-    match command {
-        UserCommand::Interpret { input } => {
-            // Use LLM to interpret and execute
-            let llm = OllamaClient::default();
-            let model = state.get_ollama_model().await;
-            let prompt = PromptBuilder::build_command_interpretation_prompt(&state, &input).await;
+    // Create status channel for messages
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
-            debug!("Sending prompt to LLM for interpretation");
-            match llm.generate_command_interpretation(&model, &prompt).await {
-                Ok(interpretation) => {
-                    // Display message from LLM
-                    if let Some(msg) = &interpretation.message {
-                        println!("{}", msg);  // User-facing output
-                    }
+    // Spawn a task to handle the interpretation
+    let status_tx_clone = status_tx.clone();
+    let mut interpret_handle = tokio::spawn(async move {
+        event_handler.handle_interpret(prompt, status_tx_clone).await
+    });
 
-                    // Execute actions
-                    for action in interpretation.actions {
-                        match action {
-                            CommandAction::UpdateInstruction { instruction } => {
-                                debug!("Setting instruction: {}", instruction);
-                                state.set_instruction(instruction).await;
-                            }
-                            CommandAction::OpenServer {
-                                port,
-                                base_stack: stack_str,
-                                send_banner,
-                                initial_memory,
-                            } => {
-                                let stack = crate::protocol::BaseStack::from_str(&stack_str)
-                                    .unwrap_or(crate::protocol::BaseStack::TcpRaw);
-                                state.set_mode(Mode::Server).await;
-                                state.set_base_stack(stack).await;
-                                state.set_port(port).await;
-                                state.set_send_banner(send_banner).await;
-
-                                // Set initial memory if provided
-                                if let Some(mem) = initial_memory {
-                                    state.set_memory(mem).await;
-                                }
-
-                                info!("Starting {} server on {}", stack, port);
-
-                                // Run the server
-                                return run_server(&state, llm).await;
-                            }
-                            CommandAction::ShowMessage { message } => {
-                                println!("{}", message);  // User-facing output
-                            }
-                            CommandAction::ChangeModel { model: new_model } => {
-                                info!("Switching model to: {}", new_model);
-                                state.set_ollama_model(new_model).await;
-                            }
-                            _ => {
-                                // Ignore other actions in non-interactive mode
-                            }
+    // Process status messages from the handler
+    let mut handle_completed = false;
+    loop {
+        tokio::select! {
+            msg = status_rx.recv() => {
+                match msg {
+                    Some(msg) => {
+                        if msg == "__CHECK_SERVER_STARTUP__" {
+                            // Server should be started - break to main server loop
+                            break;
+                        } else if msg == "__UPDATE_UI__" {
+                            // Ignore in non-interactive mode
+                        } else if msg.starts_with("__STATS_SENT__") {
+                            // Ignore in non-interactive mode
+                        } else {
+                            // Print status message (strip log level prefix for cleaner output)
+                            let clean_msg = msg
+                                .strip_prefix("[INFO] ").unwrap_or(&msg)
+                                .strip_prefix("[ERROR] ").unwrap_or(&msg)
+                                .strip_prefix("[WARN] ").unwrap_or(&msg)
+                                .strip_prefix("[DEBUG] ").unwrap_or(&msg);
+                            println!("{}", clean_msg);
                         }
                     }
-
-                    // If no server was started, we're done
-                    if state.get_mode().await != Mode::Server {
-                        debug!("Command executed successfully");
+                    None => {
+                        // Channel closed - handler finished
+                        break;
                     }
                 }
-                Err(e) => {
-                    error!("LLM interpretation failed: {}", e);
-                    return Err(e);
-                }
+            }
+            result = &mut interpret_handle => {
+                // Handler completed - save result and mark as completed
+                result??;
+                handle_completed = true;
+                break;
             }
         }
-        _ => {
-            // Slash commands not supported in non-interactive mode
-            error!("Slash commands are not supported in non-interactive mode");
-            return Err(anyhow::anyhow!("Slash commands are not supported in non-interactive mode. Please provide a natural language prompt."));
-        }
+    }
+
+    // Wait for handler to finish (only if it hasn't completed yet)
+    if !handle_completed {
+        interpret_handle.await??;
+    }
+
+    // Check if we're in server mode
+    if state.get_mode().await == Mode::Server {
+        // Run the server
+        return run_server(&state, llm, status_rx).await;
     }
 
     Ok(())
 }
 
 /// Run a server in non-interactive mode
-async fn run_server(state: &AppState, llm: OllamaClient) -> Result<()> {
-    // Create event channels
-    let (network_tx, mut network_rx) = mpsc::unbounded_channel();
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
-
-    // Connection management
-    type WriteHalfMap = Arc<
-        Mutex<
-            HashMap<
-                ConnectionId,
-                Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
-            >,
-        >,
-    >;
-    let connections: WriteHalfMap = Arc::new(Mutex::new(HashMap::new()));
-    let cancellation_tokens = Arc::new(Mutex::new(HashMap::new()));
-
-    // Connection state for queueing
-    let connection_states: Arc<Mutex<HashMap<ConnectionId, ConnectionState>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+async fn run_server(
+    state: &AppState,
+    llm: OllamaClient,
+    mut status_rx: mpsc::UnboundedReceiver<String>,
+) -> Result<()> {
+    // Create status channel for server messages
+    let (status_tx, mut server_status_rx) = mpsc::unbounded_channel::<String>();
 
     // Start the server
-    server_startup::check_and_start_server(
-        state,
-        &network_tx,
-        &connections,
-        &cancellation_tokens,
-        &status_tx,
-    )
-    .await?;
+    server_startup::check_and_start_server(state, &llm, &status_tx).await?;
 
     println!("Server is running. Press Ctrl+C to stop.");
     println!("Waiting for connections...\n");
@@ -176,452 +135,22 @@ async fn run_server(state: &AppState, llm: OllamaClient) -> Result<()> {
             break;
         }
 
-        // Process status messages
+        // Process status messages from handler (drain remaining)
         while let Ok(msg) = status_rx.try_recv() {
+            if !msg.starts_with("__") {
+                println!("[STATUS] {}", msg);
+            }
+        }
+
+        // Process server status messages
+        while let Ok(msg) = server_status_rx.try_recv() {
             println!("[STATUS] {}", msg);
         }
 
-        // Process network events with timeout to allow checking shutdown
-        match timeout(Duration::from_millis(100), network_rx.recv()).await {
-            Ok(Some(event)) => {
-                process_network_event(
-                    event,
-                    state,
-                    &llm,
-                    &connections,
-                    &connection_states,
-                    &network_tx,
-                    &status_tx,
-                )
-                .await;
-            }
-            Ok(None) => {
-                // Channel closed
-                break;
-            }
-            Err(_) => {
-                // Timeout - continue to check shutdown
-                continue;
-            }
-        }
+        // Sleep briefly to avoid busy waiting
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     println!("Server stopped.");
     Ok(())
-}
-
-/// Connection processing state for LLM queueing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConnectionStatus {
-    Idle,
-    Processing,
-    Accumulating,
-}
-
-/// Per-connection state for queueing and LLM processing
-struct ConnectionState {
-    status: ConnectionStatus,
-    queue: Vec<u8>,
-    memory: String,
-}
-
-impl ConnectionState {
-    fn new() -> Self {
-        Self {
-            status: ConnectionStatus::Idle,
-            queue: Vec::new(),
-            memory: String::new(),
-        }
-    }
-}
-
-/// Process a network event in non-interactive mode
-async fn process_network_event(
-    event: NetworkEvent,
-    state: &AppState,
-    llm: &OllamaClient,
-    connections: &Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>>>,
-    connection_states: &Arc<Mutex<HashMap<ConnectionId, ConnectionState>>>,
-    network_tx: &mpsc::UnboundedSender<NetworkEvent>,
-    status_tx: &mpsc::UnboundedSender<String>,
-) {
-    match event {
-        NetworkEvent::Connected {
-            connection_id,
-            remote_addr,
-        } => {
-            println!(
-                "[CONNECTED] Connection {} from {}",
-                connection_id, remote_addr
-            );
-
-            // Initialize connection state
-            connection_states
-                .lock()
-                .await
-                .insert(connection_id, ConnectionState::new());
-
-            // Generate initial response if needed
-            if state.get_send_banner().await {
-                let model = state.get_ollama_model().await;
-                let prompt =
-                    PromptBuilder::build_connection_established_prompt(state, connection_id, "").await;
-
-                match llm.generate_llm_response(&model, &prompt).await {
-                    Ok(response) => {
-                        if let Some(output) = response.output {
-                            if !output.is_empty() {
-                                debug!("Sending initial response to connection {}", connection_id);
-                                send_response(connections, connection_id, output.as_bytes()).await;
-                            }
-                        }
-
-                        if response.close_connection {
-                            info!("Closing connection {} (LLM requested)", connection_id);
-                            close_connection(connections, connection_states, connection_id).await;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to generate initial response: {}", e);
-                    }
-                }
-            }
-        }
-
-        NetworkEvent::DataReceived {
-            connection_id,
-            data,
-        } => {
-            // Display received data
-            match String::from_utf8(data.to_vec()) {
-                Ok(text) => {
-                    let display = if text.len() > 200 {
-                        format!("{}... ({} bytes)", &text[..200], text.len())
-                    } else {
-                        text.clone()
-                    };
-                    println!("← Received from connection {}: {}", connection_id, display);
-                }
-                Err(_) => {
-                    println!(
-                        "← Received {} bytes of binary data from connection {}",
-                        data.len(),
-                        connection_id
-                    );
-                }
-            }
-
-            // Process with LLM (spawn task for async processing)
-            let state = state.clone();
-            let llm = llm.clone();
-            let connections = connections.clone();
-            let connection_states = connection_states.clone();
-            let status_tx = status_tx.clone();
-
-            tokio::spawn(async move {
-                process_data_with_llm(
-                    connection_id,
-                    data.to_vec(),
-                    &state,
-                    &llm,
-                    &connections,
-                    &connection_states,
-                    &status_tx,
-                )
-                .await;
-            });
-        }
-
-        NetworkEvent::Disconnected {
-            connection_id,
-        } => {
-            println!("[DISCONNECTED] Connection {}", connection_id);
-
-            // Clean up connection state
-            connections.lock().await.remove(&connection_id);
-            connection_states.lock().await.remove(&connection_id);
-        }
-
-        NetworkEvent::HttpRequest {
-            connection_id,
-            method,
-            uri,
-            headers,
-            body,
-            response_tx,
-        } => {
-            println!("[HTTP] {} {} from connection {}", method, uri, connection_id);
-
-            // Generate HTTP response with LLM
-            let model = state.get_ollama_model().await;
-            let prompt = PromptBuilder::build_http_request_prompt(
-                state, connection_id, &method, &uri, &headers, &body, "",
-            )
-            .await;
-
-            match llm.generate_http_response(&model, &prompt).await {
-                Ok(response) => {
-                    debug!(
-                        "Sending HTTP {} response to connection {}",
-                        response.status, connection_id
-                    );
-
-                    let _ = response_tx.send(HttpResponse {
-                        status: response.status,
-                        headers: response.headers,
-                        body: Bytes::from(response.body),
-                    });
-                }
-                Err(e) => {
-                    error!("Failed to generate HTTP response: {}", e);
-                    // Send a 500 error response
-                    let _ = response_tx.send(HttpResponse {
-                        status: 500,
-                        headers: HashMap::new(),
-                        body: Bytes::from("Internal Server Error"),
-                    });
-                }
-            }
-        }
-
-        NetworkEvent::UdpRequest {
-            connection_id,
-            peer_addr,
-            data,
-            response_tx,
-        } => {
-            println!("[UDP] Request from {} ({})", peer_addr, data.len());
-
-            // Generate UDP response with LLM
-            let model = state.get_ollama_model().await;
-            let prompt = PromptBuilder::build_udp_request_prompt(
-                state, connection_id, peer_addr, &data, "",
-            )
-            .await;
-
-            match llm.generate(&model, &prompt).await {
-                Ok(llm_text) => {
-                    // Try to parse as JSON first to check for SNMP-specific response
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&llm_text) {
-                        // Check if this is an SNMP response with structured data
-                        if json.get("snmp_response").is_some() {
-                            // Parse the SNMP message to get version, request ID, and community
-                            if let Ok(parsed) = crate::network::snmp::SnmpServer::parse_snmp_message(&data) {
-                                // Build SNMP response using the structured data
-                                match crate::network::snmp::SnmpServer::build_snmp_response(
-                                    &llm_text,
-                                    parsed.version,
-                                    parsed.request_id,
-                                    &parsed.community,
-                                ) {
-                                    Ok(response_data) => {
-                                        debug!("Sending SNMP response to {} ({} bytes)", peer_addr, response_data.len());
-                                        let _ = response_tx.send(UdpResponse {
-                                            data: response_data,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to build SNMP response: {}", e);
-                                        let _ = response_tx.send(UdpResponse {
-                                            data: Vec::new(),
-                                        });
-                                    }
-                                }
-                            } else {
-                                error!("Failed to parse SNMP request");
-                                let _ = response_tx.send(UdpResponse {
-                                    data: Vec::new(),
-                                });
-                            }
-                        } else if let Some(output) = json.get("output").and_then(|v| v.as_str()) {
-                            // Regular UDP response with raw output
-                            debug!("Sending UDP response to {}", peer_addr);
-                            let _ = response_tx.send(UdpResponse {
-                                data: output.as_bytes().to_vec(),
-                            });
-                        } else {
-                            // No output specified
-                            let _ = response_tx.send(UdpResponse {
-                                data: Vec::new(),
-                            });
-                        }
-                    } else {
-                        // Not JSON, treat as raw output (backward compatibility)
-                        debug!("Sending UDP response to {}", peer_addr);
-                        let _ = response_tx.send(UdpResponse {
-                            data: llm_text.as_bytes().to_vec(),
-                        });
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to generate UDP response: {}", e);
-                    // Send empty response on error
-                    let _ = response_tx.send(UdpResponse {
-                        data: Vec::new(),
-                    });
-                }
-            }
-        }
-
-        _ => {
-            // Other events we might not handle in non-interactive mode
-            info!("Unhandled event: {:?}", event);
-        }
-    }
-}
-
-/// Process data with LLM, handling queueing and accumulation
-async fn process_data_with_llm(
-    connection_id: ConnectionId,
-    mut data: Vec<u8>,
-    state: &AppState,
-    llm: &OllamaClient,
-    connections: &Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>>>,
-    connection_states: &Arc<Mutex<HashMap<ConnectionId, ConnectionState>>>,
-    status_tx: &mpsc::UnboundedSender<String>,
-) {
-    // Check and update connection state
-    let mut states = connection_states.lock().await;
-    let conn_state = states.entry(connection_id).or_insert_with(ConnectionState::new);
-
-    // Check if we're already processing
-    if conn_state.status == ConnectionStatus::Processing {
-        // Queue the data
-        conn_state.queue.extend_from_slice(&data);
-        let _ = status_tx.send(format!(
-            "Queued {} bytes for connection {} (LLM is processing)",
-            data.len(),
-            connection_id
-        ));
-        return;
-    }
-
-    // If accumulating, merge with new data
-    if conn_state.status == ConnectionStatus::Accumulating {
-        conn_state.queue.extend_from_slice(&data);
-        data = conn_state.queue.clone();
-        conn_state.queue.clear();
-    }
-
-    // Mark as processing
-    conn_state.status = ConnectionStatus::Processing;
-    let memory = conn_state.memory.clone();
-    drop(states); // Release lock while calling LLM
-
-    // Loop to handle queued data
-    loop {
-        // Generate LLM response
-        let model = state.get_ollama_model().await;
-        let prompt = PromptBuilder::build_data_received_prompt(
-            state,
-            connection_id,
-            &Bytes::from(data.clone()),
-            &memory,
-        )
-        .await;
-
-        match llm.generate_llm_response(&model, &prompt).await {
-            Ok(response) => {
-                // Handle response
-                if let Some(output) = &response.output {
-                    if !output.is_empty() {
-                        debug!("Sending response to connection {}", connection_id);
-                        send_response(connections, connection_id, output.as_bytes()).await;
-                    }
-                }
-
-                // Update memory if provided
-                let mut states = connection_states.lock().await;
-                if let Some(conn_state) = states.get_mut(&connection_id) {
-                    if let Some(new_memory) = &response.set_connection_memory {
-                        conn_state.memory = new_memory.clone();
-                    } else if let Some(append_memory) = &response.append_connection_memory {
-                        if !conn_state.memory.is_empty() {
-                            conn_state.memory.push('\n');
-                        }
-                        conn_state.memory.push_str(append_memory);
-                    }
-
-                    // Handle special flags
-                    if response.wait_for_more {
-                        conn_state.status = ConnectionStatus::Accumulating;
-                        conn_state.queue.clear();
-                        let _ = status_tx.send(format!(
-                            "Waiting for more data from connection {} (LLM requested)",
-                            connection_id
-                        ));
-                        return;
-                    }
-
-                    if response.close_connection {
-                        drop(states);
-                        info!("Closing connection {} (LLM requested)", connection_id);
-                        close_connection(connections, connection_states, connection_id).await;
-                        return;
-                    }
-
-                    // Check for queued data
-                    if !conn_state.queue.is_empty() {
-                        data = conn_state.queue.clone();
-                        conn_state.queue.clear();
-                        let _ = status_tx.send(format!(
-                            "Processing {} queued bytes for connection {}",
-                            data.len(),
-                            connection_id
-                        ));
-                        drop(states);
-                        // Loop to process queued data
-                        continue;
-                    }
-
-                    // No more data, go idle
-                    conn_state.status = ConnectionStatus::Idle;
-                }
-                break;
-            }
-            Err(e) => {
-                error!("LLM error for connection {}: {}", connection_id, e);
-
-                // Reset to idle on error
-                let mut states = connection_states.lock().await;
-                if let Some(conn_state) = states.get_mut(&connection_id) {
-                    conn_state.status = ConnectionStatus::Idle;
-                }
-                break;
-            }
-        }
-    }
-}
-
-/// Send a response to a connection
-async fn send_response(
-    connections: &Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>>>,
-    connection_id: ConnectionId,
-    data: &[u8],
-) {
-    use tokio::io::AsyncWriteExt;
-
-    if let Some(write_half_arc) = connections.lock().await.get(&connection_id) {
-        if let Ok(mut write_half) = write_half_arc.try_lock() {
-            if let Err(e) = write_half.write_all(data).await {
-                error!("Failed to send response to connection {}: {}", connection_id, e);
-            } else if let Err(e) = write_half.flush().await {
-                error!("Failed to flush response to connection {}: {}", connection_id, e);
-            }
-        } else {
-            warn!("Connection {} write half is locked", connection_id);
-        }
-    } else {
-        warn!("Connection {} not found in connection map", connection_id);
-    }
-}
-
-/// Close a connection
-async fn close_connection(
-    connections: &Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>>>,
-    connection_states: &Arc<Mutex<HashMap<ConnectionId, ConnectionState>>>,
-    connection_id: ConnectionId,
-) {
-    connections.lock().await.remove(&connection_id);
-    connection_states.lock().await.remove(&connection_id);
 }

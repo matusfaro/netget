@@ -1,8 +1,8 @@
 //! Prompt building for LLM interactions
-
-use std::collections::HashMap;
-
-use bytes::Bytes;
+//!
+//! This module provides two main prompt builders:
+//! 1. User input handler - interprets user commands and manages the server
+//! 2. Network event handler - handles incoming network events based on instructions
 
 use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -11,514 +11,189 @@ use crate::state::app_state::AppState;
 pub struct PromptBuilder;
 
 impl PromptBuilder {
-    /// Build a prompt for handling received data
-    pub async fn build_data_received_prompt(
-        state: &AppState,
-        connection_id: ConnectionId,
-        data: &Bytes,
-        connection_memory: &str,
-    ) -> String {
-        let mode = state.get_mode().await;
-        let base_stack = state.get_base_stack().await;
-        let instruction = state.get_instruction().await;
-        let state_summary = state.get_summary().await;
-
-        let data_preview = if data.len() > 100 {
-            format!("{} bytes (preview: {:?}...)", data.len(), &data[..100])
-        } else {
-            format!("{:?}", data)
-        };
-
-        let instruction_text = if instruction.is_empty() {
-            "No specific instructions provided yet.".to_string()
-        } else {
-            instruction
-        };
-
-        let memory = state.get_memory().await;
-        let memory_text = if memory.is_empty() {
-            "No memory stored yet.".to_string()
-        } else {
-            memory
-        };
-
-        let conn_memory_text = if connection_memory.is_empty() {
-            "No connection memory stored yet.".to_string()
-        } else {
-            connection_memory.to_string()
-        };
-
-        format!(
-            r#"You are controlling a network server/client application.
-
-Current State:
-{}
-
-Mode: {}
-Stack: {}
-
-User Instructions:
-{}
-
-Global Memory (shared across all connections):
-{}
-
-Connection Memory (specific to this connection):
-{}
-
-Event: Data Received
-Connection ID: {}
-Data: {}
-
-Based on the protocol and user instructions, what should be done?
-
-IMPORTANT: Respond with a JSON object with the following structure:
-{{
-  "output": "data to send over the wire (or null if no output)",
-  "close_connection": false,
-  "wait_for_more": false,
-  "shutdown_server": false,
-  "log_message": "optional debug message",
-  "set_memory": "completely replace memory with this text (optional)",
-  "append_memory": "append this to existing memory (optional)"
-}}
-
-Fields:
-- "output": The raw text/bytes to send. Use actual newlines (\n), carriage returns (\r), etc. Set to null or omit if no response needed.
-- "close_connection": Set to true to close this specific connection
-- "wait_for_more": Set to true if you need more data before responding (e.g., incomplete HTTP headers)
-- "shutdown_server": Set to true to shut down the entire server
-- "log_message": Optional string for debugging/logging
-- "set_memory": Replace entire GLOBAL memory with this text. Persists across all connections. Use for server-wide state (file listings, config, etc.)
-- "append_memory": Add to existing GLOBAL memory. Use for logging server-wide events.
-- "set_connection_memory": Replace THIS CONNECTION's memory. Persists only for this connection. Use for per-user session data (logged in user, current directory, etc.)
-- "append_connection_memory": Add to THIS CONNECTION's memory. Use for logging per-connection events.
-
-Examples:
-- FTP welcome: {{"output": "220 Welcome to FTP Server\r\n"}}
-- Echo response: {{"output": "Hello\r\n"}}
-- Need more data: {{"wait_for_more": true, "log_message": "Waiting for complete HTTP headers"}}
-- Close connection: {{"output": "221 Goodbye\r\n", "close_connection": true}}
-- No response: {{}}
-
-For FTP protocol, respond with proper FTP response codes.
-For Echo protocol, echo back the exact same data.
-For other protocols, follow the protocol specification.
-
-Response (JSON only):"#,
-            state_summary, mode, base_stack, instruction_text, memory_text, conn_memory_text, connection_id, data_preview
-        )
-    }
-
-    /// Build a prompt for command interpretation
-    /// This prompt asks the LLM to interpret user input and return structured actions
-    pub async fn build_command_interpretation_prompt(
+    /// Build prompt for handling user input
+    /// This prompt interprets what the user wants and returns appropriate actions
+    pub async fn build_user_input_prompt(
         state: &AppState,
         user_input: &str,
     ) -> String {
-        use crate::protocol::BaseStack;
-
-        let _mode = state.get_mode().await;
-        let _base_stack = state.get_base_stack().await;
+        // Get current state
+        let mode = state.get_mode().await;
+        let base_stack = state.get_base_stack().await;
+        let port = state.get_port().await;
         let instruction = state.get_instruction().await;
-        let state_summary = state.get_summary().await;
-        let local_addr = state.get_local_addr().await;
+        let memory = state.get_memory().await;
 
-        let current_instruction_text = if instruction.is_empty() {
-            "No current instruction.".to_string()
-        } else {
-            format!("Current instruction: \"{}\"", instruction)
-        };
-
-        let server_status = if local_addr.is_some() {
-            format!("Server is currently running on {}.", local_addr.unwrap())
+        let current_state = if mode == crate::state::app_state::Mode::Server {
+            format!(
+                r#"Current server state:
+- Mode: Server
+- Stack: {}
+- Port: {:?}
+- Current instruction: {}
+- Global memory: {}
+"#,
+                base_stack,
+                port,
+                if instruction.is_empty() { "(none)" } else { &instruction },
+                if memory.is_empty() { "(empty)" } else { &memory }
+            )
         } else {
             "No server currently running.".to_string()
         };
 
-        // Get available base stacks
-        let available_stacks = BaseStack::available_stacks();
-        let stacks_str = available_stacks.iter()
-            .map(|s| format!("\"{}\"", s))
-            .collect::<Vec<_>>()
-            .join(", ");
-
         format!(
-            r#"You are an AI assistant controlling a network server/client application. Your job is to interpret user commands and return structured actions.
+            r#"You are NetGet, an LLM-controlled network application assistant.
 
-Current Application State:
-{}
-{}
 {}
 
-User Input:
-"{}"
+User input: "{}"
 
-Your task: Analyze this input and determine what actions to take. Return a JSON object with this structure:
+Interpret what the user wants and respond with appropriate actions.
 
+IMPORTANT: Always respond with a JSON object with this structure:
 {{
+  "message": "A helpful response to show the user",
   "actions": [
-    {{"type": "update_instruction", "instruction": "..."}},
-    {{"type": "open_server", "port": 8080, "base_stack": "tcp_raw"}},
-    {{"type": "show_message", "message": "..."}},
-    etc.
-  ],
-  "message": "optional message to display to user"
+    // One or more actions (optional)
+  ]
 }}
 
-Available action types:
+Available actions:
 
-1. **update_instruction**: Update the LLM's instruction for how to behave
-   {{"type": "update_instruction", "instruction": "new instruction text"}}
+1. open_server - Start a new server:
+{{
+  "type": "open_server",
+  "port": 8080,  // Port number
+  "base_stack": "tcp",  // Stack: tcp, http, udp, snmp, dns, dhcp, ntp, ssh, irc
+  "send_first": true,  // True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
+  "initial_memory": null,  // Optional initial memory
+  "instruction": "Detailed instructions for handling network events..."
+}}
 
-2. **open_server**: Start a server
-   {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true, "initial_memory": "files: data.txt, readme.md"}}
-   base_stack options: {stacks}
-   send_banner: true if protocol sends greeting on connect (FTP, SMTP), false if it waits for client (HTTP, SSH)
-   initial_memory: Optional string to initialize global memory (e.g., file listings, config)
+2. update_instruction - Update the current server instruction:
+{{
+  "type": "update_instruction",
+  "instruction": "New combined instruction..."
+}}
+Note: Combine the old instruction with the new requirement.
 
-3. **open_client**: Connect as a client
-   {{"type": "open_client", "address": "127.0.0.1:21", "base_stack": "tcp_raw"}}
-   base_stack options: same as open_server
+3. close_server - Stop the current server:
+{{
+  "type": "close_server"
+}}
 
-4. **close_connection**: Close connection(s)
-   {{"type": "close_connection", "connection_id": "conn-1"}}  // or omit connection_id to close all
+4. show_message - Display a message:
+{{
+  "type": "show_message",
+  "message": "Message to display"
+}}
 
-5. **show_message**: Display a message to the user
-   {{"type": "show_message", "message": "Server started successfully"}}
-
-6. **change_model**: Change the Ollama model
-   {{"type": "change_model", "model": "llama3.2:latest"}}
+5. change_model - Switch LLM model:
+{{
+  "type": "change_model",
+  "model": "model_name"
+}}
 
 Examples:
 
-User: "Listen on port 21 and pretend you are an FTP server with files data.txt and readme.md"
+User: "start an FTP server"
 Response:
 {{
+  "message": "Starting FTP server on port 21...",
   "actions": [
-    {{"type": "open_server", "port": 21, "base_stack": "tcp_raw", "send_banner": true, "initial_memory": "Available files:\n- data.txt (100 bytes)\n- readme.md (500 bytes)"}},
-    {{"type": "update_instruction", "instruction": "Pretend you are an FTP server"}},
-    {{"type": "show_message", "message": "FTP server started on port 21 with 2 files"}}
+    {{
+      "type": "open_server",
+      "port": 21,
+      "base_stack": "tcp",
+      "send_first": true,
+      "instruction": "You are an FTP server. Respond to FTP commands:\n- USER: Accept any username\n- PASS: Accept any password\n- PWD: Return current directory\n- LIST: Return file listing\n- RETR: Return file contents\n- QUIT: Close connection\nSend appropriate FTP response codes."
+    }}
   ]
 }}
 
-User: "For the FTP server, pretend you have a file data.txt with content 'hello'"
+User: "always return 404"
 Response:
 {{
+  "message": "Updating server to always return HTTP 404...",
   "actions": [
-    {{"type": "update_instruction", "instruction": "Pretend you are an FTP server and you have a file data.txt with content 'hello'"}},
-    {{"type": "show_message", "message": "Added file data.txt to FTP server"}}
+    {{
+      "type": "update_instruction",
+      "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
+    }}
   ]
 }}
 
-User: "Start an HTTP server on port 8080"
+User: "but return 200 for /health"
 Response:
 {{
+  "message": "Updated server to return 200 for /health, 404 for everything else.",
   "actions": [
-    {{"type": "open_server", "port": 8080, "base_stack": "http", "send_banner": false}},
-    {{"type": "show_message", "message": "HTTP server started on port 8080"}}
+    {{
+      "type": "update_instruction",
+      "instruction": "For HTTP requests: If path is /health, return status 200 with 'OK'. For all other paths, return status 404 with 'Not Found'."
+    }}
   ]
 }}
-
-User: "What's the current status?"
-Response:
-{{
-  "message": "{}: {}"
-}}
-
-Important guidelines:
-- Choose the appropriate base_stack from the available options: {stacks}
-- When opening a server, always use base_stack: "tcp_raw" for protocols like FTP, custom TCP, etc. (if available)
-- Use base_stack: "http" only when user explicitly wants HTTP stack (not just HTTP protocol over TCP)
-- When updating instructions, include ALL previous instructions plus the new one - don't lose context
-- Actions are executed in order
-- You can return zero or more actions
-- Always provide helpful messages to confirm what you did
 
 Response (JSON only):"#,
-            state_summary,
-            current_instruction_text,
-            server_status,
-            user_input,
-            state_summary,
-            current_instruction_text,
-            stacks = stacks_str
+            current_state,
+            user_input
         )
     }
 
-    /// Build a prompt for connection established
-    pub async fn build_connection_established_prompt(
+    /// Build prompt for handling network events
+    ///
+    /// # Arguments
+    /// * `state` - Application state
+    /// * `connection_id` - Connection identifier
+    /// * `connection_memory` - Per-connection memory
+    /// * `event_description` - Description of the event (built by protocol-specific code)
+    /// * `prompt_config` - (stack_context, output_format) tuple from protocol's get_llm_prompt_config()
+    pub async fn build_network_event_prompt(
         state: &AppState,
-        connection_id: ConnectionId,
+        _connection_id: ConnectionId,
         connection_memory: &str,
+        event_description: &str,
+        prompt_config: (&str, &str),
     ) -> String {
-        let mode = state.get_mode().await;
         let base_stack = state.get_base_stack().await;
+        let port = state.get_port().await.unwrap_or(0);
         let instruction = state.get_instruction().await;
+        let global_memory = state.get_memory().await;
 
-        let instruction_text = if instruction.is_empty() {
-            "No specific instructions provided yet.".to_string()
-        } else {
-            instruction
-        };
-
-        let memory = state.get_memory().await;
-        let memory_text = if memory.is_empty() {
-            "No memory stored yet.".to_string()
-        } else {
-            memory
-        };
-
-        let conn_memory_text = if connection_memory.is_empty() {
-            "No connection memory stored yet.".to_string()
-        } else {
-            connection_memory.to_string()
-        };
+        let (stack_context, output_format) = prompt_config;
 
         format!(
-            r#"You are controlling a network server/client application.
+            r#"You are controlling a network server application.
 
-Mode: {}
-Stack: {}
+Server configuration:
+- Stack: {}
+- Port: {}
+- Global memory: {}
+- Connection memory: {}
 
-User Instructions:
 {}
 
-Global Memory (shared across all connections):
+Event: {}
+
+User's instruction for handling events:
 {}
 
-Connection Memory (specific to this connection):
+Based on the instruction and the event, determine the appropriate response.
+
 {}
-
-Event: New Connection Established
-Connection ID: {}
-
-Should any initial data be sent to the client? (e.g., FTP welcome message "220 Welcome\r\n", HTTP server banner, etc.)
-
-IMPORTANT: Respond with a JSON object with the following structure:
-{{
-  "output": "data to send over the wire (or null if no output)",
-  "close_connection": false,
-  "wait_for_more": false,
-  "shutdown_server": false,
-  "log_message": "optional debug message",
-  "set_memory": "completely replace memory with this text (optional)",
-  "append_memory": "append this to existing memory (optional)"
-}}
-
-Examples:
-- FTP welcome: {{"output": "220 Welcome to FTP Server\r\n"}}
-- No initial response: {{}}
 
 Response (JSON only):"#,
-            mode, base_stack, instruction_text, memory_text, conn_memory_text, connection_id
+            base_stack,
+            port,
+            if global_memory.is_empty() { "(empty)" } else { &global_memory },
+            if connection_memory.is_empty() { "(empty)" } else { connection_memory },
+            stack_context,
+            event_description,
+            if instruction.is_empty() { "No specific instruction provided. Use your best judgment based on the protocol." } else { &instruction },
+            output_format
         )
     }
 
-    /// Build a prompt for handling HTTP requests
-    pub async fn build_http_request_prompt(
-        state: &AppState,
-        connection_id: ConnectionId,
-        method: &str,
-        uri: &str,
-        headers: &HashMap<String, String>,
-        body: &Bytes,
-        connection_memory: &str,
-    ) -> String {
-        let mode = state.get_mode().await;
-        let instruction = state.get_instruction().await;
-        let state_summary = state.get_summary().await;
-
-        let instruction_text = if instruction.is_empty() {
-            "No specific instructions provided yet.".to_string()
-        } else {
-            instruction
-        };
-
-        let memory = state.get_memory().await;
-        let memory_text = if memory.is_empty() {
-            "No memory stored yet.".to_string()
-        } else {
-            memory
-        };
-
-        let conn_memory_text = if connection_memory.is_empty() {
-            "No connection memory stored yet.".to_string()
-        } else {
-            connection_memory.to_string()
-        };
-
-        let headers_text = if headers.is_empty() {
-            "No headers".to_string()
-        } else {
-            headers
-                .iter()
-                .map(|(k, v)| format!("  {}: {}", k, v))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        let body_text = if body.is_empty() {
-            "Empty body".to_string()
-        } else if body.len() > 1000 {
-            format!(
-                "{} bytes (preview: {}...)",
-                body.len(),
-                String::from_utf8_lossy(&body[..1000])
-            )
-        } else {
-            String::from_utf8_lossy(body).to_string()
-        };
-
-        format!(
-            r#"You are controlling an HTTP server application.
-
-Current State:
-{}
-
-Mode: {}
-Stack: HTTP
-
-User Instructions:
-{}
-
-Memory (persistent context):
-{}
-
-Event: HTTP Request
-Connection ID: {}
-Method: {}
-URI: {}
-Headers:
-{}
-Body:
-{}
-
-Based on the user instructions, generate an appropriate HTTP response.
-
-IMPORTANT: Respond with a JSON object with the following structure:
-{{
-  "status": 200,
-  "headers": {{"Content-Type": "text/html"}},
-  "body": "response body content",
-  "log_message": "optional debug message",
-  "set_memory": "completely replace memory with this text (optional)",
-  "append_memory": "append this to existing memory (optional)"
-}}
-
-Fields:
-- "status": HTTP status code (e.g., 200, 404, 500)
-- "headers": Object containing response headers (e.g., {{"Content-Type": "application/json"}})
-- "body": The response body as a string
-- "log_message": Optional string for debugging/logging
-- "set_memory": Replace entire memory with this text. Use for storing session data, page visit counts, etc.
-- "append_memory": Add to existing memory. Use for logging requests or accumulating data over time.
-
-Examples:
-- Simple HTML: {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<html><body>Hello!</body></html>"}}
-- JSON API: {{"status": 200, "headers": {{"Content-Type": "application/json"}}, "body": "{{\\"message\\": \\"success\\"}}"}}
-- Not found: {{"status": 404, "headers": {{"Content-Type": "text/plain"}}, "body": "Not Found"}}
-- Echo request: {{"status": 200, "headers": {{"Content-Type": "text/plain"}}, "body": "You requested: {}"}}
-
-Response (JSON only):"#,
-            state_summary, mode, instruction_text, memory_text, conn_memory_text, connection_id, method, uri, headers_text, body_text
-        )
-    }
-
-    /// Build prompt for UDP request (SNMP, DNS, etc.)
-    pub async fn build_udp_request_prompt(
-        state: &AppState,
-        connection_id: ConnectionId,
-        peer_addr: std::net::SocketAddr,
-        data: &bytes::Bytes,
-        connection_memory: &str,
-    ) -> String {
-        let mode = state.get_mode().await;
-        let mut state_summary = format!("Mode: {}\n", mode);
-
-        // Get global memory
-        let memory = state.get_memory().await;
-        let memory_text = if memory.is_empty() {
-            String::new()
-        } else {
-            format!("\nGlobal Memory:\n{}\n", memory)
-        };
-
-        // Get user instructions
-        let instruction = state.get_instruction().await;
-        let instruction_text = if instruction.is_empty() {
-            String::new()
-        } else {
-            format!("\nUser Instructions:\n{}\n", instruction)
-        };
-
-        // Format connection memory if present
-        let conn_memory_text = if connection_memory.is_empty() {
-            String::new()
-        } else {
-            format!("\nConnection Memory:\n{}\n", connection_memory)
-        };
-
-        // Format the data as hex dump for debugging
-        let data_hex = data.chunks(16)
-            .map(|chunk| {
-                let hex = chunk.iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let ascii = chunk.iter()
-                    .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
-                    .collect::<String>();
-                format!("  {} | {}", hex, ascii)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        format!(
-            r#"You are controlling a UDP-based network application.
-
-{}{}{}{}
-
-Event: UDP Request
-Connection ID: {}
-Peer Address: {}
-Data Length: {} bytes
-Data (hex):
-{}
-
-Analyze the UDP packet and generate an appropriate response. Common UDP protocols:
-- SNMP (port 161): Simple Network Management Protocol
-- DNS (port 53): Domain Name System
-- DHCP (port 67/68): Dynamic Host Configuration Protocol
-- NTP (port 123): Network Time Protocol
-
-IMPORTANT: Respond with a JSON object with the following structure:
-{{
-  "output": "raw bytes to send back (use actual \\n, \\r, etc. for control chars)",
-  "close_connection": false,
-  "wait_for_more": false,
-  "log_message": "optional debug message",
-  "set_connection_memory": "completely replace connection memory (optional)",
-  "append_connection_memory": "append to existing connection memory (optional)"
-}}
-
-For SNMP specifically, you should:
-1. Parse the SNMP request to understand what OIDs are being requested
-2. Return a JSON with variable bindings like:
-{{
-  "output": null,
-  "snmp_response": {{
-    "variables": [
-      {{"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "System Description"}},
-      {{"oid": "1.3.6.1.2.1.1.3.0", "type": "timeticks", "value": 123456}}
-    ]
-  }},
-  "log_message": "SNMP GetRequest processed"
-}}
-
-Response (JSON only):"#,
-            state_summary, instruction_text, memory_text, conn_memory_text,
-            connection_id, peer_addr, data.len(), data_hex
-        )
-    }
 }

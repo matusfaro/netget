@@ -188,7 +188,7 @@ pub enum CommandAction {
         port: u16,
         base_stack: String,
         #[serde(default)]
-        send_banner: bool,
+        send_first: bool,
         #[serde(default)]
         initial_memory: Option<String>,
     },

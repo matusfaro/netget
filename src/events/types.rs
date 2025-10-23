@@ -2,10 +2,6 @@
 
 use bytes::Bytes;
 use std::collections::HashMap;
-use std::net::SocketAddr;
-use tokio::sync::oneshot;
-
-use crate::network::connection::ConnectionId;
 
 /// HTTP response to be sent back to the client
 #[derive(Debug, Clone)]
@@ -18,8 +14,6 @@ pub struct HttpResponse {
 /// Main application event enum
 #[derive(Debug)]
 pub enum AppEvent {
-    /// Network-related event
-    Network(NetworkEvent),
     /// User command
     UserCommand(UserCommand),
     /// Tick/timeout event
@@ -32,60 +26,6 @@ pub enum AppEvent {
 #[derive(Debug, Clone)]
 pub struct UdpResponse {
     pub data: Vec<u8>,
-}
-
-/// Network events
-#[derive(Debug)]
-pub enum NetworkEvent {
-    /// Server started listening on address
-    Listening {
-        addr: SocketAddr,
-    },
-    /// New connection established
-    Connected {
-        connection_id: ConnectionId,
-        remote_addr: SocketAddr,
-    },
-    /// Connection closed
-    Disconnected {
-        connection_id: ConnectionId,
-    },
-    /// Data received from connection (for raw TCP stack)
-    DataReceived {
-        connection_id: ConnectionId,
-        data: Bytes,
-    },
-    /// HTTP request received (for HTTP stack)
-    HttpRequest {
-        connection_id: ConnectionId,
-        method: String,
-        uri: String,
-        headers: HashMap<String, String>,
-        body: Bytes,
-        response_tx: oneshot::Sender<HttpResponse>,
-    },
-    /// UDP request received (for UDP-based protocols like SNMP, DNS, etc.)
-    UdpRequest {
-        connection_id: ConnectionId,
-        peer_addr: SocketAddr,
-        data: Bytes,
-        response_tx: oneshot::Sender<UdpResponse>,
-    },
-    /// Packet received from network interface (for DataLink stack)
-    PacketReceived {
-        interface: String,
-        data: Bytes,
-    },
-    /// Data sent on connection
-    DataSent {
-        connection_id: ConnectionId,
-        data: Bytes,
-    },
-    /// Network error occurred
-    Error {
-        connection_id: Option<ConnectionId>,
-        error: String,
-    },
 }
 
 /// User commands parsed from input

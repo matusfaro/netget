@@ -3,6 +3,8 @@
 //! These tests spawn the actual NetGet binary with HTTP prompts
 //! and validate the responses using real HTTP clients.
 
+#![cfg(feature = "e2e-tests")]
+
 mod e2e;
 
 use e2e::helpers::{self, ServerConfig, E2EResult};

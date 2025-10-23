@@ -1,27 +1,22 @@
 //! Event handler - coordinates responses to events using LLM
 
 use anyhow::Result;
-use std::collections::HashMap;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
-use tracing::{error, info};
+use tokio::sync::mpsc;
+use tracing::info;
 
-use super::types::{AppEvent, NetworkEvent, UserCommand};
-use crate::llm::{OllamaClient, PromptBuilder};
-use crate::network::connection::ConnectionId;
-use crate::network::tcp;
+use super::types::{AppEvent, UserCommand};
+use crate::llm::OllamaClient;
 use crate::protocol::BaseStack;
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
 
 /// Event handler that coordinates all event processing
+#[derive(Clone)]
 pub struct EventHandler {
     /// Application state
     state: AppState,
     /// Ollama client
     llm: OllamaClient,
-    /// Active connections (for sending data)
-    connections: HashMap<ConnectionId, TcpStream>,
 }
 
 impl EventHandler {
@@ -30,61 +25,13 @@ impl EventHandler {
         Self {
             state,
             llm,
-            connections: HashMap::new(),
         }
     }
-
-    /// Format bytes for display - as text if printable, otherwise as hex
-    fn format_data(&self, data: &[u8], max_len: usize) -> String {
-        // Check if data is printable ASCII/UTF-8
-        let is_text = data.iter().all(|&b| {
-            b == b'\n' || b == b'\r' || b == b'\t' || (b >= 32 && b < 127)
-        });
-
-        if is_text {
-            // Try to display as UTF-8 text
-            match std::str::from_utf8(data) {
-                Ok(text) => {
-                    let display_text = text.replace('\r', "\\r").replace('\n', "\\n").replace('\t', "\\t");
-                    if display_text.len() > max_len {
-                        format!("{}... ({} bytes)", &display_text[..max_len], data.len())
-                    } else {
-                        format!("{} ({} bytes)", display_text, data.len())
-                    }
-                }
-                Err(_) => self.format_as_hex(data, max_len),
-            }
-        } else {
-            self.format_as_hex(data, max_len)
-        }
-    }
-
-    /// Format bytes as hexadecimal
-    fn format_as_hex(&self, data: &[u8], max_len: usize) -> String {
-        let hex_chars = max_len / 3; // Each byte is "XX " (3 chars)
-        let bytes_to_show = hex_chars.min(data.len());
-
-        let hex: String = data.iter()
-            .take(bytes_to_show)
-            .map(|b| format!("{:02x} ", b))
-            .collect();
-
-        if data.len() > bytes_to_show {
-            format!("{}... ({} bytes, hex)", hex.trim(), data.len())
-        } else {
-            format!("{} ({} bytes, hex)", hex.trim(), data.len())
-        }
-    }
-
 
     /// Handle an application event
     /// Returns Ok(true) if the application should quit
     pub async fn handle_event(&mut self, event: AppEvent, ui: &mut App) -> Result<bool> {
         match event {
-            AppEvent::Network(net_event) => {
-                self.handle_network_event(net_event, ui).await?;
-                Ok(false)
-            }
             AppEvent::UserCommand(cmd) => {
                 self.handle_user_command(cmd, ui).await
             }
@@ -95,282 +42,6 @@ impl EventHandler {
             AppEvent::Shutdown => {
                 info!("Shutdown event received");
                 Ok(true)
-            }
-        }
-    }
-
-    /// Handle network events using LLM
-    async fn handle_network_event(&mut self, event: NetworkEvent, ui: &mut App) -> Result<()> {
-        match event {
-            NetworkEvent::Listening { addr } => {
-                ui.add_status_message(format!("Listening on {}", addr));
-                self.state.set_local_addr(Some(addr)).await;
-                Ok(())
-            }
-            NetworkEvent::Connected {
-                connection_id,
-                remote_addr,
-            } => {
-                ui.add_status_message(format!(
-                    "Connection {} established from {}",
-                    connection_id, remote_addr
-                ));
-
-                // Ask LLM if we should send any initial data (e.g., FTP welcome)
-                let model = self.state.get_ollama_model().await;
-                // Note: Legacy event handler doesn't support per-connection memory
-                let prompt = PromptBuilder::build_connection_established_prompt(&self.state, connection_id, "").await;
-
-                match self.llm.generate_llm_response(&model, &prompt).await {
-                    Ok(llm_response) => {
-                        if let Some(output) = llm_response.output {
-                            // Send the LLM's response
-                            if let Some(stream) = self.connections.get_mut(&connection_id) {
-                                tcp::send_data(stream, output.as_bytes()).await?;
-                                let formatted = self.format_data(output.as_bytes(), 80);
-                                ui.add_status_message(format!(
-                                    "→ Sent to {}: {}",
-                                    connection_id,
-                                    formatted
-                                ));
-                            }
-                        }
-
-                        if llm_response.close_connection {
-                            if let Some(mut stream) = self.connections.remove(&connection_id) {
-                                let _ = stream.shutdown().await;
-                                ui.add_status_message(format!("LLM requested connection {} closure", connection_id));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("LLM error on connection: {}", e);
-                        ui.add_llm_message(format!("LLM error: {}", e));
-                    }
-                }
-
-                Ok(())
-            }
-            NetworkEvent::Disconnected { connection_id } => {
-                ui.add_status_message(format!("Connection {} closed", connection_id));
-                self.connections.remove(&connection_id);
-                self.state.remove_connection(connection_id).await;
-                Ok(())
-            }
-            NetworkEvent::DataReceived {
-                connection_id,
-                data,
-            } => {
-                let formatted = self.format_data(&data, 80);
-                ui.add_status_message(format!(
-                    "← Recv from {}: {}",
-                    connection_id,
-                    formatted
-                ));
-
-                // Update stats
-                self.state
-                    .update_connection_stats(connection_id, 0, data.len() as u64, 0, 1)
-                    .await;
-
-                // Ask LLM what to respond with
-                let model = self.state.get_ollama_model().await;
-                // Note: Legacy event handler doesn't support per-connection memory
-                let prompt = PromptBuilder::build_data_received_prompt(&self.state, connection_id, &data, "").await;
-
-                match self.llm.generate_llm_response(&model, &prompt).await {
-                    Ok(llm_response) => {
-                        // Handle output first
-                        if let Some(output) = llm_response.output {
-                            // Send LLM's response
-                            if let Some(stream) = self.connections.get_mut(&connection_id) {
-                                tcp::send_data(stream, output.as_bytes()).await?;
-                                let formatted = self.format_data(output.as_bytes(), 80);
-                                ui.add_status_message(format!(
-                                    "→ Sent to {}: {}",
-                                    connection_id,
-                                    formatted
-                                ));
-
-                                // Update stats
-                                self.state
-                                    .update_connection_stats(connection_id, output.len() as u64, 0, 1, 0)
-                                    .await;
-                            }
-                        } else if !llm_response.close_connection && !llm_response.wait_for_more {
-                            ui.add_status_message("LLM: No response needed".to_string());
-                        }
-
-                        // Handle connection closure
-                        if llm_response.close_connection {
-                            if let Some(mut stream) = self.connections.remove(&connection_id) {
-                                let _ = stream.shutdown().await;
-                                ui.add_status_message(format!("LLM requested connection {} closure", connection_id));
-                            }
-                        }
-
-                        // Handle wait for more
-                        if llm_response.wait_for_more {
-                            ui.add_status_message("LLM: Waiting for more data".to_string());
-                        }
-
-                        // Handle log message
-                        if let Some(log_msg) = llm_response.log_message {
-                            info!("LLM: {}", log_msg);
-                            ui.add_llm_message(log_msg);
-                        }
-                    }
-                    Err(e) => {
-                        error!("LLM error processing data: {}", e);
-                        ui.add_llm_message(format!("LLM error: {}", e));
-                    }
-                }
-
-                Ok(())
-            }
-            NetworkEvent::DataSent {
-                connection_id,
-                data,
-            } => {
-                ui.add_status_message(format!(
-                    "Sent {} bytes to {}",
-                    data.len(),
-                    connection_id
-                ));
-                Ok(())
-            }
-            NetworkEvent::Error {
-                connection_id,
-                error,
-            } => {
-                let msg = if let Some(id) = connection_id {
-                    format!("Error on connection {}: {}", id, error)
-                } else {
-                    format!("Network error: {}", error)
-                };
-                ui.add_status_message(msg.clone());
-                error!("{}", msg);
-                Ok(())
-            }
-            NetworkEvent::HttpRequest { .. } => {
-                // HTTP requests are handled directly in main.rs
-                // This is because they need to send responses back via oneshot channel
-                Ok(())
-            }
-            NetworkEvent::UdpRequest { connection_id, peer_addr, data, response_tx } => {
-                // UDP requests (SNMP, DNS, etc.) need to send responses via oneshot channel
-                let formatted = self.format_data(&data, 80);
-                ui.add_status_message(format!(
-                    "← UDP from {}: {}",
-                    peer_addr,
-                    formatted
-                ));
-
-                // Build proper UDP prompt with protocol detection
-                let model = self.state.get_ollama_model().await;
-                let prompt = crate::llm::PromptBuilder::build_udp_request_prompt(
-                    &self.state,
-                    connection_id,
-                    peer_addr,
-                    &data,
-                    "",  // No connection memory for UDP
-                ).await;
-
-                match self.llm.generate(&model, &prompt).await {
-                    Ok(llm_text) => {
-                        // Try to parse as JSON first to check for SNMP-specific response
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&llm_text) {
-                            // Check if this is an SNMP response with structured data
-                            if json.get("snmp_response").is_some() {
-                                // Parse the SNMP message to get version, request ID, and community
-                                #[cfg(feature = "snmp")]
-                                {
-                                    if let Ok(parsed) = crate::network::snmp::SnmpServer::parse_snmp_message(&data) {
-                                        // Build SNMP response using the structured data
-                                        match crate::network::snmp::SnmpServer::build_snmp_response(
-                                            &llm_text,
-                                            parsed.version,
-                                            parsed.request_id,
-                                            &parsed.community,
-                                        ) {
-                                            Ok(response_data) => {
-                                                let udp_response = crate::events::types::UdpResponse {
-                                                    data: response_data,
-                                                };
-                                                let _ = response_tx.send(udp_response);
-                                                ui.add_status_message(format!("→ SNMP response sent to {}", peer_addr));
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to build SNMP response: {}", e);
-                                                let udp_response = crate::events::types::UdpResponse {
-                                                    data: Vec::new(),
-                                                };
-                                                let _ = response_tx.send(udp_response);
-                                            }
-                                        }
-                                    } else {
-                                        error!("Failed to parse SNMP request");
-                                        let udp_response = crate::events::types::UdpResponse {
-                                            data: Vec::new(),
-                                        };
-                                        let _ = response_tx.send(udp_response);
-                                    }
-                                }
-                                #[cfg(not(feature = "snmp"))]
-                                {
-                                    let udp_response = crate::events::types::UdpResponse {
-                                        data: Vec::new(),
-                                    };
-                                    let _ = response_tx.send(udp_response);
-                                }
-                            } else if let Some(output) = json.get("output").and_then(|v| v.as_str()) {
-                                // Regular UDP response with raw output
-                                let udp_response = crate::events::types::UdpResponse {
-                                    data: output.as_bytes().to_vec(),
-                                };
-                                let _ = response_tx.send(udp_response);
-                                ui.add_status_message(format!("→ UDP response sent to {}", peer_addr));
-                            } else {
-                                // No output specified
-                                let udp_response = crate::events::types::UdpResponse {
-                                    data: Vec::new(),
-                                };
-                                let _ = response_tx.send(udp_response);
-                                ui.add_status_message("LLM: No UDP response needed".to_string());
-                            }
-                        } else {
-                            // Not JSON, treat as raw output (backward compatibility)
-                            let udp_response = crate::events::types::UdpResponse {
-                                data: llm_text.as_bytes().to_vec(),
-                            };
-                            let _ = response_tx.send(udp_response);
-                            ui.add_status_message(format!("→ UDP response sent to {}", peer_addr));
-                        }
-                    }
-                    Err(e) => {
-                        error!("LLM error processing UDP request: {}", e);
-                        ui.add_llm_message(format!("LLM error: {}", e));
-                        // Send empty response on error
-                        let udp_response = crate::events::types::UdpResponse {
-                            data: Vec::new(),
-                        };
-                        let _ = response_tx.send(udp_response);
-                    }
-                }
-
-                Ok(())
-            }
-            NetworkEvent::PacketReceived { interface, data } => {
-                // Data link packets are handled directly in main.rs
-                // This is because they may need to inject packets back
-                let formatted = self.format_data(&data, 80);
-                ui.add_status_message(format!(
-                    "← Packet on {}: {} bytes: {}",
-                    interface,
-                    data.len(),
-                    formatted
-                ));
-                Ok(())
             }
         }
     }
@@ -413,53 +84,65 @@ impl EventHandler {
                 ui.add_llm_message("Available commands: /status, /model [name], /log [level], /quit".to_string());
                 Ok(false)
             }
-            UserCommand::Interpret { input } => {
-                self.handle_interpret(input, ui).await?;
+            UserCommand::Interpret { input: _ } => {
+                ui.add_llm_message("Internal error: Interpret command should use async path".to_string());
                 Ok(false)
             }
         }
     }
 
-    async fn handle_interpret(&mut self, input: String, ui: &mut App) -> Result<()> {
+    /// Handle interpret command asynchronously via channel
+    /// This method can be spawned in a task without blocking the UI
+    pub async fn handle_interpret(
+        &mut self,
+        input: String,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
         use crate::llm::PromptBuilder;
 
-        ui.add_status_message(format!("Interpreting: {}", input));
+        let _ = status_tx.send(format!("[INFO] Interpreting: {}", input));
 
         // Ask LLM to interpret the command
-        let prompt = PromptBuilder::build_command_interpretation_prompt(&self.state, &input).await;
+        let prompt = PromptBuilder::build_user_input_prompt(&self.state, &input).await;
         let model = self.state.get_ollama_model().await;
 
         match self.llm.generate_command_interpretation(&model, &prompt).await {
             Ok(interpretation) => {
                 // Display message if provided
                 if let Some(msg) = &interpretation.message {
-                    ui.add_llm_message(msg.clone());
+                    let _ = status_tx.send(msg.clone());
                 }
 
                 // Execute each action in order
                 for action in interpretation.actions {
-                    if let Err(e) = self.execute_command_action(action, ui).await {
-                        ui.add_llm_message(format!("Error executing action: {}", e));
+                    if let Err(e) = self.execute_command_action(action, &status_tx).await {
+                        let _ = status_tx.send(format!("[ERROR] Error executing action: {}", e));
                     }
                 }
             }
             Err(e) => {
-                ui.add_llm_message(format!("LLM error: {}", e));
+                let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
             }
         }
 
         Ok(())
     }
 
-    async fn execute_command_action(&mut self, action: crate::llm::CommandAction, ui: &mut App) -> Result<()> {
+
+    /// Execute a command action (already in async context)
+    async fn execute_command_action(
+        &mut self,
+        action: crate::llm::CommandAction,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
         use crate::llm::CommandAction;
 
         match action {
             CommandAction::UpdateInstruction { instruction } => {
                 self.state.set_instruction(instruction.clone()).await;
-                ui.add_status_message(format!("Instruction: {}", instruction));
+                let _ = status_tx.send(format!("[INFO] Instruction: {}", instruction));
             }
-            CommandAction::OpenServer { port, base_stack, send_banner, initial_memory } => {
+            CommandAction::OpenServer { port, base_stack, send_first, initial_memory, instruction } => {
                 // Parse base stack
                 let stack = crate::protocol::BaseStack::from_str(&base_stack)
                     .unwrap_or(BaseStack::TcpRaw);
@@ -467,42 +150,49 @@ impl EventHandler {
                 self.state.set_mode(Mode::Server).await;
                 self.state.set_base_stack(stack).await;
                 self.state.set_port(port).await;
-                self.state.set_send_banner(send_banner).await;
+                self.state.set_send_first(send_first).await;
+                self.state.set_instruction(instruction).await;
 
                 // Set initial memory if provided
                 if let Some(mem) = initial_memory {
                     self.state.set_memory(mem).await;
                 }
 
-                ui.add_llm_message(format!("Opening server on port {} with stack {}", port, stack));
-                ui.connection_info.mode = Mode::Server.to_string();
-                ui.connection_info.state = format!("Listening on port {}", port);
+                let _ = status_tx.send(format!("Opening server on port {} with stack {}", port, stack));
 
-                // Note: Actual server startup happens in main.rs after this returns
+                // Signal main loop to check for server startup and update UI
+                let _ = status_tx.send("__CHECK_SERVER_STARTUP__".to_string());
             }
             CommandAction::OpenClient { address, base_stack: _ } => {
-                ui.add_llm_message(format!("Client mode not yet implemented ({})", address));
+                let _ = status_tx.send(format!("Client mode not yet implemented ({})", address));
             }
             CommandAction::CloseConnection { connection_id } => {
                 if let Some(conn_id_str) = connection_id {
                     if let Some(conn_id) = crate::network::ConnectionId::from_string(&conn_id_str) {
                         self.state.remove_connection(conn_id).await;
-                        ui.add_status_message(format!("Closed connection {}", conn_id));
+                        let _ = status_tx.send(format!("[INFO] Closed connection {}", conn_id));
                     }
                 } else {
-                    // Close all connections
-                    for (id, _) in self.connections.drain() {
-                        self.state.remove_connection(id).await;
-                    }
-                    ui.add_status_message("Closed all connections".to_string());
+                    let _ = status_tx.send("[INFO] Close all connections not supported".to_string());
                 }
             }
+            CommandAction::CloseServer => {
+                self.state.set_mode(Mode::Idle).await;
+                self.state.set_port(0).await;
+                let _ = status_tx.send("[INFO] Server closed".to_string());
+
+                // Signal main loop to update UI
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
             CommandAction::ShowMessage { message } => {
-                ui.add_llm_message(message);
+                let _ = status_tx.send(message);
             }
             CommandAction::ChangeModel { model } => {
                 self.state.set_ollama_model(model.clone()).await;
-                ui.add_llm_message(format!("Changed model to: {}", model));
+                let _ = status_tx.send(format!("Changed model to: {}", model));
+
+                // Signal main loop to update UI
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
         }
 
@@ -596,10 +286,5 @@ impl EventHandler {
         }
 
         Ok(())
-    }
-
-    /// Register a new connection
-    pub fn add_connection(&mut self, connection_id: ConnectionId, stream: TcpStream) {
-        self.connections.insert(connection_id, stream);
     }
 }

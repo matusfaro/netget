@@ -1,83 +1,110 @@
 //! UDP server implementation for raw UDP stack
 
-use crate::events::types::{AppEvent, NetworkEvent};
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
-use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
+use tracing::{error, info};
 
-/// UDP server that manages UDP connections
-pub struct UdpServer {
-    socket: Arc<UdpSocket>,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::state::app_state::AppState;
+
+/// Get LLM context and output format instructions for UDP stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling raw UDP datagrams. Each packet is independent.
+Common UDP protocols: DNS (port 53), DHCP (67/68), NTP (123), SNMP (161)"#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "response data to send back (null if no response)",
+  "message": null  // Optional message for user
+}"#;
+
+    (context, output_format)
 }
 
+/// UDP server that manages UDP connections
+pub struct UdpServer;
+
 impl UdpServer {
-    /// Create a new UDP server listening on the specified address
-    pub async fn new(
-        addr: SocketAddr,
-        event_tx: mpsc::UnboundedSender<AppEvent>,
-    ) -> Result<Self> {
-        let socket = UdpSocket::bind(addr).await?;
-        let socket = Arc::new(socket);
-
-        // Send listening event with the actual bound address
+    /// Spawn UDP server with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        event_tx.send(AppEvent::Network(NetworkEvent::Listening { addr: local_addr }))?;
+        info!("UDP server listening on {}", local_addr);
 
-        Ok(Self { socket, event_tx })
-    }
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 65535]; // Maximum UDP datagram size
 
-    /// Start accepting and handling UDP datagrams
-    pub async fn start(self) -> Result<()> {
-        let mut buffer = vec![0u8; 65535]; // Maximum UDP datagram size
-        let mut connections: HashMap<SocketAddr, ConnectionId> = HashMap::new();
-        let socket = self.socket.clone();
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let connection_id = ConnectionId::new();
 
-        loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((n, peer_addr)) => {
-                    // Get or create connection ID for this peer
-                    let connection_id = connections.entry(peer_addr).or_insert_with(|| {
-                        let id = ConnectionId::new();
-                        // Send connection event for new peer
-                        let _ = self.event_tx.send(AppEvent::Network(NetworkEvent::Connected {
-                            connection_id: id,
-                            remote_addr: peer_addr,
-                        }));
-                        id
-                    });
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
 
-                    // Send data received event
-                    let data = Bytes::copy_from_slice(&buffer[..n]);
-                    let _ = self
-                        .event_tx
-                        .send(AppEvent::Network(NetworkEvent::DataReceived {
-                            connection_id: *connection_id,
-                            data,
-                        }));
-                }
-                Err(e) => {
-                    tracing::error!("UDP receive error: {}", e);
-                    // Continue listening despite errors
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let prompt_config = get_llm_prompt_config();
+                            let conn_memory = String::new();
+
+                            // Build event description
+                            let event_description = {
+                                let data_preview = if data.len() > 200 {
+                                    format!("{} bytes from {} (preview: {:?}...)", data.len(), peer_addr, &data[..200])
+                                } else {
+                                    format!("{} bytes from {}: {:?}", data.len(), peer_addr, data)
+                                };
+                                format!("UDP datagram received: {}", data_preview)
+                            };
+
+                            let prompt = PromptBuilder::build_network_event_prompt(
+                                &state_clone,
+                                connection_id,
+                                &conn_memory,
+                                &event_description,
+                                prompt_config,
+                            ).await;
+
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                        error!("Failed to send UDP response: {}", e);
+                                    } else {
+                                        let _ = status_clone.send(format!(
+                                            "→ UDP response to {} ({} bytes)",
+                                            peer_addr, llm_output.len()
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("LLM error for UDP: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for UDP: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("UDP receive error: {}", e);
+                    }
                 }
             }
-        }
-    }
+        });
 
-    /// Send data to a specific peer
-    pub async fn send_to(&self, data: &[u8], addr: SocketAddr) -> Result<()> {
-        self.socket.send_to(data, addr).await?;
-        Ok(())
-    }
-
-    /// Get the local address the server is bound to
-    pub fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.socket.local_addr()?)
+        Ok(local_addr)
     }
 }
 

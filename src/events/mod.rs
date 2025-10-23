@@ -5,5 +5,5 @@
 pub mod types;
 pub mod handler;
 
-pub use types::{AppEvent, HttpResponse, NetworkEvent, UserCommand};
+pub use types::{AppEvent, HttpResponse, UserCommand};
 pub use handler::EventHandler;

@@ -48,8 +48,8 @@ struct AppStateInner {
     base_stack: BaseStack,
     /// Server port (for server mode)
     port: Option<u16>,
-    /// Whether to send banner on connection (for server mode)
-    send_banner: bool,
+    /// Whether to send data first on connection (for server mode)
+    send_first: bool,
     /// Local listening address (for server mode)
     local_addr: Option<SocketAddr>,
     /// Active connections
@@ -82,7 +82,7 @@ impl AppState {
                 mode: Mode::Idle,
                 base_stack: BaseStack::TcpRaw,
                 port: None,
-                send_banner: false,
+                send_first: false,
                 local_addr: None,
                 connections: HashMap::new(),
                 instruction: String::new(),
@@ -122,14 +122,14 @@ impl AppState {
         self.inner.write().await.port = Some(port);
     }
 
-    /// Get whether to send banner on connection
-    pub async fn get_send_banner(&self) -> bool {
-        self.inner.read().await.send_banner
+    /// Get whether to send data first on connection
+    pub async fn get_send_first(&self) -> bool {
+        self.inner.read().await.send_first
     }
 
-    /// Set whether to send banner on connection
-    pub async fn set_send_banner(&self, send_banner: bool) {
-        self.inner.write().await.send_banner = send_banner;
+    /// Set whether to send data first on connection
+    pub async fn set_send_first(&self, send_first: bool) {
+        self.inner.write().await.send_first = send_first;
     }
 
     /// Get the local listening address
