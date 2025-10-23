@@ -1,9 +1,7 @@
 //! SNMP agent implementation using rasn-snmp library
 
-use crate::events::types::{AppEvent, NetworkEvent};
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
-use bytes::Bytes;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -14,6 +12,41 @@ use tracing::{error, info, debug};
 use rasn_snmp::{v1, v2c, v2};
 use rasn::{ber, types::Integer};
 
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::state::app_state::AppState;
+
+/// Get LLM context and output format instructions for SNMP stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling SNMP requests. Return appropriate SNMP responses with OID values.
+Common OIDs:
+- 1.3.6.1.2.1.1.1.0: System description
+- 1.3.6.1.2.1.1.5.0: System name
+- 1.3.6.1.2.1.1.3.0: System uptime"#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object containing SNMP variable bindings:
+{
+  "variables": [
+    {"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "System Description"},
+    {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "hostname"}
+  ],
+  "error": false,
+  "error_message": null
+}
+
+Supported value types: "string", "integer", "counter", "gauge", "timeticks", "null"
+
+For errors, respond with:
+{
+  "error": true,
+  "error_message": "Error description"
+}
+
+You can also return plain text which will be treated as a simple string value for the first requested OID."#;
+
+    (context, output_format)
+}
+
 /// Parsed SNMP message information
 #[derive(Debug)]
 pub struct ParsedSnmpInfo {
@@ -22,148 +55,124 @@ pub struct ParsedSnmpInfo {
     pub version: u8,
     pub request_id: i32,
     pub community: Vec<u8>,
+    pub requested_oids: Vec<String>,
 }
 
 /// SNMP server that forwards requests to LLM
-pub struct SnmpServer {
-    event_tx: mpsc::UnboundedSender<AppEvent>,
-    socket: Arc<UdpSocket>,
-}
+pub struct SnmpServer;
 
 impl SnmpServer {
-    /// Create a new SNMP agent
-    pub async fn new(
-        addr: SocketAddr,
-        event_tx: mpsc::UnboundedSender<AppEvent>,
-    ) -> Result<Self> {
-        // SNMP typically uses port 161
-        let socket = Arc::new(UdpSocket::bind(addr).await?);
-        info!("SNMP agent listening on {}", socket.local_addr()?);
+    /// Spawn SNMP agent with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
+        let local_addr = socket.local_addr()?;
+        info!("SNMP agent listening on {}", local_addr);
 
-        // Send listening event
-        event_tx.send(AppEvent::Network(NetworkEvent::Listening {
-            addr: socket.local_addr()?,
-        }))?;
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 65535];
 
-        Ok(Self {
-            event_tx,
-            socket,
-        })
-    }
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let connection_id = ConnectionId::new();
 
-    /// Start the SNMP agent
-    pub async fn start(self) -> Result<()> {
-        let mut buffer = vec![0u8; 65535]; // SNMP messages can be large
-        let socket = self.socket.clone();
+                        // Parse the SNMP message
+                        let parsed = match Self::parse_snmp_message(&data) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("Failed to parse SNMP message: {}", e);
+                                continue;
+                            }
+                        };
 
-        loop {
-            match self.socket.recv_from(&mut buffer).await {
-                Ok((n, peer_addr)) => {
-                    let data = buffer[..n].to_vec();
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
+                        let version = parsed.version;
+                        let request_id = parsed.request_id;
+                        let community = parsed.community.clone();
+                        let requested_oids = parsed.requested_oids.clone();
 
-                    // Create connection ID for this SNMP request
-                    let connection_id = ConnectionId::new();
+                        // Spawn task to handle request with LLM
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let prompt_config = get_llm_prompt_config();
+                            let conn_memory = String::new();
 
-                    // Don't send Connected event for UDP - it's connectionless
+                            // Build event description
+                            let event_description = format!(
+                                "SNMP {} from {}:\n{}Request ID: {}\nCommunity: {}\nOIDs: {}",
+                                parsed.request_type,
+                                peer_addr,
+                                parsed.description,
+                                parsed.request_id,
+                                String::from_utf8_lossy(&parsed.community),
+                                parsed.requested_oids.join(", ")
+                            );
 
-                    // Parse the SNMP message and get request details
-                    let parsed = match Self::parse_snmp_message(&data) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            error!("Failed to parse SNMP message: {}", e);
-                            continue;
-                        }
-                    };
+                            let prompt = PromptBuilder::build_network_event_prompt(
+                                &state_clone,
+                                connection_id,
+                                &conn_memory,
+                                &event_description,
+                                prompt_config,
+                            ).await;
 
-                    // Create a oneshot channel for the response
-                    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    debug!("LLM SNMP response: {}", llm_output);
 
-                    // Send UDP request event with the parsed SNMP info and response channel
-                    // Include instructions for the LLM on how to format the response
-                    let llm_prompt = format!(
-                        "{}\n\n\
-                        IMPORTANT: You are acting as an SNMP agent. Based on the request above (type: {}), \
-                        generate an appropriate SNMP response.\n\n\
-                        Respond with a JSON object containing the SNMP data:\n\
-                        {{\n\
-                        \"error\": false,  // true if there's an error\n\
-                        \"error_message\": \"\",  // error description if any\n\
-                        \"variables\": [      // Array of OID-value pairs to return\n\
-                            {{\n\
-                                \"oid\": \"1.3.6.1.2.1.1.1.0\",  // System description OID\n\
-                                \"type\": \"string\",  // string|integer|counter|gauge|timeticks|null\n\
-                                \"value\": \"NetGet SNMP Agent v1.0 - LLM Controlled\"\n\
-                            }},\n\
-                            {{\n\
-                                \"oid\": \"1.3.6.1.2.1.1.3.0\",  // System uptime OID\n\
-                                \"type\": \"timeticks\",\n\
-                                \"value\": 123456\n\
-                            }}\n\
-                        ]\n\
-                        }}\n\n\
-                        Common OIDs:\n\
-                        - 1.3.6.1.2.1.1.1.0 = sysDescr (system description)\n\
-                        - 1.3.6.1.2.1.1.2.0 = sysObjectID (system OID)\n\
-                        - 1.3.6.1.2.1.1.3.0 = sysUpTime (uptime in timeticks)\n\
-                        - 1.3.6.1.2.1.1.4.0 = sysContact (contact info)\n\
-                        - 1.3.6.1.2.1.1.5.0 = sysName (system name)\n\
-                        - 1.3.6.1.2.1.1.6.0 = sysLocation (location)\n\n\
-                        Generate appropriate values for the requested OIDs.",
-                        parsed.description,
-                        parsed.request_type
-                    );
+                                    // Build SNMP response from LLM output
+                                    match Self::build_snmp_response(&llm_output, version, request_id, &community, &requested_oids) {
+                                        Ok(snmp_response) => {
+                                            // Debug: log hex dump of response
+                                            let hex_dump: String = snmp_response.iter()
+                                                .map(|b| format!("{:02X}", b))
+                                                .collect::<Vec<_>>()
+                                                .join(" ");
+                                            debug!("Sending SNMP response ({} bytes): {}", snmp_response.len(), hex_dump);
 
-                    let _ = self.event_tx.send(AppEvent::Network(NetworkEvent::UdpRequest {
-                        connection_id,
-                        peer_addr,
-                        data: Bytes::from(data.to_vec()),  // Send raw SNMP data, not the prompt
-                        response_tx,
-                    }));
-
-                    // Clone socket for response handling
-                    let socket_clone = socket.clone();
-
-                    // Extract fields needed for response building
-                    let version = parsed.version;
-                    let request_id = parsed.request_id;
-                    let community = parsed.community.clone();
-
-                    // Spawn task to handle the response
-                    tokio::spawn(async move {
-                        match response_rx.await {
-                            Ok(udp_response) => {
-                                let llm_output = String::from_utf8_lossy(&udp_response.data);
-                                debug!("LLM SNMP response: {}", llm_output);
-
-                                // Try to build SNMP response based on LLM output
-                                match Self::build_snmp_response(&llm_output, version, request_id, &community) {
-                                    Ok(snmp_response) => {
-                                        if let Err(e) = socket_clone.send_to(&snmp_response, peer_addr).await {
-                                            error!("Failed to send SNMP response: {}", e);
-                                        } else {
-                                            debug!("Sent SNMP response to {}: {} bytes", peer_addr, snmp_response.len());
+                                            if let Err(e) = socket_clone.send_to(&snmp_response, peer_addr).await {
+                                                error!("Failed to send SNMP response: {}", e);
+                                            } else {
+                                                let _ = status_clone.send(format!(
+                                                    "→ SNMP response to {} ({} bytes)",
+                                                    peer_addr, snmp_response.len()
+                                                ));
+                                            }
                                         }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to build SNMP response: {}", e);
-                                        // Send a simple error response
-                                        if let Ok(error_response) = Self::build_error_response(version, request_id, &community) {
-                                            let _ = socket_clone.send_to(&error_response, peer_addr).await;
+                                        Err(e) => {
+                                            error!("Failed to build SNMP response: {}", e);
+                                            // Send error response
+                                            if let Ok(error_response) = Self::build_error_response(version, request_id, &community) {
+                                                let _ = socket_clone.send_to(&error_response, peer_addr).await;
+                                            }
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    error!("LLM error for SNMP request: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for SNMP: {}", e));
+                                }
                             }
-                            Err(_) => {
-                                debug!("SNMP response channel closed");
-                            }
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("SNMP receive error: {}", e);
+                        });
+                    }
+                    Err(e) => {
+                        error!("SNMP receive error: {}", e);
+                        break;
+                    }
                 }
             }
-        }
+        });
+
+        Ok(local_addr)
     }
 
     /// Parse SNMP message and extract relevant information
@@ -172,12 +181,14 @@ impl SnmpServer {
         if let Ok(msg) = ber::decode::<v2c::Message<v2::Pdus>>(data) {
             let request_type = Self::get_v2_pdu_type(&msg.data);
             let request_id = Self::get_v2_request_id(&msg.data);
+            let requested_oids = Self::get_v2_requested_oids(&msg.data);
             return Ok(ParsedSnmpInfo {
                 description: Self::format_v2c_message(&msg),
                 request_type,
                 version: 1, // v2c uses version 1 in the packet
                 request_id,
                 community: msg.community.to_vec(),
+                requested_oids,
             });
         }
 
@@ -185,12 +196,14 @@ impl SnmpServer {
         if let Ok(msg) = ber::decode::<v1::Message<v1::Pdus>>(data) {
             let request_type = Self::get_v1_pdu_type(&msg.data);
             let request_id = Self::get_v1_request_id(&msg.data);
+            let requested_oids = Self::get_v1_requested_oids(&msg.data);
             return Ok(ParsedSnmpInfo {
                 description: Self::format_v1_message(&msg),
                 request_type,
                 version: 0,
                 request_id,
                 community: msg.community.to_vec(),
+                requested_oids,
             });
         }
 
@@ -213,6 +226,19 @@ impl SnmpServer {
         }
     }
 
+    /// Get requested OIDs for v2
+    fn get_v2_requested_oids(pdu: &v2::Pdus) -> Vec<String> {
+        let bindings = match pdu {
+            v2::Pdus::GetRequest(p) => &p.0.variable_bindings,
+            v2::Pdus::GetNextRequest(p) => &p.0.variable_bindings,
+            v2::Pdus::GetBulkRequest(p) => &p.0.variable_bindings,
+            v2::Pdus::SetRequest(p) => &p.0.variable_bindings,
+            _ => return vec![],
+        };
+
+        bindings.iter().map(|vb| vb.name.to_string()).collect()
+    }
+
     /// Get request ID for v1
     fn get_v1_request_id(pdu: &v1::Pdus) -> i32 {
         let integer = match pdu {
@@ -231,6 +257,18 @@ impl SnmpServer {
                 big.to_string().parse::<i32>().unwrap_or(0)
             }
         }
+    }
+
+    /// Get requested OIDs for v1
+    fn get_v1_requested_oids(pdu: &v1::Pdus) -> Vec<String> {
+        let bindings = match pdu {
+            v1::Pdus::GetRequest(p) => &p.0.variable_bindings,
+            v1::Pdus::GetNextRequest(p) => &p.0.variable_bindings,
+            v1::Pdus::SetRequest(p) => &p.0.variable_bindings,
+            _ => return vec![],
+        };
+
+        bindings.iter().map(|vb| vb.name.to_string()).collect()
     }
 
     /// Get PDU type for v2
@@ -345,35 +383,82 @@ impl SnmpServer {
         version: u8,
         request_id: i32,
         community: &[u8],
+        requested_oids: &[String],
     ) -> Result<Vec<u8>> {
-        // Parse JSON response from LLM
-        let response_data: serde_json::Value = serde_json::from_str(llm_response)
-            .map_err(|e| anyhow::anyhow!("Failed to parse LLM JSON response: {}. Response was: {}", e, llm_response))?;
+        let trimmed = llm_response.trim();
 
-        // Check for error
-        if response_data["error"].as_bool().unwrap_or(false) {
-            let error_msg = response_data["error_message"].as_str().unwrap_or("Unknown error");
-            debug!("LLM reported error: {}", error_msg);
-            return Self::build_error_response(version, request_id, community);
-        }
+        // Try to parse as JSON first
+        if let Ok(response_data) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if !response_data.is_object() {
+                // Not an object, fall through to plain text handling
+            } else if response_data.get("variables").is_some() || response_data.get("error").is_some() {
+                // SNMP-specific format with variables
+                // Check for error
+                if response_data["error"].as_bool().unwrap_or(false) {
+                    let error_msg = response_data["error_message"].as_str().unwrap_or("Unknown error");
+                    debug!("LLM reported error: {}", error_msg);
+                    return Self::build_error_response(version, request_id, community);
+                }
 
-        // Build response with variable bindings
-        let mut var_binds = Vec::new();
+                // Build response with variable bindings
+                let mut var_binds = Vec::new();
 
-        if let Some(variables) = response_data["variables"].as_array() {
-            for var in variables {
-                let oid_str = var["oid"].as_str().unwrap_or("");
-                let value_type = var["type"].as_str().unwrap_or("null");
-                let value = &var["value"];
+                if let Some(variables) = response_data["variables"].as_array() {
+                    for var in variables {
+                        let oid_str = var["oid"].as_str().unwrap_or("");
+                        let value_type = var["type"].as_str().unwrap_or("null");
+                        let value = &var["value"];
 
-                // Encode each variable binding
-                let var_bind = Self::encode_var_bind(oid_str, value_type, value)?;
-                var_binds.push(var_bind);
+                        // Encode each variable binding
+                        let var_bind = Self::encode_var_bind(oid_str, value_type, value)?;
+                        var_binds.push(var_bind);
+                    }
+                }
+
+                // Build the complete SNMP response message
+                return Self::build_response_message(version, request_id, community, 0, 0, var_binds);
+            } else if let Some(output) = response_data.get("output") {
+                // Standard LlmResponse format - extract output field and process as text
+                if let Some(output_str) = output.as_str() {
+                    debug!("LLM returned LlmResponse format, using 'output' field: {}", output_str);
+
+                    // Use the first requested OID
+                    let oid = requested_oids.first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("1.3.6.1.2.1.1.1.0");
+
+                    // Try to parse as integer first
+                    let var_bind = if let Ok(num) = output_str.trim().parse::<i32>() {
+                        Self::encode_var_bind(oid, "integer", &serde_json::Value::from(num))?
+                    } else {
+                        // Treat as string
+                        Self::encode_var_bind(oid, "string", &serde_json::Value::from(output_str))?
+                    };
+
+                    return Self::build_response_message(version, request_id, community, 0, 0, vec![var_bind]);
+                }
+                // If output is null or not a string, fall through to plain text handling
             }
+            // If JSON parsed but not recognized format, fall through to plain text handling
         }
 
-        // Build the complete SNMP response message
-        Self::build_response_message(version, request_id, community, 0, 0, var_binds)
+        // Fallback: treat as plain text value
+        // Use the first requested OID if available, otherwise use a default
+        let oid = requested_oids.first()
+            .map(|s| s.as_str())
+            .unwrap_or("1.3.6.1.2.1.1.1.0");
+
+        debug!("LLM returned plain text (not JSON), treating as simple value for OID {}: {}", oid, trimmed);
+
+        // Try to parse as integer first
+        let var_bind = if let Ok(num) = trimmed.parse::<i32>() {
+            Self::encode_var_bind(oid, "integer", &serde_json::Value::from(num))?
+        } else {
+            // Treat as string
+            Self::encode_var_bind(oid, "string", &serde_json::Value::from(trimmed))?
+        };
+
+        Self::build_response_message(version, request_id, community, 0, 0, vec![var_bind])
     }
 
     /// Encode a single variable binding

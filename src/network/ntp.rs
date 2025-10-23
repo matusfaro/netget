@@ -1,13 +1,30 @@
 //! NTP server implementation
 
-use crate::events::types::{AppEvent, NetworkEvent};
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
-use bytes::Bytes;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{error, info};
+
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::state::app_state::AppState;
+
+/// Get LLM context and output format instructions for NTP stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling NTP time synchronization requests (port 123).
+Respond with current time in NTP format (seconds since 1900-01-01)."#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "NTP response packet data (null if no response)",
+  "message": null  // Optional message for user
+}"#;
+
+    (context, output_format)
+}
 
 /// NTP packet structure (simplified)
 #[derive(Debug, Clone)]
@@ -30,6 +47,7 @@ struct NtpPacket {
 
 impl NtpPacket {
     /// Parse NTP packet from bytes
+    #[allow(dead_code)]
     fn from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < 48 {
             return None;
@@ -63,78 +81,79 @@ impl NtpPacket {
 }
 
 /// NTP server that forwards requests to LLM
-pub struct NtpServer {
-    addr: SocketAddr,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
-}
+pub struct NtpServer;
 
 impl NtpServer {
-    /// Create a new NTP server
-    pub async fn new(
-        addr: SocketAddr,
-        event_tx: mpsc::UnboundedSender<AppEvent>,
-    ) -> Result<Self> {
-        Ok(Self { addr, event_tx })
-    }
+    /// Spawn NTP server with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
+        let local_addr = socket.local_addr()?;
+        info!("NTP server listening on {}", local_addr);
 
-    /// Start the NTP server
-    pub async fn start(self) -> Result<()> {
-        // NTP typically uses port 123
-        let socket = UdpSocket::bind(self.addr).await?;
-        info!("NTP server listening on {}", socket.local_addr()?);
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 48]; // NTP packet is 48 bytes
 
-        // Send listening event
-        self.event_tx.send(AppEvent::Network(NetworkEvent::Listening {
-            addr: socket.local_addr()?,
-        }))?;
+            loop {
+                match socket.recv_from(&mut buffer).await {
+                    Ok((n, peer_addr)) => {
+                        let data = buffer[..n].to_vec();
+                        let connection_id = ConnectionId::new();
 
-        let mut buffer = vec![0u8; 128]; // NTP packets are typically 48 bytes
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let socket_clone = socket.clone();
 
-        loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((n, peer_addr)) => {
-                    // Create connection ID for this NTP request
-                    let connection_id = ConnectionId::new();
+                        tokio::spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let prompt_config = get_llm_prompt_config();
+                            let conn_memory = String::new();
 
-                    // Send connection event
-                    let _ = self.event_tx.send(AppEvent::Network(NetworkEvent::Connected {
-                        connection_id,
-                        remote_addr: peer_addr,
-                    }));
+                            // Build event description
+                            let event_description = format!(
+                                "NTP request from {} ({} bytes)",
+                                peer_addr, data.len()
+                            );
 
-                    // Parse NTP packet if possible
-                    let ntp_info = if let Some(packet) = NtpPacket::from_bytes(&buffer[..n]) {
-                        format!(
-                            "NTP Request: Version={}, Mode={}, Stratum={}",
-                            packet.version,
-                            match packet.mode {
-                                1 => "symmetric active",
-                                2 => "symmetric passive",
-                                3 => "client",
-                                4 => "server",
-                                5 => "broadcast",
-                                6 => "control",
-                                7 => "reserved",
-                                _ => "unknown",
-                            },
-                            packet.stratum
-                        )
-                    } else {
-                        format!("NTP Request: {} bytes (unparseable)", n)
-                    };
+                            let prompt = PromptBuilder::build_network_event_prompt(
+                                &state_clone,
+                                connection_id,
+                                &conn_memory,
+                                &event_description,
+                                prompt_config,
+                            ).await;
 
-                    // Send data received event
-                    let _ = self
-                        .event_tx
-                        .send(AppEvent::Network(NetworkEvent::DataReceived {
-                            connection_id,
-                            data: Bytes::from(ntp_info),
-                        }));
-                }
-                Err(e) => {
-                    tracing::error!("NTP receive error: {}", e);
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    if let Err(e) = socket_clone.send_to(llm_output.as_bytes(), peer_addr).await {
+                                        error!("Failed to send NTP response: {}", e);
+                                    } else {
+                                        let _ = status_clone.send(format!(
+                                            "→ NTP response to {} ({} bytes)",
+                                            peer_addr, llm_output.len()
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("LLM error for NTP: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for NTP: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("NTP receive error: {}", e);
+                        break;
+                    }
                 }
             }
-        }
+        });
+
+        Ok(local_addr)
     }
 }

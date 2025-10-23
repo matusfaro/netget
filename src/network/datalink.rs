@@ -5,32 +5,35 @@
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use pcap::{Active, Capture, Device};
+use pcap::{Capture, Device};
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
-use crate::events::types::NetworkEvent;
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::network::connection::ConnectionId;
+use crate::state::app_state::AppState;
 
-/// Data Link layer server that captures and injects packets
-pub struct DataLinkServer {
-    /// The network interface name
-    interface: String,
-    /// Event sender
-    event_tx: mpsc::UnboundedSender<NetworkEvent>,
-    /// Pcap capture handle (optional, set when listening)
-    capture: Option<Capture<Active>>,
+/// Get LLM context and output format instructions for DataLink stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling Data Link layer (Layer 2) packets via pcap.
+You can capture and inject Ethernet frames, handle ARP requests/responses, and work with raw MAC addresses.
+Common use cases: ARP spoofing detection, custom Ethernet protocols, network monitoring."#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "Ethernet frame data as hex (null if no response to inject)",
+  "message": null  // Optional message for user
+}"#;
+
+    (context, output_format)
 }
 
-impl DataLinkServer {
-    /// Create a new DataLink server for the specified interface
-    pub fn new(interface: String, event_tx: mpsc::UnboundedSender<NetworkEvent>) -> Self {
-        Self {
-            interface,
-            event_tx,
-            capture: None,
-        }
-    }
+/// Data Link layer server that captures and injects packets
+pub struct DataLinkServer;
 
+impl DataLinkServer {
     /// List available network interfaces
     pub fn list_devices() -> Result<Vec<Device>> {
         Device::list().context("Failed to list network devices")
@@ -45,138 +48,110 @@ impl DataLinkServer {
             .ok_or_else(|| anyhow::anyhow!("Device '{}' not found", name))
     }
 
-    /// Start capturing packets on the interface
-    pub fn start_capture(&mut self, filter: Option<&str>) -> Result<()> {
-        info!("Starting packet capture on interface: {}", self.interface);
+    /// Spawn datalink server with integrated LLM handling (async wrapper for blocking pcap)
+    pub async fn spawn_with_llm(
+        interface: String,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        filter: Option<String>,
+    ) -> Result<String> {
+        info!("Starting packet capture on interface: {}", interface);
 
-        // Find the device
-        let device = Self::find_device(&self.interface)?;
+        // Datalink/pcap is blocking, so we run it in a blocking task
+        let interface_clone = interface.clone();
+        tokio::task::spawn_blocking(move || {
+            // Find device
+            let device = match Self::find_device(&interface_clone) {
+                Ok(d) => d,
+                Err(e) => {
+                    error!("Failed to find device: {}", e);
+                    return;
+                }
+            };
 
-        // Open the device
-        let mut cap = Capture::from_device(device)
-            .context("Failed to create capture from device")?
-            .promisc(true) // Enable promiscuous mode
-            .snaplen(65535) // Capture full packets
-            .timeout(1000) // 1 second timeout for next_packet()
-            .open()
-            .context("Failed to open capture")?;
+            // Open capture
+            let mut cap = match Capture::from_device(device)
+                .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
+                .and_then(|c| c.open())
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Failed to open capture: {}", e);
+                    return;
+                }
+            };
 
-        // Apply filter if provided
-        if let Some(filter_str) = filter {
-            info!("Applying BPF filter: {}", filter_str);
-            cap.filter(filter_str, true)
-                .context("Failed to set packet filter")?;
-        }
+            // Apply filter if provided
+            if let Some(ref filter_str) = filter {
+                if let Err(e) = cap.filter(filter_str, true) {
+                    error!("Failed to apply filter: {}", e);
+                    return;
+                }
+            }
 
-        info!(
-            "Started capturing on {} in promiscuous mode",
-            self.interface
-        );
+            let runtime = tokio::runtime::Handle::current();
 
-        self.capture = Some(cap);
+            // Capture loop
+            loop {
+                match cap.next_packet() {
+                    Ok(packet) => {
+                        let data = Bytes::copy_from_slice(packet.data);
+                        let connection_id = ConnectionId::new();
 
-        // Send listening event (using interface as the "address")
-        let _ = self.event_tx.send(NetworkEvent::Listening {
-            addr: format!("{}:0", self.interface).parse().unwrap_or_else(|_| {
-                // Fallback to localhost if interface name can't be parsed as address
-                "127.0.0.1:0".parse().unwrap()
-            }),
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+
+                        // Spawn async task to handle packet with LLM
+                        runtime.spawn(async move {
+                            let model = state_clone.get_ollama_model().await;
+                            let prompt_config = get_llm_prompt_config();
+                            let conn_memory = String::new();
+
+                            // Build event description
+                            let event_description = format!(
+                                "Datalink packet captured ({} bytes)",
+                                data.len()
+                            );
+
+                            let prompt = PromptBuilder::build_network_event_prompt(
+                                &state_clone,
+                                connection_id,
+                                &conn_memory,
+                                &event_description,
+                                prompt_config,
+                            ).await;
+
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    let _ = status_clone.send(format!(
+                                        "→ Datalink packet processed: {} bytes → {} bytes response",
+                                        data.len(),
+                                        llm_output.len()
+                                    ));
+                                    // Note: Injecting packets back would require mutable cap access
+                                }
+                                Err(e) => {
+                                    error!("LLM error for datalink: {}", e);
+                                    let _ = status_clone.send(format!("✗ LLM error for datalink: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Err(pcap::Error::TimeoutExpired) => {
+                        // Normal timeout, continue
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("Packet capture error: {}", e);
+                        break;
+                    }
+                }
+            }
         });
 
-        Ok(())
-    }
-
-    /// Capture the next packet from the interface
-    /// Returns None if timeout occurs without a packet
-    pub fn next_packet(&mut self) -> Result<Option<Bytes>> {
-        if let Some(cap) = &mut self.capture {
-            match cap.next_packet() {
-                Ok(packet) => {
-                    let data = Bytes::copy_from_slice(packet.data);
-                    debug!("Captured packet: {} bytes", data.len());
-                    Ok(Some(data))
-                }
-                Err(pcap::Error::TimeoutExpired) => {
-                    // This is normal - just means no packet arrived within timeout
-                    Ok(None)
-                }
-                Err(e) => {
-                    error!("Error capturing packet: {}", e);
-                    Err(e.into())
-                }
-            }
-        } else {
-            Err(anyhow::anyhow!("Capture not started"))
-        }
-    }
-
-    /// Inject a raw packet onto the interface
-    pub fn inject_packet(&mut self, data: &[u8]) -> Result<()> {
-        if let Some(cap) = &mut self.capture {
-            debug!("Injecting packet: {} bytes", data.len());
-            cap.sendpacket(data)
-                .context("Failed to inject packet")?;
-            info!("Successfully injected {} byte packet", data.len());
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Capture not started, cannot inject"))
-        }
-    }
-
-    /// Get the interface name
-    pub fn interface(&self) -> &str {
-        &self.interface
-    }
-
-    /// Check if currently capturing
-    pub fn is_capturing(&self) -> bool {
-        self.capture.is_some()
-    }
-
-    /// Stop capturing
-    pub fn stop_capture(&mut self) {
-        if self.capture.is_some() {
-            info!("Stopping packet capture on {}", self.interface);
-            self.capture = None;
-        }
-    }
-
-    /// Run the capture loop, sending packets to the event channel
-    /// This is a blocking operation and should be run in a separate task
-    pub fn run_capture_loop(mut self) -> Result<()> {
-        info!("Starting capture loop on {}", self.interface);
-
-        loop {
-            match self.next_packet() {
-                Ok(Some(data)) => {
-                    // Send packet received event
-                    let _ = self.event_tx.send(NetworkEvent::PacketReceived {
-                        interface: self.interface.clone(),
-                        data,
-                    });
-                }
-                Ok(None) => {
-                    // Timeout - continue loop
-                    continue;
-                }
-                Err(e) => {
-                    error!("Error in capture loop: {}", e);
-                    let _ = self.event_tx.send(NetworkEvent::Error {
-                        connection_id: None,
-                        error: e.to_string(),
-                    });
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl Drop for DataLinkServer {
-    fn drop(&mut self) {
-        self.stop_capture();
+        Ok(interface)
     }
 }
 

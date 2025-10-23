@@ -19,7 +19,7 @@
               "type": {"const": "open_server"},
               "port": {"type": "integer"},
               "base_stack": {"type": "string"},
-              "send_banner": {"type": "boolean"},
+              "send_first": {"type": "boolean"},
               "initial_memory": {"type": "string"}
             },
             "required": ["type", "port", "base_stack"]

@@ -185,15 +185,20 @@ impl HttpLlmResponse {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandAction {
-    UpdateInstruction { instruction: String },
+    UpdateInstruction {
+        instruction: String
+    },
     OpenServer {
         port: u16,
         base_stack: String,
         #[serde(default)]
-        send_banner: bool,
+        send_first: bool,
         #[serde(default)]
         initial_memory: Option<String>,
+        /// The instruction prompt for handling network events
+        instruction: String,
     },
+    CloseServer,
     OpenClient {
         address: String,
         base_stack: String,

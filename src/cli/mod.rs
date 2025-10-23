@@ -42,10 +42,10 @@ pub async fn run() -> Result<()> {
         let state = AppState::new();
         let app = App::new();
         let llm = OllamaClient::default();
-        let event_handler = EventHandler::new(state.clone(), llm);
+        let event_handler = EventHandler::new(state.clone(), llm.clone());
 
         let _terminal_guard = setup::init_terminal()?;
-        tui::run_tui(state, app, event_handler, settings).await
+        tui::run_tui(state, app, event_handler, llm, settings, &args).await
     } else {
         // No prompt and no terminal available
         anyhow::bail!(

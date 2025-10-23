@@ -1,144 +1,174 @@
 //! IRC server implementation
 
-use crate::events::types::{AppEvent, NetworkEvent};
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
-use bytes::Bytes;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-/// IRC server that forwards messages to LLM
-pub struct IrcServer {
-    addr: SocketAddr,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::prompt::PromptBuilder;
+use crate::state::app_state::AppState;
+
+/// Get LLM context and output format instructions for IRC stack
+pub fn get_llm_prompt_config() -> (&'static str, &'static str) {
+    let context = r#"You are handling IRC chat protocol (port 6667).
+Respond to IRC commands like JOIN, PART, PRIVMSG, NICK, USER, PING, etc.
+Use IRC response codes (e.g., 001 for welcome, 332 for topic)."#;
+
+    let output_format = r#"IMPORTANT: Respond with a JSON object:
+{
+  "output": "IRC response message (null if no response)",
+  "close_connection": false,  // Close this connection after sending
+  "message": null  // Optional message for user
+}"#;
+
+    (context, output_format)
 }
+
+/// IRC server that forwards messages to LLM
+pub struct IrcServer;
 
 impl IrcServer {
-    /// Create a new IRC server
-    pub async fn new(
-        addr: SocketAddr,
-        event_tx: mpsc::UnboundedSender<AppEvent>,
-    ) -> Result<Self> {
-        Ok(Self { addr, event_tx })
-    }
+    /// Spawn IRC server with integrated LLM handling
+    pub async fn spawn_with_llm(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<SocketAddr> {
+        let listener = TcpListener::bind(listen_addr).await?;
+        let local_addr = listener.local_addr()?;
+        info!("IRC server listening on {}", local_addr);
 
-    /// Start the IRC server
-    pub async fn start(self) -> Result<()> {
-        let listener = TcpListener::bind(self.addr).await?;
-        info!("IRC server listening on {}", listener.local_addr()?);
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, peer_addr)) => {
+                        let connection_id = ConnectionId::new();
+                        info!("Accepted IRC connection {} from {}", connection_id, peer_addr);
 
-        // Send listening event
-        self.event_tx.send(AppEvent::Network(NetworkEvent::Listening {
-            addr: listener.local_addr()?,
-        }))?;
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
 
-        loop {
-            match listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    let event_tx = self.event_tx.clone();
-
-                    // Spawn task to handle this IRC connection
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_irc_connection(stream, peer_addr, event_tx).await {
-                            error!("IRC connection error: {}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("Failed to accept IRC connection: {}", e);
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_irc_with_llm(
+                                stream,
+                                connection_id,
+                                llm_clone,
+                                state_clone,
+                                status_clone,
+                            ).await {
+                                error!("IRC connection error: {}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to accept IRC connection: {}", e);
+                        break;
+                    }
                 }
             }
-        }
+        });
+
+        Ok(local_addr)
     }
 }
 
-/// Handle a single IRC connection
-async fn handle_irc_connection(
-    mut stream: TcpStream,
-    peer_addr: SocketAddr,
-    event_tx: mpsc::UnboundedSender<AppEvent>,
+/// Handle IRC connection with integrated LLM
+async fn handle_irc_with_llm(
+    stream: TcpStream,
+    connection_id: ConnectionId,
+    llm_client: OllamaClient,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
 ) -> Result<()> {
-    let connection_id = ConnectionId::new();
-
-    // Send connection event
-    event_tx.send(AppEvent::Network(NetworkEvent::Connected {
-        connection_id,
-        remote_addr: peer_addr,
-    }))?;
-
-    let (read_half, _write_half) = stream.split();
+    let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
+    let mut connection_memory = String::new();
 
     loop {
         line.clear();
         match reader.read_line(&mut line).await {
             Ok(0) => {
                 // Connection closed
-                event_tx.send(AppEvent::Network(NetworkEvent::Disconnected {
-                    connection_id,
-                }))?;
+                let _ = status_tx.send(format!("✗ IRC connection {} closed", connection_id));
                 break;
             }
             Ok(_) => {
-                // Parse IRC message
                 let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    let irc_msg = parse_irc_message(trimmed);
+                if trimmed.is_empty() {
+                    continue;
+                }
 
-                    // Send to LLM
-                    event_tx.send(AppEvent::Network(NetworkEvent::DataReceived {
-                        connection_id,
-                        data: Bytes::from(irc_msg),
-                    }))?;
+                // Call LLM with the IRC line
+                let model = app_state.get_ollama_model().await;
+                let prompt_config = get_llm_prompt_config();
+
+                // Build event description
+                let event_description = format!("IRC message received on connection {}: {}", connection_id, trimmed);
+
+                let prompt = PromptBuilder::build_network_event_prompt(
+                    &app_state,
+                    connection_id,
+                    &connection_memory,
+                    &event_description,
+                    prompt_config,
+                ).await;
+
+                match llm_client.generate_llm_response(&model, &prompt).await {
+                    Ok(response) => {
+                        // Handle common actions and update connection memory
+                        use crate::llm::response_handler;
+                        let processed = response_handler::handle_llm_response(response, &app_state, &mut connection_memory).await;
+
+                        // Send output if present
+                        if let Some(output) = processed.output {
+                            // Ensure IRC messages end with \r\n
+                            let formatted = if output.ends_with("\r\n") {
+                                output.clone()
+                            } else if output.ends_with('\n') {
+                                format!("{}\r", output)
+                            } else {
+                                format!("{}\r\n", output)
+                            };
+
+                            if let Err(e) = write_half.write_all(formatted.as_bytes()).await {
+                                error!("Failed to send IRC response: {}", e);
+                                break;
+                            }
+                            if let Err(e) = write_half.flush().await {
+                                error!("Failed to flush IRC response: {}", e);
+                                break;
+                            }
+                            let _ = status_tx.send(format!("→ IRC to {}: {}", connection_id, formatted.trim()));
+                        }
+
+                        // Handle close
+                        if processed.close_connection {
+                            let _ = status_tx.send(format!("✗ Closing IRC connection {}", connection_id));
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("LLM error for IRC: {}", e);
+                        let _ = status_tx.send(format!("✗ LLM error for IRC: {}", e));
+                    }
                 }
             }
             Err(e) => {
                 error!("IRC read error: {}", e);
-                event_tx.send(AppEvent::Network(NetworkEvent::Disconnected {
-                    connection_id,
-                }))?;
                 break;
             }
         }
     }
 
     Ok(())
-}
-
-/// Parse IRC message into a more readable format for the LLM
-fn parse_irc_message(line: &str) -> String {
-    // Basic IRC message parsing
-    // Format: [:<prefix>] <command> [<params>]
-
-    let mut parts = line.split_whitespace();
-
-    let (prefix, command) = if line.starts_with(':') {
-        // Has prefix
-        let prefix = parts.next().unwrap_or("").trim_start_matches(':');
-        let command = parts.next().unwrap_or("");
-        (Some(prefix), command)
-    } else {
-        // No prefix
-        let command = parts.next().unwrap_or("");
-        (None, command)
-    };
-
-    // Collect remaining parameters
-    let params: Vec<&str> = parts.collect();
-
-    // Format for LLM
-    if let Some(prefix) = prefix {
-        format!(
-            "IRC: {} from '{}' with params: {:?}",
-            command, prefix, params
-        )
-    } else {
-        format!("IRC: {} with params: {:?}", command, params)
-    }
 }
 
 /// Send an IRC response

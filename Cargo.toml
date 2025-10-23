@@ -15,6 +15,8 @@ snmp = ["rasn-snmp", "rasn"]
 ssh = ["russh", "russh-keys", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
 all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc"]
+# E2E testing feature - marker to enable end-to-end black-box tests
+e2e-tests = []
 
 [dependencies]
 # Async runtime
@@ -82,11 +84,15 @@ russh-keys = { version = "0.45", optional = true }
 async-trait = { version = "0.1", optional = true }
 
 [dev-dependencies]
-# FTP client for integration tests
-suppaftp = "6.0"
 # For async tests
 tokio-test = "0.4"
 # For e2e test setup/teardown
 ctor = "0.2"
+
+# E2E test dependencies (only used when e2e-tests feature is enabled via test files' cfg gates)
+# FTP client for e2e integration tests
+suppaftp = "6.0"
 # For process management in e2e tests (Unix signals)
 nix = { version = "0.29", features = ["signal", "process"] }
+# SNMP client for e2e integration tests
+snmp = "0.2"
