@@ -3,7 +3,7 @@
 //! This module defines the trait that all protocols must implement
 //! to provide their own action systems.
 
-use super::ActionDefinition;
+use super::{ActionDefinition, ParameterDefinition};
 use crate::state::app_state::AppState;
 use anyhow::Result;
 
@@ -149,10 +149,24 @@ impl ActionResult {
 /// Trait for protocol-specific action systems
 ///
 /// Each protocol implements this trait to provide:
-/// 1. Async actions - executable anytime from user input
-/// 2. Sync actions - executable during network events
-/// 3. Action executor - parses and executes protocol actions
+/// 1. Startup parameters - configuration accepted when opening server
+/// 2. Async actions - executable anytime from user input
+/// 3. Sync actions - executable during network events
+/// 4. Action executor - parses and executes protocol actions
 pub trait ProtocolActions: Send + Sync {
+    /// Get startup parameters that can be provided when opening a server
+    ///
+    /// These parameters configure the protocol before it starts accepting
+    /// connections. Examples:
+    /// - Proxy: certificate_mode, request_filter_mode, response_filter_mode
+    /// - SSH: host_key_path, banner_message
+    /// - SNMP: community_string, allowed_oids
+    ///
+    /// Default implementation returns empty vector (no startup parameters).
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        Vec::new()
+    }
+
     /// Get async actions that can be executed anytime from user input
     ///
     /// These actions don't require network context. Examples:

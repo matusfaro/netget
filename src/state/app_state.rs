@@ -121,6 +121,7 @@ impl AppState {
                 created_at: s.created_at,
                 status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
+                startup_params: s.startup_params.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
             }
@@ -147,6 +148,7 @@ impl AppState {
                 created_at: s.created_at,
                 status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
+                startup_params: s.startup_params.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
             }

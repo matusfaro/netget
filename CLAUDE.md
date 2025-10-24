@@ -83,6 +83,12 @@ LLM returns `{actions: [...]}` instead of nested structures. Each action is self
 
 **Philosophy**: Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients.
 
+**CRITICAL: Test Organization**:
+- **ALL tests MUST be in the `tests/` directory, NEVER in `src/`**
+- Unit tests use `#[cfg(test)]` modules in `tests/` files
+- Integration tests in `tests/` as separate files
+- No test modules under `src/` - only production code
+
 **Unit tests**: No Ollama required. Test parsing and detection logic.
 
 **Integration tests** (`tests/`): Require Ollama + model. Use real clients (suppaftp, reqwest, ssh2, raw sockets).

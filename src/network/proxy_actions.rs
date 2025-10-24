@@ -9,7 +9,7 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    ActionDefinition, Parameter,
+    ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::network::proxy_filter::{
     ProxyFilterConfig, CertificateMode, RequestFilter, ResponseFilter, HttpsConnectionFilter,
@@ -30,6 +30,53 @@ impl ProxyProtocol {
 }
 
 impl ProtocolActions for ProxyProtocol {
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "certificate_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)".to_string(),
+                required: false,
+                example: json!("generate"),
+            },
+            ParameterDefinition {
+                name: "cert_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to certificate file (only if certificate_mode is 'load_from_file')".to_string(),
+                required: false,
+                example: json!("/path/to/cert.pem"),
+            },
+            ParameterDefinition {
+                name: "key_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to private key file (only if certificate_mode is 'load_from_file')".to_string(),
+                required: false,
+                example: json!("/path/to/key.pem"),
+            },
+            ParameterDefinition {
+                name: "request_filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Request filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass through)".to_string(),
+                required: false,
+                example: json!("match_only"),
+            },
+            ParameterDefinition {
+                name: "response_filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response filter mode: 'all', 'match_only', or 'none'".to_string(),
+                required: false,
+                example: json!("all"),
+            },
+            ParameterDefinition {
+                name: "https_connection_filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "HTTPS connection filter mode (pass-through only): 'all', 'match_only', or 'none'".to_string(),
+                required: false,
+                example: json!("match_only"),
+            },
+        ]
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             // Configuration actions (async - can be called anytime)

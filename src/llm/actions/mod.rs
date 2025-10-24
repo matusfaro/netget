@@ -8,10 +8,47 @@ pub mod executor;
 pub mod common;
 
 // Re-export commonly used functions and types
-pub use common::{get_user_input_common_actions, get_network_event_common_actions};
+pub use common::{get_user_input_common_actions, get_network_event_common_actions, generate_base_stack_documentation};
 
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+
+/// Definition of a configuration parameter for prompt generation
+///
+/// This describes a startup parameter that a protocol accepts,
+/// including its name, type, description, and an example value.
+#[derive(Debug, Clone)]
+pub struct ParameterDefinition {
+    /// Parameter name (e.g., "certificate_mode", "max_connections")
+    pub name: String,
+
+    /// Type hint for the LLM (e.g., "string", "number", "boolean", "object")
+    pub type_hint: String,
+
+    /// Human-readable description of what this parameter does
+    pub description: String,
+
+    /// Whether this parameter is required
+    pub required: bool,
+
+    /// JSON example showing a valid value for this parameter
+    pub example: serde_json::Value,
+}
+
+impl ParameterDefinition {
+    /// Convert to prompt text format for LLM
+    pub fn to_prompt_text(&self) -> String {
+        let required = if self.required { "required" } else { "optional" };
+        format!(
+            "\"{}\": {}  // {} ({})\nExample: {}",
+            self.name,
+            self.type_hint,
+            self.description,
+            required,
+            serde_json::to_string(&self.example).unwrap_or_default()
+        )
+    }
+}
 
 /// Definition of an action for prompt generation
 ///
