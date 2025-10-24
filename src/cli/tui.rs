@@ -49,13 +49,13 @@ pub async fn run_tui(
     app.add_message("  TCP (Beta): \"Pretend to be FTP server on port 2121; serve file accounts.csv with 'balance,0'\"".to_string());
     app.add_message("  HTTP (Beta): \"Pretend to be a sassy HTTP server on port 8080 serving cooking recipes\"".to_string());
     app.add_message("  SSH/SFTP (Beta): \"Pretent to be a shell via SSH on port 2222\"".to_string());
+    app.add_message("  DNS (Beta): \"DNS server on port 5252 and resolve everything to 1.2.3.4\"".to_string());
     app.add_message("  NTP (Beta; root-only): \"pretend to be a ntp server on port 123\"".to_string());
     app.add_message("  SNMP (Alpha): \"SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'\"".to_string());
-    app.add_message("  Ethernet (Stub; root-only)".to_string());
-    app.add_message("  UDP (Stub)".to_string());
+    app.add_message("  Ethernet (Alpha; root-only)".to_string());
+    app.add_message("  UDP (Alpha)".to_string());
     app.add_message("  DHCP (Stub)".to_string());
     app.add_message("  IRC (Stub)".to_string());
-    app.add_message("  DNS (Stub)".to_string());
     app.add_message("".to_string());
     app.add_message("Other prompts:".to_string());
     app.add_message("  ".to_string());

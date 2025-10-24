@@ -8,10 +8,10 @@
 mod e2e;
 
 use e2e::helpers::{self, ServerConfig, E2EResult};
-use hickory_client::client::{Client, SyncClient};
+use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::rr::{DNSClass, Name, RecordType};
-use hickory_client::udp::UdpClientConnection;
-use std::net::{Ipv4Addr, SocketAddr};
+use hickory_client::udp::UdpClientStream;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -38,13 +38,16 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
     // VALIDATION: Use hickory-client to query DNS
     println!("Querying example.com A record...");
 
-    let address = SocketAddr::new("127.0.0.1".parse()?, server.port);
-    let conn = UdpClientConnection::new(address)?;
-    let client = SyncClient::new(conn);
+    let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let stream = UdpClientStream::<tokio::net::UdpSocket>::new(address);
+    let (mut client, bg) = AsyncClient::connect(stream).await?;
+
+    // Run the background task
+    tokio::spawn(bg);
 
     // Query for example.com A record
     let name = Name::from_str("example.com.")?;
-    let response = client.query(&name, DNSClass::IN, RecordType::A)?;
+    let response = client.query(name, DNSClass::IN, RecordType::A).await?;
 
     println!("DNS response received:");
     let answers = response.answers();
@@ -82,21 +85,22 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query multiple domains
-    let address = SocketAddr::new("127.0.0.1".parse()?, server.port);
-    let conn = UdpClientConnection::new(address)?;
-    let client = SyncClient::new(conn);
+    let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let stream = UdpClientStream::<tokio::net::UdpSocket>::new(address);
+    let (mut client, bg) = AsyncClient::connect(stream).await?;
+    tokio::spawn(bg);
 
     // Query example.com
     println!("Querying example.com...");
     let name1 = Name::from_str("example.com.")?;
-    let response1 = client.query(&name1, DNSClass::IN, RecordType::A)?;
+    let response1 = client.query(name1, DNSClass::IN, RecordType::A).await?;
     assert!(!response1.answers().is_empty(), "Expected answer for example.com");
     println!("  ✓ example.com returned {} records", response1.answers().len());
 
     // Query mail.example.com
     println!("Querying mail.example.com...");
     let name2 = Name::from_str("mail.example.com.")?;
-    let response2 = client.query(&name2, DNSClass::IN, RecordType::A)?;
+    let response2 = client.query(name2, DNSClass::IN, RecordType::A).await?;
     assert!(!response2.answers().is_empty(), "Expected answer for mail.example.com");
     println!("  ✓ mail.example.com returned {} records", response2.answers().len());
 
@@ -125,13 +129,14 @@ async fn test_dns_txt_record() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query TXT record
-    let address = SocketAddr::new("127.0.0.1".parse()?, server.port);
-    let conn = UdpClientConnection::new(address)?;
-    let client = SyncClient::new(conn);
+    let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let stream = UdpClientStream::<tokio::net::UdpSocket>::new(address);
+    let (mut client, bg) = AsyncClient::connect(stream).await?;
+    tokio::spawn(bg);
 
     println!("Querying example.com TXT record...");
     let name = Name::from_str("example.com.")?;
-    let response = client.query(&name, DNSClass::IN, RecordType::TXT)?;
+    let response = client.query(name, DNSClass::IN, RecordType::TXT).await?;
 
     println!("DNS TXT response received:");
     let answers = response.answers();
@@ -168,15 +173,16 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query an unknown domain
-    let address = SocketAddr::new("127.0.0.1".parse()?, server.port);
-    let conn = UdpClientConnection::new(address)?;
-    let client = SyncClient::new(conn);
+    let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let stream = UdpClientStream::<tokio::net::UdpSocket>::new(address);
+    let (mut client, bg) = AsyncClient::connect(stream).await?;
+    tokio::spawn(bg);
 
     println!("Querying unknown.example.com (should get NXDOMAIN or empty response)...");
     let name = Name::from_str("unknown.example.com.")?;
 
     // Try to query - might get an error or empty response depending on implementation
-    match client.query(&name, DNSClass::IN, RecordType::A) {
+    match client.query(name, DNSClass::IN, RecordType::A).await {
         Ok(response) => {
             // Server might return empty answers or NXDOMAIN response code
             println!("  Response code: {:?}", response.response_code());
