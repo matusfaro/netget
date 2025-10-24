@@ -97,6 +97,7 @@ cargo test --lib  # Unit tests
 cargo test --test tcp_integration_test  # TCP/FTP tests
 cargo test --test http_integration_test  # HTTP tests
 cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
+cargo test --test e2e_proxy_test --features e2e-tests,proxy  # Proxy tests
 ```
 
 ### E2E Test Performance
@@ -129,6 +130,44 @@ cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
 - TCP/FTP tests: May show occasional flakiness (1-2 failures) when running with --test-threads=3 due to LLM overload
   - All tests pass reliably when run individually
   - Reduced from >5 minutes to ~20 seconds (15x improvement)
+
+### Privacy and Network Isolation Policy
+
+**CRITICAL SECURITY REQUIREMENT**: NetGet must NOT leak information to external networks during testing or runtime unless explicitly requested by the user.
+
+**Testing Requirements**:
+1. **All tests MUST pass without internet access** - Tests must use local servers only
+2. **No external endpoints** - Tests must NOT make requests to public services (e.g., httpbin.org, example.com)
+3. **Self-contained test infrastructure** - Create local HTTP/HTTPS servers within test code
+4. **Localhost only** - All test traffic must be to 127.0.0.1 or ::1
+
+**Runtime Requirements**:
+1. **Explicit user consent** - Only make external network requests when user prompt explicitly requests it
+2. **No telemetry** - Never send usage data, metrics, or logs to external services
+3. **No automatic updates** - Never check for updates or download content without user request
+4. **LLM-controlled external access** - External network requests only when LLM receives explicit instructions from user
+
+**Test Server Pattern**:
+```rust
+// CORRECT: Local HTTPS test server
+async fn start_test_https_server() -> (u16, JoinHandle<()>) {
+    // Generate self-signed cert
+    // Bind to 127.0.0.1:0
+    // Return port and handle
+}
+
+// INCORRECT: External service
+let response = client.get("https://httpbin.org/get").send().await; // ❌ NEVER
+```
+
+**Violation Examples**:
+- ❌ Using httpbin.org, example.com, or any public service in tests
+- ❌ DNS queries to real DNS servers in tests
+- ❌ Downloading dependencies or data at runtime
+- ❌ Sending logs/metrics to external services
+- ❌ Checking for updates automatically
+
+This policy ensures NetGet respects user privacy and works in isolated/air-gapped environments.
 
 ## Logging (CRITICAL)
 

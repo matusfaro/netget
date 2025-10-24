@@ -68,7 +68,7 @@ Available actions:
 {{
   "type": "open_server",
   "port": 8080,  // Port number
-  "base_stack": "tcp",  // Stack: "tcp" (raw TCP), "http stack" (HTTP server), "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc"
+  "base_stack": "tcp",  // Stack: "tcp" (raw TCP), "http stack" (HTTP server), "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "proxy", "webdav", "nfs"
   "send_first": true,  // True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
   "initial_memory": null,  // Optional initial memory
   "instruction": "Detailed instructions for handling network events..."
@@ -462,6 +462,140 @@ Response (JSON only):"#,
         };
 
         let trigger = format!("Event: {}", event_description);
+
+        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions).await
+    }
+
+    // ========================================================================
+    // Proxy-Specific Prompts
+    // ========================================================================
+
+    /// Build prompt for HTTP request interception (MITM mode or HTTP)
+    #[cfg(feature = "proxy")]
+    pub async fn build_proxy_http_request_prompt(
+        state: &AppState,
+        server_id: ServerId,
+        request_info: &crate::network::proxy_filter::FullRequestInfo,
+        all_actions: Vec<ActionDefinition>,
+    ) -> String {
+        let instruction = state.get_instruction(server_id).await.unwrap_or_default();
+        let instructions = if instruction.is_empty() {
+            "Decide whether to pass, block, or modify this HTTP request."
+        } else {
+            &instruction
+        };
+
+        // Format request info for display
+        let body_preview = if request_info.body.len() > 500 {
+            format!("{}... ({} bytes total)",
+                String::from_utf8_lossy(&request_info.body[..500]),
+                request_info.body.len())
+        } else {
+            String::from_utf8_lossy(&request_info.body).to_string()
+        };
+
+        let headers_text: String = request_info.headers.iter()
+            .map(|(k, v)| format!("  {}: {}", k, v))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let event_description = format!(
+            "HTTP {} {} from {}\n\n\
+             Host: {}\n\
+             Path: {}\n\
+             Full URL: {}\n\n\
+             Headers:\n{}\n\n\
+             Body:\n{}",
+            request_info.method,
+            request_info.path,
+            request_info.client_addr,
+            request_info.host,
+            request_info.path,
+            request_info.url,
+            headers_text,
+            body_preview
+        );
+
+        let trigger = format!("Intercepted HTTP Request:\n{}", event_description);
+
+        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions).await
+    }
+
+    /// Build prompt for HTTPS connection decision (pass-through mode, no MITM)
+    #[cfg(feature = "proxy")]
+    pub async fn build_proxy_https_connection_prompt(
+        state: &AppState,
+        server_id: ServerId,
+        conn_info: &crate::network::proxy_filter::HttpsConnectionInfo,
+        all_actions: Vec<ActionDefinition>,
+    ) -> String {
+        let instruction = state.get_instruction(server_id).await.unwrap_or_default();
+        let instructions = if instruction.is_empty() {
+            "Decide whether to allow or block this HTTPS connection. Note: In pass-through mode, you cannot see or modify the encrypted content."
+        } else {
+            &instruction
+        };
+
+        let event_description = format!(
+            "HTTPS CONNECT Request:\n\n\
+             Destination: {}:{}\n\
+             SNI: {}\n\
+             Client: {}\n\n\
+             Note: This connection uses TLS encryption. Without MITM certificate, \
+             you can only allow or block the connection, but cannot inspect or modify the traffic.",
+            conn_info.destination_host,
+            conn_info.destination_port,
+            conn_info.sni.as_ref().unwrap_or(&"(not available)".to_string()),
+            conn_info.client_addr
+        );
+
+        let trigger = format!("HTTPS Connection Request:\n{}", event_description);
+
+        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions).await
+    }
+
+    /// Build prompt for HTTP response interception (MITM mode)
+    #[cfg(feature = "proxy")]
+    pub async fn build_proxy_http_response_prompt(
+        state: &AppState,
+        server_id: ServerId,
+        response_info: &crate::network::proxy_filter::FullResponseInfo,
+        all_actions: Vec<ActionDefinition>,
+    ) -> String {
+        let instruction = state.get_instruction(server_id).await.unwrap_or_default();
+        let instructions = if instruction.is_empty() {
+            "Decide whether to pass, block, or modify this HTTP response before returning it to the client."
+        } else {
+            &instruction
+        };
+
+        // Format response info for display
+        let body_preview = if response_info.body.len() > 500 {
+            format!("{}... ({} bytes total)",
+                String::from_utf8_lossy(&response_info.body[..500]),
+                response_info.body.len())
+        } else {
+            String::from_utf8_lossy(&response_info.body).to_string()
+        };
+
+        let headers_text: String = response_info.headers.iter()
+            .map(|(k, v)| format!("  {}: {}", k, v))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let event_description = format!(
+            "HTTP Response (Status: {})\n\
+             From request: {} {}\n\n\
+             Headers:\n{}\n\n\
+             Body:\n{}",
+            response_info.status,
+            response_info.request_host,
+            response_info.request_path,
+            headers_text,
+            body_preview
+        );
+
+        let trigger = format!("Intercepted HTTP Response:\n{}", event_description);
 
         Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions).await
     }
