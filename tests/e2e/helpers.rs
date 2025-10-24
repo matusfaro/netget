@@ -123,6 +123,7 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         cmd.arg("--model").arg(model);
     } else {
         // Use the same default as the application
+        // Note: Proxy tests require a capable model like qwen3-coder:30b
         cmd.arg("--model").arg("qwen3-coder:30b");
     }
 
@@ -260,6 +261,12 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
     // Check specific protocol stacks first (before generic UDP/TCP)
     if prompt_lower.contains("http stack") || prompt_lower.contains("via http") {
         Some("HTTP".to_string())
+    } else if prompt_lower.contains("proxy stack") || prompt_lower.contains("using proxy") || prompt_lower.contains("via proxy") {
+        Some("Proxy".to_string())
+    } else if prompt_lower.contains("webdav stack") || prompt_lower.contains("using webdav") || prompt_lower.contains("via webdav") {
+        Some("WebDAV".to_string())
+    } else if prompt_lower.contains("nfs stack") || prompt_lower.contains("using nfs") || prompt_lower.contains("via nfs") {
+        Some("NFS".to_string())
     } else if prompt_lower.contains("via ssh") || prompt_lower.contains("ssh.") || prompt_lower.contains("sftp") {
         Some("SSH".to_string())
     } else if prompt_lower.contains("via irc") || prompt_lower.contains("irc") {
@@ -308,7 +315,17 @@ async fn wait_for_server_startup(
             // Look for SERVER message pattern: "[SERVER] Starting server #N (<STACK>) on <ADDRESS>:<PORT>"
             if line.contains("[SERVER]") && line.contains("Starting server") && line.contains("on ") {
                 // Extract stack type
-                if line.contains("HTTP") {
+                // Check for new protocols first (more specific)
+                // Note: Server output uses UPPERCASE for protocol names in stack trace
+                // e.g., "ETH>IP>TCP>HTTP>PROXY" or "ETH>IP>TCP>HTTP>WEBDAV"
+                // So we check for uppercase versions but return title case for consistency
+                if line.contains("PROXY") {
+                    stack = "Proxy".to_string();
+                } else if line.contains("WEBDAV") {
+                    stack = "WebDAV".to_string();
+                } else if line.contains("NFS") {
+                    stack = "NFS".to_string();
+                } else if line.contains("HTTP") {
                     stack = "HTTP".to_string();
                 } else if line.contains("SNMP") {
                     stack = "SNMP".to_string();
