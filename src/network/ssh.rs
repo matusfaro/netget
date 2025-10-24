@@ -39,6 +39,7 @@ pub struct SshServer {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
+    server_id: Option<crate::state::ServerId>,
 }
 
 impl SshServer {
@@ -134,7 +135,11 @@ pub struct SshHandler {
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     /// Active channels and their types
-    channels: Arc<Mutex<HashMap<ChannelId, ChannelType>>>,
+    channel_types: Arc<Mutex<HashMap<ChannelId, ChannelType>>>,
+    /// Active channel objects (for SFTP)
+    channels: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
+    /// Input buffers for shell channels (accumulate until newline)
+    shell_buffers: Arc<Mutex<HashMap<ChannelId, Vec<u8>>>>,
 }
 
 /// Type of SSH channel
@@ -158,8 +163,15 @@ impl SshHandler {
             llm_client,
             app_state,
             status_tx,
+            channel_types: Arc::new(Mutex::new(HashMap::new())),
             channels: Arc::new(Mutex::new(HashMap::new())),
+            shell_buffers: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Get a channel object from the internal storage
+    async fn get_channel(&mut self, channel_id: ChannelId) -> Option<Channel<Msg>> {
+        self.channels.lock().await.remove(&channel_id)
     }
 
     /// Ask LLM about authentication
@@ -341,7 +353,8 @@ impl russh::server::Handler for SshHandler {
         }
 
         let channel_id = channel.id();
-        self.channels.lock().await.insert(channel_id, ChannelType::Session);
+        self.channel_types.lock().await.insert(channel_id, ChannelType::Session);
+        self.channels.lock().await.insert(channel_id, channel);
 
         debug!("SSH session channel {} opened", channel_id);
         Ok(true)
@@ -353,23 +366,78 @@ impl russh::server::Handler for SshHandler {
         name: &str,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        debug!("SSH subsystem request: {}", name);
+        // DEBUG: SSH subsystem request summary
+        debug!("SSH request: SUBSYSTEM channel={}, name={}", channel_id, name);
+
+        // TRACE: Full SSH subsystem request
+        trace!("SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
+            channel_id, name, self.connection_id);
 
         if name == "sftp" {
             if !self.config.sftp_enabled {
                 error!("SFTP subsystem requested but SFTP is disabled");
+
+                // DEBUG: SFTP rejection
+                debug!("SSH response: CHANNEL_FAILURE (SFTP disabled)");
+
                 session.channel_failure(channel_id);
                 return Ok(());
             }
 
-            self.channels.lock().await.insert(channel_id, ChannelType::Sftp);
-            info!("SSH SFTP subsystem started on channel {}", channel_id);
-            session.channel_success(channel_id);
+            self.channel_types.lock().await.insert(channel_id, ChannelType::Sftp);
 
-            // Note: Full SFTP protocol implementation would go here
-            // For now, we just mark the channel as SFTP and let data() handle packets
+            // INFO: Major lifecycle event
+            info!("SSH SFTP subsystem started on channel {} (connection {})",
+                channel_id, self.connection_id);
+
+            // Get the channel object
+            if let Some(channel) = self.get_channel(channel_id).await {
+                // DEBUG: SFTP subsystem starting
+                debug!("SSH response: CHANNEL_SUCCESS (starting SFTP handler)");
+
+                // TRACE: SFTP handler creation
+                trace!("Creating LlmSftpHandler for channel {} on connection {}",
+                    channel_id, self.connection_id);
+
+                session.channel_success(channel_id);
+
+                // Create LLM-controlled SFTP handler
+                let sftp_handler = crate::network::LlmSftpHandler::new(
+                    self.connection_id,
+                    self.llm_client.clone(),
+                    self.app_state.clone(),
+                    self.status_tx.clone(),
+                );
+
+                // Run SFTP protocol (this handles all packet parsing)
+                // NOTE: This blocks until SFTP session ends
+                trace!("Starting russh_sftp::server::run() for channel {}", channel_id);
+                russh_sftp::server::run(channel.into_stream(), sftp_handler).await;
+
+                // INFO: SFTP session lifecycle event
+                info!("SFTP session ended on channel {} (connection {})",
+                    channel_id, self.connection_id);
+
+                // DEBUG: SFTP session ended
+                debug!("SSH: SFTP subsystem terminated on channel {}", channel_id);
+            } else {
+                error!("SFTP channel {} not found (this should not happen)", channel_id);
+
+                // DEBUG: Channel lookup failure
+                debug!("SSH response: CHANNEL_FAILURE (channel not found)");
+
+                session.channel_failure(channel_id);
+            }
         } else {
-            error!("Unknown subsystem requested: {}", name);
+            error!("Unknown subsystem requested: '{}' on channel {}", name, channel_id);
+
+            // DEBUG: Unknown subsystem rejection
+            debug!("SSH response: CHANNEL_FAILURE (unknown subsystem '{}')", name);
+
+            // TRACE: Full rejection details
+            trace!("SSH rejecting unknown subsystem: name='{}', channel={}, connection={}",
+                name, channel_id, self.connection_id);
+
             session.channel_failure(channel_id);
         }
 
@@ -439,32 +507,53 @@ impl russh::server::Handler for SshHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        let channels = self.channels.lock().await;
-        let channel_type = channels.get(&channel_id);
+        let channel_types = self.channel_types.lock().await;
+        let channel_type = channel_types.get(&channel_id).cloned();
+        drop(channel_types); // Release lock before async operations
 
         match channel_type {
             Some(ChannelType::Session) => {
-                // Shell data
+                // Shell data - buffer until newline
                 trace!("SSH shell data received on channel {}: {:?}", channel_id, String::from_utf8_lossy(data));
 
-                if let Ok(Some(output)) = self.llm_shell_command(data).await {
-                    let response = CryptoVec::from_slice(&output);
-                    session.data(channel_id, response);
-                    debug!("Sent shell response ({} bytes)", output.len());
+                // Echo the input back to the client (so user sees what they're typing)
+                let echo = CryptoVec::from_slice(data);
+                session.data(channel_id, echo);
+
+                // Get or create buffer for this channel
+                let mut buffers = self.shell_buffers.lock().await;
+                let buffer = buffers.entry(channel_id).or_insert_with(Vec::new);
+
+                // Append new data to buffer
+                buffer.extend_from_slice(data);
+
+                // Check if buffer contains newline (Enter key)
+                let has_newline = buffer.iter().any(|&b| b == b'\n' || b == b'\r');
+
+                if has_newline {
+                    // Extract the complete line
+                    let line = buffer.clone();
+                    buffer.clear(); // Clear buffer for next line
+                    drop(buffers); // Release lock before async LLM call
+
+                    // Process the complete line with LLM
+                    debug!("SSH shell processing complete line ({} bytes)", line.len());
+                    trace!("SSH shell complete line: {:?}", String::from_utf8_lossy(&line));
+
+                    if let Ok(Some(output)) = self.llm_shell_command(&line).await {
+                        let response = CryptoVec::from_slice(&output);
+                        session.data(channel_id, response);
+                        debug!("Sent shell response ({} bytes)", output.len());
+                    }
+                } else {
+                    // Still accumulating input, no newline yet
+                    trace!("SSH shell buffering input ({} bytes total)", buffer.len());
                 }
             }
             Some(ChannelType::Sftp) => {
-                // SFTP data
-                trace!("SSH SFTP data received on channel {} ({} bytes)", channel_id, data.len());
-
-                // Parse SFTP packet and handle via LLM
-                // For now, this is a stub - full SFTP protocol parsing would go here
-                let response = self.handle_sftp_packet(data).await?;
-                if !response.is_empty() {
-                    let response_vec = CryptoVec::from_slice(&response);
-                    session.data(channel_id, response_vec);
-                    debug!("Sent SFTP response ({} bytes)", response.len());
-                }
+                // SFTP data is handled by russh_sftp::server::run() in subsystem_request()
+                // This case shouldn't normally be reached
+                debug!("SFTP data received on channel {} - should be handled by SFTP subsystem", channel_id);
             }
             None => {
                 debug!("Data received on unknown channel {}", channel_id);
@@ -490,26 +579,10 @@ impl russh::server::Handler for SshHandler {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         debug!("SSH channel {} closed", channel_id);
+        self.channel_types.lock().await.remove(&channel_id);
         self.channels.lock().await.remove(&channel_id);
+        self.shell_buffers.lock().await.remove(&channel_id);
         Ok(())
-    }
-}
-
-impl SshHandler {
-    /// Handle SFTP packet (stub implementation)
-    async fn handle_sftp_packet(&self, _packet: &[u8]) -> Result<Vec<u8>> {
-        // Full SFTP protocol implementation would parse the packet here
-        // and call appropriate LLM methods for each operation
-        // For now, return empty response
-
-        // Example of what full implementation would do:
-        // 1. Parse SFTP packet to determine operation (SSH_FXP_OPEN, SSH_FXP_READ, etc.)
-        // 2. Extract parameters (filename, offset, length, etc.)
-        // 3. Call self.llm_sftp_request() with operation and parameters
-        // 4. Build SFTP response packet based on LLM response
-        // 5. Return response packet
-
-        Ok(Vec::new())
     }
 }
 

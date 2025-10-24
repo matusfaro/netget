@@ -78,9 +78,13 @@ pub mod ssh;
 #[cfg(feature = "ssh")]
 pub mod ssh_actions;
 #[cfg(feature = "ssh")]
+pub mod sftp_handler;
+#[cfg(feature = "ssh")]
 pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh_actions::SshProtocol;
+#[cfg(feature = "ssh")]
+pub use sftp_handler::LlmSftpHandler;
 
 #[cfg(feature = "irc")]
 pub mod irc;

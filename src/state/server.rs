@@ -120,11 +120,11 @@ pub enum ProtocolConnectionInfo {
     Ntp {
         recent_clients: Vec<(SocketAddr, Instant)>,
     },
-    /// SSH connection with write half
+    /// SSH connection (managed by russh library)
     Ssh {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
+        authenticated: bool,
+        username: Option<String>,
+        channels: Vec<String>, // Active channel types (shell, sftp)
     },
     /// IRC connection with write half
     Irc {
