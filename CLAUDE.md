@@ -99,6 +99,27 @@ cargo test --test http_integration_test  # HTTP tests
 cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
 ```
 
+### E2E Test Performance
+
+**Critical**: E2E tests are slow because each test spawns a NetGet process and makes LLM API calls.
+
+**Expected runtimes** (with qwen3-coder:30b):
+- Fast protocols (Telnet, HTTP, IRC): 35-50 seconds per suite
+- Medium protocols (SMTP, mDNS): 55-85 seconds per suite
+- Slow protocols (MySQL, IPP, TCP/FTP): >10 minutes per suite (often timeout)
+
+**Parallelization**:
+- **ALWAYS run with `--test-threads=4`** for e2e tests
+- Provides ~3-4x speedup by utilizing multiple CPU cores
+- Each test is isolated (dynamic ports, separate processes)
+- Ollama handles concurrent LLM requests internally
+- Example: `cargo test --features e2e-tests --test e2e_telnet_test -- --test-threads=4`
+
+**Known issues**:
+- MySQL tests: Server starts as TCP instead of MySQL stack (implementation bug)
+- IPP tests: Server starts as TCP instead of IPP stack (implementation bug)
+- TCP/FTP tests: Very slow due to complex LLM interactions (not a bug, just slow)
+
 ## Logging (CRITICAL)
 
 **Dual logging pattern** - ALL logs MUST go to BOTH:
