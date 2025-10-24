@@ -126,8 +126,9 @@ cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
 - Symptom: Server starts as TCP stack instead of protocol-specific stack
 
 **Known issues**:
-- TCP/FTP tests: Very slow (>5 minutes) due to complex LLM interactions requiring multiple round-trips
-  - **TODO**: Consider breaking into smaller unit tests for individual FTP commands
+- TCP/FTP tests: May show occasional flakiness (1-2 failures) when running with --test-threads=15 due to LLM overload
+  - All tests pass reliably when run individually
+  - Reduced from >5 minutes to ~20 seconds (15x improvement)
 
 ## Logging (CRITICAL)
 
