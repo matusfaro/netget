@@ -342,6 +342,105 @@ pub async fn start_server_by_id(
                 state.update_server_status(server_id, ServerStatus::Error("IRC not compiled".to_string())).await;
             }
         }
+        BaseStack::Telnet => {
+            #[cfg(feature = "telnet")]
+            {
+                use crate::network::telnet::TelnetServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn Telnet server
+                match TelnetServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] Telnet server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start Telnet server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "telnet"))]
+            {
+                let _ = status_tx.send("Telnet support not compiled in. Enable 'telnet' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("Telnet not compiled".to_string())).await;
+            }
+        }
+        BaseStack::Smtp => {
+            #[cfg(feature = "smtp")]
+            {
+                use crate::network::smtp::SmtpServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn SMTP server
+                match SmtpServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] SMTP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start SMTP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "smtp"))]
+            {
+                let _ = status_tx.send("SMTP support not compiled in. Enable 'smtp' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("SMTP not compiled".to_string())).await;
+            }
+        }
+        BaseStack::Mdns => {
+            #[cfg(feature = "mdns")]
+            {
+                use crate::network::mdns::MdnsServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn mDNS server
+                match MdnsServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] mDNS server #{} advertising services on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start mDNS server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "mdns"))]
+            {
+                let _ = status_tx.send("mDNS support not compiled in. Enable 'mdns' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("mDNS not compiled".to_string())).await;
+            }
+        }
     }
 
     Ok(())

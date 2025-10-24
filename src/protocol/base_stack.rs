@@ -46,6 +46,18 @@ pub enum BaseStack {
     /// IRC stack - IRC server using irc crate
     /// The LLM handles IRC chat protocol and channel management (port 6667)
     Irc,
+
+    /// Telnet stack - Telnet server using nectar
+    /// The LLM handles telnet sessions and terminal interactions (port 23)
+    Telnet,
+
+    /// SMTP stack - SMTP server for email
+    /// The LLM handles SMTP commands and mail delivery (port 25)
+    Smtp,
+
+    /// mDNS/DNS-SD stack - Multicast DNS service discovery
+    /// The LLM advertises services on the local network (port 5353)
+    Mdns,
 }
 
 impl BaseStack {
@@ -62,6 +74,9 @@ impl BaseStack {
             Self::Snmp => "ETH>IP>UDP>SNMP",
             Self::Ssh => "ETH>IP>TCP>SSH",
             Self::Irc => "ETH>IP>TCP>IRC",
+            Self::Telnet => "ETH>IP>TCP>Telnet",
+            Self::Smtp => "ETH>IP>TCP>SMTP",
+            Self::Mdns => "ETH>IP>UDP>mDNS",
         }
     }
 
@@ -75,6 +90,12 @@ impl BaseStack {
         #[cfg(feature = "ssh")]
         if s_lower.contains("ssh") {
             return Some(Self::Ssh);
+        }
+
+        // mDNS stack (check before DNS to avoid substring match)
+        #[cfg(feature = "mdns")]
+        if s_lower.contains("mdns") || s_lower.contains("bonjour") || s_lower.contains("dns-sd") || s_lower.contains("zeroconf") {
+            return Some(Self::Mdns);
         }
 
         // DNS stack
@@ -105,6 +126,18 @@ impl BaseStack {
         #[cfg(feature = "irc")]
         if s_lower.contains("irc") || s_lower.contains("chat") {
             return Some(Self::Irc);
+        }
+
+        // Telnet stack
+        #[cfg(feature = "telnet")]
+        if s_lower.contains("telnet") {
+            return Some(Self::Telnet);
+        }
+
+        // SMTP stack
+        #[cfg(feature = "smtp")]
+        if s_lower.contains("smtp") || s_lower.contains("mail") || s_lower.contains("email") {
+            return Some(Self::Smtp);
         }
 
         // UDP raw stack
@@ -192,6 +225,15 @@ impl BaseStack {
         #[cfg(feature = "irc")]
         stacks.push("irc");
 
+        #[cfg(feature = "telnet")]
+        stacks.push("telnet");
+
+        #[cfg(feature = "smtp")]
+        stacks.push("smtp");
+
+        #[cfg(feature = "mdns")]
+        stacks.push("mdns");
+
         stacks
     }
 }
@@ -263,5 +305,25 @@ mod tests {
         assert_eq!(BaseStack::from_str("irc"), Some(BaseStack::Irc));
         assert_eq!(BaseStack::from_str("chat server"), Some(BaseStack::Irc));
         assert_eq!(BaseStack::from_str("irc chat"), Some(BaseStack::Irc));
+    }
+
+    #[test]
+    fn test_parse_telnet_stack() {
+        assert_eq!(BaseStack::from_str("telnet"), Some(BaseStack::Telnet));
+        assert_eq!(BaseStack::from_str("telnet server"), Some(BaseStack::Telnet));
+    }
+
+    #[test]
+    fn test_parse_smtp_stack() {
+        assert_eq!(BaseStack::from_str("smtp"), Some(BaseStack::Smtp));
+        assert_eq!(BaseStack::from_str("mail server"), Some(BaseStack::Smtp));
+        assert_eq!(BaseStack::from_str("email server"), Some(BaseStack::Smtp));
+    }
+
+    #[test]
+    fn test_parse_mdns_stack() {
+        assert_eq!(BaseStack::from_str("mdns"), Some(BaseStack::Mdns));
+        assert_eq!(BaseStack::from_str("bonjour"), Some(BaseStack::Mdns));
+        assert_eq!(BaseStack::from_str("dns-sd"), Some(BaseStack::Mdns));
     }
 }

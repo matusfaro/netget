@@ -1,24 +1,25 @@
-//! IRC server implementation
+//! Telnet server implementation
 
 use crate::network::connection::ConnectionId;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
 use crate::llm::{ActionResponse, execute_actions, ProtocolActions, ActionResult};
-use crate::network::IrcProtocol;
+use crate::network::TelnetProtocol;
 use crate::state::app_state::AppState;
 
-/// IRC server that forwards messages to LLM
-pub struct IrcServer;
+/// Telnet server that forwards messages to LLM
+pub struct TelnetServer;
 
-impl IrcServer {
-    /// Spawn IRC server with integrated LLM actions
+#[cfg(feature = "telnet")]
+impl TelnetServer {
+    /// Spawn Telnet server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -28,9 +29,9 @@ impl IrcServer {
     ) -> Result<SocketAddr> {
         let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("IRC server (action-based) listening on {}", local_addr);
+        info!("Telnet server (action-based) listening on {}", local_addr);
 
-        let protocol = Arc::new(IrcProtocol::new());
+        let protocol = Arc::new(TelnetProtocol::new());
 
         tokio::spawn(async move {
             loop {
@@ -61,7 +62,7 @@ impl IrcServer {
                                 last_activity: now,
                                 status: ConnectionStatus::Active,
                                 status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::Irc {
+                                protocol_info: ProtocolConnectionInfo::Telnet {
                                     write_half: write_half_arc.clone(),
                                     state: ProtocolState::Idle,
                                     queued_data: Vec::new(),
@@ -70,6 +71,8 @@ impl IrcServer {
                             state_clone.add_connection_to_server(server_id, conn_state).await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
+                            // Use nectar's TelnetCodec with line-based reading
+                            use tokio::io::{AsyncBufReadExt, BufReader};
                             let mut reader = BufReader::new(read_half);
                             let mut line = String::new();
                             let model = state_clone.get_ollama_model().await;
@@ -83,14 +86,14 @@ impl IrcServer {
                                 } else {
                                     line.to_string()
                                 };
-                                debug!("IRC received {} bytes on connection {}: {}", n, connection_id, preview.trim());
-                                let _ = status_clone.send(format!("[DEBUG] IRC received {} bytes on connection {}: {}", n, connection_id, preview.trim()));
+                                debug!("Telnet received {} bytes on connection {}: {}", n, connection_id, preview.trim());
+                                let _ = status_clone.send(format!("[DEBUG] Telnet received {} bytes on connection {}: {}", n, connection_id, preview.trim()));
 
                                 // TRACE: Log full text payload
-                                trace!("IRC data (text): {:?}", line.trim());
-                                let _ = status_clone.send(format!("[TRACE] IRC data (text): {:?}", line.trim()));
+                                trace!("Telnet data (text): {:?}", line.trim());
+                                let _ = status_clone.send(format!("[TRACE] Telnet data (text): {:?}", line.trim()));
 
-                                let event_description = format!("IRC message: {}", line.trim());
+                                let event_description = format!("Telnet message: {}", line.trim());
                                 let protocol_actions = protocol_clone.get_sync_actions();
                                 let prompt = PromptBuilder::build_network_event_action_prompt(
                                     &state_clone, &event_description, protocol_actions).await;
@@ -103,29 +106,24 @@ impl IrcServer {
                                                 match protocol_result {
                                                     ActionResult::Output(data) => {
                                                         let response = String::from_utf8_lossy(&data);
-                                                        let formatted = if response.ends_with("\r\n") {
-                                                            response.to_string()
-                                                        } else if response.ends_with('\n') {
-                                                            format!("{}\r", response)
-                                                        } else {
-                                                            format!("{}\r\n", response)
-                                                        };
                                                         let mut write = write_half_arc.lock().await;
-                                                        let _ = write.write_all(formatted.as_bytes()).await;
+
+                                                        use tokio::io::AsyncWriteExt;
+                                                        let _ = write.write_all(response.as_bytes()).await;
                                                         let _ = write.flush().await;
 
                                                         // DEBUG: Log summary with text preview
-                                                        let preview = if formatted.len() > 100 {
-                                                            format!("{}...", &formatted[..100])
+                                                        let preview = if response.len() > 100 {
+                                                            format!("{}...", &response[..100])
                                                         } else {
-                                                            formatted.clone()
+                                                            response.to_string()
                                                         };
-                                                        debug!("IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim());
-                                                        let _ = status_clone.send(format!("[DEBUG] IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim()));
+                                                        debug!("Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim());
+                                                        let _ = status_clone.send(format!("[DEBUG] Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim()));
 
                                                         // TRACE: Log full text payload
-                                                        trace!("IRC sent (text): {:?}", formatted.trim());
-                                                        let _ = status_clone.send(format!("[TRACE] IRC sent (text): {:?}", formatted.trim()));
+                                                        trace!("Telnet sent (text): {:?}", response.trim());
+                                                        let _ = status_clone.send(format!("[TRACE] Telnet sent (text): {:?}", response.trim()));
                                                     }
                                                     ActionResult::CloseConnection => break,
                                                     _ => {}
@@ -143,7 +141,7 @@ impl IrcServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept IRC connection: {}", e);
+                        error!("Failed to accept Telnet connection: {}", e);
                         break;
                     }
                 }
@@ -154,21 +152,15 @@ impl IrcServer {
     }
 }
 
-/// Send an IRC response
-pub async fn send_irc_response(
-    write_half: &mut tokio::net::tcp::WriteHalf<'_>,
-    response: &str,
-) -> Result<()> {
-    // Ensure IRC messages end with \r\n
-    let formatted = if response.ends_with("\r\n") {
-        response.to_string()
-    } else if response.ends_with('\n') {
-        format!("{}\r", response)
-    } else {
-        format!("{}\r\n", response)
-    };
-
-    write_half.write_all(formatted.as_bytes()).await?;
-    write_half.flush().await?;
-    Ok(())
+#[cfg(not(feature = "telnet"))]
+impl TelnetServer {
+    pub async fn spawn_with_llm_actions(
+        _listen_addr: SocketAddr,
+        _llm_client: OllamaClient,
+        _app_state: Arc<AppState>,
+        _status_tx: mpsc::UnboundedSender<String>,
+        _server_id: crate::state::ServerId,
+    ) -> Result<SocketAddr> {
+        anyhow::bail!("Telnet feature not enabled")
+    }
 }

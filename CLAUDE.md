@@ -52,20 +52,12 @@ Per-connection state machine prevents concurrent LLM calls:
 
 ### Structured LLM Responses
 
-**Legacy TCP response** (fallback):
-```json
-{"output": "220 Welcome\r\n", "close_connection": false, "wait_for_more": false, "shutdown_server": false, "log_message": "..."}
-```
-
-**HTTP response**:
-```json
-{"status": 200, "headers": {"Content-Type": "text/html"}, "body": "...", "log_message": "..."}
-```
-
-**Action response** (new):
+**Action response**:
 ```json
 {"actions": [{"type": "send_tcp_data", "data": "hello"}, {"type": "show_message", "message": "Sent greeting"}]}
 ```
+
+All protocols use the action-based response format. The LLM returns a JSON object with an `actions` array containing action objects. Each action has a `type` field and protocol-specific parameters.
 
 ### Action-Based Prompt System
 

@@ -132,6 +132,22 @@ pub enum ProtocolConnectionInfo {
         state: ProtocolState,
         queued_data: Vec<u8>,
     },
+    /// Telnet connection with write half
+    Telnet {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
+    /// SMTP connection with write half
+    Smtp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
+    /// mDNS service (no traditional connections, just advertisements)
+    Mdns {
+        advertised_services: Vec<(String, u16, Instant)>, // service_name, port, time
+    },
 }
 
 /// Connection status

@@ -19,20 +19,6 @@ use dhcproto::{v4, Decodable, Decoder};
 #[cfg(feature = "dhcp")]
 use crate::network::dhcp_actions::DhcpRequestContext;
 
-/// Get LLM context and output format instructions for DHCP stack
-pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
-    let context = r#"You are handling DHCP requests (ports 67/68). Respond to DHCP DISCOVER, REQUEST, and other messages.
-Provide IP address assignments, subnet masks, gateways, and DNS servers."#;
-
-    let output_format = r#"IMPORTANT: Respond with a JSON object:
-{
-  "output": "DHCP response data (null if no response)",
-  "message": null  // Optional message for user
-}"#;
-
-    (context, output_format)
-}
-
 /// DHCP server that forwards requests to LLM
 pub struct DhcpServer;
 
