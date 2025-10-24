@@ -52,10 +52,13 @@ pub async fn run_tui(
     app.add_message("  DNS (Beta): \"DNS server on port 5252 and resolve everything to 1.2.3.4\"".to_string());
     app.add_message("  NTP (Beta; root-only): \"pretend to be a ntp server on port 123\"".to_string());
     app.add_message("  SNMP (Alpha): \"SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'\"".to_string());
+    app.add_message("  IRC (Alpha): \"Start an IRC server\"".to_string());
+    app.add_message("  Telnet (Alpha): \"Start a telnet server on port 23 that echoes commands\"".to_string());
+    app.add_message("  SMTP (Alpha): \"Start an SMTP mail server on port 25\"".to_string());
+    app.add_message("  mDNS (Alpha): \"Advertise a web service via mDNS on port 8080\"".to_string());
     app.add_message("  Ethernet (Alpha; root-only)".to_string());
     app.add_message("  UDP (Alpha)".to_string());
-    app.add_message("  DHCP (Stub)".to_string());
-    app.add_message("  IRC (Stub)".to_string());
+    app.add_message("  DHCP (Alpha)".to_string());
     app.add_message("".to_string());
     app.add_message("Other prompts:".to_string());
     app.add_message("  ".to_string());

@@ -14,7 +14,10 @@ ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
-all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc"]
+telnet = ["nectar"]
+smtp = ["rust-smtp-server"]
+mdns = ["mdns-sd"]
+all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns"]
 # E2E testing feature - marker to enable end-to-end black-box tests
 e2e-tests = []
 
@@ -89,6 +92,15 @@ russh-keys = { version = "0.45", optional = true }
 russh-sftp = { version = "2.1", optional = true }
 async-trait = { version = "0.1", optional = true }
 
+# Telnet server
+nectar = { version = "0.4", optional = true }
+
+# SMTP server
+rust-smtp-server = { version = "0.1", optional = true }
+
+# mDNS/DNS-SD service discovery
+mdns-sd = { version = "0.15", optional = true }
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -110,3 +122,5 @@ rsntp = "4.0"
 ssh2 = "0.9"
 # IRC client for e2e integration tests
 irc = "1.1"
+# SMTP client for e2e integration tests
+lettre = "0.11"

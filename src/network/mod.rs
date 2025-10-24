@@ -95,5 +95,32 @@ pub use irc::IrcServer;
 #[cfg(feature = "irc")]
 pub use irc_actions::IrcProtocol;
 
+#[cfg(feature = "telnet")]
+pub mod telnet;
+#[cfg(feature = "telnet")]
+pub mod telnet_actions;
+#[cfg(feature = "telnet")]
+pub use telnet::TelnetServer;
+#[cfg(feature = "telnet")]
+pub use telnet_actions::TelnetProtocol;
+
+#[cfg(feature = "smtp")]
+pub mod smtp;
+#[cfg(feature = "smtp")]
+pub mod smtp_actions;
+#[cfg(feature = "smtp")]
+pub use smtp::SmtpServer;
+#[cfg(feature = "smtp")]
+pub use smtp_actions::SmtpProtocol;
+
+#[cfg(feature = "mdns")]
+pub mod mdns;
+#[cfg(feature = "mdns")]
+pub mod mdns_actions;
+#[cfg(feature = "mdns")]
+pub use mdns::MdnsServer;
+#[cfg(feature = "mdns")]
+pub use mdns_actions::MdnsProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

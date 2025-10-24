@@ -281,6 +281,16 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
         Some("DNS".to_string())
     } else if prompt_lower.contains("via snmp") || prompt_lower.contains("snmp") {
         Some("SNMP".to_string())
+    } else if prompt_lower.contains("via telnet") || prompt_lower.contains("telnet") {
+        // Telnet uses TCP stack
+        Some("TCP".to_string())
+    } else if prompt_lower.contains("via smtp") || prompt_lower.contains("smtp") {
+        // SMTP uses TCP stack
+        Some("TCP".to_string())
+    } else if prompt_lower.contains("via mdns") || prompt_lower.contains("mdns") {
+        // mDNS doesn't have a dedicated stack - LLM may choose any stack
+        // Don't validate stack for mDNS
+        None
     } else if prompt_lower.contains("tcp") || prompt_lower.contains("ftp") {
         Some("TCP".to_string())
     } else if prompt_lower.contains("udp") {
@@ -318,6 +328,12 @@ async fn wait_for_server_startup(
                     stack = "SSH".to_string();
                 } else if line.contains("IRC") {
                     stack = "IRC".to_string();
+                } else if line.contains("Telnet") {
+                    stack = "Telnet".to_string();
+                } else if line.contains("SMTP") {
+                    stack = "SMTP".to_string();
+                } else if line.contains("mDNS") {
+                    stack = "mDNS".to_string();
                 } else if line.contains("TCP") || line.contains("TCP/IP") {
                     stack = "TCP".to_string();
                 } else if line.contains("UDP") {
