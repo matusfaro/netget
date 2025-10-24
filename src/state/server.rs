@@ -132,6 +132,18 @@ pub enum ProtocolConnectionInfo {
         state: ProtocolState,
         queued_data: Vec<u8>,
     },
+    /// HTTP Proxy connection (recent requests)
+    Proxy {
+        recent_requests: Vec<(String, String, Instant)>, // method, URL, time
+    },
+    /// WebDAV connection (recent operations)
+    WebDav {
+        recent_operations: Vec<(String, String, Instant)>, // operation, path, time
+    },
+    /// NFS connection (mounted paths)
+    Nfs {
+        mounted_paths: Vec<String>,
+    },
 }
 
 /// Connection status
@@ -195,6 +207,9 @@ pub struct ServerInstance {
     pub status_changed_at: Instant,
     /// Local listening address
     pub local_addr: Option<SocketAddr>,
+    /// Proxy filter configuration (only for proxy servers)
+    #[cfg(feature = "proxy")]
+    pub proxy_filter_config: Option<crate::network::proxy_filter::ProxyFilterConfig>,
 }
 
 impl ServerInstance {
@@ -218,6 +233,8 @@ impl ServerInstance {
             created_at: now,
             status_changed_at: now,
             local_addr: None,
+            #[cfg(feature = "proxy")]
+            proxy_filter_config: None,
         }
     }
 

@@ -46,6 +46,18 @@ pub enum BaseStack {
     /// IRC stack - IRC server using irc crate
     /// The LLM handles IRC chat protocol and channel management (port 6667)
     Irc,
+
+    /// HTTP Proxy stack - HTTP/HTTPS proxy server using http-mitm-proxy
+    /// The LLM intercepts, modifies, and forwards HTTP requests (port 8080/3128)
+    Proxy,
+
+    /// WebDAV stack - WebDAV file server using dav-server
+    /// The LLM handles WebDAV file operations over HTTP (port 80/443)
+    WebDav,
+
+    /// NFS stack - NFSv3 server using nfsserve
+    /// The LLM handles NFS file system operations (port 2049)
+    Nfs,
 }
 
 impl BaseStack {
@@ -62,6 +74,9 @@ impl BaseStack {
             Self::Snmp => "ETH>IP>UDP>SNMP",
             Self::Ssh => "ETH>IP>TCP>SSH",
             Self::Irc => "ETH>IP>TCP>IRC",
+            Self::Proxy => "ETH>IP>TCP>HTTP>PROXY",
+            Self::WebDav => "ETH>IP>TCP>HTTP>WEBDAV",
+            Self::Nfs => "ETH>IP>TCP>NFS",
         }
     }
 
@@ -105,6 +120,24 @@ impl BaseStack {
         #[cfg(feature = "irc")]
         if s_lower.contains("irc") || s_lower.contains("chat") {
             return Some(Self::Irc);
+        }
+
+        // HTTP Proxy stack
+        #[cfg(feature = "proxy")]
+        if s_lower.contains("proxy") || s_lower.contains("mitm") {
+            return Some(Self::Proxy);
+        }
+
+        // WebDAV stack
+        #[cfg(feature = "webdav")]
+        if s_lower.contains("webdav") || s_lower.contains("dav") {
+            return Some(Self::WebDav);
+        }
+
+        // NFS stack
+        #[cfg(feature = "nfs")]
+        if s_lower.contains("nfs") || s_lower.contains("file server") {
+            return Some(Self::Nfs);
         }
 
         // UDP raw stack
@@ -192,6 +225,15 @@ impl BaseStack {
         #[cfg(feature = "irc")]
         stacks.push("irc");
 
+        #[cfg(feature = "proxy")]
+        stacks.push("proxy");
+
+        #[cfg(feature = "webdav")]
+        stacks.push("webdav");
+
+        #[cfg(feature = "nfs")]
+        stacks.push("nfs");
+
         stacks
     }
 }
@@ -263,5 +305,26 @@ mod tests {
         assert_eq!(BaseStack::from_str("irc"), Some(BaseStack::Irc));
         assert_eq!(BaseStack::from_str("chat server"), Some(BaseStack::Irc));
         assert_eq!(BaseStack::from_str("irc chat"), Some(BaseStack::Irc));
+    }
+
+    #[test]
+    fn test_parse_proxy_stack() {
+        assert_eq!(BaseStack::from_str("proxy"), Some(BaseStack::Proxy));
+        assert_eq!(BaseStack::from_str("http proxy"), Some(BaseStack::Proxy));
+        assert_eq!(BaseStack::from_str("mitm"), Some(BaseStack::Proxy));
+    }
+
+    #[test]
+    fn test_parse_webdav_stack() {
+        assert_eq!(BaseStack::from_str("webdav"), Some(BaseStack::WebDav));
+        assert_eq!(BaseStack::from_str("dav server"), Some(BaseStack::WebDav));
+        assert_eq!(BaseStack::from_str("via webdav"), Some(BaseStack::WebDav));
+    }
+
+    #[test]
+    fn test_parse_nfs_stack() {
+        assert_eq!(BaseStack::from_str("nfs"), Some(BaseStack::Nfs));
+        assert_eq!(BaseStack::from_str("file server"), Some(BaseStack::Nfs));
+        assert_eq!(BaseStack::from_str("nfs server"), Some(BaseStack::Nfs));
     }
 }
