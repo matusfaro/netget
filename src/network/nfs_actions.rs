@@ -27,12 +27,17 @@ impl ProtocolActions for NfsProtocol {
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
-            lookup_file_action(),
-            read_file_action(),
-            write_file_action(),
-            create_file_action(),
-            remove_file_action(),
-            get_attributes_action(),
+            // Response actions - LLM returns these with structured data
+            nfs_lookup_response_action(),
+            nfs_read_response_action(),
+            nfs_write_response_action(),
+            nfs_getattr_response_action(),
+            nfs_create_response_action(),
+            nfs_remove_response_action(),
+            nfs_mkdir_response_action(),
+            nfs_readdir_response_action(),
+            nfs_rename_response_action(),
+            nfs_setattr_response_action(),
         ]
     }
 
@@ -48,12 +53,16 @@ impl ProtocolActions for NfsProtocol {
         match action_type {
             "mount_filesystem" => self.execute_mount_filesystem(action),
             "unmount_filesystem" => self.execute_unmount_filesystem(action),
-            "lookup_file" => self.execute_lookup_file(action),
-            "read_file" => self.execute_read_file(action),
-            "write_file" => self.execute_write_file(action),
-            "create_file" => self.execute_create_file(action),
-            "remove_file" => self.execute_remove_file(action),
-            "get_attributes" => self.execute_get_attributes(action),
+            "nfs_lookup_response" => self.execute_nfs_lookup_response(action),
+            "nfs_read_response" => self.execute_nfs_read_response(action),
+            "nfs_write_response" => self.execute_nfs_write_response(action),
+            "nfs_getattr_response" => self.execute_nfs_getattr_response(action),
+            "nfs_create_response" => self.execute_nfs_create_response(action),
+            "nfs_remove_response" => self.execute_nfs_remove_response(action),
+            "nfs_mkdir_response" => self.execute_nfs_mkdir_response(action),
+            "nfs_readdir_response" => self.execute_nfs_readdir_response(action),
+            "nfs_rename_response" => self.execute_nfs_rename_response(action),
+            "nfs_setattr_response" => self.execute_nfs_setattr_response(action),
             _ => Err(anyhow::anyhow!("Unknown NFS action: {}", action_type)),
         }
     }
@@ -69,7 +78,7 @@ impl NfsProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -82,7 +91,7 @@ impl NfsProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -90,102 +99,140 @@ impl NfsProtocol {
         Ok(ActionResult::NoAction)
     }
 
-    /// Look up a file or directory
-    fn execute_lookup_file(
+    /// NFS LOOKUP response
+    fn execute_nfs_lookup_response(
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
+        let response = json!({
+            "fileid": action.get("fileid").and_then(|v| v.as_u64()),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
     }
 
-    /// Read file contents
-    fn execute_read_file(
+    /// NFS READ response
+    fn execute_nfs_read_response(
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        let offset = action
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-
-        let count = action
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(4096);
-
-        Ok(ActionResult::NoAction)
+        let response = json!({
+            "data": action.get("data").and_then(|v| v.as_str()).unwrap_or(""),
+            "eof": action.get("eof").and_then(|v| v.as_bool()).unwrap_or(true),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
     }
 
-    /// Write file contents
-    fn execute_write_file(
+    /// NFS WRITE response
+    fn execute_nfs_write_response(
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_str())
-            .context("Missing 'data' parameter")?;
-
-        let offset = action
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-
-        Ok(ActionResult::NoAction)
+        let response = json!({
+            "size": action.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+            "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o644),
+            "mtime": action.get("mtime").and_then(|v| v.as_u64()),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
     }
 
-    /// Create a new file
-    fn execute_create_file(
+    /// NFS GETATTR response
+    fn execute_nfs_getattr_response(
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
+        let response = json!({
+            "file_type": action.get("file_type").and_then(|v| v.as_str()).unwrap_or("regular"),
+            "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o644),
+            "size": action.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+            "uid": action.get("uid").and_then(|v| v.as_u64()).unwrap_or(0),
+            "gid": action.get("gid").and_then(|v| v.as_u64()).unwrap_or(0),
+            "atime": action.get("atime").and_then(|v| v.as_u64()),
+            "mtime": action.get("mtime").and_then(|v| v.as_u64()),
+            "ctime": action.get("ctime").and_then(|v| v.as_u64()),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
     }
 
-    /// Remove a file
-    fn execute_remove_file(
+    /// NFS CREATE response
+    fn execute_nfs_create_response(
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
+        let response = json!({
+            "fileid": action.get("fileid").and_then(|v| v.as_u64()),
+            "size": action.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+            "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o644),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
     }
 
-    /// Get file attributes
-    fn execute_get_attributes(
+    /// NFS REMOVE response
+    fn execute_nfs_remove_response(
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
+        let response = json!({
+            "success": action.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
+    }
 
-        Ok(ActionResult::NoAction)
+    /// NFS MKDIR response
+    fn execute_nfs_mkdir_response(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let response = json!({
+            "fileid": action.get("fileid").and_then(|v| v.as_u64()),
+            "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o755),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
+    }
+
+    /// NFS READDIR response
+    fn execute_nfs_readdir_response(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let response = json!({
+            "entries": action.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+            "eof": action.get("eof").and_then(|v| v.as_bool()).unwrap_or(true),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
+    }
+
+    /// NFS RENAME response
+    fn execute_nfs_rename_response(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let response = json!({
+            "success": action.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
+    }
+
+    /// NFS SETATTR response
+    fn execute_nfs_setattr_response(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let response = json!({
+            "size": action.get("size").and_then(|v| v.as_u64()),
+            "mode": action.get("mode").and_then(|v| v.as_u64()),
+            "mtime": action.get("mtime").and_then(|v| v.as_u64()),
+            "error": action.get("error").and_then(|v| v.as_str()),
+        });
+        Ok(ActionResult::Output(serde_json::to_vec(&response)?))
     }
 }
 
@@ -229,144 +276,361 @@ fn unmount_filesystem_action() -> ActionDefinition {
     }
 }
 
-fn lookup_file_action() -> ActionDefinition {
+fn nfs_lookup_response_action() -> ActionDefinition {
     ActionDefinition {
-        name: "lookup_file".to_string(),
-        description: "Look up a file or directory by path".to_string(),
+        name: "nfs_lookup_response".to_string(),
+        description: "Return file ID for NFS LOOKUP operation".to_string(),
         parameters: vec![
             Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to look up".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "lookup_file",
-            "path": "/export/data/file.txt"
-        }),
-    }
-}
-
-fn read_file_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "read_file".to_string(),
-        description: "Read data from a file".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to file".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "offset".to_string(),
+                name: "fileid".to_string(),
                 type_hint: "number".to_string(),
-                description: "Offset to start reading from (default: 0)".to_string(),
+                description: "File ID (unique identifier) if file exists".to_string(),
                 required: false,
             },
             Parameter {
-                name: "count".to_string(),
-                type_hint: "number".to_string(),
-                description: "Number of bytes to read (default: 4096)".to_string(),
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed (e.g. 'NFS3ERR_NOENT', 'NFS3ERR_ACCES')".to_string(),
                 required: false,
             },
         ],
         example: json!({
-            "type": "read_file",
-            "path": "/export/data/file.txt",
-            "offset": 0,
-            "count": 1024
+            "type": "nfs_lookup_response",
+            "fileid": 42
         }),
     }
 }
 
-fn write_file_action() -> ActionDefinition {
+fn nfs_read_response_action() -> ActionDefinition {
     ActionDefinition {
-        name: "write_file".to_string(),
-        description: "Write data to a file".to_string(),
+        name: "nfs_read_response".to_string(),
+        description: "Return file data for NFS READ operation".to_string(),
         parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to file".to_string(),
-                required: true,
-            },
             Parameter {
                 name: "data".to_string(),
                 type_hint: "string".to_string(),
-                description: "Data to write".to_string(),
+                description: "File content to return".to_string(),
                 required: true,
             },
             Parameter {
-                name: "offset".to_string(),
-                type_hint: "number".to_string(),
-                description: "Offset to start writing at (default: 0)".to_string(),
+                name: "eof".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if end of file reached".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
                 required: false,
             },
         ],
         example: json!({
-            "type": "write_file",
-            "path": "/export/data/file.txt",
-            "data": "Hello NFS!",
-            "offset": 0
+            "type": "nfs_read_response",
+            "data": "Hello from NFS!",
+            "eof": false
         }),
     }
 }
 
-fn create_file_action() -> ActionDefinition {
+fn nfs_write_response_action() -> ActionDefinition {
     ActionDefinition {
-        name: "create_file".to_string(),
-        description: "Create a new file".to_string(),
+        name: "nfs_write_response".to_string(),
+        description: "Return file attributes after NFS WRITE operation".to_string(),
         parameters: vec![
             Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path where file should be created".to_string(),
+                name: "size".to_string(),
+                type_hint: "number".to_string(),
+                description: "New file size after write".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "number".to_string(),
+                description: "File permissions (e.g. 0644)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "mtime".to_string(),
+                type_hint: "number".to_string(),
+                description: "Modification time (Unix timestamp)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
             },
         ],
         example: json!({
-            "type": "create_file",
-            "path": "/export/data/newfile.txt"
+            "type": "nfs_write_response",
+            "size": 1024,
+            "mode": 0o644
         }),
     }
 }
 
-fn remove_file_action() -> ActionDefinition {
+fn nfs_getattr_response_action() -> ActionDefinition {
     ActionDefinition {
-        name: "remove_file".to_string(),
-        description: "Remove a file".to_string(),
+        name: "nfs_getattr_response".to_string(),
+        description: "Return file/directory attributes for NFS GETATTR operation".to_string(),
         parameters: vec![
             Parameter {
-                name: "path".to_string(),
+                name: "file_type".to_string(),
                 type_hint: "string".to_string(),
-                description: "Path to file to remove".to_string(),
+                description: "'regular' for file, 'directory' for dir".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "number".to_string(),
+                description: "Permissions (e.g. 0644 for files, 0755 for dirs)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "size".to_string(),
+                type_hint: "number".to_string(),
+                description: "File size in bytes".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "uid".to_string(),
+                type_hint: "number".to_string(),
+                description: "Owner user ID".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "gid".to_string(),
+                type_hint: "number".to_string(),
+                description: "Owner group ID".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "atime".to_string(),
+                type_hint: "number".to_string(),
+                description: "Access time (Unix timestamp)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "mtime".to_string(),
+                type_hint: "number".to_string(),
+                description: "Modification time (Unix timestamp)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "ctime".to_string(),
+                type_hint: "number".to_string(),
+                description: "Status change time (Unix timestamp)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
             },
         ],
         example: json!({
-            "type": "remove_file",
-            "path": "/export/data/oldfile.txt"
+            "type": "nfs_getattr_response",
+            "file_type": "regular",
+            "mode": 0o644,
+            "size": 1024,
+            "uid": 1000,
+            "gid": 1000
         }),
     }
 }
 
-fn get_attributes_action() -> ActionDefinition {
+fn nfs_create_response_action() -> ActionDefinition {
     ActionDefinition {
-        name: "get_attributes".to_string(),
-        description: "Get file or directory attributes (size, permissions, etc.)".to_string(),
+        name: "nfs_create_response".to_string(),
+        description: "Return new file ID and attributes for NFS CREATE operation".to_string(),
         parameters: vec![
             Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to get attributes for".to_string(),
+                name: "fileid".to_string(),
+                type_hint: "number".to_string(),
+                description: "New file ID".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "size".to_string(),
+                type_hint: "number".to_string(),
+                description: "Initial file size (usually 0)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "number".to_string(),
+                description: "File permissions".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
             },
         ],
         example: json!({
-            "type": "get_attributes",
-            "path": "/export/data/file.txt"
+            "type": "nfs_create_response",
+            "fileid": 123,
+            "size": 0,
+            "mode": 0o644
+        }),
+    }
+}
+
+fn nfs_remove_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "nfs_remove_response".to_string(),
+        description: "Return success/error for NFS REMOVE operation".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "success".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if file was removed successfully".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "nfs_remove_response",
+            "success": true
+        }),
+    }
+}
+
+fn nfs_mkdir_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "nfs_mkdir_response".to_string(),
+        description: "Return new directory ID for NFS MKDIR operation".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "fileid".to_string(),
+                type_hint: "number".to_string(),
+                description: "New directory ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "number".to_string(),
+                description: "Directory permissions (default 0755)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "nfs_mkdir_response",
+            "fileid": 456,
+            "mode": 0o755
+        }),
+    }
+}
+
+fn nfs_readdir_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "nfs_readdir_response".to_string(),
+        description: "Return directory listing for NFS READDIR operation".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "entries".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of directory entries [{\"name\": \"file.txt\", \"fileid\": 42}, ...]".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "eof".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if no more entries".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "nfs_readdir_response",
+            "entries": [
+                {"name": "file.txt", "fileid": 42},
+                {"name": "subdir", "fileid": 43}
+            ],
+            "eof": true
+        }),
+    }
+}
+
+fn nfs_rename_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "nfs_rename_response".to_string(),
+        description: "Return success/error for NFS RENAME operation".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "success".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if file was renamed successfully".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "nfs_rename_response",
+            "success": true
+        }),
+    }
+}
+
+fn nfs_setattr_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "nfs_setattr_response".to_string(),
+        description: "Return updated attributes for NFS SETATTR operation".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "size".to_string(),
+                type_hint: "number".to_string(),
+                description: "New file size".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "number".to_string(),
+                description: "New permissions".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "mtime".to_string(),
+                type_hint: "number".to_string(),
+                description: "New modification time".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "NFS error code if operation failed".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "nfs_setattr_response",
+            "mode": 0o600
         }),
     }
 }
