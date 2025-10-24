@@ -318,7 +318,7 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
                                     match sftp.readdir(std::path::Path::new("/")) {
                                         Ok(entries) => {
                                             println!("  ✓ Directory listing received:");
-                                            for (path, stat) in entries {
+                                            for (path, stat) in &entries {
                                                 println!("    - {} ({} bytes, is_dir: {})",
                                                     path.display(),
                                                     stat.size.unwrap_or(0),

@@ -109,8 +109,8 @@ pub fn open_server_action() -> ActionDefinition {
             },
             Parameter {
                 name: "initial_memory".to_string(),
-                type_hint: "string".to_string(),
-                description: "Optional initial global memory".to_string(),
+                type_hint: "string (optional)".to_string(),
+                description: "Optional initial memory as a string. Use for storing persistent context across connections. Example: \"user_count: 0\"".to_string(),
                 required: false,
             },
             Parameter {
@@ -125,6 +125,7 @@ pub fn open_server_action() -> ActionDefinition {
             "port": 21,
             "base_stack": "tcp",
             "send_first": true,
+            "initial_memory": "login_count: 0\nfiles: data.txt,readme.md",
             "instruction": "You are an FTP server. Respond to FTP commands like USER, PASS, LIST, RETR, QUIT with appropriate FTP response codes."
         }),
     }
@@ -186,18 +187,18 @@ pub fn change_model_action() -> ActionDefinition {
 pub fn set_memory_action() -> ActionDefinition {
     ActionDefinition {
         name: "set_memory".to_string(),
-        description: "Replace global memory completely".to_string(),
+        description: "Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.".to_string(),
         parameters: vec![
             Parameter {
                 name: "value".to_string(),
                 type_hint: "string".to_string(),
-                description: "New memory value".to_string(),
+                description: "New memory value as a string. Replaces all existing memory.".to_string(),
                 required: true,
             },
         ],
         example: json!({
             "type": "set_memory",
-            "value": "User requested feature X"
+            "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
         }),
     }
 }
@@ -206,18 +207,18 @@ pub fn set_memory_action() -> ActionDefinition {
 pub fn append_memory_action() -> ActionDefinition {
     ActionDefinition {
         name: "append_memory".to_string(),
-        description: "Append to global memory (added with newline separator)".to_string(),
+        description: "Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.".to_string(),
         parameters: vec![
             Parameter {
                 name: "value".to_string(),
                 type_hint: "string".to_string(),
-                description: "Text to append".to_string(),
+                description: "Text to append as a string. Will be added after existing memory with newline separator.".to_string(),
                 required: true,
             },
         ],
         example: json!({
             "type": "append_memory",
-            "value": "Additional context"
+            "value": "connection_count: 5\nlast_file_requested: readme.md"
         }),
     }
 }

@@ -98,6 +98,24 @@ Note: Combine the old instruction with the new requirement.
   "model": "model_name"
 }}
 
+6. set_memory - Replace entire global memory (use for protocols needing persistent state):
+{{
+  "type": "set_memory",
+  "value": "state as string"
+}}
+
+7. append_memory - Add to existing memory:
+{{
+  "type": "append_memory",
+  "value": "additional state info"
+}}
+
+MEMORY USAGE GUIDANCE:
+- Use initial_memory when creating servers that need to track state (SSH current dir, file listings, session data)
+- Use set_memory to completely replace memory (resetting state)
+- Use append_memory to incrementally add state information
+- Memory is a STRING, not an object. Use newlines to separate multiple values.
+
 Examples:
 
 User: "start an HTTP server on port 8080"
@@ -126,6 +144,22 @@ Response:
       "base_stack": "tcp",
       "send_first": true,
       "instruction": "You are an FTP server. Respond to FTP commands:\n- USER: Accept any username\n- PASS: Accept any password\n- PWD: Return current directory\n- LIST: Return file listing\n- RETR: Return file contents\n- QUIT: Close connection\nSend appropriate FTP response codes."
+    }}
+  ]
+}}
+
+User: "start an SSH server with a virtual filesystem"
+Response:
+{{
+  "message": "Starting SSH server on port 22...",
+  "actions": [
+    {{
+      "type": "open_server",
+      "port": 22,
+      "base_stack": "ssh",
+      "send_first": false,
+      "initial_memory": "cwd: /home/user\nfiles: README.md,data.txt,script.sh\nuser: guest",
+      "instruction": "You are an SSH server. Track the current working directory in memory. Support shell commands:\n- pwd: Show current directory from memory\n- ls: List files from memory\n- cd: Change directory and update memory\n- cat: Display file contents\nUse set_memory or append_memory to track state changes like directory navigation."
     }}
   ]
 }}
@@ -232,6 +266,13 @@ User's instruction for handling events:
 {}
 
 Based on the instruction and the event, determine the appropriate response.
+
+MEMORY USAGE:
+- If the protocol needs to track state (like SSH current directory, session data, file listings), use memory
+- Use set_memory to completely replace memory when state changes significantly
+- Use append_memory to add incremental state information
+- Memory is a STRING (not an object). Use newlines to separate values. Example: "cwd: /home\nuser: alice\nfiles: a.txt,b.txt"
+- Common use cases: SSH current directory tracking, session state, connection counters, file system state
 
 {}
 
