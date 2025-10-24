@@ -286,6 +286,7 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 
 ## Git Commit Instructions
 
+- **ONLY commit when explicitly requested by the user** - Do not automatically commit changes
 - **DO NOT** add "🤖 Generated with [Claude Code]" line
 - **DO NOT** add "Co-Authored-By: Claude <noreply@anthropic.com>" signature
 - Keep messages clean and professional without AI references
