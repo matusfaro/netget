@@ -103,22 +103,31 @@ cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
 
 **Critical**: E2E tests are slow because each test spawns a NetGet process and makes LLM API calls.
 
-**Expected runtimes** (with qwen3-coder:30b):
-- Fast protocols (Telnet, HTTP, IRC): 35-50 seconds per suite
-- Medium protocols (SMTP, mDNS): 55-85 seconds per suite
-- Slow protocols (MySQL, IPP, TCP/FTP): >10 minutes per suite (often timeout)
+**Expected runtimes** (with qwen3-coder:30b and `--test-threads=15`):
+- Fast protocols (IPP, MySQL): 15-25 seconds per suite
+- Medium protocols (Telnet, HTTP, IRC): 35-50 seconds per suite
+- Slow protocols (SMTP, mDNS): 55-85 seconds per suite
+- Very slow protocols (TCP/FTP): >5 minutes per suite (complex multi-round-trip protocols)
 
 **Parallelization**:
-- **ALWAYS run with `--test-threads=4`** for e2e tests
-- Provides ~3-4x speedup by utilizing multiple CPU cores
+- **ALWAYS run with `--test-threads=15`** for e2e tests
+- Provides significant speedup by utilizing multiple CPU cores
 - Each test is isolated (dynamic ports, separate processes)
 - Ollama handles concurrent LLM requests internally
-- Example: `cargo test --features e2e-tests --test e2e_telnet_test -- --test-threads=4`
+- Example: `cargo test --features e2e-tests --test e2e_telnet_test -- --test-threads=15`
+
+**Critical setup requirement**:
+- **MUST build release binary with all features before running tests**:
+  ```bash
+  cargo build --release --all-features
+  ```
+- E2E tests spawn the release binary from `target/release/netget`
+- If the binary wasn't built with all features, protocol tests will fail
+- Symptom: Server starts as TCP stack instead of protocol-specific stack
 
 **Known issues**:
-- MySQL tests: Server starts as TCP instead of MySQL stack (implementation bug)
-- IPP tests: Server starts as TCP instead of IPP stack (implementation bug)
-- TCP/FTP tests: Very slow due to complex LLM interactions (not a bug, just slow)
+- TCP/FTP tests: Very slow (>5 minutes) due to complex LLM interactions requiring multiple round-trips
+  - **TODO**: Consider breaking into smaller unit tests for individual FTP commands
 
 ## Logging (CRITICAL)
 
@@ -230,8 +239,15 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   - Protocol-specific commands
   - Error handling
   - Concurrent connections (if applicable)
-- **Run the test and assert it works**
-- Fix any issues before considering protocol complete
+- **Before running tests, MUST build release binary**:
+  ```bash
+  cargo build --release --all-features
+  ```
+- **Run tests with parallelization**:
+  ```bash
+  cargo test --features e2e-tests --test e2e_<protocol>_test -- --test-threads=15
+  ```
+- **Fix any issues before considering protocol complete**
 
 ### 10. Test Helpers (`tests/e2e/helpers.rs`)
 - Update `extract_stack_from_prompt()` if needed
