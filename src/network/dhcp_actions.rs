@@ -5,14 +5,39 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde_json::json;
+use std::net::Ipv4Addr;
 
-pub struct DhcpProtocol;
+#[cfg(feature = "dhcp")]
+use dhcproto::{v4, Encodable, Encoder};
+
+pub struct DhcpProtocol {
+    #[cfg(feature = "dhcp")]
+    request_context: std::sync::Arc<std::sync::Mutex<Option<DhcpRequestContext>>>,
+}
+
+#[cfg(feature = "dhcp")]
+#[derive(Clone)]
+pub struct DhcpRequestContext {
+    pub xid: u32,              // Transaction ID
+    pub chaddr: Vec<u8>,       // Client MAC address
+    pub message_type: v4::MessageType,
+    pub ciaddr: Ipv4Addr,      // Client IP address (if set)
+    pub requested_ip: Option<Ipv4Addr>, // Requested IP from options
+}
 
 impl DhcpProtocol {
     pub fn new() -> Self {
-        Self
+        Self {
+            #[cfg(feature = "dhcp")]
+            request_context: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    #[cfg(feature = "dhcp")]
+    pub fn set_request_context(&self, context: DhcpRequestContext) {
+        *self.request_context.lock().unwrap() = Some(context);
     }
 }
 
@@ -22,7 +47,13 @@ impl ProtocolActions for DhcpProtocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![send_dhcp_response_action(), ignore_request_action()]
+        vec![
+            send_dhcp_offer_action(),
+            send_dhcp_ack_action(),
+            send_dhcp_nak_action(),
+            send_dhcp_response_action(),
+            ignore_request_action(),
+        ]
     }
 
     fn execute_action(
@@ -35,6 +66,9 @@ impl ProtocolActions for DhcpProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
+            "send_dhcp_offer" => self.execute_send_dhcp_offer(action),
+            "send_dhcp_ack" => self.execute_send_dhcp_ack(action),
+            "send_dhcp_nak" => self.execute_send_dhcp_nak(action),
             "send_dhcp_response" => self.execute_send_dhcp_response(action),
             "ignore_request" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown DHCP action: {}", action_type)),
@@ -47,6 +81,206 @@ impl ProtocolActions for DhcpProtocol {
 }
 
 impl DhcpProtocol {
+    #[cfg(feature = "dhcp")]
+    fn execute_send_dhcp_offer(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let context = self.request_context.lock().unwrap().clone()
+            .ok_or_else(|| anyhow!("No DHCP request context available"))?;
+
+        // Extract parameters from action
+        let offered_ip = action.get("offered_ip")
+            .and_then(|v| v.as_str())
+            .context("Missing 'offered_ip' parameter")?
+            .parse::<Ipv4Addr>()?;
+
+        let server_ip = action.get("server_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0")
+            .parse::<Ipv4Addr>()?;
+
+        let subnet_mask = action.get("subnet_mask")
+            .and_then(|v| v.as_str())
+            .map(|s| s.parse::<Ipv4Addr>())
+            .transpose()?;
+
+        let router = action.get("router")
+            .and_then(|v| v.as_str())
+            .map(|s| s.parse::<Ipv4Addr>())
+            .transpose()?;
+
+        let dns_servers = action.get("dns_servers")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| s.parse::<Ipv4Addr>().ok())
+                    .collect::<Vec<_>>()
+            });
+
+        let lease_time = action.get("lease_time")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(86400) as u32;
+
+        // Build DHCP OFFER message
+        let mut msg = v4::Message::default();
+        msg.set_opcode(v4::Opcode::BootReply)
+            .set_xid(context.xid)
+            .set_flags(v4::Flags::default().set_broadcast())
+            .set_yiaddr(offered_ip)
+            .set_siaddr(server_ip)
+            .set_chaddr(&context.chaddr);
+
+        // Add DHCP options
+        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Offer));
+        msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server_ip));
+        msg.opts_mut().insert(v4::DhcpOption::AddressLeaseTime(lease_time));
+
+        if let Some(mask) = subnet_mask {
+            msg.opts_mut().insert(v4::DhcpOption::SubnetMask(mask));
+        }
+
+        if let Some(gw) = router {
+            msg.opts_mut().insert(v4::DhcpOption::Router(vec![gw]));
+        }
+
+        if let Some(dns) = dns_servers {
+            if !dns.is_empty() {
+                msg.opts_mut().insert(v4::DhcpOption::DomainNameServer(dns));
+            }
+        }
+
+        // Encode to bytes
+        let mut buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf);
+        msg.encode(&mut encoder)?;
+
+        Ok(ActionResult::Output(buf))
+    }
+
+    #[cfg(feature = "dhcp")]
+    fn execute_send_dhcp_ack(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let context = self.request_context.lock().unwrap().clone()
+            .ok_or_else(|| anyhow!("No DHCP request context available"))?;
+
+        // Extract parameters
+        let assigned_ip = action.get("assigned_ip")
+            .and_then(|v| v.as_str())
+            .context("Missing 'assigned_ip' parameter")?
+            .parse::<Ipv4Addr>()?;
+
+        let server_ip = action.get("server_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0")
+            .parse::<Ipv4Addr>()?;
+
+        let subnet_mask = action.get("subnet_mask")
+            .and_then(|v| v.as_str())
+            .map(|s| s.parse::<Ipv4Addr>())
+            .transpose()?;
+
+        let router = action.get("router")
+            .and_then(|v| v.as_str())
+            .map(|s| s.parse::<Ipv4Addr>())
+            .transpose()?;
+
+        let dns_servers = action.get("dns_servers")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| s.parse::<Ipv4Addr>().ok())
+                    .collect::<Vec<_>>()
+            });
+
+        let lease_time = action.get("lease_time")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(86400) as u32;
+
+        // Build DHCP ACK message
+        let mut msg = v4::Message::default();
+        msg.set_opcode(v4::Opcode::BootReply)
+            .set_xid(context.xid)
+            .set_flags(v4::Flags::default().set_broadcast())
+            .set_yiaddr(assigned_ip)
+            .set_siaddr(server_ip)
+            .set_chaddr(&context.chaddr);
+
+        // Add DHCP options
+        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Ack));
+        msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server_ip));
+        msg.opts_mut().insert(v4::DhcpOption::AddressLeaseTime(lease_time));
+
+        if let Some(mask) = subnet_mask {
+            msg.opts_mut().insert(v4::DhcpOption::SubnetMask(mask));
+        }
+
+        if let Some(gw) = router {
+            msg.opts_mut().insert(v4::DhcpOption::Router(vec![gw]));
+        }
+
+        if let Some(dns) = dns_servers {
+            if !dns.is_empty() {
+                msg.opts_mut().insert(v4::DhcpOption::DomainNameServer(dns));
+            }
+        }
+
+        // Encode to bytes
+        let mut buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf);
+        msg.encode(&mut encoder)?;
+
+        Ok(ActionResult::Output(buf))
+    }
+
+    #[cfg(feature = "dhcp")]
+    fn execute_send_dhcp_nak(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let context = self.request_context.lock().unwrap().clone()
+            .ok_or_else(|| anyhow!("No DHCP request context available"))?;
+
+        let server_ip = action.get("server_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0")
+            .parse::<Ipv4Addr>()?;
+
+        // Build DHCP NAK message
+        let mut msg = v4::Message::default();
+        msg.set_opcode(v4::Opcode::BootReply)
+            .set_xid(context.xid)
+            .set_flags(v4::Flags::default().set_broadcast())
+            .set_siaddr(server_ip)
+            .set_chaddr(&context.chaddr);
+
+        // Add DHCP options
+        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Nak));
+        msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server_ip));
+
+        // Optional message
+        if let Some(message) = action.get("message").and_then(|v| v.as_str()) {
+            msg.opts_mut().insert(v4::DhcpOption::Message(message.to_string()));
+        }
+
+        // Encode to bytes
+        let mut buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf);
+        msg.encode(&mut encoder)?;
+
+        Ok(ActionResult::Output(buf))
+    }
+
+    #[cfg(not(feature = "dhcp"))]
+    fn execute_send_dhcp_offer(&self, _action: serde_json::Value) -> Result<ActionResult> {
+        Err(anyhow!("DHCP feature not enabled"))
+    }
+
+    #[cfg(not(feature = "dhcp"))]
+    fn execute_send_dhcp_ack(&self, _action: serde_json::Value) -> Result<ActionResult> {
+        Err(anyhow!("DHCP feature not enabled"))
+    }
+
+    #[cfg(not(feature = "dhcp"))]
+    fn execute_send_dhcp_nak(&self, _action: serde_json::Value) -> Result<ActionResult> {
+        Err(anyhow!("DHCP feature not enabled"))
+    }
+
     fn execute_send_dhcp_response(
         &self,
         action: serde_json::Value,
@@ -68,10 +302,141 @@ impl DhcpProtocol {
     }
 }
 
+fn send_dhcp_offer_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_dhcp_offer".to_string(),
+        description: "Send DHCP OFFER message in response to DISCOVER. Proposes IP configuration to client.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "offered_ip".to_string(),
+                type_hint: "string".to_string(),
+                description: "IP address to offer to the client (e.g., '192.168.1.100')".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "server_ip".to_string(),
+                type_hint: "string".to_string(),
+                description: "DHCP server IP address (default: '0.0.0.0')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "subnet_mask".to_string(),
+                type_hint: "string".to_string(),
+                description: "Subnet mask (e.g., '255.255.255.0')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "router".to_string(),
+                type_hint: "string".to_string(),
+                description: "Default gateway/router IP (e.g., '192.168.1.1')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "dns_servers".to_string(),
+                type_hint: "array of strings".to_string(),
+                description: "DNS server IPs (e.g., ['8.8.8.8', '8.8.4.4'])".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "lease_time".to_string(),
+                type_hint: "number".to_string(),
+                description: "Lease duration in seconds (default: 86400 = 24 hours)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_dhcp_offer",
+            "offered_ip": "192.168.1.100",
+            "subnet_mask": "255.255.255.0",
+            "router": "192.168.1.1",
+            "dns_servers": ["8.8.8.8", "8.8.4.4"],
+            "lease_time": 86400
+        }),
+    }
+}
+
+fn send_dhcp_ack_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_dhcp_ack".to_string(),
+        description: "Send DHCP ACK message in response to REQUEST. Confirms IP assignment to client.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "assigned_ip".to_string(),
+                type_hint: "string".to_string(),
+                description: "IP address to assign to the client (e.g., '192.168.1.100')".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "server_ip".to_string(),
+                type_hint: "string".to_string(),
+                description: "DHCP server IP address (default: '0.0.0.0')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "subnet_mask".to_string(),
+                type_hint: "string".to_string(),
+                description: "Subnet mask (e.g., '255.255.255.0')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "router".to_string(),
+                type_hint: "string".to_string(),
+                description: "Default gateway/router IP (e.g., '192.168.1.1')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "dns_servers".to_string(),
+                type_hint: "array of strings".to_string(),
+                description: "DNS server IPs (e.g., ['8.8.8.8', '8.8.4.4'])".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "lease_time".to_string(),
+                type_hint: "number".to_string(),
+                description: "Lease duration in seconds (default: 86400 = 24 hours)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_dhcp_ack",
+            "assigned_ip": "192.168.1.100",
+            "subnet_mask": "255.255.255.0",
+            "router": "192.168.1.1",
+            "dns_servers": ["8.8.8.8"],
+            "lease_time": 86400
+        }),
+    }
+}
+
+fn send_dhcp_nak_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_dhcp_nak".to_string(),
+        description: "Send DHCP NAK message to reject a REQUEST. Informs client that the requested configuration is not valid.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "server_ip".to_string(),
+                type_hint: "string".to_string(),
+                description: "DHCP server IP address (default: '0.0.0.0')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional error message to include in NAK".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_dhcp_nak",
+            "message": "Requested IP address not available"
+        }),
+    }
+}
+
 fn send_dhcp_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dhcp_response".to_string(),
-        description: "Send DHCP response packet to the client".to_string(),
+        description: "Send custom DHCP response packet (advanced, for raw hex data)".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
@@ -88,7 +453,7 @@ fn send_dhcp_response_action() -> ActionDefinition {
 fn ignore_request_action() -> ActionDefinition {
     ActionDefinition {
         name: "ignore_request".to_string(),
-        description: "Ignore this DHCP request".to_string(),
+        description: "Ignore this DHCP request without sending a response".to_string(),
         parameters: vec![],
         example: json!({
             "type": "ignore_request"
