@@ -258,7 +258,7 @@ async fn handle_keyboard_event(
                                 let mut handler_clone = event_handler.clone();
                                 let status_tx_clone = _status_tx.clone();
                                 tokio::spawn(async move {
-                                    let _ = handler_clone.handle_interpret(llm_input, status_tx_clone).await;
+                                    let _ = handler_clone.handle_interpret_with_actions(llm_input, status_tx_clone, None).await;
                                 });
                                 // UI will be updated when messages arrive via status_tx
                             }

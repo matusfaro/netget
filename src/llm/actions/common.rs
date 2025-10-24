@@ -3,7 +3,9 @@
 //! This module defines actions that are available in both user input
 //! and network event prompts (show_message, memory operations, etc.).
 
-use super::{ActionDefinition, Parameter};
+use super::{ActionDefinition, Parameter, ParameterDefinition};
+use super::protocol_trait::ProtocolActions;
+use crate::protocol::BaseStack;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -26,6 +28,8 @@ pub enum CommonAction {
         #[serde(default)]
         initial_memory: Option<String>,
         instruction: String,
+        #[serde(default)]
+        startup_params: Option<serde_json::Value>,
     },
 
     /// Close a server (closes all if server_id not specified)
@@ -118,6 +122,12 @@ pub fn open_server_action() -> ActionDefinition {
                 type_hint: "string".to_string(),
                 description: "Detailed instructions for handling network events".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "startup_params".to_string(),
+                type_hint: "object (optional)".to_string(),
+                description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
+                required: false,
             },
         ],
         example: json!({
@@ -227,7 +237,7 @@ pub fn append_memory_action() -> ActionDefinition {
 pub fn get_all_common_actions() -> Vec<ActionDefinition> {
     vec![
         show_message_action(),
-        open_server_action(),
+        get_open_server_action_with_params(),
         close_server_action(),
         update_instruction_action(),
         change_model_action(),
@@ -236,7 +246,7 @@ pub fn get_all_common_actions() -> Vec<ActionDefinition> {
     ]
 }
 
-/// Get common actions for user input (all common actions)
+/// Get common actions for user input (all common actions with enhanced open_server)
 pub fn get_user_input_common_actions() -> Vec<ActionDefinition> {
     get_all_common_actions()
 }
@@ -248,4 +258,217 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         set_memory_action(),
         append_memory_action(),
     ]
+}
+
+/// Create a protocol instance for getting startup parameters
+/// Returns None if the protocol doesn't support the ProtocolActions trait or isn't compiled in
+fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> {
+    match stack {
+        #[cfg(feature = "tcp")]
+        BaseStack::Tcp => {
+            use crate::network::TcpProtocol;
+            Some(Box::new(TcpProtocol::new()))
+        }
+        #[cfg(feature = "http")]
+        BaseStack::Http => {
+            use crate::network::HttpProtocol;
+            Some(Box::new(HttpProtocol::new()))
+        }
+        #[cfg(feature = "udp")]
+        BaseStack::Udp => {
+            use crate::network::UdpProtocol;
+            Some(Box::new(UdpProtocol::new()))
+        }
+        #[cfg(feature = "dns")]
+        BaseStack::Dns => {
+            use crate::network::DnsProtocol;
+            Some(Box::new(DnsProtocol::new()))
+        }
+        #[cfg(feature = "dhcp")]
+        BaseStack::Dhcp => {
+            use crate::network::DhcpProtocol;
+            Some(Box::new(DhcpProtocol::new()))
+        }
+        #[cfg(feature = "ntp")]
+        BaseStack::Ntp => {
+            use crate::network::NtpProtocol;
+            Some(Box::new(NtpProtocol::new()))
+        }
+        #[cfg(feature = "snmp")]
+        BaseStack::Snmp => {
+            use crate::network::SnmpProtocol;
+            Some(Box::new(SnmpProtocol::new()))
+        }
+        #[cfg(feature = "ssh")]
+        BaseStack::Ssh => {
+            use crate::network::SshProtocol;
+            Some(Box::new(SshProtocol::new()))
+        }
+        #[cfg(feature = "irc")]
+        BaseStack::Irc => {
+            use crate::network::IrcProtocol;
+            Some(Box::new(IrcProtocol::new()))
+        }
+        #[cfg(feature = "telnet")]
+        BaseStack::Telnet => {
+            use crate::network::TelnetProtocol;
+            Some(Box::new(TelnetProtocol::new()))
+        }
+        #[cfg(feature = "smtp")]
+        BaseStack::Smtp => {
+            use crate::network::SmtpProtocol;
+            Some(Box::new(SmtpProtocol::new()))
+        }
+        #[cfg(feature = "mdns")]
+        BaseStack::Mdns => {
+            use crate::network::MdnsProtocol;
+            Some(Box::new(MdnsProtocol::new()))
+        }
+        #[cfg(feature = "ipp")]
+        BaseStack::Ipp => {
+            use crate::network::IppProtocol;
+            Some(Box::new(IppProtocol::new()))
+        }
+        #[cfg(feature = "mysql")]
+        BaseStack::Mysql => {
+            // MySQL protocol requires constructor args, so we can't instantiate here
+            // Startup parameters not supported yet for MySQL
+            None
+        }
+        #[cfg(feature = "postgresql")]
+        BaseStack::Postgresql => {
+            // PostgreSQL protocol requires constructor args, so we can't instantiate here
+            // Startup parameters not supported yet for PostgreSQL
+            None
+        }
+        #[cfg(feature = "redis")]
+        BaseStack::Redis => {
+            // Redis protocol requires constructor args, so we can't instantiate here
+            // Startup parameters not supported yet for Redis
+            None
+        }
+        #[cfg(feature = "proxy")]
+        BaseStack::Proxy => {
+            use crate::network::ProxyProtocol;
+            Some(Box::new(ProxyProtocol::new()))
+        }
+        #[cfg(feature = "webdav")]
+        BaseStack::WebDav => {
+            use crate::network::WebDavProtocol;
+            Some(Box::new(WebDavProtocol::new()))
+        }
+        #[cfg(feature = "nfs")]
+        BaseStack::Nfs => {
+            use crate::network::NfsProtocol;
+            Some(Box::new(NfsProtocol::new()))
+        }
+        _ => None,
+    }
+}
+
+/// Get all BaseStack enum values (useful for iteration)
+fn all_base_stacks() -> Vec<BaseStack> {
+    vec![
+        BaseStack::Tcp,
+        BaseStack::Http,
+        BaseStack::DataLink,
+        BaseStack::Udp,
+        BaseStack::Dns,
+        BaseStack::Dhcp,
+        BaseStack::Ntp,
+        BaseStack::Snmp,
+        BaseStack::Ssh,
+        BaseStack::Irc,
+        BaseStack::Telnet,
+        BaseStack::Smtp,
+        BaseStack::Mdns,
+        BaseStack::Mysql,
+        BaseStack::Ipp,
+        BaseStack::Postgresql,
+        BaseStack::Redis,
+        BaseStack::Proxy,
+        BaseStack::WebDav,
+        BaseStack::Nfs,
+    ]
+}
+
+/// Generate comprehensive base stack documentation with startup parameters
+/// Returns formatted text listing all available stacks and their configuration options
+pub fn generate_base_stack_documentation() -> String {
+    let mut doc = String::from("## Available Base Stacks\n\n");
+    doc.push_str("Each protocol stack has a specific name to use in the 'base_stack' field:\n\n");
+
+    for stack in all_base_stacks() {
+        // Get the stack name/identifier
+        let stack_str = format!("{}", stack);
+        doc.push_str(&format!("### {}\n", stack_str));
+        doc.push_str(&format!("Stack name: \"{}\"\n", stack.name()));
+
+        // Add startup parameters if available
+        if let Some(protocol) = get_protocol_for_stack(stack) {
+            let params = protocol.get_startup_parameters();
+            if !params.is_empty() {
+                doc.push_str("Startup parameters:\n");
+                for param in params {
+                    doc.push_str(&format!("  • {} ({}) - {}\n",
+                        param.name,
+                        if param.required { "required" } else { "optional" },
+                        param.description
+                    ));
+                    doc.push_str(&format!("    Example: {}\n",
+                        serde_json::to_string(&param.example).unwrap_or_default()
+                    ));
+                }
+            } else {
+                doc.push_str("No startup parameters.\n");
+            }
+        } else {
+            doc.push_str("No startup parameters.\n");
+        }
+        doc.push('\n');
+    }
+
+    doc
+}
+
+/// Get enhanced open_server action with protocol-specific startup parameters
+pub fn get_open_server_action_with_params() -> ActionDefinition {
+    let mut base_action = open_server_action();
+
+    // Add documentation about startup parameters from all available protocols
+    let mut startup_params_doc = String::from("\n\nProtocol-specific startup parameters:\n\n");
+
+    for stack in all_base_stacks() {
+        if let Some(protocol) = get_protocol_for_stack(stack) {
+            let params = protocol.get_startup_parameters();
+            if !params.is_empty() {
+                startup_params_doc.push_str(&format!("{}:\n", stack));
+                for param in params {
+                    startup_params_doc.push_str(&format!("  - {}: {} ({})\n",
+                        param.name,
+                        param.description,
+                        if param.required { "required" } else { "optional" }
+                    ));
+                }
+                startup_params_doc.push('\n');
+            }
+        }
+    }
+
+    // Update description to include startup params documentation
+    base_action.description.push_str(&startup_params_doc);
+
+    // Add example with startup_params for proxy
+    base_action.example = json!({
+        "type": "open_server",
+        "port": 8080,
+        "base_stack": "proxy",
+        "instruction": "Act as HTTP proxy",
+        "startup_params": {
+            "certificate_mode": "generate",
+            "request_filter_mode": "match_only"
+        }
+    });
+
+    base_action
 }

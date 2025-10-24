@@ -233,6 +233,8 @@ pub struct ServerInstance {
     pub status_changed_at: Instant,
     /// Local listening address
     pub local_addr: Option<SocketAddr>,
+    /// Protocol-specific startup parameters
+    pub startup_params: Option<serde_json::Value>,
     /// Proxy filter configuration (only for proxy servers)
     #[cfg(feature = "proxy")]
     pub proxy_filter_config: Option<crate::network::proxy_filter::ProxyFilterConfig>,
@@ -259,6 +261,7 @@ impl ServerInstance {
             created_at: now,
             status_changed_at: now,
             local_addr: None,
+            startup_params: None,
             #[cfg(feature = "proxy")]
             proxy_filter_config: None,
         }

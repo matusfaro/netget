@@ -93,45 +93,6 @@ impl EventHandler {
         }
     }
 
-    /// Handle interpret command asynchronously via channel
-    /// This method can be spawned in a task without blocking the UI
-    pub async fn handle_interpret(
-        &mut self,
-        input: String,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        use crate::llm::PromptBuilder;
-
-        let _ = status_tx.send(format!("[INFO] Interpreting: {}", input));
-
-        // Ask LLM to interpret the command
-        let prompt = PromptBuilder::build_user_input_prompt(&self.state, &input).await;
-        let model = self.state.get_ollama_model().await;
-
-        // Create LLM client with status channel for trace logs
-        let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());
-
-        match llm_with_status.generate_command_interpretation(&model, &prompt).await {
-            Ok(interpretation) => {
-                // Display message if provided
-                if let Some(msg) = &interpretation.message {
-                    let _ = status_tx.send(msg.clone());
-                }
-
-                // Execute each action in order
-                for action in interpretation.actions {
-                    if let Err(e) = self.execute_command_action(action, &status_tx).await {
-                        let _ = status_tx.send(format!("[ERROR] Error executing action: {}", e));
-                    }
-                }
-            }
-            Err(e) => {
-                let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
-            }
-        }
-
-        Ok(())
-    }
 
     /// Handle interpret command using NEW action-based system
     /// This method can be spawned in a task without blocking the UI
@@ -200,9 +161,8 @@ impl EventHandler {
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to parse action response, falling back to old system: {}", e);
-                        // Fall back to old system
-                        return self.handle_interpret(input, status_tx).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response as action array: {}", e));
+                        let _ = status_tx.send("[ERROR] The LLM must respond with {{\"actions\": [...]}}".to_string());
                     }
                 }
             }
@@ -221,7 +181,7 @@ impl EventHandler {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match action {
-            CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction } => {
+            CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction, startup_params } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
                 // Parse base stack
@@ -240,6 +200,9 @@ impl EventHandler {
                 if let Some(mem) = initial_memory {
                     server.memory = mem;
                 }
+
+                // Set startup params if provided
+                server.startup_params = startup_params;
 
                 server.status = ServerStatus::Starting;
 
@@ -316,95 +279,6 @@ impl EventHandler {
     }
 
 
-    /// Execute a command action (already in async context)
-    async fn execute_command_action(
-        &mut self,
-        action: crate::llm::CommandAction,
-        status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        use crate::llm::CommandAction;
-        use crate::state::server::{ServerInstance, ServerStatus};
-
-        match action {
-            CommandAction::UpdateInstruction { instruction } => {
-                if let Some(server_id) = self.state.get_first_server_id().await {
-                    self.state.set_instruction(server_id, instruction.clone()).await;
-                    let _ = status_tx.send(format!("[INFO] Server #{} instruction: {}", server_id.as_u32(), instruction));
-                }
-            }
-            CommandAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction } => {
-                // Parse base stack
-                let stack = crate::protocol::BaseStack::from_str(&base_stack)
-                    .unwrap_or(BaseStack::Tcp);
-
-                // Create a new server instance
-                let mut server = ServerInstance::new(
-                    crate::state::ServerId::new(0), // Temporary ID, will be replaced by add_server
-                    port,
-                    stack,
-                    instruction,
-                );
-
-                // Set initial memory if provided
-                if let Some(mem) = initial_memory {
-                    server.memory = mem;
-                }
-
-                server.status = ServerStatus::Starting;
-
-                // Add server to state (this assigns the real ID)
-                let server_id = self.state.add_server(server).await;
-
-                let _ = status_tx.send(format!("[SERVER] Opening server #{} on port {} with stack {}", server_id.as_u32(), port, stack));
-
-                // Spawn the server directly (no more message passing!)
-                if let Err(e) = server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx).await {
-                    let _ = status_tx.send(format!("[ERROR] Failed to start server #{}: {}", server_id.as_u32(), e));
-                }
-            }
-            CommandAction::OpenClient { address, base_stack: _ } => {
-                let _ = status_tx.send(format!("Client mode not yet implemented ({})", address));
-            }
-            CommandAction::CloseConnection { connection_id } => {
-                // TODO: Update this to work with per-server connections
-                if let Some(conn_id_str) = connection_id {
-                    if let Some(_conn_id) = crate::network::ConnectionId::from_string(&conn_id_str) {
-                        let _ = status_tx.send("[WARN] Close connection not yet implemented for multi-server".to_string());
-                    }
-                } else {
-                    let _ = status_tx.send("[INFO] Close all connections not supported".to_string());
-                }
-            }
-            CommandAction::CloseServer => {
-                // Close all servers
-                let server_ids = self.state.get_all_server_ids().await;
-                for server_id in server_ids {
-                    self.state.remove_server(server_id).await;
-                    let _ = status_tx.send(format!("[SERVER] Closed server #{}", server_id.as_u32()));
-                    let _ = status_tx.send(format!("__STOP_SERVER__:{}", server_id.as_u32()));
-                }
-                if self.state.get_all_server_ids().await.is_empty() {
-                    self.state.set_mode(Mode::Idle).await;
-                }
-                let _ = status_tx.send("[INFO] Server closed".to_string());
-
-                // Signal main loop to update UI
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
-            }
-            CommandAction::ShowMessage { message } => {
-                let _ = status_tx.send(message);
-            }
-            CommandAction::ChangeModel { model } => {
-                self.state.set_ollama_model(model.clone()).await;
-                let _ = status_tx.send(format!("Changed model to: {}", model));
-
-                // Signal main loop to update UI
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
-            }
-        }
-
-        Ok(())
-    }
 
     async fn handle_quit(&mut self, ui: &mut App) -> Result<()> {
         ui.add_llm_message("Quitting...".to_string());

@@ -583,6 +583,9 @@ pub async fn start_server_by_id(
                 use crate::network::proxy::ProxyServer;
                 let state_arc = Arc::new(state.clone());
 
+                // Get startup params from server
+                let startup_params = server.startup_params.clone();
+
                 // Spawn HTTP Proxy server
                 match ProxyServer::spawn_with_llm_actions(
                     listen_addr,
@@ -590,6 +593,7 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
+                    startup_params,
                 ).await {
                     Ok(actual_addr) => {
                         state.update_server_status(server_id, ServerStatus::Running).await;

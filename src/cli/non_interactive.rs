@@ -44,7 +44,7 @@ pub async fn run_non_interactive(
 
     // Call handler directly - no need for separate task!
     // The handler will spawn servers directly now
-    event_handler.handle_interpret(prompt, status_tx.clone()).await?;
+    event_handler.handle_interpret_with_actions(prompt, status_tx.clone(), None).await?;
 
     // Print any status messages that were sent
     while let Ok(msg) = status_rx.try_recv() {

@@ -8,8 +8,8 @@
 
 use crate::network::connection::ConnectionId;
 use crate::network::proxy_filter::{
-    ProxyFilterConfig, CertificateMode, FullRequestInfo, FullResponseInfo,
-    HttpsConnectionInfo, RequestAction, ResponseAction, HttpsConnectionAction,
+    ProxyFilterConfig, CertificateMode, FullRequestInfo,
+    HttpsConnectionInfo, RequestAction, HttpsConnectionAction,
 };
 use anyhow::{Result, Context};
 use std::collections::HashMap;
@@ -19,15 +19,15 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn, trace};
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::actions::get_network_event_common_actions;
-use crate::llm::actions::protocol_trait::ProtocolActions;
+use crate::llm::call_llm_with_actions;
+use crate::llm::actions::protocol_trait::{ProtocolActions, ActionResult};
 use crate::network::ProxyProtocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use regex::Regex;
+use serde_json::json;
 
 /// HTTP/HTTPS Proxy server that intercepts and forwards requests via LLM
 pub struct ProxyServer;
@@ -40,6 +40,7 @@ impl ProxyServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
+        startup_params: Option<serde_json::Value>,
     ) -> Result<SocketAddr> {
         let _ = status_tx.send("[INFO] @@@ spawn_with_llm_actions CALLED @@@".to_string());
         info!("Proxy server (action-based) starting on {}", listen_addr);
@@ -51,6 +52,59 @@ impl ProxyServer {
                 info!("No proxy filter config found, using defaults (MITM with cert generation)");
                 ProxyFilterConfig::default()
             });
+
+        // Apply startup parameters if provided
+        if let Some(params) = startup_params {
+            info!("Applying startup parameters: {:?}", params);
+            let _ = status_tx.send(format!("[INFO] Applying proxy startup parameters"));
+
+            // Parse certificate_mode
+            if let Some(cert_mode_str) = params.get("certificate_mode").and_then(|v| v.as_str()) {
+                config.certificate_mode = match cert_mode_str {
+                    "generate" => CertificateMode::Generate,
+                    "none" => CertificateMode::None,
+                    "load_from_file" => {
+                        let cert_path = params.get("cert_path")
+                            .and_then(|v| v.as_str())
+                            .context("Missing cert_path for load_from_file mode")?;
+                        let key_path = params.get("key_path")
+                            .and_then(|v| v.as_str())
+                            .context("Missing key_path for load_from_file mode")?;
+                        CertificateMode::LoadFromFile {
+                            cert_path: cert_path.into(),
+                            key_path: key_path.into(),
+                        }
+                    },
+                    _ => {
+                        warn!("Invalid certificate_mode: {}, using default", cert_mode_str);
+                        config.certificate_mode
+                    }
+                };
+                let _ = status_tx.send(format!("[INFO] Certificate mode: {:?}", config.certificate_mode));
+            }
+
+            // Parse filter modes
+            if let Some(mode_str) = params.get("request_filter_mode").and_then(|v| v.as_str()) {
+                if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
+                    let _ = status_tx.send(format!("[INFO] Request filter mode: {:?}", mode));
+                    config.request_filter_mode = mode;
+                }
+            }
+
+            if let Some(mode_str) = params.get("response_filter_mode").and_then(|v| v.as_str()) {
+                if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
+                    let _ = status_tx.send(format!("[INFO] Response filter mode: {:?}", mode));
+                    config.response_filter_mode = mode;
+                }
+            }
+
+            if let Some(mode_str) = params.get("https_connection_filter_mode").and_then(|v| v.as_str()) {
+                if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
+                    let _ = status_tx.send(format!("[INFO] HTTPS connection filter mode: {:?}", mode));
+                    config.https_connection_filter_mode = mode;
+                }
+            }
+        }
 
         // Generate or load certificate based on configuration
         let ca_cert: Option<Arc<Certificate>> = match &config.certificate_mode {
@@ -815,51 +869,54 @@ impl ProxyServer {
     ) -> Result<RequestAction> {
         let _ = status_tx.send("[DEBUG] Consulting LLM about HTTP request...".to_string());
 
-        // Get available actions
-        let mut all_actions = get_network_event_common_actions();
-        all_actions.extend((**protocol).get_sync_actions());
+        // Format request info for event description
+        let body_preview = if request_info.body.len() > 500 {
+            format!("{}... ({} bytes total)",
+                String::from_utf8_lossy(&request_info.body[..500]),
+                request_info.body.len())
+        } else {
+            String::from_utf8_lossy(&request_info.body).to_string()
+        };
 
-        // Build prompt
-        let prompt = PromptBuilder::build_proxy_http_request_prompt(
+        let headers_text: String = request_info.headers.iter()
+            .map(|(k, v)| format!("  {}: {}", k, v))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let event_description = format!(
+            "HTTP {} {} from {}\n\n\
+             Host: {}\n\
+             Path: {}\n\
+             Full URL: {}\n\n\
+             Headers:\n{}\n\n\
+             Body:\n{}",
+            request_info.method,
+            request_info.path,
+            request_info.client_addr,
+            request_info.host,
+            request_info.path,
+            request_info.url,
+            headers_text,
+            body_preview
+        );
+
+        // Call LLM with action system
+        let execution_result = call_llm_with_actions(
+            llm_client,
             app_state,
             server_id,
-            request_info,
-            all_actions,
-        ).await;
+            &event_description,
+            Some(protocol.as_ref() as &dyn ProtocolActions),
+            Vec::new(),
+        ).await.context("LLM request failed")?;
 
-        // Call LLM
-        let model = app_state.get_ollama_model().await;
-        let response_text = llm_client.generate_with_format(&model, &prompt, None).await
-            .context("LLM request failed")?;
-
-        debug!("LLM response for HTTP request:\n{}", response_text);
-
-        // Parse response as JSON
-        let response_json: serde_json::Value = serde_json::from_str(&response_text)
-            .context("Failed to parse LLM response as JSON")?;
-
-        // Extract actions array
-        let actions = response_json.get("actions")
-            .and_then(|a| a.as_array())
-            .context("Missing 'actions' array in LLM response")?;
-
-        // Find the first request handling action
-        for action in actions {
-            if let Some(action_type) = action.get("type").and_then(|t| t.as_str()) {
-                match action_type {
-                    "handle_request_pass" => {
-                        return Ok(RequestAction::Pass);
-                    },
-                    "handle_request_block" => {
-                        let status = action.get("status").and_then(|s| s.as_u64()).unwrap_or(403) as u16;
-                        let body = action.get("body").and_then(|b| b.as_str()).unwrap_or("Request blocked by proxy").to_string();
-                        return Ok(RequestAction::Block { status, body });
-                    },
-                    "handle_request_modify" => {
-                        return Self::parse_request_modify_action(action);
-                    },
-                    _ => continue,
-                }
+        // Extract request action from protocol results
+        for result in execution_result.protocol_results {
+            if let ActionResult::Output(bytes) = result {
+                // Deserialize the RequestAction
+                let action: RequestAction = serde_json::from_slice(&bytes)
+                    .context("Failed to deserialize RequestAction")?;
+                return Ok(action);
             }
         }
 
@@ -878,47 +935,37 @@ impl ProxyServer {
     ) -> Result<HttpsConnectionAction> {
         let _ = status_tx.send("[DEBUG] Consulting LLM about HTTPS connection...".to_string());
 
-        // Get available actions
-        let mut all_actions = get_network_event_common_actions();
-        all_actions.extend((**protocol).get_sync_actions());
+        // Format connection info for event description
+        let event_description = format!(
+            "HTTPS CONNECT Request:\n\n\
+             Destination: {}:{}\n\
+             SNI: {}\n\
+             Client: {}\n\n\
+             Note: This connection uses TLS encryption. Without MITM certificate, \
+             you can only allow or block the connection, but cannot inspect or modify the traffic.",
+            conn_info.destination_host,
+            conn_info.destination_port,
+            conn_info.sni.as_ref().unwrap_or(&"(not available)".to_string()),
+            conn_info.client_addr
+        );
 
-        // Build prompt
-        let prompt = PromptBuilder::build_proxy_https_connection_prompt(
+        // Call LLM with action system
+        let execution_result = call_llm_with_actions(
+            llm_client,
             app_state,
             server_id,
-            conn_info,
-            all_actions,
-        ).await;
+            &event_description,
+            Some(protocol.as_ref() as &dyn ProtocolActions),
+            Vec::new(),
+        ).await.context("LLM request failed")?;
 
-        // Call LLM
-        let model = app_state.get_ollama_model().await;
-        let response_text = llm_client.generate_with_format(&model, &prompt, None).await
-            .context("LLM request failed")?;
-
-        debug!("LLM response for HTTPS connection:\n{}", response_text);
-
-        // Parse response as JSON
-        let response_json: serde_json::Value = serde_json::from_str(&response_text)
-            .context("Failed to parse LLM response as JSON")?;
-
-        // Extract actions array
-        let actions = response_json.get("actions")
-            .and_then(|a| a.as_array())
-            .context("Missing 'actions' array in LLM response")?;
-
-        // Find the first HTTPS connection action
-        for action in actions {
-            if let Some(action_type) = action.get("type").and_then(|t| t.as_str()) {
-                match action_type {
-                    "handle_https_connection_allow" => {
-                        return Ok(HttpsConnectionAction::Allow);
-                    },
-                    "handle_https_connection_block" => {
-                        let reason = action.get("reason").and_then(|r| r.as_str()).map(|s| s.to_string());
-                        return Ok(HttpsConnectionAction::Block { reason });
-                    },
-                    _ => continue,
-                }
+        // Extract HTTPS connection action from protocol results
+        for result in execution_result.protocol_results {
+            if let ActionResult::Output(bytes) = result {
+                // Deserialize the HttpsConnectionAction
+                let action: HttpsConnectionAction = serde_json::from_slice(&bytes)
+                    .context("Failed to deserialize HttpsConnectionAction")?;
+                return Ok(action);
             }
         }
 
