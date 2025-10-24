@@ -1,0 +1,762 @@
+//! HTTP Proxy protocol actions implementation
+//!
+//! This module provides actions for:
+//! - Configuring request/response filters
+//! - Setting certificate mode (MITM vs pass-through)
+//! - Handling intercepted requests (pass/block/modify)
+//! - Handling intercepted responses (pass/block/modify)
+//! - Handling HTTPS connections in pass-through mode (allow/block)
+
+use crate::llm::actions::{
+    protocol_trait::{ActionResult, ProtocolActions},
+    ActionDefinition, Parameter,
+};
+use crate::network::proxy_filter::{
+    ProxyFilterConfig, CertificateMode, RequestFilter, ResponseFilter, HttpsConnectionFilter,
+    RequestAction, ResponseAction, HttpsConnectionAction, FilterMode,
+};
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use serde_json::json;
+use std::collections::HashMap;
+
+/// HTTP Proxy protocol action handler
+pub struct ProxyProtocol;
+
+impl ProxyProtocol {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ProtocolActions for ProxyProtocol {
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            // Configuration actions (async - can be called anytime)
+            configure_certificate_action(),
+            configure_request_filters_action(),
+            configure_response_filters_action(),
+            configure_https_connection_filters_action(),
+            set_filter_mode_action(),
+        ]
+    }
+
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            // Request handling actions (sync - in response to intercepted request)
+            handle_request_pass_action(),
+            handle_request_block_action(),
+            handle_request_modify_action(),
+            // Response handling actions (sync - in response to intercepted response)
+            handle_response_pass_action(),
+            handle_response_block_action(),
+            handle_response_modify_action(),
+            // HTTPS connection handling (sync - in response to HTTPS CONNECT in pass-through mode)
+            handle_https_connection_allow_action(),
+            handle_https_connection_block_action(),
+        ]
+    }
+
+    fn execute_action(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            // Configuration actions
+            "configure_certificate" => self.execute_configure_certificate(action),
+            "configure_request_filters" => self.execute_configure_request_filters(action),
+            "configure_response_filters" => self.execute_configure_response_filters(action),
+            "configure_https_connection_filters" => self.execute_configure_https_connection_filters(action),
+            "set_filter_mode" => self.execute_set_filter_mode(action),
+
+            // Request handling
+            "handle_request_pass" => self.execute_handle_request_pass(action),
+            "handle_request_block" => self.execute_handle_request_block(action),
+            "handle_request_modify" => self.execute_handle_request_modify(action),
+
+            // Response handling
+            "handle_response_pass" => self.execute_handle_response_pass(action),
+            "handle_response_block" => self.execute_handle_response_block(action),
+            "handle_response_modify" => self.execute_handle_response_modify(action),
+
+            // HTTPS connection handling
+            "handle_https_connection_allow" => self.execute_handle_https_connection_allow(action),
+            "handle_https_connection_block" => self.execute_handle_https_connection_block(action),
+
+            _ => Err(anyhow::anyhow!("Unknown Proxy action: {}", action_type)),
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "Proxy"
+    }
+}
+
+impl ProxyProtocol {
+    // ========================================================================
+    // Configuration Actions
+    // ========================================================================
+
+    /// Configure certificate mode
+    fn execute_configure_certificate(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let mode = action.get("mode")
+            .and_then(|v| v.as_str())
+            .context("Missing 'mode' field")?;
+
+        let cert_mode = match mode {
+            "generate" => CertificateMode::Generate,
+            "none" => CertificateMode::None,
+            "load_from_file" => {
+                let cert_path = action.get("cert_path")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'cert_path' for load_from_file mode")?;
+                let key_path = action.get("key_path")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'key_path' for load_from_file mode")?;
+
+                CertificateMode::LoadFromFile {
+                    cert_path: cert_path.into(),
+                    key_path: key_path.into(),
+                }
+            },
+            _ => return Err(anyhow::anyhow!("Invalid certificate mode: {}", mode)),
+        };
+
+        // Return configuration as JSON
+        let config = json!({
+            "certificate_mode": cert_mode
+        });
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&config).context("Failed to serialize certificate config")?,
+        ))
+    }
+
+    /// Configure request filters
+    fn execute_configure_request_filters(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let filters: Vec<RequestFilter> = action.get("filters")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let config = json!({
+            "request_filters": filters
+        });
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&config).context("Failed to serialize request filters")?,
+        ))
+    }
+
+    /// Configure response filters
+    fn execute_configure_response_filters(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let filters: Vec<ResponseFilter> = action.get("filters")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let config = json!({
+            "response_filters": filters
+        });
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&config).context("Failed to serialize response filters")?,
+        ))
+    }
+
+    /// Configure HTTPS connection filters (pass-through mode)
+    fn execute_configure_https_connection_filters(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let filters: Vec<HttpsConnectionFilter> = action.get("filters")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let config = json!({
+            "https_connection_filters": filters
+        });
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&config).context("Failed to serialize HTTPS connection filters")?,
+        ))
+    }
+
+    /// Set filter mode
+    fn execute_set_filter_mode(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let request_mode = action.get("request_filter_mode")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or(FilterMode::All);
+
+        let response_mode = action.get("response_filter_mode")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or(FilterMode::All);
+
+        let https_connection_mode = action.get("https_connection_filter_mode")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or(FilterMode::All);
+
+        let config = json!({
+            "request_filter_mode": request_mode,
+            "response_filter_mode": response_mode,
+            "https_connection_filter_mode": https_connection_mode
+        });
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&config).context("Failed to serialize filter modes")?,
+        ))
+    }
+
+    // ========================================================================
+    // Request Handling Actions
+    // ========================================================================
+
+    /// Pass request through unchanged
+    fn execute_handle_request_pass(
+        &self,
+        _action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let result = RequestAction::Pass;
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize request action")?,
+        ))
+    }
+
+    /// Block request and return error response
+    fn execute_handle_request_block(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let status = action.get("status")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(403) as u16;
+
+        let body = action.get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Request blocked by proxy")
+            .to_string();
+
+        let result = RequestAction::Block { status, body };
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize request action")?,
+        ))
+    }
+
+    /// Modify request before forwarding
+    fn execute_handle_request_modify(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let headers = action.get("headers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let remove_headers = action.get("remove_headers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let new_path = action.get("new_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let query_params = action.get("query_params")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let new_body = action.get("new_body")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let body_replacements = action.get("body_replacements")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let result = RequestAction::Modify {
+            headers,
+            remove_headers,
+            new_path,
+            query_params,
+            new_body,
+            body_replacements,
+        };
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize request action")?,
+        ))
+    }
+
+    // ========================================================================
+    // Response Handling Actions
+    // ========================================================================
+
+    /// Pass response through unchanged
+    fn execute_handle_response_pass(
+        &self,
+        _action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let result = ResponseAction::Pass;
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize response action")?,
+        ))
+    }
+
+    /// Block response and return different one
+    fn execute_handle_response_block(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let status = action.get("status")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(502) as u16;
+
+        let body = action.get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Response blocked by proxy")
+            .to_string();
+
+        let result = ResponseAction::Block { status, body };
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize response action")?,
+        ))
+    }
+
+    /// Modify response before returning to client
+    fn execute_handle_response_modify(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let status = action.get("status")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u16);
+
+        let headers = action.get("headers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let remove_headers = action.get("remove_headers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let new_body = action.get("new_body")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let body_replacements = action.get("body_replacements")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let result = ResponseAction::Modify {
+            status,
+            headers,
+            remove_headers,
+            new_body,
+            body_replacements,
+        };
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize response action")?,
+        ))
+    }
+
+    // ========================================================================
+    // HTTPS Connection Handling (Pass-Through Mode)
+    // ========================================================================
+
+    /// Allow HTTPS connection to proceed
+    fn execute_handle_https_connection_allow(
+        &self,
+        _action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let result = HttpsConnectionAction::Allow;
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize HTTPS connection action")?,
+        ))
+    }
+
+    /// Block HTTPS connection
+    fn execute_handle_https_connection_block(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let reason = action.get("reason")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let result = HttpsConnectionAction::Block { reason };
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&result).context("Failed to serialize HTTPS connection action")?,
+        ))
+    }
+}
+
+// ============================================================================
+// Action Definitions
+// ============================================================================
+
+// Configuration Actions
+
+fn configure_certificate_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "configure_certificate".to_string(),
+        description: "Configure certificate mode for proxy (generate, load from file, or none for pass-through)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Certificate mode: 'generate', 'load_from_file', or 'none'".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "cert_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to certificate file (required if mode is 'load_from_file')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "key_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to private key file (required if mode is 'load_from_file')".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "configure_certificate",
+            "mode": "generate"
+        }),
+    }
+}
+
+fn configure_request_filters_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "configure_request_filters".to_string(),
+        description: "Set up filters to determine which requests to intercept and send to LLM".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "filters".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of request filter objects with optional regex patterns for host, path, method, headers, body".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "configure_request_filters",
+            "filters": [
+                {
+                    "host_regex": "^api\\.example\\.com$",
+                    "path_regex": "^/api/.*",
+                    "method_regex": "^(POST|PUT)$"
+                }
+            ]
+        }),
+    }
+}
+
+fn configure_response_filters_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "configure_response_filters".to_string(),
+        description: "Set up filters to determine which responses to intercept and send to LLM".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "filters".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of response filter objects with optional regex patterns for status, headers, body, request_host, request_path".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "configure_response_filters",
+            "filters": [
+                {
+                    "status_regex": "^(4|5)\\d{2}$",
+                    "request_host_regex": "^api\\.example\\.com$"
+                }
+            ]
+        }),
+    }
+}
+
+fn configure_https_connection_filters_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "configure_https_connection_filters".to_string(),
+        description: "Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "filters".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of HTTPS connection filter objects with optional regex patterns for host, port, sni, client_addr".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "configure_https_connection_filters",
+            "filters": [
+                {
+                    "host_regex": "^.*\\.example\\.com$",
+                    "port_regex": "^443$",
+                    "sni_regex": "^secure\\.example\\.com$"
+                }
+            ]
+        }),
+    }
+}
+
+fn set_filter_mode_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "set_filter_mode".to_string(),
+        description: "Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "request_filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Mode for request filtering: 'all', 'match_only', or 'none'".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "response_filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Mode for response filtering: 'all', 'match_only', or 'none'".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "https_connection_filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Mode for HTTPS connection filtering (pass-through mode): 'all', 'match_only', or 'none'".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "set_filter_mode",
+            "request_filter_mode": "match_only",
+            "response_filter_mode": "all",
+            "https_connection_filter_mode": "match_only"
+        }),
+    }
+}
+
+// Request Handling Actions
+
+fn handle_request_pass_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_request_pass".to_string(),
+        description: "Pass the intercepted request through unchanged to its destination".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "handle_request_pass"
+        }),
+    }
+}
+
+fn handle_request_block_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_request_block".to_string(),
+        description: "Block the intercepted request and return an error response to the client".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "status".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status code (default: 403)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response body explaining why request was blocked".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "handle_request_block",
+            "status": 403,
+            "body": "Access denied by security policy"
+        }),
+    }
+}
+
+fn handle_request_modify_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_request_modify".to_string(),
+        description: "Modify the intercepted request before forwarding to destination".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "headers".to_string(),
+                type_hint: "object".to_string(),
+                description: "Headers to add or modify (key-value pairs)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "remove_headers".to_string(),
+                type_hint: "array".to_string(),
+                description: "Header names to remove".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "new_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "New URL path (replaces entire path)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "query_params".to_string(),
+                type_hint: "object".to_string(),
+                description: "Query parameters to add/modify".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "new_body".to_string(),
+                type_hint: "string".to_string(),
+                description: "Complete body replacement".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body_replacements".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "handle_request_modify",
+            "headers": {
+                "X-Proxy-Modified": "true",
+                "User-Agent": "CustomBot/1.0"
+            },
+            "remove_headers": ["Cookie"],
+            "body_replacements": [
+                {
+                    "pattern": "password",
+                    "replacement": "****REDACTED****"
+                }
+            ]
+        }),
+    }
+}
+
+// Response Handling Actions
+
+fn handle_response_pass_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_response_pass".to_string(),
+        description: "Pass the intercepted response through unchanged to the client".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "handle_response_pass"
+        }),
+    }
+}
+
+fn handle_response_block_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_response_block".to_string(),
+        description: "Block the intercepted response and return a different response to the client".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "status".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status code (default: 502)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response body".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "handle_response_block",
+            "status": 502,
+            "body": "Response blocked by content policy"
+        }),
+    }
+}
+
+fn handle_response_modify_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_response_modify".to_string(),
+        description: "Modify the intercepted response before returning to client".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "status".to_string(),
+                type_hint: "number".to_string(),
+                description: "New HTTP status code".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "headers".to_string(),
+                type_hint: "object".to_string(),
+                description: "Headers to add or modify (key-value pairs)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "remove_headers".to_string(),
+                type_hint: "array".to_string(),
+                description: "Header names to remove".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "new_body".to_string(),
+                type_hint: "string".to_string(),
+                description: "Complete body replacement".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body_replacements".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "handle_response_modify",
+            "headers": {
+                "X-Content-Filtered": "true"
+            },
+            "body_replacements": [
+                {
+                    "pattern": "secret-api-key-\\w+",
+                    "replacement": "****REDACTED****"
+                }
+            ]
+        }),
+    }
+}
+
+// HTTPS Connection Handling Actions
+
+fn handle_https_connection_allow_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_https_connection_allow".to_string(),
+        description: "Allow HTTPS connection to proceed (pass-through mode only, no MITM)".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "handle_https_connection_allow"
+        }),
+    }
+}
+
+fn handle_https_connection_block_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "handle_https_connection_block".to_string(),
+        description: "Block HTTPS connection (pass-through mode only, no MITM)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "reason".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional reason for blocking".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "handle_https_connection_block",
+            "reason": "Destination blocked by security policy"
+        }),
+    }
+}

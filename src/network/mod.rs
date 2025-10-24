@@ -95,5 +95,40 @@ pub use irc::IrcServer;
 #[cfg(feature = "irc")]
 pub use irc_actions::IrcProtocol;
 
+#[cfg(feature = "proxy")]
+pub mod proxy;
+#[cfg(feature = "proxy")]
+pub mod proxy_actions;
+#[cfg(feature = "proxy")]
+pub mod proxy_filter;
+#[cfg(feature = "proxy")]
+pub use proxy::ProxyServer;
+#[cfg(feature = "proxy")]
+pub use proxy_actions::ProxyProtocol;
+#[cfg(feature = "proxy")]
+pub use proxy_filter::{
+    ProxyFilterConfig, CertificateMode, RequestFilter, ResponseFilter,
+    RequestAction, ResponseAction, HttpsConnectionAction, FilterMode,
+    HttpsConnectionInfo, FullRequestInfo, FullResponseInfo,
+};
+
+#[cfg(feature = "webdav")]
+pub mod webdav;
+#[cfg(feature = "webdav")]
+pub mod webdav_actions;
+#[cfg(feature = "webdav")]
+pub use webdav::WebDavServer;
+#[cfg(feature = "webdav")]
+pub use webdav_actions::WebDavProtocol;
+
+#[cfg(feature = "nfs")]
+pub mod nfs;
+#[cfg(feature = "nfs")]
+pub mod nfs_actions;
+#[cfg(feature = "nfs")]
+pub use nfs::NfsServer;
+#[cfg(feature = "nfs")]
+pub use nfs_actions::NfsProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

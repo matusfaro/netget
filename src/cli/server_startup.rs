@@ -342,6 +342,105 @@ pub async fn start_server_by_id(
                 state.update_server_status(server_id, ServerStatus::Error("IRC not compiled".to_string())).await;
             }
         }
+        BaseStack::Proxy => {
+            #[cfg(feature = "proxy")]
+            {
+                use crate::network::proxy::ProxyServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn HTTP Proxy server
+                match ProxyServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] Proxy server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start Proxy server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "proxy"))]
+            {
+                let _ = status_tx.send("Proxy support not compiled in. Enable 'proxy' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("Proxy not compiled".to_string())).await;
+            }
+        }
+        BaseStack::WebDav => {
+            #[cfg(feature = "webdav")]
+            {
+                use crate::network::webdav::WebDavServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn WebDAV server
+                match WebDavServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] WebDAV server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start WebDAV server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "webdav"))]
+            {
+                let _ = status_tx.send("WebDAV support not compiled in. Enable 'webdav' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("WebDAV not compiled".to_string())).await;
+            }
+        }
+        BaseStack::Nfs => {
+            #[cfg(feature = "nfs")]
+            {
+                use crate::network::nfs::NfsServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn NFS server
+                match NfsServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] NFS server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start NFS server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "nfs"))]
+            {
+                let _ = status_tx.send("NFS support not compiled in. Enable 'nfs' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("NFS not compiled".to_string())).await;
+            }
+        }
     }
 
     Ok(())

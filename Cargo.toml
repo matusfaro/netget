@@ -14,7 +14,10 @@ ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
-all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc"]
+proxy = ["http-mitm-proxy", "rcgen", "tokio-native-tls", "native-tls"]
+webdav = ["dav-server"]
+nfs = ["nfsserve"]
+all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "proxy", "webdav", "nfs"]
 # E2E testing feature - marker to enable end-to-end black-box tests
 e2e-tests = []
 
@@ -62,6 +65,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
 chrono = "0.4"
+regex = "1.11"
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
@@ -89,6 +93,18 @@ russh-keys = { version = "0.45", optional = true }
 russh-sftp = { version = "2.1", optional = true }
 async-trait = { version = "0.1", optional = true }
 
+# HTTP Proxy (MITM)
+http-mitm-proxy = { version = "0.16", optional = true }
+rcgen = { version = "0.13", optional = true }  # For certificate generation
+tokio-native-tls = { version = "0.3", optional = true }
+native-tls = { version = "0.2", optional = true }
+
+# WebDAV server
+dav-server = { version = "0.8", optional = true }
+
+# NFS server
+nfsserve = { version = "0.10", optional = true }
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -110,3 +126,11 @@ rsntp = "4.0"
 ssh2 = "0.9"
 # IRC client for e2e integration tests
 irc = "1.1"
+# WebDAV client for e2e integration tests
+reqwest_dav = "0.2"
+# NFS client for e2e integration tests
+nfs3_client = "0.7"
+# Axum for creating test HTTP servers in proxy e2e tests
+axum = "0.7"
+# Axum server with TLS support for HTTPS test servers
+axum-server = { version = "0.6", features = ["tls-rustls"] }
