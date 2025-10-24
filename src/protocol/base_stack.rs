@@ -66,6 +66,14 @@ pub enum BaseStack {
     /// IPP stack - IPP (Internet Printing Protocol) server
     /// The LLM handles print jobs and printer attributes (port 631)
     Ipp,
+
+    /// PostgreSQL stack - PostgreSQL server using pgwire
+    /// The LLM handles SQL queries and generates result sets (port 5432)
+    Postgresql,
+
+    /// Redis stack - Redis server with RESP protocol
+    /// The LLM handles Redis commands and data operations (port 6379)
+    Redis,
 }
 
 impl BaseStack {
@@ -87,6 +95,8 @@ impl BaseStack {
             Self::Mdns => "ETH>IP>UDP>mDNS",
             Self::Mysql => "ETH>IP>TCP>MySQL",
             Self::Ipp => "ETH>IP>TCP>HTTP>IPP",
+            Self::Postgresql => "ETH>IP>TCP>PostgreSQL",
+            Self::Redis => "ETH>IP>TCP>Redis",
         }
     }
 
@@ -150,10 +160,22 @@ impl BaseStack {
             return Some(Self::Smtp);
         }
 
+        // PostgreSQL stack (check before MySQL to avoid "sql" substring match)
+        #[cfg(feature = "postgresql")]
+        if s_lower.contains("postgres") || s_lower.contains("psql") {
+            return Some(Self::Postgresql);
+        }
+
         // MySQL stack
         #[cfg(feature = "mysql")]
-        if s_lower.contains("mysql") || s_lower.contains("sql") {
+        if s_lower.contains("mysql") {
             return Some(Self::Mysql);
+        }
+
+        // Redis stack
+        #[cfg(feature = "redis")]
+        if s_lower.contains("redis") {
+            return Some(Self::Redis);
         }
 
         // IPP stack
@@ -261,6 +283,12 @@ impl BaseStack {
 
         #[cfg(feature = "ipp")]
         stacks.push("ipp");
+
+        #[cfg(feature = "postgresql")]
+        stacks.push("postgresql");
+
+        #[cfg(feature = "redis")]
+        stacks.push("redis");
 
         stacks
     }

@@ -509,6 +509,74 @@ pub async fn start_server_by_id(
                 state.update_server_status(server_id, ServerStatus::Error("IPP not compiled".to_string())).await;
             }
         }
+        BaseStack::Postgresql => {
+            #[cfg(feature = "postgresql")]
+            {
+                use crate::network::postgresql::PostgresqlServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn PostgreSQL server
+                match PostgresqlServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    false, // send_first - PostgreSQL waits for client
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] PostgreSQL server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start PostgreSQL server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "postgresql"))]
+            {
+                let _ = status_tx.send("PostgreSQL support not compiled in. Enable 'postgresql' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("PostgreSQL not compiled".to_string())).await;
+            }
+        }
+        BaseStack::Redis => {
+            #[cfg(feature = "redis")]
+            {
+                use crate::network::redis::RedisServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn Redis server
+                match RedisServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    false, // send_first - Redis waits for client
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] Redis server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start Redis server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "redis"))]
+            {
+                let _ = status_tx.send("Redis support not compiled in. Enable 'redis' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("Redis not compiled".to_string())).await;
+            }
+        }
     }
 
     Ok(())
