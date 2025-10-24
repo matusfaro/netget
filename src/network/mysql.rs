@@ -22,7 +22,7 @@ use tracing::{debug, error, info, trace};
 pub struct MysqlServer {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
+    _status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
 }
 
@@ -37,7 +37,7 @@ impl MysqlServer {
         Self {
             llm_client,
             app_state,
-            status_tx,
+            _status_tx: status_tx,
             server_id,
         }
     }
@@ -283,12 +283,12 @@ impl MysqlHandler {
     async fn handle_query<'a, W: tokio::io::AsyncWrite + Send + Unpin>(
         &'a mut self,
         query: &str,
-        mut results: QueryResultWriter<'a, W>,
+        results: QueryResultWriter<'a, W>,
     ) -> io::Result<()> {
         trace!("Calling LLM for MySQL query: {}", query);
 
         // Build context for LLM
-        let context = serde_json::json!({
+        let _context = serde_json::json!({
             "query": query,
             "connection_id": self.connection_id.to_string(),
         });
