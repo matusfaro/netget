@@ -154,6 +154,10 @@ pub enum ProtocolConnectionInfo {
     Ipp {
         recent_jobs: Vec<(String, Instant)>, // job ID, time
     },
+    /// PostgreSQL connection (managed by pgwire)
+    Postgresql,
+    /// Redis connection (managed by RESP protocol)
+    Redis,
 }
 
 /// Connection status
