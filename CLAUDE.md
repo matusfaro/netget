@@ -142,6 +142,99 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id))
 8. **Concurrent connections**: Each has own state, multiple can process simultaneously
 9. **Action execution**: Sequential, in-order from action array
 
+## Protocol Implementation Checklist
+
+When creating new protocols in NetGet, ensure ALL of these steps are completed:
+
+### 1. Protocol Stack Definition (`src/protocol/base_stack.rs`)
+- Add new variant to `BaseStack` enum with correct stack name
+- Update `name()` method with proper stack representation (e.g., "ETH>IP>TCP>SMTP")
+- Update `from_str()` to parse protocol keywords
+- Update `available_stacks()` to include new protocol
+- Add unit tests for parsing the new protocol
+
+### 2. TUI Description (`src/cli/tui.rs`)
+- Add protocol description to welcome message list
+- Include example usage (e.g., "Start an SMTP mail server on port 25")
+- Mark as "(Alpha)" if new/experimental
+
+### 3. Protocol Implementation (`src/network/<protocol>.rs`)
+- Create server implementation file
+- Implement spawn function with LLM integration
+- Add **structured logging to Output tab**:
+  - **TRACE** - Packet-level details, full payloads, pretty-printed JSON
+  - **DEBUG** - Summaries and formatted view of packets, request/response summaries
+  - **INFO** - High-level events: connection open/close, server start/stop
+  - **ERROR** - Critical failures
+  - **WARN** - Non-fatal issues
+- Use **dual logging pattern** (both tracing macros AND status_tx)
+- Ensure connections are **properly tracked in the UI**:
+  - Add to server's connection HashMap
+  - Update connection status (Active/Closed)
+  - Track bytes sent/received, packets sent/received
+  - Update last_activity timestamp
+
+### 4. Protocol Actions (`src/network/<protocol>_actions.rs`)
+- Implement `ProtocolActions` trait
+- Define async actions (user-triggered, no network context)
+- Define sync actions (network event triggered, with context)
+- Create action definitions with parameters and examples
+- Implement action execution logic
+
+### 5. Module Registration (`src/network/mod.rs`)
+- Add module declarations with feature flags
+- Export server and protocol structs
+
+### 6. Server Startup (`src/cli/server_startup.rs`)
+- Add match arm for new `BaseStack` variant
+- Implement feature-gated server spawning
+- Update server status on success/failure
+- Send status updates to UI
+
+### 7. Connection Info (`src/state/server.rs`)
+- Add variant to `ProtocolConnectionInfo` enum
+- Include protocol-specific state (write_half, queued_data, etc.)
+
+### 8. Feature Flag (`Cargo.toml`)
+- Add feature flag for protocol
+- Add protocol-specific dependencies
+- Include in `all-protocols` feature
+
+### 9. E2E Test (`tests/e2e_<protocol>_test.rs`)
+- **Must start NetGet in non-interactive mode** with a prompt
+- **Must assert server started with correct stack** using helpers
+- **Must use real client** or emulated client (only if no library available)
+- Test multiple scenarios:
+  - Basic functionality (connect, send, receive)
+  - Protocol-specific commands
+  - Error handling
+  - Concurrent connections (if applicable)
+- **Run the test and assert it works**
+- Fix any issues before considering protocol complete
+
+### 10. Test Helpers (`tests/e2e/helpers.rs`)
+- Update `extract_stack_from_prompt()` if needed
+- Update `wait_for_server_startup()` to detect new protocol
+- Handle protocol-specific stack validation
+
+### Validation Checklist
+- [ ] Protocol compiles with feature flag
+- [ ] Protocol compiles in `all-protocols` mode
+- [ ] E2E tests pass
+- [ ] No compilation warnings
+- [ ] Logging appears in Output panel
+- [ ] Connections tracked in UI
+- [ ] Stack name displays correctly
+- [ ] Protocol responds to LLM actions correctly
+
+### Common Pitfalls
+- Forgetting dual logging (tracing + status_tx)
+- Not tracking connections in server state
+- Missing feature flags in multiple files
+- E2E tests using interactive mode instead of prompt mode
+- Not validating server stack in tests
+- Forgetting to update base_stack.rs parsing
+
 ## SSH/SFTP Implementation
 
 **Library**: russh 0.45 + russh-sftp 2.1
