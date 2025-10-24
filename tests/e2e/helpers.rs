@@ -198,15 +198,8 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         ).into());
     }
 
-    // Wait for the port to actually open
-    // Determine if this is a UDP-based protocol
-    let is_udp = actual_stack.to_lowercase().contains("snmp")
-        || actual_stack.to_lowercase().contains("dns")
-        || actual_stack.to_lowercase().contains("dhcp")
-        || actual_stack.to_lowercase().contains("ntp")
-        || actual_stack.to_lowercase().contains("udp");
-
-    wait_for_port_open("127.0.0.1", actual_port, is_udp).await?;
+    // No need to check port availability - we already confirmed the server is listening
+    // by waiting for the "listening on" message in wait_for_server_startup()
 
     Ok(NetGetServer {
         child,
@@ -305,14 +298,15 @@ async fn wait_for_server_startup(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
 ) -> E2EResult<(u16, String)> {
     let wait_future = async {
+        let mut port = 0u16;
+        let mut stack = "Unknown".to_string();
+        let mut found_starting_message = false;
+
         while let Some(line) = reader.next_line().await? {
             println!("[DEBUG] Server output: {}", line); // Debug output
 
             // Look for SERVER message pattern: "[SERVER] Starting server #N (<STACK>) on <ADDRESS>:<PORT>"
             if line.contains("[SERVER]") && line.contains("Starting server") && line.contains("on ") {
-                let mut stack = "Unknown".to_string();
-                let mut port = 0u16;
-
                 // Extract stack type
                 if line.contains("HTTP") {
                     stack = "HTTP".to_string();
@@ -334,6 +328,10 @@ async fn wait_for_server_startup(
                     stack = "SMTP".to_string();
                 } else if line.contains("mDNS") {
                     stack = "mDNS".to_string();
+                } else if line.contains("MySQL") {
+                    stack = "MySQL".to_string();
+                } else if line.contains("IPP") {
+                    stack = "IPP".to_string();
                 } else if line.contains("TCP") || line.contains("TCP/IP") {
                     stack = "TCP".to_string();
                 } else if line.contains("UDP") {
@@ -358,14 +356,23 @@ async fn wait_for_server_startup(
 
                 if port > 0 {
                     println!("[DEBUG] Server started: {} stack on port {}", stack, port);
-                    return Ok((port, stack));
+                    found_starting_message = true;
+                    // Don't return yet - wait for "listening on" message
                 }
             }
 
-            // Also check for "Server is running" as a backup
-            if line.contains("Server is running") {
-                // We might not have the exact details yet, keep reading
-                continue;
+            // Wait for the "listening on" message which means the server is ACTUALLY ready
+            // This prevents issues where we connect before the server is fully initialized
+            if found_starting_message && line.contains("listening on") && line.contains(&port.to_string()) {
+                println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
+                return Ok((port, stack));
+            }
+
+            // For some protocols (mDNS, MySQL, IPP), the "listening on" message might differ
+            // Also accept "Server is running" as confirmation after seeing the starting message
+            if found_starting_message && line.contains("Server is running") {
+                println!("[DEBUG] Server confirmed running on port {}", port);
+                return Ok((port, stack));
             }
         }
         Err("Server did not output startup information".into())
@@ -376,41 +383,6 @@ async fn wait_for_server_startup(
         .map_err(|_| "Timeout waiting for server startup")?
 }
 
-
-/// Wait for a port to be open and accepting connections
-async fn wait_for_port_open(host: &str, port: u16, is_udp: bool) -> E2EResult<()> {
-    let addr = format!("{}:{}", host, port);
-
-    for _ in 0..100 {  // Try for up to 10 seconds (LLM processing can take time)
-        if is_udp {
-            // For UDP, we can't "connect" like TCP, so we just try to bind a socket to verify
-            // the port is in use. If bind fails with "address in use", the server is running.
-            // Or we can just wait a bit and assume the server message means it's ready.
-            match std::net::UdpSocket::bind(&addr) {
-                Ok(_) => {
-                    // Port is free, server not started yet
-                    sleep(Duration::from_millis(100)).await;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                    println!("[DEBUG] UDP port {} is now bound and ready", port);
-                    return Ok(());
-                }
-                Err(_) => sleep(Duration::from_millis(100)).await,
-            }
-        } else {
-            // For TCP, try to connect
-            match tokio::net::TcpStream::connect(&addr).await {
-                Ok(_) => {
-                    println!("[DEBUG] TCP port {} is now open and accepting connections", port);
-                    return Ok(());
-                },
-                Err(_) => sleep(Duration::from_millis(100)).await,
-            }
-        }
-    }
-
-    Err(format!("Port {} did not open in time", port).into())
-}
 
 /// Helper to build a simple test prompt
 pub fn build_prompt(base_stack: &str, port: u16, instructions: &str) -> String {
