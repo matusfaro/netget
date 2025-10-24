@@ -17,7 +17,9 @@ irc = []  # IRC uses only TCP, no extra deps
 telnet = ["nectar"]
 smtp = ["rust-smtp-server"]
 mdns = ["mdns-sd"]
-all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns"]
+mysql = ["dep:opensrv-mysql", "async-trait"]
+ipp = ["dep:ipp"]
+all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp"]
 # E2E testing feature - marker to enable end-to-end black-box tests
 e2e-tests = []
 
@@ -101,6 +103,12 @@ rust-smtp-server = { version = "0.1", optional = true }
 # mDNS/DNS-SD service discovery
 mdns-sd = { version = "0.15", optional = true }
 
+# MySQL server
+opensrv-mysql = { version = "0.7", optional = true }
+
+# IPP (Internet Printing Protocol)
+ipp = { version = "5.3", optional = true }
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -124,3 +132,5 @@ ssh2 = "0.9"
 irc = "1.1"
 # SMTP client for e2e integration tests
 lettre = "0.11"
+# MySQL client for e2e integration tests
+mysql_async = "0.34"

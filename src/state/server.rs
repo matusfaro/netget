@@ -148,6 +148,12 @@ pub enum ProtocolConnectionInfo {
     Mdns {
         advertised_services: Vec<(String, u16, Instant)>, // service_name, port, time
     },
+    /// MySQL connection (managed by opensrv-mysql)
+    Mysql,
+    /// IPP connection (recent print jobs)
+    Ipp {
+        recent_jobs: Vec<(String, Instant)>, // job ID, time
+    },
 }
 
 /// Connection status

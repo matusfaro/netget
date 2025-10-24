@@ -58,6 +58,14 @@ pub enum BaseStack {
     /// mDNS/DNS-SD stack - Multicast DNS service discovery
     /// The LLM advertises services on the local network (port 5353)
     Mdns,
+
+    /// MySQL stack - MySQL server using opensrv-mysql
+    /// The LLM handles SQL queries and generates result sets (port 3306)
+    Mysql,
+
+    /// IPP stack - IPP (Internet Printing Protocol) server
+    /// The LLM handles print jobs and printer attributes (port 631)
+    Ipp,
 }
 
 impl BaseStack {
@@ -77,6 +85,8 @@ impl BaseStack {
             Self::Telnet => "ETH>IP>TCP>Telnet",
             Self::Smtp => "ETH>IP>TCP>SMTP",
             Self::Mdns => "ETH>IP>UDP>mDNS",
+            Self::Mysql => "ETH>IP>TCP>MySQL",
+            Self::Ipp => "ETH>IP>TCP>HTTP>IPP",
         }
     }
 
@@ -138,6 +148,18 @@ impl BaseStack {
         #[cfg(feature = "smtp")]
         if s_lower.contains("smtp") || s_lower.contains("mail") || s_lower.contains("email") {
             return Some(Self::Smtp);
+        }
+
+        // MySQL stack
+        #[cfg(feature = "mysql")]
+        if s_lower.contains("mysql") || s_lower.contains("sql") {
+            return Some(Self::Mysql);
+        }
+
+        // IPP stack
+        #[cfg(feature = "ipp")]
+        if s_lower.contains("ipp") || s_lower.contains("printer") || s_lower.contains("print") {
+            return Some(Self::Ipp);
         }
 
         // UDP raw stack
@@ -233,6 +255,12 @@ impl BaseStack {
 
         #[cfg(feature = "mdns")]
         stacks.push("mdns");
+
+        #[cfg(feature = "mysql")]
+        stacks.push("mysql");
+
+        #[cfg(feature = "ipp")]
+        stacks.push("ipp");
 
         stacks
     }
