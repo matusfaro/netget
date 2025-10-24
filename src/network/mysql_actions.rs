@@ -8,10 +8,8 @@ use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use tracing::debug;
 
 /// Connection data for MySQL protocol
@@ -21,8 +19,8 @@ pub struct MysqlConnectionData {
 
 /// MySQL protocol action handler
 pub struct MysqlProtocol {
-    connection_id: ConnectionId,
-    app_state: Arc<AppState>,
+    _connection_id: ConnectionId,
+    _app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
 }
 
@@ -33,8 +31,8 @@ impl MysqlProtocol {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Self {
         Self {
-            connection_id,
-            app_state,
+            _connection_id: connection_id,
+            _app_state: app_state,
             status_tx,
         }
     }

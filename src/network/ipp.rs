@@ -182,7 +182,7 @@ async fn handle_ipp_request_with_llm(
     trace!("IPP operation: {}", operation_name);
 
     // Build context for LLM
-    let context = serde_json::json!({
+    let _context = serde_json::json!({
         "method": method,
         "uri": uri,
         "headers": headers,
