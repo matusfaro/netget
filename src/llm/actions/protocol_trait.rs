@@ -58,6 +58,52 @@ pub enum ActionResult {
         status: u16,
         body: Vec<u8>,
     },
+
+    /// PostgreSQL query response with result set
+    PostgresqlQueryResponse {
+        columns: Vec<serde_json::Value>,
+        rows: Vec<serde_json::Value>,
+    },
+
+    /// PostgreSQL error response
+    PostgresqlError {
+        severity: String,
+        code: String,
+        message: String,
+    },
+
+    /// PostgreSQL command complete response
+    PostgresqlOk {
+        tag: String,
+    },
+
+    /// Redis simple string response ("+OK\r\n")
+    RedisSimpleString {
+        value: String,
+    },
+
+    /// Redis bulk string response ("$5\r\nhello\r\n")
+    RedisBulkString {
+        value: Option<Vec<u8>>,
+    },
+
+    /// Redis array response
+    RedisArray {
+        values: Vec<serde_json::Value>,
+    },
+
+    /// Redis integer response (":42\r\n")
+    RedisInteger {
+        value: i64,
+    },
+
+    /// Redis error response ("-ERR message\r\n")
+    RedisError {
+        message: String,
+    },
+
+    /// Redis null response ("$-1\r\n")
+    RedisNull,
 }
 
 impl ActionResult {

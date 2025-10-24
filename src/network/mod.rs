@@ -140,5 +140,23 @@ pub use ipp::IppServer;
 #[cfg(feature = "ipp")]
 pub use ipp_actions::IppProtocol;
 
+#[cfg(feature = "postgresql")]
+pub mod postgresql;
+#[cfg(feature = "postgresql")]
+pub mod postgresql_actions;
+#[cfg(feature = "postgresql")]
+pub use postgresql::PostgresqlServer;
+#[cfg(feature = "postgresql")]
+pub use postgresql_actions::PostgresqlProtocol;
+
+#[cfg(feature = "redis")]
+pub mod redis;
+#[cfg(feature = "redis")]
+pub mod redis_actions;
+#[cfg(feature = "redis")]
+pub use redis::RedisServer;
+#[cfg(feature = "redis")]
+pub use redis_actions::RedisProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
