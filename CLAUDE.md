@@ -103,18 +103,18 @@ cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
 
 **Critical**: E2E tests are slow because each test spawns a NetGet process and makes LLM API calls.
 
-**Expected runtimes** (with qwen3-coder:30b and `--test-threads=15`):
+**Expected runtimes** (with qwen3-coder:30b and `--test-threads=3`):
 - Fast protocols (IPP, MySQL): 15-25 seconds per suite
 - Medium protocols (Telnet, HTTP, IRC): 35-50 seconds per suite
 - Slow protocols (SMTP, mDNS): 55-85 seconds per suite
 - Very slow protocols (TCP/FTP): >5 minutes per suite (complex multi-round-trip protocols)
 
 **Parallelization**:
-- **ALWAYS run with `--test-threads=15`** for e2e tests
+- **ALWAYS run with `--test-threads=3`** for e2e tests
 - Provides significant speedup by utilizing multiple CPU cores
 - Each test is isolated (dynamic ports, separate processes)
 - Ollama handles concurrent LLM requests internally
-- Example: `cargo test --features e2e-tests --test e2e_telnet_test -- --test-threads=15`
+- Example: `cargo test --features e2e-tests --test e2e_telnet_test -- --test-threads=3`
 
 **Critical setup requirement**:
 - **MUST build release binary with all features before running tests**:
@@ -126,7 +126,7 @@ cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
 - Symptom: Server starts as TCP stack instead of protocol-specific stack
 
 **Known issues**:
-- TCP/FTP tests: May show occasional flakiness (1-2 failures) when running with --test-threads=15 due to LLM overload
+- TCP/FTP tests: May show occasional flakiness (1-2 failures) when running with --test-threads=3 due to LLM overload
   - All tests pass reliably when run individually
   - Reduced from >5 minutes to ~20 seconds (15x improvement)
 
@@ -246,7 +246,7 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   ```
 - **Run tests with parallelization**:
   ```bash
-  cargo test --features e2e-tests --test e2e_<protocol>_test -- --test-threads=15
+  cargo test --features e2e-tests --test e2e_<protocol>_test -- --test-threads=3
   ```
 - **Fix any issues before considering protocol complete**
 
