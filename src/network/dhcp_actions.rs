@@ -2,7 +2,6 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    context::NetworkContext,
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
@@ -22,19 +21,13 @@ impl ProtocolActions for DhcpProtocol {
         Vec::new()
     }
 
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
-        match context {
-            NetworkContext::DhcpRequest { .. } => {
-                vec![send_dhcp_response_action(), ignore_request_action()]
-            }
-            _ => Vec::new(),
-        }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![send_dhcp_response_action(), ignore_request_action()]
     }
 
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -42,7 +35,7 @@ impl ProtocolActions for DhcpProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_dhcp_response" => self.execute_send_dhcp_response(action, context),
+            "send_dhcp_response" => self.execute_send_dhcp_response(action),
             "ignore_request" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown DHCP action: {}", action_type)),
         }
@@ -57,36 +50,37 @@ impl DhcpProtocol {
     fn execute_send_dhcp_response(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
-        if let Some(NetworkContext::DhcpRequest { .. }) = context {
-            let data = action
-                .get("data")
-                .and_then(|v| v.as_str())
-                .context("Missing 'data' parameter")?;
+        let data = action
+            .get("data")
+            .and_then(|v| v.as_str())
+            .context("Missing 'data' parameter")?;
 
-            Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        // Try to decode as hex first (for binary DHCP packets)
+        // If hex decode fails, treat as raw string
+        let bytes = if let Ok(decoded) = hex::decode(data) {
+            decoded
         } else {
-            Err(anyhow::anyhow!(
-                "send_dhcp_response requires DhcpRequest context"
-            ))
-        }
+            data.as_bytes().to_vec()
+        };
+
+        Ok(ActionResult::Output(bytes))
     }
 }
 
 fn send_dhcp_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dhcp_response".to_string(),
-        description: "Send DHCP response to the request".to_string(),
+        description: "Send DHCP response packet to the client".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "DHCP response data".to_string(),
+            description: "DHCP response packet as hex-encoded string".to_string(),
             required: true,
         }],
         example: json!({
             "type": "send_dhcp_response",
-            "data": "dhcp_response_bytes"
+            "data": "020106006395a3e3000080000000000000000000c0a8016400000000..."
         }),
     }
 }

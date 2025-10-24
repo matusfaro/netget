@@ -2,7 +2,6 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    context::NetworkContext,
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
@@ -24,21 +23,17 @@ impl ProtocolActions for SnmpProtocol {
         vec![send_trap_action()]
     }
 
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
-        match context {
-            NetworkContext::SnmpRequest { .. } => vec![
-                send_snmp_response_action(),
-                send_snmp_error_action(),
-                ignore_request_action(),
-            ],
-            _ => Vec::new(),
-        }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_snmp_response_action(),
+            send_snmp_error_action(),
+            ignore_request_action(),
+        ]
     }
 
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -47,8 +42,8 @@ impl ProtocolActions for SnmpProtocol {
 
         match action_type {
             "send_trap" => self.execute_send_trap(action),
-            "send_snmp_response" => self.execute_send_snmp_response(action, context),
-            "send_snmp_error" => self.execute_send_snmp_error(action, context),
+            "send_snmp_response" => self.execute_send_snmp_response(action),
+            "send_snmp_error" => self.execute_send_snmp_error(action),
             "ignore_request" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown SNMP action: {}", action_type)),
         }
@@ -87,61 +82,45 @@ impl SnmpProtocol {
     fn execute_send_snmp_response(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
-        // Verify we have SNMP context
-        if let Some(NetworkContext::SnmpRequest { .. }) = context {
-            let variables = action
-                .get("variables")
-                .and_then(|v| v.as_array())
-                .context("Missing 'variables' parameter")?;
+        let variables = action
+            .get("variables")
+            .and_then(|v| v.as_array())
+            .context("Missing 'variables' parameter")?;
 
-            // Encode response data as JSON
-            // The caller will convert this to actual SNMP response format
-            let response_data = json!({
-                "variables": variables,
-                "error": false
-            });
+        // Encode response data as JSON
+        // The caller will convert this to actual SNMP response format
+        let response_data = json!({
+            "variables": variables,
+            "error": false
+        });
 
-            Ok(ActionResult::Output(
-                serde_json::to_vec(&response_data)
-                    .context("Failed to serialize SNMP response")?,
-            ))
-        } else {
-            Err(anyhow::anyhow!(
-                "send_snmp_response requires SnmpRequest context"
-            ))
-        }
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&response_data)
+                .context("Failed to serialize SNMP response")?,
+        ))
     }
 
     /// Execute send_snmp_error sync action
     fn execute_send_snmp_error(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
-        // Verify we have SNMP context
-        if let Some(NetworkContext::SnmpRequest { .. }) = context {
-            let error_message = action
-                .get("error_message")
-                .and_then(|v| v.as_str())
-                .context("Missing 'error_message' parameter")?;
+        let error_message = action
+            .get("error_message")
+            .and_then(|v| v.as_str())
+            .context("Missing 'error_message' parameter")?;
 
-            // Encode error response as JSON
-            let response_data = json!({
-                "error": true,
-                "error_message": error_message
-            });
+        // Encode error response as JSON
+        let response_data = json!({
+            "error": true,
+            "error_message": error_message
+        });
 
-            Ok(ActionResult::Output(
-                serde_json::to_vec(&response_data)
-                    .context("Failed to serialize SNMP error")?,
-            ))
-        } else {
-            Err(anyhow::anyhow!(
-                "send_snmp_error requires SnmpRequest context"
-            ))
-        }
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&response_data)
+                .context("Failed to serialize SNMP error")?,
+        ))
     }
 }
 

@@ -4,6 +4,7 @@
 
 // New action system
 pub mod actions;
+pub mod action_helper;  // Centralized helper for LLM calls
 
 // Old modules
 pub mod old_actions;  // Legacy action system, to be removed
@@ -16,9 +17,15 @@ pub mod client;  // Keep the old client module for reference
 pub use actions::{
     ActionDefinition, ActionResponse, Parameter,
     common::{CommonAction, get_all_common_actions, get_user_input_common_actions, get_network_event_common_actions},
-    context::NetworkContext,
     protocol_trait::{ActionResult, ProtocolActions},
     executor::{execute_actions, ExecutionResult},
+};
+
+// Re-export action helper functions
+pub use action_helper::{
+    call_llm_with_actions,
+    call_llm_with_custom_actions,
+    call_llm_with_protocol,
 };
 
 // Legacy re-exports (for backward compatibility during migration)

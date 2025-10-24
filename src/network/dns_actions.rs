@@ -2,7 +2,6 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    context::NetworkContext,
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
@@ -23,19 +22,13 @@ impl ProtocolActions for DnsProtocol {
         Vec::new() // DNS has no async actions
     }
 
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
-        match context {
-            NetworkContext::DnsQuery { .. } => {
-                vec![send_dns_response_action(), ignore_query_action()]
-            }
-            _ => Vec::new(),
-        }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![send_dns_response_action(), ignore_query_action()]
     }
 
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -43,7 +36,7 @@ impl ProtocolActions for DnsProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_dns_response" => self.execute_send_dns_response(action, context),
+            "send_dns_response" => self.execute_send_dns_response(action),
             "ignore_query" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown DNS action: {}", action_type)),
         }
@@ -58,36 +51,37 @@ impl DnsProtocol {
     fn execute_send_dns_response(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
-        if let Some(NetworkContext::DnsQuery { .. }) = context {
-            let data = action
-                .get("data")
-                .and_then(|v| v.as_str())
-                .context("Missing 'data' parameter")?;
+        let data = action
+            .get("data")
+            .and_then(|v| v.as_str())
+            .context("Missing 'data' parameter")?;
 
-            Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        // Try to decode as hex first (for binary DNS packets)
+        // If hex decode fails, treat as raw string
+        let bytes = if let Ok(decoded) = hex::decode(data) {
+            decoded
         } else {
-            Err(anyhow::anyhow!(
-                "send_dns_response requires DnsQuery context"
-            ))
-        }
+            data.as_bytes().to_vec()
+        };
+
+        Ok(ActionResult::Output(bytes))
     }
 }
 
 fn send_dns_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dns_response".to_string(),
-        description: "Send DNS response to the query".to_string(),
+        description: "Send DNS response packet to the query".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "DNS response data".to_string(),
+            description: "DNS response packet as hex-encoded string or plain text".to_string(),
             required: true,
         }],
         example: json!({
             "type": "send_dns_response",
-            "data": "dns_response_bytes"
+            "data": "81800001000100000000076578616d706c6503636f6d0000010001c00c00010001..."
         }),
     }
 }

@@ -10,23 +10,10 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, NetworkContext, ProtocolActions};
+use crate::llm::{ActionResponse, execute_actions, ProtocolActions};
 use crate::network::NtpProtocol;
 use crate::state::app_state::AppState;
 
-/// Get LLM context and output format instructions for NTP stack
-pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
-    let context = r#"You are handling NTP time synchronization requests (port 123).
-Respond with current time in NTP format (seconds since 1900-01-01)."#;
-
-    let output_format = r#"IMPORTANT: Respond with a JSON object:
-{
-  "output": "NTP response packet data (null if no response)",
-  "message": null  // Optional message for user
-}"#;
-
-    (context, output_format)
-}
 
 /// NTP packet structure (simplified)
 #[derive(Debug, Clone)]
@@ -86,95 +73,6 @@ impl NtpPacket {
 pub struct NtpServer;
 
 impl NtpServer {
-    /// Spawn NTP server with integrated LLM handling
-    pub async fn spawn_with_llm(
-        listen_addr: SocketAddr,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<SocketAddr> {
-        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
-        let local_addr = socket.local_addr()?;
-        info!("NTP server listening on {}", local_addr);
-
-        tokio::spawn(async move {
-            let mut buffer = vec![0u8; 48]; // NTP packet is 48 bytes
-
-            loop {
-                match socket.recv_from(&mut buffer).await {
-                    Ok((n, peer_addr)) => {
-                        let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new();
-
-                        // DEBUG: Log summary
-                        debug!("NTP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] NTP received {} bytes from {}", n, peer_addr));
-
-                        // TRACE: Log full payload (always hex for NTP)
-                        let hex_str = hex::encode(&data);
-                        trace!("NTP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] NTP data (hex): {}", hex_str));
-
-                        let llm_clone = llm_client.clone();
-                        let state_clone = app_state.clone();
-                        let status_clone = status_tx.clone();
-                        let socket_clone = socket.clone();
-
-                        tokio::spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-                            let prompt_config = get_llm_protocol_prompt();
-
-                            // Build event description
-                            let event_description = format!(
-                                "NTP request from {} ({} bytes)",
-                                peer_addr, data.len()
-                            );
-
-                            let prompt = PromptBuilder::build_network_event_prompt(
-                                &state_clone,
-                                connection_id,
-                                &event_description,
-                                prompt_config,
-                            ).await;
-
-                            match llm_clone.generate(&model, &prompt).await {
-                                Ok(llm_output) => {
-                                    let output_data = llm_output.as_bytes();
-                                    if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
-                                        error!("Failed to send NTP response: {}", e);
-                                    } else {
-                                        // DEBUG: Log summary
-                                        debug!("NTP sent {} bytes to {}", output_data.len(), peer_addr);
-                                        let _ = status_clone.send(format!("[DEBUG] NTP sent {} bytes to {}", output_data.len(), peer_addr));
-
-                                        // TRACE: Log full payload (always hex for NTP)
-                                        let hex_str = hex::encode(output_data);
-                                        trace!("NTP sent (hex): {}", hex_str);
-                                        let _ = status_clone.send(format!("[TRACE] NTP sent (hex): {}", hex_str));
-
-                                        let _ = status_clone.send(format!(
-                                            "→ NTP response to {} ({} bytes)",
-                                            peer_addr, output_data.len()
-                                        ));
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("LLM error for NTP: {}", e);
-                                    let _ = status_clone.send(format!("✗ LLM error for NTP: {}", e));
-                                }
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("NTP receive error: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(local_addr)
-    }
 
     /// Spawn NTP server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
@@ -237,43 +135,129 @@ impl NtpServer {
 
                         tokio::spawn(async move {
                             let model = state_clone.get_ollama_model().await;
-                            let event_description = format!("NTP request from {} ({} bytes)", peer_addr, data.len());
 
-                            let context = NetworkContext::NtpRequest {
-                                peer_addr,
-                                socket: socket_clone.clone(),
-                                request_data: data,
-                                status_tx: status_clone.clone(),
+                            // Get current Unix timestamp
+                            use std::time::{SystemTime, UNIX_EPOCH};
+                            let current_unix_time = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+
+                            // Parse client's transmit timestamp from request (bytes 40-47)
+                            // This should be echoed back as origin_timestamp in the response
+                            // Extract full 64-bit NTP timestamp (seconds + fraction)
+                            let (client_transmit_unix, client_transmit_ntp) = if data.len() >= 48 {
+                                let seconds = u32::from_be_bytes([data[40], data[41], data[42], data[43]]) as u64;
+                                let fraction = u32::from_be_bytes([data[44], data[45], data[46], data[47]]) as u64;
+                                let ntp_timestamp = (seconds << 32) | fraction; // Full 64-bit NTP timestamp
+
+                                // Convert seconds part to Unix timestamp for the LLM prompt
+                                let unix_ts = if seconds > 2_208_988_800 {
+                                    Some(seconds - 2_208_988_800)
+                                } else {
+                                    None
+                                };
+
+                                (unix_ts, Some(ntp_timestamp))
+                            } else {
+                                (None, None)
                             };
 
-                            let protocol_actions = protocol_clone.get_sync_actions(&context);
+                            let event_description = if let Some(unix_ts) = client_transmit_unix {
+                                format!(
+                                    "NTP request from {} ({} bytes). Current time: {} (Unix timestamp). \
+                                    Client's transmit timestamp: {} (must be echoed back as origin_timestamp - leave blank to auto-fill).",
+                                    peer_addr, data.len(), current_unix_time, unix_ts
+                                )
+                            } else {
+                                format!(
+                                    "NTP request from {} ({} bytes). Current time: {} (Unix timestamp).",
+                                    peer_addr, data.len(), current_unix_time
+                                )
+                            };
+
+                            let protocol_actions = protocol_clone.get_sync_actions();
                             let prompt = PromptBuilder::build_network_event_action_prompt(
                                 &state_clone, &event_description, protocol_actions).await;
 
-                            if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
-                                if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                                    if let Ok(result) = execute_actions(action_response.actions, &state_clone,
-                                        Some(protocol_clone.as_ref()), Some(&context)).await {
-                                        for msg in result.messages {
-                                            let _ = status_clone.send(msg);
-                                        }
-                                        for protocol_result in result.protocol_results {
-                                            if let Some(output_data) = protocol_result.get_all_output().first() {
-                                                let _ = socket_clone.send_to(output_data, peer_addr).await;
+                            // Log the full prompt being sent to LLM
+                            debug!("NTP LLM prompt:\n{}", prompt);
+                            let _ = status_clone.send(format!("[DEBUG] NTP LLM prompt:\n{}", prompt));
 
-                                                // DEBUG: Log summary
-                                                debug!("NTP sent {} bytes to {}", output_data.len(), peer_addr);
-                                                let _ = status_clone.send(format!("[DEBUG] NTP sent {} bytes to {}", output_data.len(), peer_addr));
+                            match llm_clone.generate(&model, &prompt).await {
+                                Ok(llm_output) => {
+                                    debug!("NTP LLM raw output: {}", llm_output);
+                                    let _ = status_clone.send(format!("[DEBUG] NTP LLM raw output: {}", llm_output));
 
-                                                // TRACE: Log full payload (always hex for NTP)
-                                                let hex_str = hex::encode(output_data);
-                                                trace!("NTP sent (hex): {}", hex_str);
-                                                let _ = status_clone.send(format!("[TRACE] NTP sent (hex): {}", hex_str));
+                                    match ActionResponse::from_str(&llm_output) {
+                                        Ok(mut action_response) => {
+                                            debug!("NTP parsed {} actions", action_response.actions.len());
+                                            let _ = status_clone.send(format!("[DEBUG] NTP parsed {} actions", action_response.actions.len()));
 
-                                                let _ = status_clone.send(format!("→ NTP response to {} ({} bytes)", peer_addr, output_data.len()));
+                                            // Auto-inject client's transmit timestamp as origin_timestamp if LLM didn't provide it
+                                            if let Some(ntp_ts) = client_transmit_ntp {
+                                                for action in &mut action_response.actions {
+                                                    if action.get("type").and_then(|v| v.as_str()) == Some("send_ntp_time_response") {
+                                                        // Only set if LLM didn't provide origin_timestamp
+                                                        if !action.get("origin_timestamp").is_some() {
+                                                            if let Some(obj) = action.as_object_mut() {
+                                                                // Insert raw NTP timestamp (will be recognized as NTP format in parse_timestamp)
+                                                                obj.insert("origin_timestamp".to_string(), serde_json::json!(ntp_ts));
+                                                                debug!("NTP auto-injected origin_timestamp: 0x{:016x}", ntp_ts);
+                                                                let _ = status_clone.send(format!("[DEBUG] NTP auto-injected origin_timestamp: 0x{:016x}", ntp_ts));
+                                                            }
+                                                        } else {
+                                                            debug!("NTP using LLM-provided origin_timestamp");
+                                                            let _ = status_clone.send("[DEBUG] NTP using LLM-provided origin_timestamp".to_string());
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            match execute_actions(action_response.actions, &state_clone,
+                                                Some(protocol_clone.as_ref())).await {
+                                                Ok(result) => {
+                                                    for msg in result.messages {
+                                                        let _ = status_clone.send(msg);
+                                                    }
+                                                    debug!("NTP got {} protocol results", result.protocol_results.len());
+                                                    let _ = status_clone.send(format!("[DEBUG] NTP got {} protocol results", result.protocol_results.len()));
+
+                                                    for protocol_result in result.protocol_results {
+                                                        if let Some(output_data) = protocol_result.get_all_output().first() {
+                                                            let _ = socket_clone.send_to(output_data, peer_addr).await;
+
+                                                            // DEBUG: Log summary
+                                                            debug!("NTP sent {} bytes to {}", output_data.len(), peer_addr);
+                                                            let _ = status_clone.send(format!("[DEBUG] NTP sent {} bytes to {}", output_data.len(), peer_addr));
+
+                                                            // TRACE: Log full payload (always hex for NTP)
+                                                            let hex_str = hex::encode(output_data);
+                                                            trace!("NTP sent (hex): {}", hex_str);
+                                                            let _ = status_clone.send(format!("[TRACE] NTP sent (hex): {}", hex_str));
+
+                                                            let _ = status_clone.send(format!("→ NTP response to {} ({} bytes)", peer_addr, output_data.len()));
+                                                        } else {
+                                                            debug!("NTP protocol result has no output data");
+                                                            let _ = status_clone.send("[DEBUG] NTP protocol result has no output data".to_string());
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error!("NTP action execution error: {}", e);
+                                                    let _ = status_clone.send(format!("✗ NTP action execution error: {}", e));
+                                                }
                                             }
                                         }
+                                        Err(e) => {
+                                            error!("NTP failed to parse LLM response as actions: {}", e);
+                                            let _ = status_clone.send(format!("✗ NTP failed to parse LLM response: {}", e));
+                                        }
                                     }
+                                }
+                                Err(e) => {
+                                    error!("NTP LLM generation error: {}", e);
+                                    let _ = status_clone.send(format!("✗ NTP LLM error: {}", e));
                                 }
                             }
                         });

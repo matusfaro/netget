@@ -12,7 +12,7 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{execute_actions, ActionResponse, NetworkContext, ProtocolActions};
+use crate::llm::{execute_actions, ActionResponse, ProtocolActions};
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for UDP stack
@@ -242,15 +242,8 @@ impl UdpServer {
                                 format!("UDP datagram received: {}", data_preview)
                             };
 
-                            // Create network context
-                            let context = NetworkContext::UdpDatagram {
-                                peer_addr,
-                                socket: socket_clone.clone(),
-                                status_tx: status_clone.clone(),
-                            };
-
                             // Get protocol sync actions
-                            let protocol_actions = protocol_clone.get_sync_actions(&context);
+                            let protocol_actions = protocol_clone.get_sync_actions();
 
                             // Build prompt
                             let prompt = PromptBuilder::build_network_event_action_prompt(
@@ -272,7 +265,6 @@ impl UdpServer {
                                                 action_response.actions,
                                                 &state_clone,
                                                 Some(protocol_clone.as_ref()),
-                                                Some(&context),
                                             ).await {
                                                 Ok(result) => {
                                                     // Display messages

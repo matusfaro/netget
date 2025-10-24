@@ -14,7 +14,7 @@ use rasn::{ber, types::Integer};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, NetworkContext, ProtocolActions};
+use crate::llm::{ActionResponse, execute_actions, ProtocolActions};
 use crate::network::SnmpProtocol;
 use crate::state::app_state::AppState;
 
@@ -279,19 +279,8 @@ impl SnmpServer {
                             let requested_oids_clone = requested_oids.clone();
                             let community_clone = community.clone();
 
-                            // Create network context
-                            let context = NetworkContext::SnmpRequest {
-                                peer_addr,
-                                socket: socket_clone.clone(),
-                                version,
-                                request_id,
-                                community,
-                                requested_oids,
-                                status_tx: status_clone.clone(),
-                            };
-
                             // Get protocol sync actions
-                            let protocol_actions = protocol_clone.get_sync_actions(&context);
+                            let protocol_actions = protocol_clone.get_sync_actions();
 
                             // Build prompt
                             let prompt = PromptBuilder::build_network_event_action_prompt(
@@ -313,7 +302,6 @@ impl SnmpServer {
                                                 action_response.actions,
                                                 &state_clone,
                                                 Some(protocol_clone.as_ref()),
-                                                Some(&context),
                                             ).await {
                                                 Ok(result) => {
                                                     // Display messages

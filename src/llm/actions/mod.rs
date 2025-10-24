@@ -3,7 +3,6 @@
 //! This module provides a unified action system where both user input
 //! and network events return arrays of actions to execute.
 
-pub mod context;
 pub mod protocol_trait;
 pub mod executor;
 pub mod common;

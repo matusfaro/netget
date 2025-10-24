@@ -2,7 +2,6 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    context::NetworkContext,
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
@@ -23,21 +22,17 @@ impl ProtocolActions for IrcProtocol {
         Vec::new()
     }
 
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
-        match context {
-            NetworkContext::IrcConnection { .. } => vec![
-                send_irc_data_action(),
-                wait_for_more_action(),
-                close_connection_action(),
-            ],
-            _ => Vec::new(),
-        }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_irc_data_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ]
     }
 
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -45,7 +40,7 @@ impl ProtocolActions for IrcProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_irc_data" => self.execute_send_irc_data(action, context),
+            "send_irc_data" => self.execute_send_irc_data(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown IRC action: {}", action_type)),
@@ -61,20 +56,13 @@ impl IrcProtocol {
     fn execute_send_irc_data(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
-        if let Some(NetworkContext::IrcConnection { .. }) = context {
-            let data = action
-                .get("data")
-                .and_then(|v| v.as_str())
-                .context("Missing 'data' parameter")?;
+        let data = action
+            .get("data")
+            .and_then(|v| v.as_str())
+            .context("Missing 'data' parameter")?;
 
-            Ok(ActionResult::Output(data.as_bytes().to_vec()))
-        } else {
-            Err(anyhow::anyhow!(
-                "send_irc_data requires IrcConnection context"
-            ))
-        }
+        Ok(ActionResult::Output(data.as_bytes().to_vec()))
     }
 }
 

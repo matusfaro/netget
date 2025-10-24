@@ -178,7 +178,6 @@ impl EventHandler {
                             action_response.actions.clone(),
                             &self.state,
                             protocol_ref,
-                            None, // No network context for user commands
                         ).await {
                             Ok(result) => {
                                 // Display messages
