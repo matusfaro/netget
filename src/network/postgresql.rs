@@ -9,7 +9,7 @@ use anyhow::Result;
 use pgwire::api::auth::noop::NoopStartupHandler;
 use pgwire::api::copy::NoopCopyHandler;
 use pgwire::api::portal::Portal;
-use pgwire::api::query::{ExtendedQueryHandler, PlaceholderExtendedQueryHandler, SimpleQueryHandler};
+use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{DataRowEncoder, DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo, QueryResponse, Response, Tag};
 use pgwire::api::stmt::StoredStatement;
 use pgwire::api::{ClientInfo, PgWireHandlerFactory, Type};
@@ -25,6 +25,7 @@ use tracing::{debug, error, info, trace, warn};
 pub struct PostgresqlServer {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
+    #[allow(dead_code)]
     status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
 }
@@ -407,12 +408,12 @@ impl ExtendedQueryHandler for PostgresqlHandler {
             Ok(execution_result) => {
                 let num_results = execution_result.protocol_results.len();
                 debug!("Extended query handler received {} protocol results", num_results);
-                let _ = self.status_tx.send(format!("[DEBUG] Extended query handler received {} protocol results", num_results));
+                let _ = self.status_tx.send(format!("[DEBUG] Extended query handler received {num_results} protocol results"));
 
                 // Process action results to find PostgreSQL responses
                 for (idx, result) in execution_result.protocol_results.into_iter().enumerate() {
                     debug!("Processing protocol result {}: {:?}", idx, result);
-                    let _ = self.status_tx.send(format!("[DEBUG] Processing protocol result {}: {:?}", idx, result));
+                    let _ = self.status_tx.send(format!("[DEBUG] Processing protocol result {idx}: {result:?}"));
 
                     match result {
                         ActionResult::PostgresqlQueryResponse { columns, rows } => {

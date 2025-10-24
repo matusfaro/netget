@@ -65,7 +65,7 @@ impl WebDavProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -79,12 +79,12 @@ impl WebDavProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
 
-        let content = action
+        let _content = action
             .get("content")
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -97,7 +97,7 @@ impl WebDavProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -110,7 +110,7 @@ impl WebDavProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -123,7 +123,7 @@ impl WebDavProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -136,7 +136,7 @@ impl WebDavProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let path = action
+        let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
@@ -146,7 +146,6 @@ impl WebDavProtocol {
 }
 
 /// Action definitions
-
 fn read_file_action() -> ActionDefinition {
     ActionDefinition {
         name: "read_file".to_string(),

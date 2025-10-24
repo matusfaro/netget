@@ -126,7 +126,7 @@ impl TcpServer {
                                         // Connection closed
                                         connections_clone.lock().await.remove(&connection_id);
                                         app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                                        let _ = status_tx_clone.send(format!("✗ Connection {} closed", connection_id));
+                                        let _ = status_tx_clone.send(format!("✗ Connection {connection_id} closed"));
                                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }

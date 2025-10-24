@@ -139,7 +139,7 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
 
         // Create environment filter
         let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", log_level)));
+            .unwrap_or_else(|_| EnvFilter::new(format!("netget={log_level}")));
 
         // Log to stderr in non-interactive mode
         tracing_subscriber::registry()

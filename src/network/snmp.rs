@@ -217,7 +217,7 @@ impl SnmpServer {
                         let conn_state = ServerConnectionState {
                             id: connection_id,
                             remote_addr: peer_addr,
-                            local_addr: local_addr,
+                            local_addr,
                             bytes_sent: 0,
                             bytes_received: n as u64,
                             packets_sent: 0,
@@ -498,22 +498,22 @@ impl SnmpServer {
 
     /// Format SNMPv2c message with OIDs
     fn format_v2c_message(msg: &v2c::Message<v2::Pdus>) -> String {
-        let mut info = format!("SNMPv2c Message:\n");
+        let mut info = "SNMPv2c Message:\n".to_string();
         info.push_str(&format!("  Community: {}\n", String::from_utf8_lossy(&msg.community)));
 
         match &msg.data {
             v2::Pdus::GetRequest(pdu) => {
-                info.push_str(&format!("  Type: GetRequest\n"));
+                info.push_str("  Type: GetRequest\n");
                 info.push_str(&format!("  Request ID: {}\n", pdu.0.request_id));
                 info.push_str(&Self::format_v2_var_binds(&pdu.0.variable_bindings));
             },
             v2::Pdus::GetNextRequest(pdu) => {
-                info.push_str(&format!("  Type: GetNextRequest\n"));
+                info.push_str("  Type: GetNextRequest\n");
                 info.push_str(&format!("  Request ID: {}\n", pdu.0.request_id));
                 info.push_str(&Self::format_v2_var_binds(&pdu.0.variable_bindings));
             },
             v2::Pdus::GetBulkRequest(pdu) => {
-                info.push_str(&format!("  Type: GetBulkRequest\n"));
+                info.push_str("  Type: GetBulkRequest\n");
                 info.push_str(&format!("  Request ID: {}\n", pdu.0.request_id));
                 info.push_str(&format!("  Non-repeaters: {}\n", pdu.0.non_repeaters));
                 info.push_str(&format!("  Max-repetitions: {}\n", pdu.0.max_repetitions));
@@ -529,17 +529,17 @@ impl SnmpServer {
 
     /// Format SNMPv1 message with OIDs
     fn format_v1_message(msg: &v1::Message<v1::Pdus>) -> String {
-        let mut info = format!("SNMPv1 Message:\n");
+        let mut info = "SNMPv1 Message:\n".to_string();
         info.push_str(&format!("  Community: {}\n", String::from_utf8_lossy(&msg.community)));
 
         match &msg.data {
             v1::Pdus::GetRequest(pdu) => {
-                info.push_str(&format!("  Type: GetRequest\n"));
+                info.push_str("  Type: GetRequest\n");
                 info.push_str(&format!("  Request ID: {}\n", pdu.0.request_id));
                 info.push_str(&Self::format_v1_var_binds(&pdu.0.variable_bindings));
             },
             v1::Pdus::GetNextRequest(pdu) => {
-                info.push_str(&format!("  Type: GetNextRequest\n"));
+                info.push_str("  Type: GetNextRequest\n");
                 info.push_str(&format!("  Request ID: {}\n", pdu.0.request_id));
                 info.push_str(&Self::format_v1_var_binds(&pdu.0.variable_bindings));
             },

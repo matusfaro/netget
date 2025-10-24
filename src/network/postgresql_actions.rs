@@ -14,7 +14,9 @@ use tracing::debug;
 
 /// PostgreSQL protocol action handler
 pub struct PostgresqlProtocol {
+    #[allow(dead_code)]
     connection_id: ConnectionId,
+    #[allow(dead_code)]
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
 }

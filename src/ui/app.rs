@@ -320,34 +320,34 @@ impl App {
 
     /// Log at ERROR level (always shown)
     pub fn log_error(&mut self, message: String) {
-        self.add_message(format!("[ERROR] {}", message));
+        self.add_message(format!("[ERROR] {message}"));
     }
 
     /// Log at WARN level (shown if level >= WARN)
     pub fn log_warn(&mut self, message: String) {
         if self.log_level >= LogLevel::Warn {
-            self.add_message(format!("[WARN] {}", message));
+            self.add_message(format!("[WARN] {message}"));
         }
     }
 
     /// Log at INFO level (shown if level >= INFO)
     pub fn log_info(&mut self, message: String) {
         if self.log_level >= LogLevel::Info {
-            self.add_message(format!("[INFO] {}", message));
+            self.add_message(format!("[INFO] {message}"));
         }
     }
 
     /// Log at DEBUG level (shown if level >= DEBUG)
     pub fn log_debug(&mut self, message: String) {
         if self.log_level >= LogLevel::Debug {
-            self.add_message(format!("[DEBUG] {}", message));
+            self.add_message(format!("[DEBUG] {message}"));
         }
     }
 
     /// Log at TRACE level (shown if level >= TRACE)
     pub fn log_trace(&mut self, message: String) {
         if self.log_level >= LogLevel::Trace {
-            self.add_message(format!("[TRACE] {}", message));
+            self.add_message(format!("[TRACE] {message}"));
         }
     }
 

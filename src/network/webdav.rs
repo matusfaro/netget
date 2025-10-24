@@ -1,15 +1,13 @@
 //! WebDAV server implementation using dav-server
 
 use crate::network::connection::ConnectionId;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions};
 use crate::network::WebDavProtocol;
 use crate::state::app_state::AppState;
 
@@ -26,14 +24,14 @@ impl WebDavServer {
     /// Spawn WebDAV server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
-        llm_client: OllamaClient,
+        _llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         info!("WebDAV server (action-based) starting on {}", listen_addr);
 
-        let protocol = Arc::new(WebDavProtocol::new());
+        let _protocol = Arc::new(WebDavProtocol::new());
 
         // Create in-memory filesystem (LLM will control file operations)
         let memfs = MemFs::new();

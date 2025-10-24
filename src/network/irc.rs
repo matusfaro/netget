@@ -106,9 +106,9 @@ impl IrcServer {
                                                         let formatted = if response.ends_with("\r\n") {
                                                             response.to_string()
                                                         } else if response.ends_with('\n') {
-                                                            format!("{}\r", response)
+                                                            format!("{response}\r")
                                                         } else {
-                                                            format!("{}\r\n", response)
+                                                            format!("{response}\r\n")
                                                         };
                                                         let mut write = write_half_arc.lock().await;
                                                         let _ = write.write_all(formatted.as_bytes()).await;
@@ -163,9 +163,9 @@ pub async fn send_irc_response(
     let formatted = if response.ends_with("\r\n") {
         response.to_string()
     } else if response.ends_with('\n') {
-        format!("{}\r", response)
+        format!("{response}\r")
     } else {
-        format!("{}\r\n", response)
+        format!("{response}\r\n")
     };
 
     write_half.write_all(formatted.as_bytes()).await?;

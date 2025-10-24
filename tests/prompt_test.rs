@@ -163,7 +163,8 @@ async fn test_network_event_prompt_for_proxy() {
     assert!(prompt.contains(event_description));
     assert!(prompt.contains("Act as HTTP proxy")); // Instruction
     assert!(prompt.contains("connections: 0")); // Memory
-    assert!(prompt.contains("Available Base Stacks")); // Base stack documentation
+    // Network event prompts should NOT include base stack docs (server already running)
+    assert!(!prompt.contains("Available Base Stacks"));
 
     #[cfg(feature = "proxy")]
     {
