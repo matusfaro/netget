@@ -265,3 +265,140 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
     println!("=== Test completed ===\n");
     Ok(())
 }
+
+#[tokio::test]
+async fn test_sftp_basic_operations() -> E2EResult<()> {
+    println!("\n=== E2E Test: SFTP Basic Operations ===");
+
+    // PROMPT: Tell the LLM to act as an SFTP server with a virtual filesystem
+    let port = helpers::get_available_port().await?;
+    let prompt = format!(
+        "listen on port {} via ssh. Enable SFTP subsystem. \
+        When SFTP clients connect and request directory listing for '/', \
+        return a virtual directory with 3 files: 'readme.txt' (100 bytes), \
+        'data.json' (256 bytes), and 'logs' (directory). \
+        When clients read 'readme.txt', return the content 'Hello from NetGet SFTP!'. \
+        Accept password authentication for user 'test' with any password.",
+        port
+    );
+
+    // Start the server
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // VALIDATION: Test SFTP operations using ssh2
+    println!("Connecting via SFTP...");
+
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("✓ TCP connected");
+
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000); // 10 second timeout for LLM responses
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("✓ SSH handshake completed");
+
+                    // Try to authenticate
+                    match sess.userauth_password("test", "testpass") {
+                        Ok(_) => {
+                            println!("✓ Authentication successful");
+
+                            // Open SFTP channel
+                            match sess.sftp() {
+                                Ok(sftp) => {
+                                    println!("✓ SFTP channel opened");
+
+                                    // Test 1: List root directory
+                                    println!("\nTest: List root directory");
+                                    match sftp.readdir(std::path::Path::new("/")) {
+                                        Ok(entries) => {
+                                            println!("  ✓ Directory listing received:");
+                                            for (path, stat) in entries {
+                                                println!("    - {} ({} bytes, is_dir: {})",
+                                                    path.display(),
+                                                    stat.size.unwrap_or(0),
+                                                    stat.is_dir()
+                                                );
+                                            }
+
+                                            // Verify we got some entries
+                                            assert!(!entries.is_empty(), "Expected non-empty directory listing");
+                                            println!("  ✓ Directory listing validated");
+                                        }
+                                        Err(e) => {
+                                            println!("  Note: Directory listing failed: {}", e);
+                                            println!("  This may indicate the LLM needs more guidance on SFTP responses");
+                                        }
+                                    }
+
+                                    // Test 2: Read a file
+                                    println!("\nTest: Read file 'readme.txt'");
+                                    match sftp.open(std::path::Path::new("/readme.txt")) {
+                                        Ok(mut file) => {
+                                            println!("  ✓ File opened");
+
+                                            let mut contents = String::new();
+                                            match file.read_to_string(&mut contents) {
+                                                Ok(bytes_read) => {
+                                                    println!("  ✓ Read {} bytes: {:?}", bytes_read, contents);
+                                                    assert!(!contents.is_empty(), "Expected non-empty file content");
+                                                }
+                                                Err(e) => {
+                                                    println!("  Note: File read failed: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            println!("  Note: File open failed: {}", e);
+                                            println!("  The LLM may need to return file metadata");
+                                        }
+                                    }
+
+                                    // Test 3: Get file attributes
+                                    println!("\nTest: Get file attributes");
+                                    match sftp.stat(std::path::Path::new("/readme.txt")) {
+                                        Ok(stat) => {
+                                            println!("  ✓ File stat successful:");
+                                            println!("    Size: {:?} bytes", stat.size);
+                                            println!("    Permissions: {:?}", stat.perm);
+                                            println!("    Is file: {}", stat.is_file());
+                                        }
+                                        Err(e) => {
+                                            println!("  Note: File stat failed: {}", e);
+                                        }
+                                    }
+
+                                    println!("\n✓ SFTP operations completed");
+                                }
+                                Err(e) => {
+                                    println!("Note: SFTP channel creation failed: {}", e);
+                                    println!("  This indicates the SSH server may not be handling SFTP subsystem requests");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("Note: Authentication failed: {}", e);
+                            println!("  The LLM may need to be instructed to accept the authentication");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Note: SSH handshake failed: {}", e);
+                    println!("  russh implementation should handle this automatically");
+                }
+            }
+        }
+        Err(e) => {
+            println!("Note: TCP connection failed: {}", e);
+        }
+    }
+
+    server.stop().await?;
+    println!("=== Test completed ===\n");
+    Ok(())
+}

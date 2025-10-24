@@ -12,7 +12,7 @@ dns = ["hickory-server", "hickory-proto"]
 dhcp = ["dhcproto"]
 ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
-ssh = ["russh", "russh-keys", "async-trait"]
+ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
 all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc"]
 # E2E testing feature - marker to enable end-to-end black-box tests
@@ -86,6 +86,7 @@ rasn = { version = "0.18", optional = true }
 # SSH server
 russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }
+russh-sftp = { version = "2.1", optional = true }
 async-trait = { version = "0.1", optional = true }
 
 [dev-dependencies]

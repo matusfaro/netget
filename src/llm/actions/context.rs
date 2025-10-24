@@ -82,6 +82,16 @@ pub enum NetworkContext {
         status_tx: mpsc::UnboundedSender<String>,
     },
 
+    /// SFTP request context - for SFTP subsystem (runs over SSH)
+    SftpRequest {
+        connection_id: ConnectionId,
+        request_id: u32,
+        operation: String,  // e.g., "opendir", "read", "write", "stat"
+        path: Option<String>,
+        handle: Option<String>,
+        status_tx: mpsc::UnboundedSender<String>,
+    },
+
     /// IRC connection context - for IRC protocol
     IrcConnection {
         connection_id: ConnectionId,
@@ -110,6 +120,9 @@ impl NetworkContext {
                 format!("NTP request from {}", peer_addr),
             NetworkContext::SshConnection { connection_id, .. } =>
                 format!("SSH connection {}", connection_id),
+            NetworkContext::SftpRequest { connection_id, operation, path, .. } =>
+                format!("SFTP {} on connection {} (path: {})",
+                    operation, connection_id, path.as_deref().unwrap_or("N/A")),
             NetworkContext::IrcConnection { connection_id, .. } =>
                 format!("IRC connection {}", connection_id),
         }
