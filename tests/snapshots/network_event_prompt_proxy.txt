@@ -19,25 +19,9 @@ Instructions: Act as HTTP proxy
 
 Available actions:
 
-1. show_message. Display a message to the user controlling NetGet
-{
-  "type": "show_message",
-  "message": string,  // Message to display (required)
-  // Message to display (required)
-}
-
-Example:
-{
-  "type": "show_message",
-  "message": "Server started successfully on port 8080"
-}
-
-2. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
-{
-  "type": "set_memory",
-  "value": string,  // New memory value as a string. Replaces all existing memory. (required)
-  // New memory value as a string. Replaces all existing memory. (required)
-}
+1. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
+Parameters:
+  • value: string (required) - New memory value as a string. Replaces all existing memory.
 
 Example:
 {
@@ -45,12 +29,9 @@ Example:
   "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
 }
 
-3. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
-{
-  "type": "append_memory",
-  "value": string,  // Text to append as a string. Will be added after existing memory with newline separator. (required)
-  // Text to append as a string. Will be added after existing memory with newline separator. (required)
-}
+2. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
+Parameters:
+  • value: string (required) - Text to append as a string. Will be added after existing memory with newline separator.
 
 Example:
 {
@@ -58,23 +39,26 @@ Example:
   "value": "connection_count: 5\nlast_file_requested: readme.md"
 }
 
-4. handle_request_pass. Pass the intercepted request through unchanged to its destination
+3. show_message. Display a message to the user controlling NetGet
+Parameters:
+  • message: string (required) - Message to display
+
+Example:
 {
-  "type": "handle_request_pass",
+  "type": "show_message",
+  "message": "Server started successfully on port 8080"
 }
 
+4. handle_request_pass. Pass the intercepted request through unchanged to its destination
 Example:
 {
   "type": "handle_request_pass"
 }
 
 5. handle_request_block. Block the intercepted request and return an error response to the client
-{
-  "type": "handle_request_block",
-  "status": number,  // HTTP status code (default: 403) (optional)
-  "body": string,  // Response body explaining why request was blocked (optional)
-  // Response body explaining why request was blocked (optional)
-}
+Parameters:
+  • status: number (optional) - HTTP status code (default: 403)
+  • body: string (optional) - Response body explaining why request was blocked
 
 Example:
 {
@@ -84,16 +68,13 @@ Example:
 }
 
 6. handle_request_modify. Modify the intercepted request before forwarding to destination
-{
-  "type": "handle_request_modify",
-  "headers": object,  // Headers to add or modify (key-value pairs) (optional)
-  "remove_headers": array,  // Header names to remove (optional)
-  "new_path": string,  // New URL path (replaces entire path) (optional)
-  "query_params": object,  // Query parameters to add/modify (optional)
-  "new_body": string,  // Complete body replacement (optional)
-  "body_replacements": array,  // Array of regex replacements: [{pattern: 'regex', replacement: 'text'}] (optional)
-  // Array of regex replacements: [{pattern: 'regex', replacement: 'text'}] (optional)
-}
+Parameters:
+  • headers: object (optional) - Headers to add or modify (key-value pairs)
+  • remove_headers: array (optional) - Header names to remove
+  • new_path: string (optional) - New URL path (replaces entire path)
+  • query_params: object (optional) - Query parameters to add/modify
+  • new_body: string (optional) - Complete body replacement
+  • body_replacements: array (optional) - Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]
 
 Example:
 {
@@ -114,22 +95,15 @@ Example:
 }
 
 7. handle_response_pass. Pass the intercepted response through unchanged to the client
-{
-  "type": "handle_response_pass",
-}
-
 Example:
 {
   "type": "handle_response_pass"
 }
 
 8. handle_response_block. Block the intercepted response and return a different response to the client
-{
-  "type": "handle_response_block",
-  "status": number,  // HTTP status code (default: 502) (optional)
-  "body": string,  // Response body (optional)
-  // Response body (optional)
-}
+Parameters:
+  • status: number (optional) - HTTP status code (default: 502)
+  • body: string (optional) - Response body
 
 Example:
 {
@@ -139,15 +113,12 @@ Example:
 }
 
 9. handle_response_modify. Modify the intercepted response before returning to client
-{
-  "type": "handle_response_modify",
-  "status": number,  // New HTTP status code (optional)
-  "headers": object,  // Headers to add or modify (key-value pairs) (optional)
-  "remove_headers": array,  // Header names to remove (optional)
-  "new_body": string,  // Complete body replacement (optional)
-  "body_replacements": array,  // Array of regex replacements: [{pattern: 'regex', replacement: 'text'}] (optional)
-  // Array of regex replacements: [{pattern: 'regex', replacement: 'text'}] (optional)
-}
+Parameters:
+  • status: number (optional) - New HTTP status code
+  • headers: object (optional) - Headers to add or modify (key-value pairs)
+  • remove_headers: array (optional) - Header names to remove
+  • new_body: string (optional) - Complete body replacement
+  • body_replacements: array (optional) - Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]
 
 Example:
 {
@@ -164,21 +135,14 @@ Example:
 }
 
 10. handle_https_connection_allow. Allow HTTPS connection to proceed (pass-through mode only, no MITM)
-{
-  "type": "handle_https_connection_allow",
-}
-
 Example:
 {
   "type": "handle_https_connection_allow"
 }
 
 11. handle_https_connection_block. Block HTTPS connection (pass-through mode only, no MITM)
-{
-  "type": "handle_https_connection_block",
-  "reason": string,  // Optional reason for blocking (optional)
-  // Optional reason for blocking (optional)
-}
+Parameters:
+  • reason: string (optional) - Optional reason for blocking
 
 Example:
 {
@@ -188,122 +152,18 @@ Example:
 
 
 
-## Available Base Stacks
-
-Each protocol stack has a specific name to use in the 'base_stack' field:
-
-### ETH>IP>TCP
-Stack name: "ETH>IP>TCP"
-No startup parameters.
-
-### ETH>IP>TCP>HTTP
-Stack name: "ETH>IP>TCP>HTTP"
-No startup parameters.
-
-### ETH
-Stack name: "ETH"
-No startup parameters.
-
-### ETH>IP>UDP
-Stack name: "ETH>IP>UDP"
-No startup parameters.
-
-### ETH>IP>UDP>DNS
-Stack name: "ETH>IP>UDP>DNS"
-No startup parameters.
-
-### ETH>IP>UDP>DHCP
-Stack name: "ETH>IP>UDP>DHCP"
-No startup parameters.
-
-### ETH>IP>UDP>NTP
-Stack name: "ETH>IP>UDP>NTP"
-No startup parameters.
-
-### ETH>IP>UDP>SNMP
-Stack name: "ETH>IP>UDP>SNMP"
-No startup parameters.
-
-### ETH>IP>TCP>SSH
-Stack name: "ETH>IP>TCP>SSH"
-No startup parameters.
-
-### ETH>IP>TCP>IRC
-Stack name: "ETH>IP>TCP>IRC"
-No startup parameters.
-
-### ETH>IP>TCP>Telnet
-Stack name: "ETH>IP>TCP>Telnet"
-No startup parameters.
-
-### ETH>IP>TCP>SMTP
-Stack name: "ETH>IP>TCP>SMTP"
-No startup parameters.
-
-### ETH>IP>UDP>mDNS
-Stack name: "ETH>IP>UDP>mDNS"
-No startup parameters.
-
-### ETH>IP>TCP>MySQL
-Stack name: "ETH>IP>TCP>MySQL"
-No startup parameters.
-
-### ETH>IP>TCP>HTTP>IPP
-Stack name: "ETH>IP>TCP>HTTP>IPP"
-No startup parameters.
-
-### ETH>IP>TCP>PostgreSQL
-Stack name: "ETH>IP>TCP>PostgreSQL"
-No startup parameters.
-
-### ETH>IP>TCP>Redis
-Stack name: "ETH>IP>TCP>Redis"
-No startup parameters.
-
-### ETH>IP>TCP>HTTP>PROXY
-Stack name: "ETH>IP>TCP>HTTP>PROXY"
-Startup parameters:
-  • certificate_mode (optional) - Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)
-    Example: "generate"
-  • cert_path (optional) - Path to certificate file (only if certificate_mode is 'load_from_file')
-    Example: "/path/to/cert.pem"
-  • key_path (optional) - Path to private key file (only if certificate_mode is 'load_from_file')
-    Example: "/path/to/key.pem"
-  • request_filter_mode (optional) - Request filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass through)
-    Example: "match_only"
-  • response_filter_mode (optional) - Response filter mode: 'all', 'match_only', or 'none'
-    Example: "all"
-  • https_connection_filter_mode (optional) - HTTPS connection filter mode (pass-through only): 'all', 'match_only', or 'none'
-    Example: "match_only"
-
-### ETH>IP>TCP>HTTP>WEBDAV
-Stack name: "ETH>IP>TCP>HTTP>WEBDAV"
-No startup parameters.
-
-### ETH>IP>TCP>NFS
-Stack name: "ETH>IP>TCP>NFS"
-No startup parameters.
 
 
+RESPONSE FORMAT:
+Respond with JSON: {"actions": [...]}
+The "actions" array can contain one or more actions, executed in order.
 
-IMPORTANT: Respond with a JSON object containing an "actions" array.
-The "actions" field MUST ALWAYS be an array, even for a single action.
-
-For a single action:
+Example:
 {
   "actions": [
-    {"type": "action_name", "param1": "value1", ...}
+    {"type": "show_message", "message": "Done"},
+    {"type": "update_instruction", "instruction": "New behavior"}
   ]
 }
-
-For multiple actions:
-{
-  "actions": [
-    {"type": "first_action", "param1": "value1", ...},
-    {"type": "second_action", "param2": "value2", ...}
-  ]
-}
-
-The actions will be executed in order.
 
 Response (JSON only):

@@ -5,9 +5,9 @@
 
 #![cfg(feature = "e2e-tests")]
 
-mod e2e;
+// Helper module imported from parent
 
-use e2e::helpers::{self, ServerConfig, E2EResult};
+use super::super::helpers::{self, ServerConfig, E2EResult};
 use std::process::Command;
 use std::time::Duration;
 

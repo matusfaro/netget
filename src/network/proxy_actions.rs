@@ -12,13 +12,12 @@ use crate::llm::actions::{
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::network::proxy_filter::{
-    ProxyFilterConfig, CertificateMode, RequestFilter, ResponseFilter, HttpsConnectionFilter,
+    CertificateMode, RequestFilter, ResponseFilter, HttpsConnectionFilter,
     RequestAction, ResponseAction, HttpsConnectionAction, FilterMode,
 };
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
 
 /// HTTP Proxy protocol action handler
 pub struct ProxyProtocol;

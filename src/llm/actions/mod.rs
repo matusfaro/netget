@@ -73,28 +73,24 @@ impl ActionDefinition {
     /// Convert to prompt text format for LLM
     pub fn to_prompt_text(&self) -> String {
         let mut text = format!("{}. {}\n", self.name, self.description);
-        text.push_str("{\n");
-        text.push_str(&format!("  \"type\": \"{}\",\n", self.name));
 
-        for (i, param) in self.parameters.iter().enumerate() {
-            let required = if param.required { "required" } else { "optional" };
-            text.push_str(&format!(
-                "  \"{}\": {},  // {} ({})\n",
-                param.name,
-                param.type_hint,
-                param.description,
-                required
-            ));
-
-            if i == self.parameters.len() - 1 {
-                // Remove trailing comma from last parameter
-                text = text.trim_end_matches(",  // ").to_string();
-                text.push_str("  // ");
-                text.push_str(&format!("{} ({})\n", param.description, required));
+        // Only show schema if there are parameters
+        if !self.parameters.is_empty() {
+            text.push_str("Parameters:\n");
+            for param in &self.parameters {
+                let required = if param.required { "required" } else { "optional" };
+                text.push_str(&format!(
+                    "  • {}: {} ({}) - {}\n",
+                    param.name,
+                    param.type_hint,
+                    required,
+                    param.description
+                ));
             }
+            text.push_str("\n");
         }
 
-        text.push_str("}\n\nExample:\n");
+        text.push_str("Example:\n");
         text.push_str(&serde_json::to_string_pretty(&self.example).unwrap_or_default());
         text
     }

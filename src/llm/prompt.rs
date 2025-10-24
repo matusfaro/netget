@@ -119,12 +119,14 @@ Response (JSON only):"#,
     /// * `trigger_reason` - Why this prompt is being called (e.g., "User said: X" or "TCP data received")
     /// * `instructions` - How to handle the situation
     /// * `available_actions` - List of actions the LLM can use
+    /// * `include_base_stacks` - Whether to include full base stack documentation
     pub async fn build_action_prompt(
         state: &AppState,
         server_id: Option<ServerId>,
         trigger_reason: &str,
         instructions: &str,
         available_actions: Vec<ActionDefinition>,
+        include_base_stacks: bool,
     ) -> String {
         // Get current state
         let mode = state.get_mode().await;
@@ -179,8 +181,18 @@ Response (JSON only):"#,
             text
         };
 
-        // Generate base stack documentation
-        let base_stack_docs = generate_base_stack_documentation();
+        // Conditionally generate base stack documentation
+        let base_stack_docs = if include_base_stacks {
+            // For user input when starting servers, include full documentation
+            generate_base_stack_documentation()
+        } else if server_id.is_some() {
+            // For network events, don't include (server already running)
+            String::new()
+        } else {
+            // For user input with running servers, show abbreviated list
+            let stacks = crate::protocol::BaseStack::available_stacks();
+            format!("\nAvailable protocol stacks: {}\n", stacks.join(", "))
+        };
 
         format!(
             r#"You are NetGet, an LLM-controlled network application assistant.
@@ -195,25 +207,17 @@ Instructions: {}
 
 {}
 
-IMPORTANT: Respond with a JSON object containing an "actions" array.
-The "actions" field MUST ALWAYS be an array, even for a single action.
+RESPONSE FORMAT:
+Respond with JSON: {{"actions": [...]}}
+The "actions" array can contain one or more actions, executed in order.
 
-For a single action:
+Example:
 {{
   "actions": [
-    {{"type": "action_name", "param1": "value1", ...}}
+    {{"type": "show_message", "message": "Done"}},
+    {{"type": "update_instruction", "instruction": "New behavior"}}
   ]
 }}
-
-For multiple actions:
-{{
-  "actions": [
-    {{"type": "first_action", "param1": "value1", ...}},
-    {{"type": "second_action", "param2": "value2", ...}}
-  ]
-}}
-
-The actions will be executed in order.
 
 Response (JSON only):"#,
             current_state, trigger_reason, instructions, actions_text, base_stack_docs
@@ -238,7 +242,12 @@ Response (JSON only):"#,
         let instructions =
             "Interpret what the user wants and respond with appropriate actions.";
 
-        Self::build_action_prompt(state, None, &trigger, instructions, actions).await
+        // Include full base stack docs only if no servers are running
+        // (user might want to start a new server)
+        let servers = state.get_all_servers().await;
+        let include_base_stacks = servers.is_empty();
+
+        Self::build_action_prompt(state, None, &trigger, instructions, actions, include_base_stacks).await
     }
 
     /// Build prompt for network events using new action system (legacy - no server_id)
@@ -287,7 +296,8 @@ Response (JSON only):"#,
 
         let trigger = format!("Event: {}", event_description);
 
-        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions).await
+        // Network events don't need base stack docs (server already running, handling specific event)
+        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions, false).await
     }
 
     // ========================================================================

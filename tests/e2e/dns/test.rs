@@ -5,9 +5,9 @@
 
 #![cfg(feature = "e2e-tests")]
 
-mod e2e;
+// Helper module imported from parent
 
-use e2e::helpers::{self, ServerConfig, E2EResult};
+use super::super::helpers::{self, ServerConfig, E2EResult};
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::rr::{DNSClass, Name, RecordType};
 use hickory_client::udp::UdpClientStream;

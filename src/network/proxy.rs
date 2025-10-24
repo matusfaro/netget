@@ -86,14 +86,14 @@ impl ProxyServer {
             // Parse filter modes
             if let Some(mode_str) = params.get("request_filter_mode").and_then(|v| v.as_str()) {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
-                    let _ = status_tx.send(format!("[INFO] Request filter mode: {:?}", mode));
+                    let _ = status_tx.send(format!("[INFO] Request filter mode: {mode:?}"));
                     config.request_filter_mode = mode;
                 }
             }
 
             if let Some(mode_str) = params.get("response_filter_mode").and_then(|v| v.as_str()) {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
-                    let _ = status_tx.send(format!("[INFO] Response filter mode: {:?}", mode));
+                    let _ = status_tx.send(format!("[INFO] Response filter mode: {mode:?}"));
                     config.response_filter_mode = mode;
                 }
             }
@@ -118,7 +118,7 @@ impl ProxyServer {
                 let _ = status_tx.send(format!("[INFO] Loading CA cert from {:?}", cert_path));
 
                 // Read certificate and key files
-                let cert_pem = std::fs::read_to_string(cert_path)
+                let _cert_pem = std::fs::read_to_string(cert_path)
                     .context("Failed to read certificate file")?;
                 let key_pem = std::fs::read_to_string(key_path)
                     .context("Failed to read private key file")?;
@@ -258,7 +258,7 @@ impl ProxyServer {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<ProxyProtocol>,
     ) -> Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncReadExt;
 
         eprintln!(">>> PROXY: handle_proxy_connection called from {}", peer_addr);
         info!("Proxy: handling connection {} from {}", connection_id, peer_addr);
@@ -551,7 +551,7 @@ impl ProxyServer {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<ProxyProtocol>,
     ) -> Result<()> {
-        use tokio::io::{AsyncWriteExt, AsyncReadExt};
+        use tokio::io::AsyncWriteExt;
 
         let start_time = std::time::Instant::now();
 
@@ -974,6 +974,7 @@ impl ProxyServer {
     }
 
     /// Parse modify action from JSON
+    #[allow(dead_code)]
     fn parse_request_modify_action(action: &serde_json::Value) -> Result<RequestAction> {
         use crate::network::proxy_filter::RegexReplacement;
 
@@ -1043,7 +1044,7 @@ impl ProxyServer {
             headers,
             remove_headers,
             new_path,
-            query_params,
+            query_params: _,
             new_body,
             body_replacements,
         } = modifications {

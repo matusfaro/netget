@@ -1,6 +1,5 @@
 //! NFS server implementation using nfsserve
 
-use crate::network::connection::ConnectionId;
 use anyhow::{Result, Context};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -10,13 +9,14 @@ use tracing::{debug, error, info, trace};
 #[cfg(feature = "nfs")]
 use nfsserve::vfs::{NFSFileSystem, DirEntry, ReadDirResult};
 #[cfg(feature = "nfs")]
-use nfsserve::nfs::{fattr3, fileid3, filename3, nfspath3, nfsstat3, nfstime3, ftype3, sattr3, nfs_fh3};
+use nfsserve::nfs::{fattr3, fileid3, filename3, nfspath3, nfsstat3, nfstime3, ftype3, sattr3};
 #[cfg(feature = "nfs")]
 use async_trait::async_trait;
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions};
+use crate::llm::ActionResponse;
+use crate::llm::actions::protocol_trait::ProtocolActions;
 use crate::network::NfsProtocol;
 use crate::state::app_state::AppState;
 

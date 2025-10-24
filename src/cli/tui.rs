@@ -229,7 +229,7 @@ async fn handle_keyboard_event(
                 KeyCode::Enter if app.is_input_focused() => {
                     let input = app.submit_input();
                     if !input.is_empty() {
-                        app.add_status_message(format!("[USER] {}", input));
+                        app.add_status_message(format!("[USER] {input}"));
 
                         // Parse command
                         let command = UserCommand::parse(&input);
@@ -248,7 +248,7 @@ async fn handle_keyboard_event(
                                         }
                                     }
                                     Err(e) => {
-                                        app.add_llm_message(format!("Error: {}", e));
+                                        app.add_llm_message(format!("Error: {e}"));
                                     }
                                 }
                                 update_ui_from_state(app, state).await;
@@ -285,7 +285,7 @@ async fn handle_keyboard_event(
 async fn update_ui_from_state(app: &mut App, state: &AppState) {
     use crate::ui::app::{ServerDisplayInfo, ConnectionDisplayInfo};
 
-    app.connection_info.mode = format!("{}", state.get_mode().await);
+    app.connection_info.mode = state.get_mode().await.to_string();
     app.connection_info.model = state.get_ollama_model().await;
 
     // Update server list

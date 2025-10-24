@@ -270,7 +270,7 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
     let (title, title_style) = if app.is_servers_focused() {
         let expand_hint = if app.expand_all_connections { "[E: collapse]" } else { "[E: expand]" };
         (
-            format!("Servers & Connections {} | ↑↓: scroll", expand_hint),
+            format!("Servers & Connections {expand_hint} | ↑↓: scroll"),
             Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
         )
     } else {
@@ -310,7 +310,7 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
                 ),
                 Span::raw(" :"),
                 Span::styled(
-                    format!("{}", server.port),
+                    server.port.to_string(),
                     Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
                 ),
                 Span::raw(" - "),

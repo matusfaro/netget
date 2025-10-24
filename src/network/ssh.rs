@@ -500,10 +500,10 @@ impl russh::server::Handler for SshHandler {
         if name == "sftp" {
             if !self.config.sftp_enabled {
                 error!("SFTP subsystem requested but SFTP is disabled");
-                let _ = self.status_tx.send(format!("[ERROR] SFTP subsystem requested but SFTP is disabled"));
+                let _ = self.status_tx.send("[ERROR] SFTP subsystem requested but SFTP is disabled".to_string());
 
                 debug!("SSH response: CHANNEL_FAILURE (SFTP disabled)");
-                let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_FAILURE (SFTP disabled)"));
+                let _ = self.status_tx.send("[DEBUG] SSH response: CHANNEL_FAILURE (SFTP disabled)".to_string());
 
                 session.channel_failure(channel_id);
                 return Ok(());
@@ -520,7 +520,7 @@ impl russh::server::Handler for SshHandler {
             // Get the channel object
             if let Some(channel) = self.get_channel(channel_id).await {
                 debug!("SSH response: CHANNEL_SUCCESS (starting SFTP handler)");
-                let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_SUCCESS (starting SFTP handler)"));
+                let _ = self.status_tx.send("[DEBUG] SSH response: CHANNEL_SUCCESS (starting SFTP handler)".to_string());
 
                 trace!("Creating LlmSftpHandler for channel {} on connection {}",
                     channel_id, self.connection_id);
@@ -539,7 +539,7 @@ impl russh::server::Handler for SshHandler {
 
                 // Run SFTP protocol (this handles all packet parsing)
                 trace!("Starting russh_sftp::server::run() for channel {}", channel_id);
-                let _ = self.status_tx.send(format!("[TRACE] Starting russh_sftp::server::run() for channel {}", channel_id));
+                let _ = self.status_tx.send(format!("[TRACE] Starting russh_sftp::server::run() for channel {channel_id}"));
 
                 russh_sftp::server::run(channel.into_stream(), sftp_handler).await;
 
@@ -553,10 +553,10 @@ impl russh::server::Handler for SshHandler {
                 let _ = self.status_tx.send(format!("[DEBUG] SSH: SFTP subsystem terminated on channel {}", channel_id));
             } else {
                 error!("SFTP channel {} not found (this should not happen)", channel_id);
-                let _ = self.status_tx.send(format!("[ERROR] SFTP channel {} not found", channel_id));
+                let _ = self.status_tx.send(format!("[ERROR] SFTP channel {channel_id} not found"));
 
                 debug!("SSH response: CHANNEL_FAILURE (channel not found)");
-                let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_FAILURE (channel not found)"));
+                let _ = self.status_tx.send("[DEBUG] SSH response: CHANNEL_FAILURE (channel not found)".to_string());
 
                 session.channel_failure(channel_id);
             }

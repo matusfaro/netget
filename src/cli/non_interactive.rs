@@ -55,7 +55,7 @@ pub async fn run_non_interactive(
                 .strip_prefix("[ERROR] ").unwrap_or(&msg)
                 .strip_prefix("[WARN] ").unwrap_or(&msg)
                 .strip_prefix("[DEBUG] ").unwrap_or(&msg);
-            println!("{}", clean_msg);
+            println!("{clean_msg}");
         }
     }
 
@@ -106,13 +106,13 @@ async fn run_server(
         // Process status messages from handler (drain remaining)
         while let Ok(msg) = status_rx.try_recv() {
             if !msg.starts_with("__") {
-                println!("[STATUS] {}", msg);
+                println!("[STATUS] {msg}");
             }
         }
 
         // Process server status messages
         while let Ok(msg) = server_status_rx.try_recv() {
-            println!("[STATUS] {}", msg);
+            println!("[STATUS] {msg}");
         }
 
         // Sleep briefly to avoid busy waiting

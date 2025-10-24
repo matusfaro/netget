@@ -237,7 +237,6 @@ impl NfsProtocol {
 }
 
 /// Action definitions
-
 fn mount_filesystem_action() -> ActionDefinition {
     ActionDefinition {
         name: "mount_filesystem".to_string(),

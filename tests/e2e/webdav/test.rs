@@ -5,9 +5,9 @@
 
 #![cfg(feature = "e2e-tests")]
 
-mod e2e;
+// Helper module imported from parent
 
-use e2e::helpers::{self, ServerConfig, E2EResult};
+use super::super::helpers::{self, ServerConfig, E2EResult};
 
 #[tokio::test]
 async fn test_webdav_server_start() -> E2EResult<()> {

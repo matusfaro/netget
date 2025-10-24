@@ -3,7 +3,7 @@
 //! This module defines actions that are available in both user input
 //! and network event prompts (show_message, memory operations, etc.).
 
-use super::{ActionDefinition, Parameter, ParameterDefinition};
+use super::{ActionDefinition, Parameter};
 use super::protocol_trait::ProtocolActions;
 use crate::protocol::BaseStack;
 use anyhow::{Context, Result};
@@ -113,7 +113,7 @@ pub fn open_server_action() -> ActionDefinition {
             },
             Parameter {
                 name: "initial_memory".to_string(),
-                type_hint: "string (optional)".to_string(),
+                type_hint: "string".to_string(),
                 description: "Optional initial memory as a string. Use for storing persistent context across connections. Example: \"user_count: 0\"".to_string(),
                 required: false,
             },
@@ -125,7 +125,7 @@ pub fn open_server_action() -> ActionDefinition {
             },
             Parameter {
                 name: "startup_params".to_string(),
-                type_hint: "object (optional)".to_string(),
+                type_hint: "object".to_string(),
                 description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
                 required: false,
             },
@@ -234,15 +234,25 @@ pub fn append_memory_action() -> ActionDefinition {
 }
 
 /// Get all common action definitions
+///
+/// Actions are organized logically:
+/// 1. Server Management - Create/destroy servers
+/// 2. Server Configuration - Configure running servers
+/// 3. System/Utility - Model changes, messages
 pub fn get_all_common_actions() -> Vec<ActionDefinition> {
     vec![
-        show_message_action(),
+        // === Server Management ===
         get_open_server_action_with_params(),
         close_server_action(),
+
+        // === Server Configuration ===
         update_instruction_action(),
-        change_model_action(),
         set_memory_action(),
         append_memory_action(),
+
+        // === System/Utility ===
+        change_model_action(),
+        show_message_action(),
     ]
 }
 
@@ -252,11 +262,17 @@ pub fn get_user_input_common_actions() -> Vec<ActionDefinition> {
 }
 
 /// Get common actions for network events (exclude server management actions)
+///
+/// Network events only get server configuration and utility actions,
+/// not server management (can't create/destroy servers from event handlers).
 pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
     vec![
-        show_message_action(),
+        // === Server Configuration ===
         set_memory_action(),
         append_memory_action(),
+
+        // === System/Utility ===
+        show_message_action(),
     ]
 }
 
@@ -400,7 +416,7 @@ pub fn generate_base_stack_documentation() -> String {
 
     for stack in all_base_stacks() {
         // Get the stack name/identifier
-        let stack_str = format!("{}", stack);
+        let stack_str = stack.to_string();
         doc.push_str(&format!("### {}\n", stack_str));
         doc.push_str(&format!("Stack name: \"{}\"\n", stack.name()));
 
@@ -431,34 +447,14 @@ pub fn generate_base_stack_documentation() -> String {
     doc
 }
 
-/// Get enhanced open_server action with protocol-specific startup parameters
+/// Get open_server action with example showing startup_params usage
+///
+/// Startup parameter documentation is provided in the base stack documentation section,
+/// not inline here, to avoid redundancy and reduce token usage.
 pub fn get_open_server_action_with_params() -> ActionDefinition {
     let mut base_action = open_server_action();
 
-    // Add documentation about startup parameters from all available protocols
-    let mut startup_params_doc = String::from("\n\nProtocol-specific startup parameters:\n\n");
-
-    for stack in all_base_stacks() {
-        if let Some(protocol) = get_protocol_for_stack(stack) {
-            let params = protocol.get_startup_parameters();
-            if !params.is_empty() {
-                startup_params_doc.push_str(&format!("{}:\n", stack));
-                for param in params {
-                    startup_params_doc.push_str(&format!("  - {}: {} ({})\n",
-                        param.name,
-                        param.description,
-                        if param.required { "required" } else { "optional" }
-                    ));
-                }
-                startup_params_doc.push('\n');
-            }
-        }
-    }
-
-    // Update description to include startup params documentation
-    base_action.description.push_str(&startup_params_doc);
-
-    // Add example with startup_params for proxy
+    // Use example that shows startup_params usage (proxy is a good example as it has params)
     base_action.example = json!({
         "type": "open_server",
         "port": 8080,

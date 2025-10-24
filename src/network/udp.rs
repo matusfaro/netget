@@ -48,7 +48,7 @@ impl UdpServer {
                         let conn_state = ServerConnectionState {
                             id: connection_id,
                             remote_addr: peer_addr,
-                            local_addr: local_addr,
+                            local_addr,
                             bytes_sent: 0,
                             bytes_received: n as u64,
                             packets_sent: 0,

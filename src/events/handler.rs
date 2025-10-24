@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
@@ -73,7 +73,7 @@ impl EventHandler {
                 if let Some(log_level) = LogLevel::from_str(&level) {
                     ui.set_log_level(log_level);
                 } else {
-                    ui.add_llm_message(format!("Invalid log level: {}. Use: error, warn, info, debug, or trace", level));
+                    ui.add_llm_message(format!("Invalid log level: {level}. Use: error, warn, info, debug, or trace"));
                 }
                 Ok(false)
             }
@@ -82,7 +82,7 @@ impl EventHandler {
                 Ok(true) // Signal to quit
             }
             UserCommand::UnknownSlashCommand { command } => {
-                ui.add_llm_message(format!("Unknown command: {}", command));
+                ui.add_llm_message(format!("Unknown command: {command}"));
                 ui.add_llm_message("Available commands: /status, /model [name], /log [level], /quit".to_string());
                 Ok(false)
             }
@@ -104,7 +104,7 @@ impl EventHandler {
     ) -> Result<()> {
         use crate::llm::PromptBuilder;
 
-        let _ = status_tx.send(format!("[INFO] Interpreting: {}", input));
+        let _ = status_tx.send(format!("[INFO] Interpreting: {input}"));
 
         // Get protocol async actions if available
         let protocol_async_actions = if let Some(ref proto) = protocol {
@@ -150,24 +150,24 @@ impl EventHandler {
                                 for action_value in &action_response.actions {
                                     if let Ok(common_action) = CommonAction::from_json(action_value) {
                                         if let Err(e) = self.execute_server_management_action(common_action, &status_tx).await {
-                                            let _ = status_tx.send(format!("[ERROR] Error executing action: {}", e));
+                                            let _ = status_tx.send(format!("[ERROR] Error executing action: {e}"));
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {}", e));
+                                let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response as action array: {}", e));
+                        let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response as action array: {e}"));
                         let _ = status_tx.send("[ERROR] The LLM must respond with {{\"actions\": [...]}}".to_string());
                     }
                 }
             }
             Err(e) => {
-                let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
+                let _ = status_tx.send(format!("[ERROR] LLM error: {e}"));
             }
         }
 
@@ -254,7 +254,7 @@ impl EventHandler {
             }
             CommonAction::ChangeModel { model } => {
                 self.state.set_ollama_model(model.clone()).await;
-                let _ = status_tx.send(format!("Changed model to: {}", model));
+                let _ = status_tx.send(format!("Changed model to: {model}"));
 
                 // Signal main loop to update UI
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -288,7 +288,7 @@ impl EventHandler {
 
     async fn handle_status(&mut self, ui: &mut App) -> Result<()> {
         let summary = self.state.get_summary().await;
-        ui.add_llm_message(format!("Status: {}", summary));
+        ui.add_llm_message(format!("Status: {summary}"));
 
         // Show instruction for first server
         if let Some(server_id) = self.state.get_first_server_id().await {
@@ -307,7 +307,7 @@ impl EventHandler {
     async fn handle_show_model(&mut self, ui: &mut App) -> Result<()> {
         let current_model = self.state.get_ollama_model().await;
 
-        ui.add_llm_message(format!("Current model: {}", current_model));
+        ui.add_llm_message(format!("Current model: {current_model}"));
         ui.add_llm_message("".to_string());
         ui.add_llm_message("Fetching available models...".to_string());
 
@@ -321,9 +321,9 @@ impl EventHandler {
                     ui.add_llm_message(format!("Available models ({}):", models.len()));
                     for model in &models {
                         if model == &current_model {
-                            ui.add_llm_message(format!("  * {} (current)", model));
+                            ui.add_llm_message(format!("  * {model} (current)"));
                         } else {
-                            ui.add_llm_message(format!("    {}", model));
+                            ui.add_llm_message(format!("    {model}"));
                         }
                     }
                     ui.add_llm_message("".to_string());
@@ -331,7 +331,7 @@ impl EventHandler {
                 }
             }
             Err(e) => {
-                ui.add_llm_message(format!("Failed to fetch models: {}", e));
+                ui.add_llm_message(format!("Failed to fetch models: {e}"));
                 ui.add_llm_message("Make sure Ollama is running.".to_string());
             }
         }
@@ -345,9 +345,9 @@ impl EventHandler {
             Ok(models) => {
                 if models.contains(&model) {
                     self.state.set_ollama_model(model.clone()).await;
-                    ui.add_llm_message(format!("✓ Changed model to: {}", model));
+                    ui.add_llm_message(format!("✓ Changed model to: {model}"));
                 } else {
-                    ui.add_llm_message(format!("✗ Model '{}' not found", model));
+                    ui.add_llm_message(format!("✗ Model '{model}' not found"));
                     ui.add_llm_message("".to_string());
 
                     if models.is_empty() {
@@ -356,16 +356,16 @@ impl EventHandler {
                     } else {
                         ui.add_llm_message("Available models:".to_string());
                         for available_model in &models {
-                            ui.add_llm_message(format!("  {}", available_model));
+                            ui.add_llm_message(format!("  {available_model}"));
                         }
                         ui.add_llm_message("".to_string());
                         ui.add_llm_message("Or pull the model:".to_string());
-                        ui.add_llm_message(format!("  ollama pull {}", model));
+                        ui.add_llm_message(format!("  ollama pull {model}"));
                     }
                 }
             }
             Err(e) => {
-                ui.add_llm_message(format!("Failed to validate model: {}", e));
+                ui.add_llm_message(format!("Failed to validate model: {e}"));
                 ui.add_llm_message("Make sure Ollama is running.".to_string());
             }
         }

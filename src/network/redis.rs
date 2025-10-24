@@ -19,6 +19,7 @@ use tracing::{debug, error, info, trace};
 pub struct RedisServer {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
+    #[allow(dead_code)]
     status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
 }
@@ -135,6 +136,7 @@ struct RedisHandler {
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
+    #[allow(dead_code)]
     remote_addr: SocketAddr,
 }
 
