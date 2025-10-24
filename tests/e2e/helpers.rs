@@ -266,9 +266,13 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
     // Look for various stack patterns
     if prompt_lower.contains("http stack") || prompt_lower.contains("via http") {
         Some("HTTP".to_string())
+    } else if prompt_lower.contains("via ssh") || prompt_lower.contains("ssh.") || prompt_lower.contains("sftp") {
+        Some("SSH".to_string())
+    } else if prompt_lower.contains("via irc") || prompt_lower.contains("irc") {
+        Some("IRC".to_string())
     } else if prompt_lower.contains("tcp") || prompt_lower.contains("ftp") {
         Some("TCP".to_string())
-    } else if prompt_lower.contains("udp") {
+    } else if prompt_lower.contains("udp") || prompt_lower.contains("snmp") || prompt_lower.contains("dns") || prompt_lower.contains("dhcp") || prompt_lower.contains("ntp") {
         Some("UDP".to_string())
     } else {
         None

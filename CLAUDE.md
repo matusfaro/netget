@@ -723,6 +723,79 @@ All JSON in trace logs is automatically pretty-printed for readability:
 
 **Location**: `src/cli/setup.rs`, `src/cli/args.rs`
 
+### Dual Logging Pattern (CRITICAL)
+
+**IMPORTANT**: NetGet uses a dual logging approach where ALL log messages MUST be sent to BOTH:
+1. **Tracing macros** (`debug!`, `trace!`, `error!`, `warn!`, `info!`) → Goes to `netget.log` file
+2. **Status channel** (`status_tx.send()`) → Goes to TUI Status panel
+
+**Required Pattern** (MUST follow for all protocol implementations):
+
+```rust
+// DEBUG level
+debug!("SFTP request: SSH_FXP_OPEN id={}, path={}", id, path);
+let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_OPEN id={}, path={}", id, path));
+
+// TRACE level
+trace!("SFTP SSH_FXP_OPEN request: id={}, path='{}'", id, path);
+let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_OPEN request: id={}, path='{}'", id, path));
+
+// ERROR level
+error!("SFTP open failed for path: {}", path);
+let _ = self.status_tx.send(format!("[ERROR] SFTP open failed for path: {}", path));
+
+// INFO level
+info!("SSH SFTP subsystem started on channel {}", channel_id);
+let _ = self.status_tx.send(format!("→ SFTP subsystem started on channel {}", channel_id));
+
+// WARN level
+warn!("Retrying connection after timeout");
+let _ = self.status_tx.send(format!("[WARN] Retrying connection after timeout"));
+```
+
+**Status Message Prefixes:**
+- `[DEBUG]` - Debug information
+- `[TRACE]` - Detailed trace information
+- `[ERROR]` - Error messages
+- `[INFO]` - Informational (less common, usually use symbols)
+- `[WARN]` - Warning messages
+
+**User-Facing Symbols** (use instead of `[INFO]` for better UX):
+- `→` - Successful operations (file opened, data sent, connection established)
+- `✗` - Failed operations (connection closed, errors)
+- `✓` - Confirmations
+
+**Why Dual Logging?**
+- **Tracing logs** persist to file for post-mortem debugging
+- **Status messages** provide real-time feedback in the TUI Status panel
+- Users need to see what's happening NOW, not just in log files
+
+**Example from TCP** (`src/network/tcp.rs:660-674`):
+```rust
+debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+
+trace!("TCP sent (text): {:?}", data_str);
+let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
+
+let _ = status_tx.send(format!("→ Sent banner to {}", connection_id));
+```
+
+**When Implementing New Protocols:**
+1. ✅ Add `status_tx: mpsc::UnboundedSender<String>` parameter to all handler methods
+2. ✅ For EVERY `debug!()`, `trace!()`, `error!()`, `warn!()`, `info!()` call, add corresponding `status_tx.send()`
+3. ✅ Use appropriate prefix: `[DEBUG]`, `[TRACE]`, `[ERROR]`, `[WARN]`, or user-facing symbols
+4. ✅ NEVER skip the status_tx - it's NOT optional
+5. ✅ Use `let _ =` to ignore send errors (don't unwrap or propagate)
+
+**Verification**: Check that protocol follows pattern by searching:
+```bash
+# Should find matching pairs
+grep "debug!\|trace!\|error!\|warn!\|info!" src/network/your_protocol.rs | wc -l
+grep "status_tx.send" src/network/your_protocol.rs | wc -l
+# Numbers should be roughly equal (or status_tx higher due to user-facing messages)
+```
+
 ## User Interface Features
 
 ### Command History
@@ -889,6 +962,133 @@ Before committing changes:
 19. **Protocol-specific actions**: Each protocol defines its own actions via `ProtocolActions` trait with `get_async_actions()` and `get_sync_actions()`
 20. **Context-aware prompts**: Actions auto-included in prompts based on availability (e.g., TCP `send_to_connection` only if server running)
 21. **User protocol control**: TCP async actions enable users to send data to specific connections directly from CLI
+22. **Dual logging**: ALL logs must go to both tracing macros (file) AND status_tx channel (TUI) - this is NOT optional
+23. **SSH/SFTP implementation**: Uses russh crate with LLM-controlled virtual filesystem, proper shell buffering, and connection tracking
+
+## SSH/SFTP Implementation Details
+
+### SSH Server Architecture
+
+**Library**: russh 0.45 + russh-sftp 2.1
+**Port**: Both SSH and SFTP run on same port (SFTP as SSH subsystem)
+**Location**: `src/network/ssh.rs`, `src/network/sftp_handler.rs`
+
+### SSH Shell Buffering (`ssh.rs:577-694`)
+
+**Problem Solved**: LLM was being invoked on every keystroke, causing slow UX and unnecessary API calls.
+
+**Solution**: Line-based buffering with proper terminal echo handling:
+
+1. **Character-by-character processing**:
+   - **Backspace (0x7F, 0x08)**: Pop from buffer, echo `backspace + space + backspace` to erase on screen
+   - **Enter (\r, \n)**: Echo as `\r\n`, add to buffer, trigger LLM
+   - **Ctrl-C (0x03)**: Echo as-is, add to buffer, trigger LLM (let LLM decide to close connection)
+   - **Regular characters**: Echo immediately, add to buffer
+
+2. **Banner vs Empty Enter differentiation**:
+   - Track `channel_initialized` HashMap to know if channel has been used
+   - **First Enter press** (even if buffer empty): Call LLM for banner/greeting
+   - **Subsequent empty Enters**: Skip LLM call (don't re-send banner)
+   - **Non-empty input**: Always call LLM
+
+3. **LLM receives complete context**:
+   - Buffer includes actual newlines and control characters (not stripped)
+   - Context flags: `FIRST_INPUT` (for banner), `CTRL_C` (for interrupts)
+   - LLM sees raw input like: `"ls\r\n"` or `"exit\x03"`
+
+**Example Flow**:
+```
+User types 'l' → echo 'l', buffer="l"
+User types 's' → echo 's', buffer="ls"
+User presses Enter → echo '\r\n', buffer="ls\r\n", invoke LLM with "ls\r\n"
+User presses Backspace → echo '\b \b', buffer="" (popped)
+User presses Ctrl-C → echo '^C', buffer="\x03", invoke LLM with "\x03"
+```
+
+### SFTP Handler (`sftp_handler.rs`)
+
+**Implementation**: LLM-controlled virtual filesystem (no real files)
+
+**Key Methods**:
+- `opendir()` - LLM returns directory handle
+- `readdir()` - LLM returns list of files with attributes (name, size, permissions, is_dir)
+- `open()` - LLM returns file handle
+- `read()` - LLM returns file content
+- `close()` - Clean up handle
+- `lstat()`/`fstat()` - LLM returns file attributes
+- `realpath()` - Path canonicalization (currently pass-through)
+
+**LLM Integration**:
+All operations call `llm_sftp_operation(operation, params)` which:
+1. Builds prompt with operation context
+2. Calls LLM
+3. Parses JSON response
+4. Returns structured data to SFTP protocol handler
+
+**Handle Tracking**:
+- `handles: HashMap<String, HandleInfo>` tracks open files/directories
+- Prevents re-reading directories (sets `dir_read_done` flag)
+- Cleanup on close
+
+### Connection Tracking (`ssh.rs:308-342`)
+
+**Integration**: SSH connections tracked in `ServerInstance` for UI display
+
+**On new_client()**:
+1. Generate `ConnectionId`
+2. Create `ConnectionState` with `ProtocolConnectionInfo::Ssh`
+3. Call `app_state.add_connection_to_server(server_id, conn_state)`
+4. Send `__UPDATE_UI__` to refresh TUI
+
+**SSH-specific ConnectionInfo**:
+```rust
+ProtocolConnectionInfo::Ssh {
+    authenticated: bool,
+    username: Option<String>,
+    channels: Vec<String>,  // ["shell", "sftp"]
+}
+```
+
+### Logging Pattern (`ssh.rs`, `sftp_handler.rs`)
+
+**All SSH/SFTP logging follows dual pattern**:
+```rust
+debug!("SFTP request: SSH_FXP_OPEN id={}, path={}", id, path);
+let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_OPEN id={}, path={}", id, path));
+```
+
+**46+ dual logging calls** added across SFTP handler
+**30+ dual logging calls** added across SSH subsystem
+
+### Testing
+
+**E2E Tests**: `tests/e2e_ssh_test.rs`
+
+All SSH/SFTP E2E tests require:
+1. Ollama running (`ollama serve`)
+2. Model available (e.g., `ollama pull qwen3-coder:30b`)
+3. Tests use ssh2 crate as real SSH client
+
+**Available Tests**:
+1. `test_ssh_banner` - Verify SSH protocol banner
+2. `test_ssh_version_exchange` - Verify SSH handshake
+3. `test_ssh_connection_attempt` - Verify SSH connection and auth
+4. `test_ssh_multiple_connections` - Verify concurrent connections
+5. `test_sftp_basic_operations` - Verify SFTP directory listing, file read, stat
+
+**Running Tests**:
+```bash
+# Start Ollama
+ollama serve
+
+# Run all SSH E2E tests
+cargo test --test e2e_ssh_test --features e2e-tests -- --nocapture
+
+# Run specific test
+cargo test --test e2e_ssh_test test_sftp_basic_operations --features e2e-tests -- --nocapture
+```
+
+**Note**: Tests are black-box and LLM-driven. The LLM's responses determine test behavior.
 
 ## Git Commit Instructions
 

@@ -49,12 +49,14 @@ impl SshServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: Option<crate::state::ServerId>,
     ) -> Self {
         Self {
             config,
             llm_client,
             app_state,
             status_tx,
+            server_id,
         }
     }
 
@@ -66,7 +68,7 @@ impl SshServer {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
         let config = SshServerConfig::default();
-        Self::spawn_with_config(listen_addr, config, llm_client, app_state, status_tx).await
+        Self::spawn_with_config(listen_addr, config, llm_client, app_state, status_tx, None).await
     }
 
     /// Spawn SSH server with custom configuration
@@ -76,11 +78,12 @@ impl SshServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: Option<crate::state::ServerId>,
     ) -> Result<SocketAddr> {
         // Generate host key
         let key_pair = generate_host_key()?;
 
-        let mut server = SshServer::new(config, llm_client, app_state.clone(), status_tx.clone());
+        let mut server = SshServer::new(config, llm_client, app_state.clone(), status_tx.clone(), server_id);
         let russh_config = russh::server::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
             auth_rejection_time: std::time::Duration::from_secs(3),
@@ -111,11 +114,10 @@ impl SshServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         _send_first: bool,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        // For now, delegate to the regular spawn_with_llm
-        // TODO: Implement full action-based integration with server tracking
-        Self::spawn_with_llm(listen_addr, llm_client, app_state, status_tx).await
+        let config = SshServerConfig::default();
+        Self::spawn_with_config(listen_addr, config, llm_client, app_state, status_tx, Some(server_id)).await
     }
 }
 
@@ -134,12 +136,18 @@ pub struct SshHandler {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
+    #[allow(dead_code)] // Used for connection tracking in new_client, not in handler methods
+    server_id: Option<crate::state::ServerId>,
+    #[allow(dead_code)] // Stored for future use (e.g., logging peer address in errors)
+    remote_addr: Option<SocketAddr>,
     /// Active channels and their types
     channel_types: Arc<Mutex<HashMap<ChannelId, ChannelType>>>,
     /// Active channel objects (for SFTP)
     channels: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
     /// Input buffers for shell channels (accumulate until newline)
     shell_buffers: Arc<Mutex<HashMap<ChannelId, Vec<u8>>>>,
+    /// Track if we've sent initial data for each channel (for banner vs empty enter)
+    channel_initialized: Arc<Mutex<HashMap<ChannelId, bool>>>,
 }
 
 /// Type of SSH channel
@@ -156,6 +164,8 @@ impl SshHandler {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: Option<crate::state::ServerId>,
+        remote_addr: Option<SocketAddr>,
     ) -> Self {
         Self {
             connection_id,
@@ -163,9 +173,12 @@ impl SshHandler {
             llm_client,
             app_state,
             status_tx,
+            server_id,
+            remote_addr,
             channel_types: Arc::new(Mutex::new(HashMap::new())),
             channels: Arc::new(Mutex::new(HashMap::new())),
             shell_buffers: Arc::new(Mutex::new(HashMap::new())),
+            channel_initialized: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -248,7 +261,7 @@ impl SshHandler {
     }
 
     /// Ask LLM to handle shell command
-    async fn llm_shell_command(&self, command: &[u8]) -> Result<Option<Vec<u8>>> {
+    async fn llm_shell_command(&self, command: &[u8]) -> Result<Option<crate::llm::ollama_client::LlmResponse>> {
         let model = self.app_state.get_ollama_model().await;
 
         let command_str = String::from_utf8_lossy(command);
@@ -265,18 +278,9 @@ impl SshHandler {
         debug!("SSH shell command: {:?}", command_str);
         trace!("SSH shell command (full): {}", command_str);
 
-        match self.llm_client.generate(&model, &prompt).await {
-            Ok(response) => {
-                if response.trim().is_empty() || response.trim().eq_ignore_ascii_case("NO_RESPONSE") {
-                    Ok(None)
-                } else {
-                    // Try to parse as structured response
-                    if let Ok(parsed) = self.llm_client.generate_llm_response(&model, &prompt).await {
-                        Ok(parsed.output.map(|s| s.as_bytes().to_vec()))
-                    } else {
-                        Ok(Some(response.into_bytes()))
-                    }
-                }
+        match self.llm_client.generate_llm_response(&model, &prompt).await {
+            Ok(parsed) => {
+                Ok(Some(parsed))
             }
             Err(e) => {
                 error!("LLM error handling shell command: {}", e);
@@ -297,12 +301,50 @@ impl RusshServer for SshServer {
         info!("SSH connection {} from {}", connection_id, addr);
         let _ = self.status_tx.send(format!("SSH connection from {}", addr));
 
+        // Track connection in server state if server_id is available
+        if let Some(server_id) = self.server_id {
+            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+            let now = std::time::Instant::now();
+
+            // Assume local address is the bind address (we don't have access to the actual socket here)
+            let local_addr = "0.0.0.0:22".parse().unwrap(); // Placeholder
+
+            let conn_state = ServerConnectionState {
+                id: connection_id,
+                remote_addr: addr,
+                local_addr,
+                bytes_sent: 0,
+                bytes_received: 0,
+                packets_sent: 0,
+                packets_received: 0,
+                last_activity: now,
+                status: ConnectionStatus::Active,
+                status_changed_at: now,
+                protocol_info: ProtocolConnectionInfo::Ssh {
+                    authenticated: false,
+                    username: None,
+                    channels: Vec::new(),
+                },
+            };
+
+            let app_state = self.app_state.clone();
+            let status_tx = self.status_tx.clone();
+
+            // Spawn task to add connection (new_client is not async)
+            tokio::spawn(async move {
+                app_state.add_connection_to_server(server_id, conn_state).await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            });
+        }
+
         SshHandler::new(
             connection_id,
             self.config.clone(),
             self.llm_client.clone(),
             self.app_state.clone(),
             self.status_tx.clone(),
+            self.server_id,
+            peer_addr,
         )
     }
 }
@@ -368,17 +410,21 @@ impl russh::server::Handler for SshHandler {
     ) -> Result<(), Self::Error> {
         // DEBUG: SSH subsystem request summary
         debug!("SSH request: SUBSYSTEM channel={}, name={}", channel_id, name);
+        let _ = self.status_tx.send(format!("[DEBUG] SSH request: SUBSYSTEM channel={}, name={}", channel_id, name));
 
         // TRACE: Full SSH subsystem request
         trace!("SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
             channel_id, name, self.connection_id);
+        let _ = self.status_tx.send(format!("[TRACE] SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
+            channel_id, name, self.connection_id));
 
         if name == "sftp" {
             if !self.config.sftp_enabled {
                 error!("SFTP subsystem requested but SFTP is disabled");
+                let _ = self.status_tx.send(format!("[ERROR] SFTP subsystem requested but SFTP is disabled"));
 
-                // DEBUG: SFTP rejection
                 debug!("SSH response: CHANNEL_FAILURE (SFTP disabled)");
+                let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_FAILURE (SFTP disabled)"));
 
                 session.channel_failure(channel_id);
                 return Ok(());
@@ -389,15 +435,18 @@ impl russh::server::Handler for SshHandler {
             // INFO: Major lifecycle event
             info!("SSH SFTP subsystem started on channel {} (connection {})",
                 channel_id, self.connection_id);
+            let _ = self.status_tx.send(format!("→ SFTP subsystem started on channel {} (conn {})",
+                channel_id, self.connection_id));
 
             // Get the channel object
             if let Some(channel) = self.get_channel(channel_id).await {
-                // DEBUG: SFTP subsystem starting
                 debug!("SSH response: CHANNEL_SUCCESS (starting SFTP handler)");
+                let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_SUCCESS (starting SFTP handler)"));
 
-                // TRACE: SFTP handler creation
                 trace!("Creating LlmSftpHandler for channel {} on connection {}",
                     channel_id, self.connection_id);
+                let _ = self.status_tx.send(format!("[TRACE] Creating LlmSftpHandler for channel {} on connection {}",
+                    channel_id, self.connection_id));
 
                 session.channel_success(channel_id);
 
@@ -410,33 +459,39 @@ impl russh::server::Handler for SshHandler {
                 );
 
                 // Run SFTP protocol (this handles all packet parsing)
-                // NOTE: This blocks until SFTP session ends
                 trace!("Starting russh_sftp::server::run() for channel {}", channel_id);
+                let _ = self.status_tx.send(format!("[TRACE] Starting russh_sftp::server::run() for channel {}", channel_id));
+
                 russh_sftp::server::run(channel.into_stream(), sftp_handler).await;
 
-                // INFO: SFTP session lifecycle event
+                // INFO: SFTP session ended
                 info!("SFTP session ended on channel {} (connection {})",
                     channel_id, self.connection_id);
+                let _ = self.status_tx.send(format!("✗ SFTP session ended on channel {} (conn {})",
+                    channel_id, self.connection_id));
 
-                // DEBUG: SFTP session ended
                 debug!("SSH: SFTP subsystem terminated on channel {}", channel_id);
+                let _ = self.status_tx.send(format!("[DEBUG] SSH: SFTP subsystem terminated on channel {}", channel_id));
             } else {
                 error!("SFTP channel {} not found (this should not happen)", channel_id);
+                let _ = self.status_tx.send(format!("[ERROR] SFTP channel {} not found", channel_id));
 
-                // DEBUG: Channel lookup failure
                 debug!("SSH response: CHANNEL_FAILURE (channel not found)");
+                let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_FAILURE (channel not found)"));
 
                 session.channel_failure(channel_id);
             }
         } else {
             error!("Unknown subsystem requested: '{}' on channel {}", name, channel_id);
+            let _ = self.status_tx.send(format!("[ERROR] Unknown subsystem requested: '{}'", name));
 
-            // DEBUG: Unknown subsystem rejection
             debug!("SSH response: CHANNEL_FAILURE (unknown subsystem '{}')", name);
+            let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_FAILURE (unknown subsystem '{}')", name));
 
-            // TRACE: Full rejection details
             trace!("SSH rejecting unknown subsystem: name='{}', channel={}, connection={}",
                 name, channel_id, self.connection_id);
+            let _ = self.status_tx.send(format!("[TRACE] SSH rejecting unknown subsystem: name='{}', channel={}, conn={}",
+                name, channel_id, self.connection_id));
 
             session.channel_failure(channel_id);
         }
@@ -487,10 +542,12 @@ impl russh::server::Handler for SshHandler {
         session.channel_success(channel_id);
 
         // Execute command via LLM
-        if let Ok(Some(output)) = self.llm_shell_command(data).await {
-            let data = CryptoVec::from_slice(&output);
-            session.data(channel_id, data);
-            debug!("Sent exec output ({} bytes)", output.len());
+        if let Ok(Some(llm_response)) = self.llm_shell_command(data).await {
+            if let Some(output) = llm_response.output {
+                let data = CryptoVec::from_slice(output.as_bytes());
+                session.data(channel_id, data);
+                debug!("Sent exec output ({} bytes)", output.len());
+            }
         }
 
         // Close channel after exec
@@ -513,41 +570,168 @@ impl russh::server::Handler for SshHandler {
 
         match channel_type {
             Some(ChannelType::Session) => {
-                // Shell data - buffer until newline
-                trace!("SSH shell data received on channel {}: {:?}", channel_id, String::from_utf8_lossy(data));
-
-                // Echo the input back to the client (so user sees what they're typing)
-                let echo = CryptoVec::from_slice(data);
-                session.data(channel_id, echo);
+                // Shell data - handle backspace, echo properly, and buffer until newline or Ctrl-C
+                trace!("SSH shell data received on channel {}: hex={:02x?}", channel_id, data);
+                let _ = self.status_tx.send(format!("[TRACE] SSH shell data received on channel {}: hex={:02x?}",
+                    channel_id, data));
 
                 // Get or create buffer for this channel
                 let mut buffers = self.shell_buffers.lock().await;
                 let buffer = buffers.entry(channel_id).or_insert_with(Vec::new);
 
-                // Append new data to buffer
-                buffer.extend_from_slice(data);
+                // Process each byte
+                for &byte in data {
+                    match byte {
+                        // Backspace (0x7F) or Delete (0x08)
+                        0x7F | 0x08 => {
+                            if !buffer.is_empty() {
+                                buffer.pop();
+                                // Echo: backspace + space + backspace (to erase character on screen)
+                                let erase = CryptoVec::from_slice(&[0x08, b' ', 0x08]);
+                                session.data(channel_id, erase);
+                                trace!("SSH shell: backspace, buffer now {} bytes", buffer.len());
+                            }
+                        }
+                        // Tab (0x09) - pass through
+                        0x09 => {
+                            let echo = CryptoVec::from_slice(&[byte]);
+                            session.data(channel_id, echo);
+                            buffer.push(byte);
+                        }
+                        // Newline characters (Enter key)
+                        b'\n' | b'\r' => {
+                            // Echo newline as \r\n (proper line ending for terminals)
+                            let echo = CryptoVec::from_slice(b"\r\n");
+                            session.data(channel_id, echo);
+                            // Add actual received character to buffer
+                            buffer.push(byte);
+                        }
+                        // Control characters (0x01-0x1F except tab/newline/carriage return)
+                        0x01..=0x1F => {
+                            // Echo control characters visually as "^X\r\n" (e.g., ^C, ^D, ^Z)
+                            // Control character to printable: add 0x40 (e.g., 0x03 + 0x40 = 0x43 = 'C')
+                            let ctrl_char = byte + 0x40;
+                            let echo_str = format!("^{}\r\n", ctrl_char as char);
+                            let echo = CryptoVec::from_slice(echo_str.as_bytes());
+                            session.data(channel_id, echo);
+                            // Add to buffer for LLM to see
+                            buffer.push(byte);
+                        }
+                        // Printable characters (0x20-0x7E)
+                        0x20..=0x7E => {
+                            // Echo the character
+                            let echo = CryptoVec::from_slice(&[byte]);
+                            session.data(channel_id, echo);
+                            // Add to buffer
+                            buffer.push(byte);
+                        }
+                        // Other bytes (non-printable, non-control)
+                        _ => {
+                            // Just add to buffer without echo
+                            buffer.push(byte);
+                        }
+                    }
+                }
 
-                // Check if buffer contains newline (Enter key)
-                let has_newline = buffer.iter().any(|&b| b == b'\n' || b == b'\r');
+                // Check if we should process the buffer (Enter or control characters received)
+                // NOTE: Echo has already happened above in the byte loop - LLM invocation comes AFTER echo
+                // Process on: Enter (\r, \n) or any control character except Tab (0x09)
+                let should_process = data.iter().any(|&b| {
+                    b == b'\n' || b == b'\r' || (b >= 0x01 && b <= 0x1F && b != 0x09)
+                });
 
-                if has_newline {
-                    // Extract the complete line
+                if should_process {
+                    // Check if this is the first interaction (for banner) or empty input
+                    let mut initialized = self.channel_initialized.lock().await;
+                    let is_first_input = !initialized.get(&channel_id).copied().unwrap_or(false);
+                    initialized.insert(channel_id, true);
+                    drop(initialized);
+
                     let line = buffer.clone();
-                    buffer.clear(); // Clear buffer for next line
-                    drop(buffers); // Release lock before async LLM call
+                    buffer.clear();
+                    drop(buffers);
 
-                    // Process the complete line with LLM
-                    debug!("SSH shell processing complete line ({} bytes)", line.len());
-                    trace!("SSH shell complete line: {:?}", String::from_utf8_lossy(&line));
+                    // Only call LLM if:
+                    // 1. First input (even if empty) - for banner
+                    // 2. Non-empty input (command to process)
+                    // 3. Any control character present (Ctrl-C, Ctrl-D, etc.) - always process
+                    // 4. Empty Enter - LLM should respond with prompt
+                    let has_ctrl_c = line.iter().any(|&b| b == 0x03);
+                    let has_any_ctrl = line.iter().any(|&b| b >= 0x01 && b <= 0x1F && b != 0x09);
+                    let is_empty_cmd = line.iter().all(|&b| b == b'\n' || b == b'\r');
 
-                    if let Ok(Some(output)) = self.llm_shell_command(&line).await {
-                        let response = CryptoVec::from_slice(&output);
-                        session.data(channel_id, response);
-                        debug!("Sent shell response ({} bytes)", output.len());
+                    // Always process if we have any control character or non-empty command
+                    if is_first_input || !is_empty_cmd || has_any_ctrl {
+                        debug!("SSH shell processing input ({} bytes, first={}, empty={})",
+                            line.len(), is_first_input, is_empty_cmd);
+                        let _ = self.status_tx.send(format!("[DEBUG] SSH shell processing input ({} bytes, first={}, empty={})",
+                            line.len(), is_first_input, is_empty_cmd));
+
+                        trace!("SSH shell input (hex): {:02x?}", line);
+                        let _ = self.status_tx.send(format!("[TRACE] SSH shell input (hex): {:02x?}", line));
+
+                        trace!("SSH shell input (text): {:?}", String::from_utf8_lossy(&line));
+                        let _ = self.status_tx.send(format!("[TRACE] SSH shell input (text): {:?}", String::from_utf8_lossy(&line)));
+
+                        // Build context string for LLM
+                        let mut context_parts = Vec::new();
+                        if is_first_input {
+                            context_parts.push("FIRST_INPUT - send banner/greeting if appropriate");
+                        }
+                        if has_ctrl_c {
+                            context_parts.push("CTRL_C - user interrupted");
+                        }
+                        // Check for other common control characters
+                        if line.iter().any(|&b| b == 0x04) {
+                            context_parts.push("CTRL_D - EOF signal");
+                        }
+                        if line.iter().any(|&b| b == 0x1A) {
+                            context_parts.push("CTRL_Z - suspend signal");
+                        }
+                        if is_empty_cmd && !is_first_input {
+                            context_parts.push("EMPTY_ENTER - just show prompt");
+                        }
+                        let context = if context_parts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", context_parts.join(", "))
+                        };
+
+                        if let Ok(Some(llm_response)) = self.llm_shell_command(&line).await {
+                            // Send output if present
+                            if let Some(output) = llm_response.output {
+                                let response = CryptoVec::from_slice(output.as_bytes());
+                                session.data(channel_id, response);
+
+                                debug!("Sent shell response ({} bytes){}", output.len(), context);
+                                let _ = self.status_tx.send(format!("[DEBUG] Sent shell response ({} bytes){}", output.len(), context));
+                                let _ = self.status_tx.send(format!("→ Sent shell response to channel {}", channel_id));
+                            }
+
+                            // Handle close_connection flag (e.g., from Ctrl-C)
+                            if llm_response.close_connection {
+                                info!("LLM requested shell connection close on channel {}", channel_id);
+                                let _ = self.status_tx.send(format!("✗ Closing shell (LLM request) on channel {}", channel_id));
+
+                                session.exit_status_request(channel_id, 0);
+                                session.eof(channel_id);
+                                session.close(channel_id);
+                            } else {
+                                // Send a prompt after the response so user knows where to type next
+                                // This prevents commands from being echoed on the same line as output
+                                let prompt = CryptoVec::from_slice(b"$ ");
+                                session.data(channel_id, prompt);
+                            }
+                        }
+                    } else {
+                        // Empty Enter press after initialization - ignore it
+                        trace!("SSH shell: ignoring empty Enter (already initialized)");
+                        let _ = self.status_tx.send(format!("[TRACE] SSH shell: ignoring empty Enter"));
                     }
                 } else {
-                    // Still accumulating input, no newline yet
-                    trace!("SSH shell buffering input ({} bytes total)", buffer.len());
+                    // Still accumulating input
+                    trace!("SSH shell buffering: {} bytes total", buffer.len());
+                    let _ = self.status_tx.send(format!("[TRACE] SSH shell buffering: {} bytes total", buffer.len()));
                 }
             }
             Some(ChannelType::Sftp) => {
@@ -582,6 +766,7 @@ impl russh::server::Handler for SshHandler {
         self.channel_types.lock().await.remove(&channel_id);
         self.channels.lock().await.remove(&channel_id);
         self.shell_buffers.lock().await.remove(&channel_id);
+        self.channel_initialized.lock().await.remove(&channel_id);
         Ok(())
     }
 }
@@ -609,10 +794,23 @@ IMPORTANT: SSH protocol includes TWO main capabilities:
    - Simulate a Linux/Unix-like shell environment
    - Handle commands like: ls, pwd, cat, echo, cd, etc.
 
+   CRITICAL: ALWAYS use \r\n (CRLF) for line endings, NOT just \n (LF)
+   SSH terminals require carriage return (\r) to move cursor to beginning of line
+
+   Special Input Handling:
+   - Ctrl-C (control character \u{3} or 0x03) - Interrupt signal
+     * The system will echo "^C" visually to the user
+     * You will see "CTRL_C" in the context flags
+     * You decide how to respond (typically show a new prompt, or exit if appropriate)
+   - Other control characters are handled and echoed appropriately
+
    Example interaction:
-   User connects → Show banner "Welcome to SSH Server\r\n"
-   User types "ls" → Return "file1.txt\nfile2.txt\n"
-   User types "pwd" → Return "/home/user\n"
+   User connects → Show banner "Welcome to SSH Server\r\nLast login: Mon Jan 1 12:00:00 2024\r\n$ "
+   User types "ls" → Return "file1.txt\r\nfile2.txt\r\n"
+   User types "pwd" → Return "/home/user\r\n"
+   User presses Enter (empty) → Return "$ " (just show prompt again)
+   User presses Ctrl-C → System echoes "^C\r\n", you can respond with new prompt "$ " or handle as needed
+   User presses Ctrl-D → You can close connection or show message, your choice
 
 3. SFTP SUBSYSTEM (file transfer operations):
    - SFTP runs as a subsystem within SSH
@@ -651,8 +849,8 @@ Plain text output or JSON:
   "close_connection": false
 }
 
-OR just plain text:
-"total 4\ndrwxr-xr-x 2 user user 4096 Jan 1 12:00 Desktop\n"
+OR just plain text (ALWAYS use \r\n for line endings):
+"total 4\r\ndrwxr-xr-x 2 user user 4096 Jan 1 12:00 Desktop\r\n"
 
 === SFTP RESPONSES ===
 For file reads:
