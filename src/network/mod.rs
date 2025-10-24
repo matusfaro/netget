@@ -122,5 +122,23 @@ pub use mdns::MdnsServer;
 #[cfg(feature = "mdns")]
 pub use mdns_actions::MdnsProtocol;
 
+#[cfg(feature = "mysql")]
+pub mod mysql;
+#[cfg(feature = "mysql")]
+pub mod mysql_actions;
+#[cfg(feature = "mysql")]
+pub use mysql::MysqlServer;
+#[cfg(feature = "mysql")]
+pub use mysql_actions::MysqlProtocol;
+
+#[cfg(feature = "ipp")]
+pub mod ipp;
+#[cfg(feature = "ipp")]
+pub mod ipp_actions;
+#[cfg(feature = "ipp")]
+pub use ipp::IppServer;
+#[cfg(feature = "ipp")]
+pub use ipp_actions::IppProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
