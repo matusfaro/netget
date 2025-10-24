@@ -46,6 +46,14 @@ pub enum BaseStack {
     /// IRC stack - IRC server using irc crate
     /// The LLM handles IRC chat protocol and channel management (port 6667)
     Irc,
+
+    /// MySQL stack - MySQL server using opensrv-mysql
+    /// The LLM handles SQL queries and generates result sets (port 3306)
+    Mysql,
+
+    /// IPP stack - IPP (Internet Printing Protocol) server
+    /// The LLM handles print jobs and printer attributes (port 631)
+    Ipp,
 }
 
 impl BaseStack {
@@ -62,6 +70,8 @@ impl BaseStack {
             Self::Snmp => "ETH>IP>UDP>SNMP",
             Self::Ssh => "ETH>IP>TCP>SSH",
             Self::Irc => "ETH>IP>TCP>IRC",
+            Self::Mysql => "ETH>IP>TCP>MySQL",
+            Self::Ipp => "ETH>IP>TCP>HTTP>IPP",
         }
     }
 
@@ -105,6 +115,18 @@ impl BaseStack {
         #[cfg(feature = "irc")]
         if s_lower.contains("irc") || s_lower.contains("chat") {
             return Some(Self::Irc);
+        }
+
+        // MySQL stack
+        #[cfg(feature = "mysql")]
+        if s_lower.contains("mysql") || s_lower.contains("sql") {
+            return Some(Self::Mysql);
+        }
+
+        // IPP stack
+        #[cfg(feature = "ipp")]
+        if s_lower.contains("ipp") || s_lower.contains("printer") || s_lower.contains("print") {
+            return Some(Self::Ipp);
         }
 
         // UDP raw stack
@@ -191,6 +213,12 @@ impl BaseStack {
 
         #[cfg(feature = "irc")]
         stacks.push("irc");
+
+        #[cfg(feature = "mysql")]
+        stacks.push("mysql");
+
+        #[cfg(feature = "ipp")]
+        stacks.push("ipp");
 
         stacks
     }

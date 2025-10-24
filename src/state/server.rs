@@ -132,6 +132,12 @@ pub enum ProtocolConnectionInfo {
         state: ProtocolState,
         queued_data: Vec<u8>,
     },
+    /// MySQL connection (managed by opensrv-mysql)
+    Mysql,
+    /// IPP connection (recent print jobs)
+    Ipp {
+        recent_jobs: Vec<(String, Instant)>, // job ID, time
+    },
 }
 
 /// Connection status

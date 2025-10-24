@@ -34,6 +34,30 @@ pub enum ActionResult {
         name: String,
         data: serde_json::Value,
     },
+
+    /// MySQL query response with result set
+    MysqlQueryResponse {
+        columns: Vec<serde_json::Value>,
+        rows: Vec<serde_json::Value>,
+    },
+
+    /// MySQL error response
+    MysqlError {
+        error_code: u16,
+        message: String,
+    },
+
+    /// MySQL OK response
+    MysqlOk {
+        affected_rows: u64,
+        last_insert_id: u64,
+    },
+
+    /// IPP response
+    IppResponse {
+        status: u16,
+        body: Vec<u8>,
+    },
 }
 
 impl ActionResult {

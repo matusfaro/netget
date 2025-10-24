@@ -342,6 +342,74 @@ pub async fn start_server_by_id(
                 state.update_server_status(server_id, ServerStatus::Error("IRC not compiled".to_string())).await;
             }
         }
+        BaseStack::Mysql => {
+            #[cfg(feature = "mysql")]
+            {
+                use crate::network::mysql::MysqlServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn MySQL server
+                match MysqlServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    false, // send_first - MySQL waits for client
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] MySQL server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start MySQL server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "mysql"))]
+            {
+                let _ = status_tx.send("MySQL support not compiled in. Enable 'mysql' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("MySQL not compiled".to_string())).await;
+            }
+        }
+        BaseStack::Ipp => {
+            #[cfg(feature = "ipp")]
+            {
+                use crate::network::ipp::IppServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn IPP server
+                match IppServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    false, // send_first - IPP waits for client
+                    server_id,
+                ).await {
+                    Ok(actual_addr) => {
+                        state.update_server_status(server_id, ServerStatus::Running).await;
+                        let _ = status_tx.send(format!("[SERVER] IPP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
+                        let _ = status_tx.send(format!("[ERROR] Failed to start IPP server #{}: {}", server_id.as_u32(), e));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "ipp"))]
+            {
+                let _ = status_tx.send("IPP support not compiled in. Enable 'ipp' feature.".to_string());
+                state.update_server_status(server_id, ServerStatus::Error("IPP not compiled".to_string())).await;
+            }
+        }
     }
 
     Ok(())
