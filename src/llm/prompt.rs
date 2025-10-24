@@ -7,7 +7,7 @@
 use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use crate::llm::actions::{ActionDefinition, get_user_input_common_actions, get_network_event_common_actions};
+use crate::llm::actions::{ActionDefinition, get_user_input_common_actions};
 
 /// Builder for constructing LLM prompts
 pub struct PromptBuilder;
@@ -450,11 +450,10 @@ Response (JSON only):"#,
         state: &AppState,
         server_id: ServerId,
         event_description: &str,
-        protocol_sync_actions: Vec<ActionDefinition>,
+        all_actions: Vec<ActionDefinition>,
     ) -> String {
-        let mut actions = get_network_event_common_actions();
-        actions.extend(protocol_sync_actions);
-
+        // Note: all_actions already contains common + protocol + custom actions
+        // They are pre-assembled by the action_helper, so we don't add common actions here
         let instruction = state.get_instruction(server_id).await.unwrap_or_default();
         let instructions = if instruction.is_empty() {
             "No specific instruction provided. Use your best judgment based on the protocol and event."
@@ -464,7 +463,7 @@ Response (JSON only):"#,
 
         let trigger = format!("Event: {}", event_description);
 
-        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, actions).await
+        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions).await
     }
 
 }

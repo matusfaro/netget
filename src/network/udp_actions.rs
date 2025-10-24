@@ -2,7 +2,6 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    context::NetworkContext,
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
@@ -36,19 +35,13 @@ impl ProtocolActions for UdpProtocol {
         vec![send_to_address_action()]
     }
 
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
-        match context {
-            NetworkContext::UdpDatagram { .. } => {
-                vec![send_udp_response_action(), ignore_datagram_action()]
-            }
-            _ => Vec::new(),
-        }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![send_udp_response_action(), ignore_datagram_action()]
     }
 
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -57,7 +50,7 @@ impl ProtocolActions for UdpProtocol {
 
         match action_type {
             "send_to_address" => self.execute_send_to_address(action),
-            "send_udp_response" => self.execute_send_udp_response(action, context),
+            "send_udp_response" => self.execute_send_udp_response(action),
             "ignore_datagram" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown UDP action: {}", action_type)),
         }
@@ -95,21 +88,13 @@ impl UdpProtocol {
     fn execute_send_udp_response(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        // Verify we have UDP context
-        if let Some(NetworkContext::UdpDatagram { .. }) = context {
-            Ok(ActionResult::Output(data.as_bytes().to_vec()))
-        } else {
-            Err(anyhow::anyhow!(
-                "send_udp_response requires UdpDatagram context"
-            ))
-        }
+        Ok(ActionResult::Output(data.as_bytes().to_vec()))
     }
 }
 

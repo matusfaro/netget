@@ -11,7 +11,7 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, NetworkContext, ProtocolActions, ActionResult};
+use crate::llm::{ActionResponse, execute_actions, ProtocolActions, ActionResult};
 use crate::network::IrcProtocol;
 use crate::state::app_state::AppState;
 
@@ -153,15 +153,14 @@ impl IrcServer {
                                 let _ = status_clone.send(format!("[TRACE] IRC data (text): {:?}", line.trim()));
 
                                 let event_description = format!("IRC message: {}", line.trim());
-                                let context = NetworkContext::IrcConnection { connection_id, write_half: write_half_arc.clone(), status_tx: status_clone.clone() };
-                                let protocol_actions = protocol_clone.get_sync_actions(&context);
+                                let protocol_actions = protocol_clone.get_sync_actions();
                                 let prompt = PromptBuilder::build_network_event_action_prompt(
                                     &state_clone, &event_description, protocol_actions).await;
 
                                 if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
                                     if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
                                         if let Ok(result) = execute_actions(action_response.actions, &state_clone,
-                                            Some(protocol_clone.as_ref()), Some(&context)).await {
+                                            Some(protocol_clone.as_ref())).await {
                                             for protocol_result in result.protocol_results {
                                                 match protocol_result {
                                                     ActionResult::Output(data) => {

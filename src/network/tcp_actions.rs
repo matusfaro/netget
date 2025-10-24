@@ -2,7 +2,6 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, ProtocolActions},
-    context::NetworkContext,
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -69,21 +68,17 @@ impl ProtocolActions for TcpProtocol {
         ]
     }
 
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition> {
-        match context {
-            NetworkContext::TcpConnection { .. } => vec![
-                send_tcp_data_action(),
-                wait_for_more_action(),
-                close_this_connection_action(),
-            ],
-            _ => Vec::new(),
-        }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_tcp_data_action(),
+            wait_for_more_action(),
+            close_this_connection_action(),
+        ]
     }
 
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -127,7 +122,7 @@ impl ProtocolActions for TcpProtocol {
                 // This needs to be handled specially by the caller
                 Ok(ActionResult::NoAction)
             }
-            "send_tcp_data" => self.execute_send_tcp_data(action, context),
+            "send_tcp_data" => self.execute_send_tcp_data(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown TCP action: {}", action_type)),
@@ -144,21 +139,13 @@ impl TcpProtocol {
     fn execute_send_tcp_data(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        // Verify we have TCP context
-        if let Some(NetworkContext::TcpConnection { .. }) = context {
-            Ok(ActionResult::Output(data.as_bytes().to_vec()))
-        } else {
-            Err(anyhow::anyhow!(
-                "send_tcp_data requires TcpConnection context"
-            ))
-        }
+        Ok(ActionResult::Output(data.as_bytes().to_vec()))
     }
 }
 

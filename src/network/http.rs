@@ -19,7 +19,7 @@ use crate::network::connection::ConnectionId;
 use crate::network::HttpProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, NetworkContext, ActionResult, ProtocolActions};
+use crate::llm::{ActionResponse, execute_actions, ActionResult, ProtocolActions};
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for HTTP stack
@@ -470,17 +470,8 @@ async fn handle_http_request_with_llm_actions(
         if body_text.is_empty() { "(empty)" } else { &body_text }
     );
 
-    // Create network context
-    let context = NetworkContext::HttpRequest {
-        connection_id,
-        method: method.clone(),
-        uri: uri.clone(),
-        headers: headers.clone(),
-        status_tx: status_tx.clone(),
-    };
-
     // Get protocol sync actions
-    let protocol_actions = protocol.get_sync_actions(&context);
+    let protocol_actions = protocol.get_sync_actions();
 
     // Build prompt and call LLM
     let model = app_state.get_ollama_model().await;
@@ -504,7 +495,6 @@ async fn handle_http_request_with_llm_actions(
                         action_response.actions,
                         &app_state,
                         Some(protocol.as_ref()),
-                        Some(&context),
                     ).await {
                         Ok(result) => {
                             // Display messages

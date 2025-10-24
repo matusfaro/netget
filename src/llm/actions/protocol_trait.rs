@@ -3,7 +3,7 @@
 //! This module defines the trait that all protocols must implement
 //! to provide their own action systems.
 
-use super::{ActionDefinition, context::NetworkContext};
+use super::ActionDefinition;
 use crate::state::app_state::AppState;
 use anyhow::Result;
 
@@ -24,6 +24,16 @@ pub enum ActionResult {
 
     /// Multiple results (e.g., send data + close connection)
     Multiple(Vec<ActionResult>),
+
+    /// Custom protocol-specific result with structured data
+    ///
+    /// This is used when a protocol needs to return structured information
+    /// that isn't just "send these bytes". For example, SSH auth decisions
+    /// return {"allowed": true/false} which the protocol handler interprets.
+    Custom {
+        name: String,
+        data: serde_json::Value,
+    },
 }
 
 impl ActionResult {
@@ -70,7 +80,7 @@ impl ActionResult {
 ///
 /// Each protocol implements this trait to provide:
 /// 1. Async actions - executable anytime from user input
-/// 2. Sync actions - executable during network events with context
+/// 2. Sync actions - executable during network events
 /// 3. Action executor - parses and executes protocol actions
 pub trait ProtocolActions: Send + Sync {
     /// Get async actions that can be executed anytime from user input
@@ -81,19 +91,18 @@ pub trait ProtocolActions: Send + Sync {
     /// - IRC: broadcast(message)
     fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition>;
 
-    /// Get sync actions that require network event context
+    /// Get sync actions available during network events
     ///
     /// These actions only make sense in response to network events. Examples:
     /// - TCP: send_tcp_data(output), wait_for_more()
     /// - HTTP: send_http_response(status, headers, body)
     /// - SNMP: send_snmp_response(variables)
-    fn get_sync_actions(&self, context: &NetworkContext) -> Vec<ActionDefinition>;
+    fn get_sync_actions(&self) -> Vec<ActionDefinition>;
 
     /// Execute a protocol-specific action
     ///
     /// # Arguments
     /// * `action` - The action JSON object from LLM
-    /// * `context` - Optional network context (None for async actions)
     ///
     /// # Returns
     /// * `Ok(ActionResult)` - Result of execution (data to send, close connection, etc.)
@@ -101,7 +110,6 @@ pub trait ProtocolActions: Send + Sync {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        context: Option<&NetworkContext>,
     ) -> Result<ActionResult>;
 
     /// Get protocol name for debugging

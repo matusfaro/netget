@@ -1,8 +1,12 @@
 //! SSH server implementation using russh
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
+use crate::llm::{call_llm_with_actions, ActionResult};
 use crate::network::connection::ConnectionId;
+use crate::network::ssh_actions::{
+    ssh_auth_decision_action, ssh_close_connection_action, ssh_send_banner_action,
+    ssh_shell_response_action, SshProtocol,
+};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -140,6 +144,8 @@ pub struct SshHandler {
     server_id: Option<crate::state::ServerId>,
     #[allow(dead_code)] // Stored for future use (e.g., logging peer address in errors)
     remote_addr: Option<SocketAddr>,
+    /// SSH protocol handler for action execution
+    protocol: Arc<SshProtocol>,
     /// Active channels and their types
     channel_types: Arc<Mutex<HashMap<ChannelId, ChannelType>>>,
     /// Active channel objects (for SFTP)
@@ -175,6 +181,7 @@ impl SshHandler {
             status_tx,
             server_id,
             remote_addr,
+            protocol: Arc::new(SshProtocol::new()),
             channel_types: Arc::new(Mutex::new(HashMap::new())),
             channels: Arc::new(Mutex::new(HashMap::new())),
             shell_buffers: Arc::new(Mutex::new(HashMap::new())),
@@ -182,42 +189,73 @@ impl SshHandler {
         }
     }
 
+    /// Convert line endings to SSH/terminal format (\r\n)
+    /// This is required for proper display in SSH terminals.
+    ///
+    /// Handles both Unix (\n) and Windows (\r\n) line endings by:
+    /// 1. First normalizing to Unix (\n) - removes any existing \r
+    /// 2. Then converting all \n to \r\n
+    ///
+    /// This ensures consistent output regardless of what the LLM generates.
+    fn normalize_line_endings(text: &str) -> String {
+        // First normalize to Unix line endings, then convert to SSH format
+        // This prevents double \r\r\n if LLM already sends \r\n
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    }
+
     /// Get a channel object from the internal storage
     async fn get_channel(&mut self, channel_id: ChannelId) -> Option<Channel<Msg>> {
         self.channels.lock().await.remove(&channel_id)
     }
 
-    /// Ask LLM about authentication
+    /// Ask LLM about authentication using action-based framework
     async fn llm_auth_decision(&self, username: &str, auth_type: &str) -> Result<bool> {
-        let model = self.app_state.get_ollama_model().await;
+        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
         let event_description = format!(
             "SSH authentication request: user='{}', type='{}'",
             username, auth_type
         );
 
-        let prompt = PromptBuilder::build_network_event_prompt(
-            &self.app_state,
-            self.connection_id,
-            &event_description,
-            get_llm_protocol_prompt(),
-        )
-        .await;
-
         debug!("SSH auth request for user '{}' via {}", username, auth_type);
 
-        match self.llm_client.generate(&model, &prompt).await {
-            Ok(response) => {
-                // Parse LLM response - look for "allow", "accept", "yes" etc.
-                let lower = response.to_lowercase();
-                let allowed = lower.contains("allow")
-                    || lower.contains("accept")
-                    || lower.contains("yes")
-                    || lower.contains("\"status\": \"success\"")
-                    || lower.contains("\"allowed\": true");
+        // Use action helper with custom SSH auth action and protocol
+        let custom_action = ssh_auth_decision_action(username, auth_type);
 
-                info!("SSH auth decision for '{}': {}", username, if allowed { "allowed" } else { "denied" });
-                let _ = self.status_tx.send(format!("SSH auth {}: {}", username, if allowed { "✓" } else { "✗" }));
-                Ok(allowed)
+        match call_llm_with_actions(
+            &self.llm_client,
+            &self.app_state,
+            server_id,
+            &event_description,
+            Some(self.protocol.as_ref()),
+            vec![custom_action],
+        )
+        .await
+        {
+            Ok(result) => {
+                // Look for Custom result with auth decision
+                for protocol_result in result.protocol_results {
+                    if let ActionResult::Custom { name, data } = protocol_result {
+                        if name == "ssh_auth_decision" {
+                            if let Some(allowed) = data.get("allowed").and_then(|v| v.as_bool()) {
+                                info!(
+                                    "SSH auth decision for '{}': {}",
+                                    username,
+                                    if allowed { "allowed" } else { "denied" }
+                                );
+                                let _ = self.status_tx.send(format!(
+                                    "SSH auth {}: {}",
+                                    username,
+                                    if allowed { "✓" } else { "✗" }
+                                ));
+                                return Ok(allowed);
+                            }
+                        }
+                    }
+                }
+
+                // If no auth decision found, deny by default
+                error!("SSH auth: LLM did not return auth decision, denying by default");
+                Ok(false)
             }
             Err(e) => {
                 error!("LLM error during SSH auth: {}", e);
@@ -227,31 +265,41 @@ impl SshHandler {
         }
     }
 
-    /// Ask LLM for shell banner/greeting
+    /// Ask LLM for shell banner/greeting using action-based framework
     async fn llm_shell_banner(&self) -> Result<Option<String>> {
-        let model = self.app_state.get_ollama_model().await;
+        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
         let event_description = "SSH shell session opened - send banner/greeting if needed";
 
-        let prompt = PromptBuilder::build_network_event_prompt(
-            &self.app_state,
-            self.connection_id,
-            event_description,
-            crate::network::ssh::get_llm_protocol_prompt(),
-        )
-        .await;
+        debug!("SSH requesting shell banner from LLM");
 
-        match self.llm_client.generate(&model, &prompt).await {
-            Ok(response) => {
-                if response.trim().is_empty() || response.trim().eq_ignore_ascii_case("NO_RESPONSE") {
-                    Ok(None)
-                } else {
-                    // Try to parse as JSON, fallback to raw text
-                    if let Ok(parsed) = self.llm_client.generate_llm_response(&model, &prompt).await {
-                        Ok(parsed.output.map(|s| s.to_string()))
-                    } else {
-                        Ok(Some(response))
+        // Use action helper with custom SSH banner action and protocol
+        let custom_action = ssh_send_banner_action();
+
+        match call_llm_with_actions(
+            &self.llm_client,
+            &self.app_state,
+            server_id,
+            event_description,
+            Some(self.protocol.as_ref()),
+            vec![custom_action],
+        )
+        .await
+        {
+            Ok(result) => {
+                // Look for Output result with banner data
+                for protocol_result in result.protocol_results {
+                    if let ActionResult::Output(data) = protocol_result {
+                        let banner = String::from_utf8_lossy(&data).to_string();
+                        // Convert \n to \r\n for proper SSH terminal display
+                        let normalized = Self::normalize_line_endings(&banner);
+                        debug!("SSH banner received: {} bytes", normalized.len());
+                        return Ok(Some(normalized));
                     }
                 }
+
+                // No banner in results
+                debug!("SSH: No banner returned by LLM");
+                Ok(None)
             }
             Err(e) => {
                 error!("LLM error getting shell banner: {}", e);
@@ -260,31 +308,62 @@ impl SshHandler {
         }
     }
 
-    /// Ask LLM to handle shell command
-    async fn llm_shell_command(&self, command: &[u8]) -> Result<Option<crate::llm::ollama_client::LlmResponse>> {
-        let model = self.app_state.get_ollama_model().await;
-
+    /// Ask LLM to handle shell command using action-based framework
+    /// Returns (output, close_connection)
+    async fn llm_shell_command(&self, command: &[u8]) -> Result<(Option<String>, bool)> {
+        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
         let command_str = String::from_utf8_lossy(command);
         let event_description = format!("SSH shell command received: {:?}", command_str);
-
-        let prompt = PromptBuilder::build_network_event_prompt(
-            &self.app_state,
-            self.connection_id,
-            &event_description,
-            get_llm_protocol_prompt(),
-        )
-        .await;
 
         debug!("SSH shell command: {:?}", command_str);
         trace!("SSH shell command (full): {}", command_str);
 
-        match self.llm_client.generate_llm_response(&model, &prompt).await {
-            Ok(parsed) => {
-                Ok(Some(parsed))
+        // Use action helper with custom SSH shell response action and protocol
+        let custom_actions = vec![
+            ssh_shell_response_action(&command_str),
+            ssh_close_connection_action(),
+        ];
+
+        match call_llm_with_actions(
+            &self.llm_client,
+            &self.app_state,
+            server_id,
+            &event_description,
+            Some(self.protocol.as_ref()),
+            custom_actions,
+        )
+        .await
+        {
+            Ok(result) => {
+                let mut output: Option<String> = None;
+                let mut close_connection = false;
+
+                // Process all protocol results
+                for protocol_result in result.protocol_results {
+                    match protocol_result {
+                        ActionResult::Output(data) => {
+                            let text = String::from_utf8_lossy(&data).to_string();
+                            // Convert \n to \r\n for proper SSH terminal display
+                            output = Some(Self::normalize_line_endings(&text));
+                        }
+                        ActionResult::CloseConnection => {
+                            close_connection = true;
+                        }
+                        _ => {}
+                    }
+                }
+
+                debug!(
+                    "SSH shell response: output={}, close={}",
+                    output.is_some(),
+                    close_connection
+                );
+
+                Ok((output, close_connection))
             }
             Err(e) => {
                 error!("LLM error handling shell command: {}", e);
-                Ok(None)
+                Ok((None, false))
             }
         }
     }
@@ -542,11 +621,11 @@ impl russh::server::Handler for SshHandler {
         session.channel_success(channel_id);
 
         // Execute command via LLM
-        if let Ok(Some(llm_response)) = self.llm_shell_command(data).await {
-            if let Some(output) = llm_response.output {
-                let data = CryptoVec::from_slice(output.as_bytes());
+        if let Ok((output, _close)) = self.llm_shell_command(data).await {
+            if let Some(output_text) = output {
+                let data = CryptoVec::from_slice(output_text.as_bytes());
                 session.data(channel_id, data);
-                debug!("Sent exec output ({} bytes)", output.len());
+                debug!("Sent exec output ({} bytes)", output_text.len());
             }
         }
 
@@ -592,11 +671,12 @@ impl russh::server::Handler for SshHandler {
                                 trace!("SSH shell: backspace, buffer now {} bytes", buffer.len());
                             }
                         }
-                        // Tab (0x09) - pass through
+                        // Tab (0x09) - echo but don't buffer (for tab completion)
                         0x09 => {
                             let echo = CryptoVec::from_slice(&[byte]);
                             session.data(channel_id, echo);
-                            buffer.push(byte);
+                            // Don't buffer tabs - they should be handled immediately by the client
+                            // or used for tab completion which doesn't need buffering
                         }
                         // Newline characters (Enter key)
                         b'\n' | b'\r' => {
@@ -697,19 +777,19 @@ impl russh::server::Handler for SshHandler {
                             format!(" [{}]", context_parts.join(", "))
                         };
 
-                        if let Ok(Some(llm_response)) = self.llm_shell_command(&line).await {
+                        if let Ok((output, close_connection)) = self.llm_shell_command(&line).await {
                             // Send output if present
-                            if let Some(output) = llm_response.output {
-                                let response = CryptoVec::from_slice(output.as_bytes());
+                            if let Some(output_text) = output {
+                                let response = CryptoVec::from_slice(output_text.as_bytes());
                                 session.data(channel_id, response);
 
-                                debug!("Sent shell response ({} bytes){}", output.len(), context);
-                                let _ = self.status_tx.send(format!("[DEBUG] Sent shell response ({} bytes){}", output.len(), context));
+                                debug!("Sent shell response ({} bytes){}", output_text.len(), context);
+                                let _ = self.status_tx.send(format!("[DEBUG] Sent shell response ({} bytes){}", output_text.len(), context));
                                 let _ = self.status_tx.send(format!("→ Sent shell response to channel {}", channel_id));
                             }
 
                             // Handle close_connection flag (e.g., from Ctrl-C)
-                            if llm_response.close_connection {
+                            if close_connection {
                                 info!("LLM requested shell connection close on channel {}", channel_id);
                                 let _ = self.status_tx.send(format!("✗ Closing shell (LLM request) on channel {}", channel_id));
 

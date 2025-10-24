@@ -5,7 +5,6 @@
 
 use super::{
     common::CommonAction,
-    context::NetworkContext,
     protocol_trait::{ActionResult, ProtocolActions},
 };
 use crate::state::app_state::AppState;
@@ -44,7 +43,6 @@ impl ExecutionResult {
 /// * `actions` - Array of action JSON objects from LLM
 /// * `state` - Application state
 /// * `protocol` - Optional protocol for protocol-specific actions
-/// * `context` - Optional network context for sync actions
 ///
 /// # Returns
 /// * `Ok(ExecutionResult)` - Results of execution
@@ -53,7 +51,6 @@ pub async fn execute_actions(
     actions: Vec<serde_json::Value>,
     state: &AppState,
     protocol: Option<&dyn ProtocolActions>,
-    context: Option<&NetworkContext>,
 ) -> Result<ExecutionResult> {
     let mut result = ExecutionResult::new();
 
@@ -70,7 +67,7 @@ pub async fn execute_actions(
 
         // Try protocol-specific action
         if let Some(proto) = protocol {
-            match proto.execute_action(action.clone(), context) {
+            match proto.execute_action(action.clone()) {
                 Ok(action_result) => {
                     debug!(
                         "Protocol action executed successfully: {:?}",

@@ -249,12 +249,24 @@ impl OllamaClient {
     }
 
     /// Generate a completion from the model with optional JSON schema
-    pub async fn generate(&self, model: &str, prompt: &str) -> Result<String> {
+    ///
+    /// IMPORTANT: This method is crate-private. Use `action_helper::call_llm_with_actions()`
+    /// instead for all LLM calls. The action helper provides a unified interface with
+    /// proper prompt building, response parsing, and action execution.
+    ///
+    /// Only use this directly in:
+    /// - action_helper module (the primary consumer)
+    /// - specialized methods like generate_command_interpretation for user commands
+    pub(crate) async fn generate(&self, model: &str, prompt: &str) -> Result<String> {
         self.generate_with_format(model, prompt, None).await
     }
 
     /// Generate a completion with a specific JSON schema format
-    pub async fn generate_with_format(
+    ///
+    /// IMPORTANT: This method is crate-private. Use `action_helper::call_llm_with_actions()`
+    /// for network event handling, or the specialized methods like generate_command_interpretation()
+    /// for user command interpretation.
+    pub(crate) async fn generate_with_format(
         &self,
         model: &str,
         prompt: &str,
@@ -288,6 +300,11 @@ impl OllamaClient {
         }
 
         let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
+
+        // Set num_predict to allow longer responses (especially for binary protocol data)
+        use ollama_rs::models::ModelOptions;
+        let options = ModelOptions::default().num_predict(2048); // Allow up to 2048 tokens
+        request = request.options(options);
 
         // Add format if provided
         if let Some(_schema) = format {

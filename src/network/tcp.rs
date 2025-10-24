@@ -14,7 +14,7 @@ use super::connection::ConnectionId;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
 use crate::llm::response_handler;
-use crate::llm::{ActionResponse, execute_actions, NetworkContext, ActionResult, ProtocolActions};
+use crate::llm::{ActionResponse, execute_actions, ActionResult, ProtocolActions};
 use crate::network::TcpProtocol;
 use crate::state::app_state::AppState;
 
@@ -602,15 +602,8 @@ impl TcpServer {
             let model = app_state.get_ollama_model().await;
             let event_description = format!("New connection opened: {}", connection_id);
 
-            // Create network context
-            let context = NetworkContext::TcpConnection {
-                connection_id,
-                write_half: write_half.clone(),
-                status_tx: status_tx.clone(),
-            };
-
             // Get protocol sync actions
-            let protocol_actions = protocol.get_sync_actions(&context);
+            let protocol_actions = protocol.get_sync_actions();
 
             // Build prompt
             let prompt = PromptBuilder::build_network_event_action_prompt(
@@ -632,7 +625,6 @@ impl TcpServer {
                                 action_response.actions,
                                 &app_state,
                                 Some(protocol.as_ref()),
-                                Some(&context),
                             ).await {
                                 Ok(result) => {
                                     // Display messages
@@ -772,15 +764,8 @@ impl TcpServer {
                 format!("Data received on connection {}: {}", connection_id, data_preview)
             };
 
-            // Create network context
-            let context = NetworkContext::TcpConnection {
-                connection_id,
-                write_half: write_half.clone(),
-                status_tx: status_tx.clone(),
-            };
-
             // Get protocol sync actions
-            let protocol_actions = protocol.get_sync_actions(&context);
+            let protocol_actions = protocol.get_sync_actions();
 
             // Build prompt and call LLM
             let prompt = PromptBuilder::build_network_event_action_prompt(
@@ -801,7 +786,6 @@ impl TcpServer {
                                 action_response.actions,
                                 &app_state,
                                 Some(protocol.as_ref()),
-                                Some(&context),
                             ).await {
                                 Ok(result) => {
                                     // Update memory
