@@ -39,7 +39,7 @@ impl ProtocolActions for HttpProtocol {
 
         match action_type {
             "send_http_response" => self.execute_send_http_response(action),
-            _ => Err(anyhow::anyhow!("Unknown HTTP action: {}", action_type)),
+            _ => Err(anyhow::anyhow!("Unknown HTTP action: {action_type}")),
         }
     }
 

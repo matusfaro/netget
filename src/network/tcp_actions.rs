@@ -125,7 +125,7 @@ impl ProtocolActions for TcpProtocol {
             "send_tcp_data" => self.execute_send_tcp_data(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            _ => Err(anyhow::anyhow!("Unknown TCP action: {}", action_type)),
+            _ => Err(anyhow::anyhow!("Unknown TCP action: {action_type}")),
         }
     }
 

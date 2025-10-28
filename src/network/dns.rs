@@ -166,25 +166,25 @@ impl DnsServer {
                                                         }
                                                         Err(e) => {
                                                             error!("DNS action execution error: {}", e);
-                                                            let _ = status_clone.send(format!("✗ DNS action execution error: {}", e));
+                                                            let _ = status_clone.send(format!("✗ DNS action execution error: {e}"));
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
                                                     error!("DNS failed to parse LLM response as actions: {}", e);
-                                                    let _ = status_clone.send(format!("✗ DNS failed to parse LLM response: {}", e));
+                                                    let _ = status_clone.send(format!("✗ DNS failed to parse LLM response: {e}"));
                                                 }
                                             }
                                         }
                                         Err(e) => {
                                             error!("DNS LLM generation error: {}", e);
-                                            let _ = status_clone.send(format!("✗ DNS LLM error: {}", e));
+                                            let _ = status_clone.send(format!("✗ DNS LLM error: {e}"));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     error!("Failed to parse DNS query: {}", e);
-                                    let _ = status_clone.send(format!("✗ Failed to parse DNS query: {}", e));
+                                    let _ = status_clone.send(format!("✗ Failed to parse DNS query: {e}"));
 
                                     // Fall back to hex representation for malformed queries
                                     let hex_str = hex::encode(&data);
@@ -194,7 +194,7 @@ impl DnsServer {
                                     );
 
                                     debug!("DNS malformed query: {}", event_description);
-                                    let _ = status_clone.send(format!("[DEBUG] {}", event_description));
+                                    let _ = status_clone.send(format!("[DEBUG] {event_description}"));
                                 }
                             }
                         });
