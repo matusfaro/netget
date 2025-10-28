@@ -217,7 +217,7 @@ impl TcpServer {
         // Send data first if requested
         if send_first {
             let model = app_state.get_ollama_model().await;
-            let event_description = format!("New connection opened: {}", connection_id);
+            let event_description = format!("New connection opened: {connection_id}");
 
             // Get protocol sync actions
             let protocol_actions = protocol.get_sync_actions();
@@ -280,12 +280,12 @@ impl TcpServer {
                                                         trace!("TCP sent (hex): {}", hex_str);
                                                         let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
                                                     }
-                                                    let _ = status_tx.send(format!("→ Sent banner to {}", connection_id));
+                                                    let _ = status_tx.send(format!("→ Sent banner to {connection_id}"));
                                                 }
                                             }
                                             ActionResult::CloseConnection => {
                                                 connections.lock().await.remove(&connection_id);
-                                                let _ = status_tx.send(format!("✗ Closed connection {} after banner", connection_id));
+                                                let _ = status_tx.send(format!("✗ Closed connection {connection_id} after banner"));
                                             }
                                             _ => {}
                                         }
@@ -293,19 +293,19 @@ impl TcpServer {
                                 }
                                 Err(e) => {
                                     error!("Failed to execute actions: {}", e);
-                                    let _ = status_tx.send(format!("✗ Action execution error: {}", e));
+                                    let _ = status_tx.send(format!("✗ Action execution error: {e}"));
                                 }
                             }
                         }
                         Err(e) => {
                             error!("Failed to parse action response: {}", e);
-                            let _ = status_tx.send(format!("✗ Parse error: {}", e));
+                            let _ = status_tx.send(format!("✗ Parse error: {e}"));
                         }
                     }
                 }
                 Err(e) => {
                     error!("LLM error generating banner: {}", e);
-                    let _ = status_tx.send(format!("✗ LLM error: {}", e));
+                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
                 }
             }
         }
@@ -378,7 +378,7 @@ impl TcpServer {
                 } else {
                     format!("{:?}", all_data)
                 };
-                format!("Data received on connection {}: {}", connection_id, data_preview)
+                format!("Data received on connection {connection_id}: {data_preview}")
             };
 
             // Get protocol sync actions
@@ -467,14 +467,14 @@ impl TcpServer {
                                         connections.lock().await
                                             .entry(connection_id)
                                             .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                                        let _ = status_tx.send(format!("⏳ Waiting for more data from {}", connection_id));
+                                        let _ = status_tx.send(format!("⏳ Waiting for more data from {connection_id}"));
                                         return;
                                     }
 
                                     // Handle close_connection
                                     if should_close {
                                         connections.lock().await.remove(&connection_id);
-                                        let _ = status_tx.send(format!("✗ Closed connection {}", connection_id));
+                                        let _ = status_tx.send(format!("✗ Closed connection {connection_id}"));
                                         return;
                                     }
 
@@ -487,7 +487,7 @@ impl TcpServer {
                                     };
 
                                     if has_queued {
-                                        let _ = status_tx.send(format!("▶ Processing queued data for {}", connection_id));
+                                        let _ = status_tx.send(format!("▶ Processing queued data for {connection_id}"));
                                         // Loop continues to process queued data
                                     } else {
                                         // Go to Idle state
@@ -499,7 +499,7 @@ impl TcpServer {
                                 }
                                 Err(e) => {
                                     error!("Failed to execute actions: {}", e);
-                                    let _ = status_tx.send(format!("✗ Action execution error: {}", e));
+                                    let _ = status_tx.send(format!("✗ Action execution error: {e}"));
                                     connections.lock().await
                                         .entry(connection_id)
                                         .and_modify(|conn| conn.state = ConnectionState::Idle);
@@ -509,7 +509,7 @@ impl TcpServer {
                         }
                         Err(e) => {
                             error!("Failed to parse action response: {}", e);
-                            let _ = status_tx.send(format!("✗ Parse error: {}", e));
+                            let _ = status_tx.send(format!("✗ Parse error: {e}"));
                             connections.lock().await
                                 .entry(connection_id)
                                 .and_modify(|conn| conn.state = ConnectionState::Idle);
@@ -519,7 +519,7 @@ impl TcpServer {
                 }
                 Err(e) => {
                     error!("LLM error: {}", e);
-                    let _ = status_tx.send(format!("✗ LLM error: {}", e));
+                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
                     connections.lock().await
                         .entry(connection_id)
                         .and_modify(|conn| conn.state = ConnectionState::Idle);

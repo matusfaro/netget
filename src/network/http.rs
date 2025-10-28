@@ -106,7 +106,7 @@ impl HttpServer {
 
                             // Mark connection as closed
                             app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ HTTP connection {} closed", connection_id));
+                            let _ = status_tx_clone.send(format!("✗ HTTP connection {connection_id} closed"));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -284,7 +284,7 @@ async fn handle_http_request_with_llm_actions(
                         }
                         Err(e) => {
                             error!("Failed to execute actions: {}", e);
-                            let _ = status_tx.send(format!("✗ Action execution error: {}", e));
+                            let _ = status_tx.send(format!("✗ Action execution error: {e}"));
 
                             Ok(Response::builder()
                                 .status(500)
@@ -295,7 +295,7 @@ async fn handle_http_request_with_llm_actions(
                 }
                 Err(e) => {
                     error!("Failed to parse action response: {}", e);
-                    let _ = status_tx.send(format!("✗ Parse error: {}", e));
+                    let _ = status_tx.send(format!("✗ Parse error: {e}"));
 
                     Ok(Response::builder()
                         .status(500)

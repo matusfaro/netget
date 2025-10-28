@@ -176,13 +176,13 @@ impl UdpServer {
                                                 }
                                                 Err(e) => {
                                                     error!("Failed to execute actions: {}", e);
-                                                    let _ = status_clone.send(format!("✗ Action execution error: {}", e));
+                                                    let _ = status_clone.send(format!("✗ Action execution error: {e}"));
                                                 }
                                             }
                                         }
                                         Err(e) => {
                                             error!("Failed to parse action response: {}", e);
-                                            let _ = status_clone.send(format!("✗ Parse error: {}", e));
+                                            let _ = status_clone.send(format!("✗ Parse error: {e}"));
                                         }
                                     }
                                 }
