@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::protocol::BaseStack;
 use super::server::{ServerId, ServerInstance};
+use crate::protocol::BaseStack;
 
 /// Operating mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,8 +142,12 @@ impl AppState {
 
     /// Get all servers (lightweight copies without handles)
     pub async fn get_all_servers(&self) -> Vec<ServerInstance> {
-        self.inner.read().await.servers.values().map(|s| {
-            ServerInstance {
+        self.inner
+            .read()
+            .await
+            .servers
+            .values()
+            .map(|s| ServerInstance {
                 id: s.id,
                 port: s.port,
                 base_stack: s.base_stack,
@@ -159,8 +163,8 @@ impl AppState {
                 script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Update server status
@@ -173,7 +177,12 @@ impl AppState {
 
     /// Get instruction for a specific server
     pub async fn get_instruction(&self, server_id: ServerId) -> Option<String> {
-        self.inner.read().await.servers.get(&server_id).map(|s| s.instruction.clone())
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
+            .map(|s| s.instruction.clone())
     }
 
     /// Set instruction for a specific server
@@ -185,7 +194,12 @@ impl AppState {
 
     /// Get memory for a specific server
     pub async fn get_memory(&self, server_id: ServerId) -> Option<String> {
-        self.inner.read().await.servers.get(&server_id).map(|s| s.memory.clone())
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
+            .map(|s| s.memory.clone())
     }
 
     /// Set memory for a specific server
@@ -255,7 +269,12 @@ impl AppState {
 
     /// Get base stack for a server
     pub async fn get_base_stack(&self, server_id: ServerId) -> Option<BaseStack> {
-        self.inner.read().await.servers.get(&server_id).map(|s| s.base_stack)
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
+            .map(|s| s.base_stack)
     }
 
     /// Cleanup old connections across all servers (connectionless protocols like UDP)
@@ -273,10 +292,12 @@ impl AppState {
 
         let mut inner = self.inner.write().await;
         for server in inner.servers.values_mut() {
-            let to_remove: Vec<crate::network::connection::ConnectionId> = server.connections.iter()
+            let to_remove: Vec<crate::network::connection::ConnectionId> = server
+                .connections
+                .iter()
                 .filter(|(_, conn)| {
-                    conn.status == ConnectionStatus::Closed &&
-                    now.duration_since(conn.status_changed_at).as_secs() >= max_age_secs
+                    conn.status == ConnectionStatus::Closed
+                        && now.duration_since(conn.status_changed_at).as_secs() >= max_age_secs
                 })
                 .map(|(id, _)| *id)
                 .collect();
@@ -293,11 +314,15 @@ impl AppState {
         let now = std::time::Instant::now();
 
         let mut inner = self.inner.write().await;
-        let to_remove: Vec<ServerId> = inner.servers.iter()
+        let to_remove: Vec<ServerId> = inner
+            .servers
+            .iter()
             .filter(|(_, server)| {
                 // Remove if stopped/error and status changed more than max_age_secs ago
-                matches!(server.status, ServerStatus::Stopped | ServerStatus::Error(_)) &&
-                now.duration_since(server.status_changed_at).as_secs() >= max_age_secs
+                matches!(
+                    server.status,
+                    ServerStatus::Stopped | ServerStatus::Error(_)
+                ) && now.duration_since(server.status_changed_at).as_secs() >= max_age_secs
             })
             .map(|(id, _)| *id)
             .collect();
@@ -313,14 +338,22 @@ impl AppState {
     }
 
     /// Add a connection to a specific server
-    pub async fn add_connection_to_server(&self, server_id: ServerId, connection: super::server::ConnectionState) {
+    pub async fn add_connection_to_server(
+        &self,
+        server_id: ServerId,
+        connection: super::server::ConnectionState,
+    ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             server.add_connection(connection);
         }
     }
 
     /// Mark a connection as closed (instead of removing it immediately)
-    pub async fn close_connection_on_server(&self, server_id: ServerId, connection_id: crate::network::connection::ConnectionId) {
+    pub async fn close_connection_on_server(
+        &self,
+        server_id: ServerId,
+        connection_id: crate::network::connection::ConnectionId,
+    ) {
         use super::server::ConnectionStatus;
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.get_connection_mut(connection_id) {
@@ -331,7 +364,11 @@ impl AppState {
     }
 
     /// Remove a connection from a specific server (used by cleanup task)
-    pub async fn remove_connection_from_server(&self, server_id: ServerId, connection_id: crate::network::connection::ConnectionId) {
+    pub async fn remove_connection_from_server(
+        &self,
+        server_id: ServerId,
+        connection_id: crate::network::connection::ConnectionId,
+    ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             server.remove_connection(connection_id);
         }
@@ -345,7 +382,11 @@ impl AppState {
         &self,
         server_id: ServerId,
     ) -> Option<crate::network::proxy_filter::ProxyFilterConfig> {
-        self.inner.read().await.servers.get(&server_id)
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
             .and_then(|s| s.proxy_filter_config.clone())
     }
 
@@ -386,24 +427,46 @@ impl AppState {
 
     /// Get the first server's port (for backwards compat)
     pub async fn get_port(&self) -> Option<u16> {
-        self.inner.read().await.servers.values().next().map(|s| s.port)
+        self.inner
+            .read()
+            .await
+            .servers
+            .values()
+            .next()
+            .map(|s| s.port)
     }
 
     /// Get the first server's base stack (for backwards compat)
     pub async fn get_first_base_stack(&self) -> Option<BaseStack> {
-        self.inner.read().await.servers.values().next().map(|s| s.base_stack)
+        self.inner
+            .read()
+            .await
+            .servers
+            .values()
+            .next()
+            .map(|s| s.base_stack)
     }
 
     /// Get the first server's instruction (for backwards compat)
     pub async fn get_first_instruction(&self) -> String {
-        self.inner.read().await.servers.values().next()
+        self.inner
+            .read()
+            .await
+            .servers
+            .values()
+            .next()
             .map(|s| s.instruction.clone())
             .unwrap_or_default()
     }
 
     /// Get the first server's memory (for backwards compat)
     pub async fn get_first_memory(&self) -> String {
-        self.inner.read().await.servers.values().next()
+        self.inner
+            .read()
+            .await
+            .servers
+            .values()
+            .next()
             .map(|s| s.memory.clone())
             .unwrap_or_default()
     }
@@ -415,7 +478,12 @@ impl AppState {
 
     /// Get local address of first server (for backwards compat)
     pub async fn get_local_addr(&self) -> Option<std::net::SocketAddr> {
-        self.inner.read().await.servers.values().next()
+        self.inner
+            .read()
+            .await
+            .servers
+            .values()
+            .next()
             .and_then(|s| s.local_addr)
     }
 }

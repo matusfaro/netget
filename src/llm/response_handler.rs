@@ -1,9 +1,9 @@
 //! Common LLM response handling logic
 
+use super::ollama_client::LlmResponse;
+use crate::state::app_state::AppState;
 use std::sync::Arc;
 use tracing::info;
-use crate::state::app_state::AppState;
-use super::ollama_client::LlmResponse;
 
 /// Result of processing an LLM response - contains flags and data for protocol-specific handling
 pub struct ProcessedResponse {

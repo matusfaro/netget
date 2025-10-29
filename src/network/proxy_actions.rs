@@ -12,8 +12,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::network::proxy_filter::{
-    CertificateMode, RequestFilter, ResponseFilter, HttpsConnectionFilter,
-    RequestAction, ResponseAction, HttpsConnectionAction, FilterMode,
+    CertificateMode, FilterMode, HttpsConnectionAction, HttpsConnectionFilter, RequestAction,
+    RequestFilter, ResponseAction, ResponseFilter,
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -105,10 +105,7 @@ impl Protocol for ProxyProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -119,7 +116,9 @@ impl Protocol for ProxyProtocol {
             "configure_certificate" => self.execute_configure_certificate(action),
             "configure_request_filters" => self.execute_configure_request_filters(action),
             "configure_response_filters" => self.execute_configure_response_filters(action),
-            "configure_https_connection_filters" => self.execute_configure_https_connection_filters(action),
+            "configure_https_connection_filters" => {
+                self.execute_configure_https_connection_filters(action)
+            }
             "set_filter_mode" => self.execute_set_filter_mode(action),
 
             // Request handling
@@ -155,11 +154,9 @@ impl ProxyProtocol {
     // ========================================================================
 
     /// Configure certificate mode
-    fn execute_configure_certificate(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let mode = action.get("mode")
+    fn execute_configure_certificate(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let mode = action
+            .get("mode")
             .and_then(|v| v.as_str())
             .context("Missing 'mode' field")?;
 
@@ -167,10 +164,12 @@ impl ProxyProtocol {
             "generate" => CertificateMode::Generate,
             "none" => CertificateMode::None,
             "load_from_file" => {
-                let cert_path = action.get("cert_path")
+                let cert_path = action
+                    .get("cert_path")
                     .and_then(|v| v.as_str())
                     .context("Missing 'cert_path' for load_from_file mode")?;
-                let key_path = action.get("key_path")
+                let key_path = action
+                    .get("key_path")
                     .and_then(|v| v.as_str())
                     .context("Missing 'key_path' for load_from_file mode")?;
 
@@ -178,7 +177,7 @@ impl ProxyProtocol {
                     cert_path: cert_path.into(),
                     key_path: key_path.into(),
                 }
-            },
+            }
             _ => return Err(anyhow::anyhow!("Invalid certificate mode: {}", mode)),
         };
 
@@ -193,11 +192,9 @@ impl ProxyProtocol {
     }
 
     /// Configure request filters
-    fn execute_configure_request_filters(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let filters: Vec<RequestFilter> = action.get("filters")
+    fn execute_configure_request_filters(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let filters: Vec<RequestFilter> = action
+            .get("filters")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
@@ -215,7 +212,8 @@ impl ProxyProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let filters: Vec<ResponseFilter> = action.get("filters")
+        let filters: Vec<ResponseFilter> = action
+            .get("filters")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
@@ -233,7 +231,8 @@ impl ProxyProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let filters: Vec<HttpsConnectionFilter> = action.get("filters")
+        let filters: Vec<HttpsConnectionFilter> = action
+            .get("filters")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
@@ -247,19 +246,19 @@ impl ProxyProtocol {
     }
 
     /// Set filter mode
-    fn execute_set_filter_mode(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let request_mode = action.get("request_filter_mode")
+    fn execute_set_filter_mode(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let request_mode = action
+            .get("request_filter_mode")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or(FilterMode::All);
 
-        let response_mode = action.get("response_filter_mode")
+        let response_mode = action
+            .get("response_filter_mode")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or(FilterMode::All);
 
-        let https_connection_mode = action.get("https_connection_filter_mode")
+        let https_connection_mode = action
+            .get("https_connection_filter_mode")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or(FilterMode::All);
 
@@ -279,10 +278,7 @@ impl ProxyProtocol {
     // ========================================================================
 
     /// Pass request through unchanged
-    fn execute_handle_request_pass(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_handle_request_pass(&self, _action: serde_json::Value) -> Result<ActionResult> {
         let result = RequestAction::Pass;
         Ok(ActionResult::Output(
             serde_json::to_vec(&result).context("Failed to serialize request action")?,
@@ -290,15 +286,11 @@ impl ProxyProtocol {
     }
 
     /// Block request and return error response
-    fn execute_handle_request_block(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let status = action.get("status")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(403) as u16;
+    fn execute_handle_request_block(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let status = action.get("status").and_then(|v| v.as_u64()).unwrap_or(403) as u16;
 
-        let body = action.get("body")
+        let body = action
+            .get("body")
             .and_then(|v| v.as_str())
             .unwrap_or("Request blocked by proxy")
             .to_string();
@@ -310,28 +302,31 @@ impl ProxyProtocol {
     }
 
     /// Modify request before forwarding
-    fn execute_handle_request_modify(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let headers = action.get("headers")
+    fn execute_handle_request_modify(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let headers = action
+            .get("headers")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let remove_headers = action.get("remove_headers")
+        let remove_headers = action
+            .get("remove_headers")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let new_path = action.get("new_path")
+        let new_path = action
+            .get("new_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let query_params = action.get("query_params")
+        let query_params = action
+            .get("query_params")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let new_body = action.get("new_body")
+        let new_body = action
+            .get("new_body")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let body_replacements = action.get("body_replacements")
+        let body_replacements = action
+            .get("body_replacements")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
         let result = RequestAction::Modify {
@@ -353,10 +348,7 @@ impl ProxyProtocol {
     // ========================================================================
 
     /// Pass response through unchanged
-    fn execute_handle_response_pass(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_handle_response_pass(&self, _action: serde_json::Value) -> Result<ActionResult> {
         let result = ResponseAction::Pass;
         Ok(ActionResult::Output(
             serde_json::to_vec(&result).context("Failed to serialize response action")?,
@@ -364,15 +356,11 @@ impl ProxyProtocol {
     }
 
     /// Block response and return different one
-    fn execute_handle_response_block(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let status = action.get("status")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(502) as u16;
+    fn execute_handle_response_block(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let status = action.get("status").and_then(|v| v.as_u64()).unwrap_or(502) as u16;
 
-        let body = action.get("body")
+        let body = action
+            .get("body")
             .and_then(|v| v.as_str())
             .unwrap_or("Response blocked by proxy")
             .to_string();
@@ -384,25 +372,27 @@ impl ProxyProtocol {
     }
 
     /// Modify response before returning to client
-    fn execute_handle_response_modify(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let status = action.get("status")
+    fn execute_handle_response_modify(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let status = action
+            .get("status")
             .and_then(|v| v.as_u64())
             .map(|n| n as u16);
 
-        let headers = action.get("headers")
+        let headers = action
+            .get("headers")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let remove_headers = action.get("remove_headers")
+        let remove_headers = action
+            .get("remove_headers")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        let new_body = action.get("new_body")
+        let new_body = action
+            .get("new_body")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let body_replacements = action.get("body_replacements")
+        let body_replacements = action
+            .get("body_replacements")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
         let result = ResponseAction::Modify {
@@ -438,7 +428,8 @@ impl ProxyProtocol {
         &self,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
-        let reason = action.get("reason")
+        let reason = action
+            .get("reason")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -598,7 +589,8 @@ fn set_filter_mode_action() -> ActionDefinition {
 fn handle_request_pass_action() -> ActionDefinition {
     ActionDefinition {
         name: "handle_request_pass".to_string(),
-        description: "Pass the intercepted request through unchanged to its destination".to_string(),
+        description: "Pass the intercepted request through unchanged to its destination"
+            .to_string(),
         parameters: vec![],
         example: json!({
             "type": "handle_request_pass"
@@ -609,7 +601,8 @@ fn handle_request_pass_action() -> ActionDefinition {
 fn handle_request_block_action() -> ActionDefinition {
     ActionDefinition {
         name: "handle_request_block".to_string(),
-        description: "Block the intercepted request and return an error response to the client".to_string(),
+        description: "Block the intercepted request and return an error response to the client"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "status".to_string(),
@@ -670,7 +663,9 @@ fn handle_request_modify_action() -> ActionDefinition {
             Parameter {
                 name: "body_replacements".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]".to_string(),
+                description:
+                    "Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]"
+                        .to_string(),
                 required: false,
             },
         ],
@@ -707,7 +702,8 @@ fn handle_response_pass_action() -> ActionDefinition {
 fn handle_response_block_action() -> ActionDefinition {
     ActionDefinition {
         name: "handle_response_block".to_string(),
-        description: "Block the intercepted response and return a different response to the client".to_string(),
+        description: "Block the intercepted response and return a different response to the client"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "status".to_string(),
@@ -762,7 +758,9 @@ fn handle_response_modify_action() -> ActionDefinition {
             Parameter {
                 name: "body_replacements".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]".to_string(),
+                description:
+                    "Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]"
+                        .to_string(),
                 required: false,
             },
         ],
@@ -786,7 +784,8 @@ fn handle_response_modify_action() -> ActionDefinition {
 fn handle_https_connection_allow_action() -> ActionDefinition {
     ActionDefinition {
         name: "handle_https_connection_allow".to_string(),
-        description: "Allow HTTPS connection to proceed (pass-through mode only, no MITM)".to_string(),
+        description: "Allow HTTPS connection to proceed (pass-through mode only, no MITM)"
+            .to_string(),
         parameters: vec![],
         example: json!({
             "type": "handle_https_connection_allow"
@@ -798,14 +797,12 @@ fn handle_https_connection_block_action() -> ActionDefinition {
     ActionDefinition {
         name: "handle_https_connection_block".to_string(),
         description: "Block HTTPS connection (pass-through mode only, no MITM)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "reason".to_string(),
-                type_hint: "string".to_string(),
-                description: "Optional reason for blocking".to_string(),
-                required: false,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "reason".to_string(),
+            type_hint: "string".to_string(),
+            description: "Optional reason for blocking".to_string(),
+            required: false,
+        }],
         example: json!({
             "type": "handle_https_connection_block",
             "reason": "Destination blocked by security policy"

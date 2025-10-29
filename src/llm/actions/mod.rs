@@ -3,13 +3,21 @@
 //! This module provides a unified action system where both user input
 //! and network events return arrays of actions to execute.
 
-pub mod protocol_trait;
-pub mod executor;
 pub mod common;
+pub mod executor;
+pub mod protocol_trait;
+pub mod summary;
+pub mod tools;
 
 // Re-export commonly used functions and types
-pub use common::{get_user_input_common_actions, get_network_event_common_actions, generate_base_stack_documentation};
+pub use common::{
+    generate_base_stack_documentation, get_network_event_common_actions,
+    get_user_input_common_actions,
+};
+pub use summary::{summarize_action, summarize_actions};
+pub use tools::{execute_tool, get_all_tool_actions, ToolAction, ToolResult};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Definition of a configuration parameter for prompt generation
@@ -37,7 +45,11 @@ pub struct ParameterDefinition {
 impl ParameterDefinition {
     /// Convert to prompt text format for LLM
     pub fn to_prompt_text(&self) -> String {
-        let required = if self.required { "required" } else { "optional" };
+        let required = if self.required {
+            "required"
+        } else {
+            "optional"
+        };
         format!(
             "\"{}\": {}  // {} ({})\nExample: {}",
             self.name,
@@ -77,13 +89,14 @@ impl ActionDefinition {
         if !self.parameters.is_empty() {
             text.push_str("Parameters:\n");
             for param in &self.parameters {
-                let required = if param.required { "required" } else { "optional" };
+                let required = if param.required {
+                    "required"
+                } else {
+                    "optional"
+                };
                 text.push_str(&format!(
                     "  • {}: {} ({}) - {}\n",
-                    param.name,
-                    param.type_hint,
-                    required,
-                    param.description
+                    param.name, param.type_hint, required, param.description
                 ));
             }
             text.push_str("\n");
@@ -125,12 +138,27 @@ impl ActionResponse {
     /// Parse from JSON string
     pub fn from_str(s: &str) -> anyhow::Result<Self> {
         let trimmed = s.trim();
-        serde_json::from_str::<ActionResponse>(trimmed)
+
+        // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+        let json_str = if trimmed.starts_with("```") {
+            // Find the first newline after opening fence
+            let start = trimmed.find('\n').unwrap_or(3);
+            // Find the closing fence
+            let end = trimmed.rfind("```").unwrap_or(trimmed.len());
+            // Extract content between fences
+            trimmed[start..end].trim()
+        } else {
+            trimmed
+        };
+
+        serde_json::from_str::<ActionResponse>(json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse action response: {}", e))
     }
 
     /// Create empty action response
     pub fn empty() -> Self {
-        Self { actions: Vec::new() }
+        Self {
+            actions: Vec::new(),
+        }
     }
 }

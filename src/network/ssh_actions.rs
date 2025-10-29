@@ -84,10 +84,7 @@ impl SshProtocol {
 
 impl Protocol for SshProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            close_ssh_connection_action(),
-            list_ssh_connections_action(),
-        ]
+        vec![close_ssh_connection_action(), list_ssh_connections_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -98,10 +95,7 @@ impl Protocol for SshProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -130,10 +124,7 @@ impl Protocol for SshProtocol {
 }
 
 impl SshProtocol {
-    fn execute_send_ssh_data(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_ssh_data(&self, action: serde_json::Value) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
@@ -142,10 +133,7 @@ impl SshProtocol {
         Ok(ActionResult::Output(data.as_bytes().to_vec()))
     }
 
-    fn execute_ssh_auth_decision(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_ssh_auth_decision(&self, action: serde_json::Value) -> Result<ActionResult> {
         let allowed = action
             .get("allowed")
             .and_then(|v| v.as_bool())
@@ -160,10 +148,7 @@ impl SshProtocol {
         })
     }
 
-    fn execute_ssh_send_banner(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_ssh_send_banner(&self, action: serde_json::Value) -> Result<ActionResult> {
         let banner = action
             .get("banner")
             .and_then(|v| v.as_str())
@@ -173,10 +158,7 @@ impl SshProtocol {
         Ok(ActionResult::Output(banner.as_bytes().to_vec()))
     }
 
-    fn execute_ssh_shell_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_ssh_shell_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = action
             .get("response")
             .and_then(|v| v.as_str())
@@ -186,10 +168,7 @@ impl SshProtocol {
         Ok(ActionResult::Output(response.as_bytes().to_vec()))
     }
 
-    fn execute_close_ssh_connection(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_close_ssh_connection(&self, action: serde_json::Value) -> Result<ActionResult> {
         let connection_id_str = action
             .get("connection_id")
             .and_then(|v| v.as_str())
@@ -205,10 +184,7 @@ impl SshProtocol {
         })
     }
 
-    fn execute_list_ssh_connections(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_list_ssh_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
         debug!("SSH list connections requested");
 
         // Return a custom result indicating list was requested
@@ -300,7 +276,8 @@ pub static SSH_SEND_BANNER_ACTION: LazyLock<ActionDefinition> = LazyLock::new(||
         name: "ssh_send_banner".to_string(),
         description: "Send a banner or greeting message when the SSH shell session opens. \
             This is typically a welcome message, MOTD (message of the day), or system information. \
-            If no banner is needed, use show_message to indicate that instead.".to_string(),
+            If no banner is needed, use show_message to indicate that instead."
+            .to_string(),
         parameters: vec![Parameter {
             name: "banner".to_string(),
             type_hint: "string".to_string(),

@@ -167,9 +167,7 @@ pub enum ProtocolConnectionInfo {
         recent_operations: Vec<(String, String, Instant)>, // operation, path, time
     },
     /// NFS connection (mounted paths)
-    Nfs {
-        mounted_paths: Vec<String>,
-    },
+    Nfs { mounted_paths: Vec<String> },
 }
 
 /// Connection status
@@ -244,12 +242,7 @@ pub struct ServerInstance {
 
 impl ServerInstance {
     /// Create a new server instance
-    pub fn new(
-        id: ServerId,
-        port: u16,
-        base_stack: BaseStack,
-        instruction: String,
-    ) -> Self {
+    pub fn new(id: ServerId, port: u16, base_stack: BaseStack, instruction: String) -> Self {
         let now = Instant::now();
         Self {
             id,
@@ -310,8 +303,7 @@ impl ServerInstance {
     /// Clean up old connectionless protocol entries (UDP, DNS, etc.)
     pub fn cleanup_old_connections(&mut self, max_age_secs: u64) {
         let now = Instant::now();
-        self.connections.retain(|_, state| {
-            now.duration_since(state.last_activity).as_secs() < max_age_secs
-        });
+        self.connections
+            .retain(|_, state| now.duration_since(state.last_activity).as_secs() < max_age_secs);
     }
 }

@@ -32,7 +32,12 @@ pub async fn start_server_by_id(
     let listen_addr: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
 
     let base_stack = server.base_stack;
-    let msg = format!("[SERVER] Starting server #{} ({}) on {}", server_id.as_u32(), base_stack, listen_addr);
+    let msg = format!(
+        "[SERVER] Starting server #{} ({}) on {}",
+        server_id.as_u32(),
+        base_stack,
+        listen_addr
+    );
     let _ = status_tx.send(msg.clone());
 
     // Actually spawn the server
@@ -53,16 +58,30 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     false, // send_first - default to false for now
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
                         // Update server with actual listen address
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] TCP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] TCP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start TCP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start TCP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -70,8 +89,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "tcp"))]
             {
-                let _ = status_tx.send("TCP support not compiled in. Enable 'tcp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("TCP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("TCP support not compiled in. Enable 'tcp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("TCP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Http => {
@@ -87,15 +112,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] HTTP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] HTTP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start HTTP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start HTTP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -103,8 +142,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "http"))]
             {
-                let _ = status_tx.send("HTTP support not compiled in. Enable 'http' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("HTTP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("HTTP support not compiled in. Enable 'http' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("HTTP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::DataLink => {
@@ -123,15 +168,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] UDP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] UDP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start UDP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start UDP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -139,8 +198,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "udp"))]
             {
-                let _ = status_tx.send("UDP support not compiled in. Enable 'udp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("UDP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("UDP support not compiled in. Enable 'udp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("UDP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Dns => {
@@ -156,15 +221,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] DNS server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] DNS server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start DNS server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start DNS server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -172,8 +251,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "dns"))]
             {
-                let _ = status_tx.send("DNS support not compiled in. Enable 'dns' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("DNS not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("DNS support not compiled in. Enable 'dns' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("DNS not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Dhcp => {
@@ -189,15 +274,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] DHCP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] DHCP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start DHCP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start DHCP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -205,8 +304,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "dhcp"))]
             {
-                let _ = status_tx.send("DHCP support not compiled in. Enable 'dhcp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("DHCP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("DHCP support not compiled in. Enable 'dhcp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("DHCP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Ntp => {
@@ -222,15 +327,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] NTP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] NTP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start NTP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start NTP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -238,8 +357,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "ntp"))]
             {
-                let _ = status_tx.send("NTP support not compiled in. Enable 'ntp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("NTP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("NTP support not compiled in. Enable 'ntp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("NTP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Snmp => {
@@ -255,15 +380,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] SNMP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] SNMP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start SNMP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start SNMP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -271,8 +410,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "snmp"))]
             {
-                let _ = status_tx.send("SNMP support not compiled in. Enable 'snmp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("SNMP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("SNMP support not compiled in. Enable 'snmp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("SNMP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Ssh => {
@@ -289,15 +434,29 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     false, // send_first - SSH waits for client
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] SSH server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] SSH server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start SSH server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start SSH server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -305,8 +464,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "ssh"))]
             {
-                let _ = status_tx.send("SSH support not compiled in. Enable 'ssh' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("SSH not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("SSH support not compiled in. Enable 'ssh' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("SSH not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Irc => {
@@ -322,15 +487,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] IRC server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] IRC server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start IRC server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start IRC server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -338,8 +517,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "irc"))]
             {
-                let _ = status_tx.send("IRC support not compiled in. Enable 'irc' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("IRC not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("IRC support not compiled in. Enable 'irc' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("IRC not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Telnet => {
@@ -355,15 +540,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] Telnet server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] Telnet server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start Telnet server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start Telnet server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -371,8 +570,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "telnet"))]
             {
-                let _ = status_tx.send("Telnet support not compiled in. Enable 'telnet' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("Telnet not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("Telnet support not compiled in. Enable 'telnet' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("Telnet not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Smtp => {
@@ -388,15 +593,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] SMTP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] SMTP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start SMTP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start SMTP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -404,8 +623,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "smtp"))]
             {
-                let _ = status_tx.send("SMTP support not compiled in. Enable 'smtp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("SMTP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("SMTP support not compiled in. Enable 'smtp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("SMTP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Mdns => {
@@ -421,15 +646,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] mDNS server #{} advertising services on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] mDNS server #{} advertising services on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start mDNS server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start mDNS server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -437,8 +676,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "mdns"))]
             {
-                let _ = status_tx.send("mDNS support not compiled in. Enable 'mdns' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("mDNS not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("mDNS support not compiled in. Enable 'mdns' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("mDNS not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Mysql => {
@@ -455,15 +700,29 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     false, // send_first - MySQL waits for client
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] MySQL server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] MySQL server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start MySQL server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start MySQL server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -471,8 +730,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "mysql"))]
             {
-                let _ = status_tx.send("MySQL support not compiled in. Enable 'mysql' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("MySQL not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("MySQL support not compiled in. Enable 'mysql' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("MySQL not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Ipp => {
@@ -489,15 +754,29 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     false, // send_first - IPP waits for client
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] IPP server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] IPP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start IPP server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start IPP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -505,8 +784,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "ipp"))]
             {
-                let _ = status_tx.send("IPP support not compiled in. Enable 'ipp' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("IPP not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("IPP support not compiled in. Enable 'ipp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("IPP not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Postgresql => {
@@ -523,15 +808,29 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     false, // send_first - PostgreSQL waits for client
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] PostgreSQL server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] PostgreSQL server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start PostgreSQL server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start PostgreSQL server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -539,8 +838,15 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "postgresql"))]
             {
-                let _ = status_tx.send("PostgreSQL support not compiled in. Enable 'postgresql' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("PostgreSQL not compiled".to_string())).await;
+                let _ = status_tx.send(
+                    "PostgreSQL support not compiled in. Enable 'postgresql' feature.".to_string(),
+                );
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("PostgreSQL not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Redis => {
@@ -557,15 +863,29 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     false, // send_first - Redis waits for client
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] Redis server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] Redis server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start Redis server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start Redis server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -573,8 +893,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "redis"))]
             {
-                let _ = status_tx.send("Redis support not compiled in. Enable 'redis' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("Redis not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("Redis support not compiled in. Enable 'redis' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("Redis not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Proxy => {
@@ -594,15 +920,29 @@ pub async fn start_server_by_id(
                     status_tx.clone(),
                     server_id,
                     startup_params,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] Proxy server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] Proxy server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start Proxy server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start Proxy server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -610,8 +950,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "proxy"))]
             {
-                let _ = status_tx.send("Proxy support not compiled in. Enable 'proxy' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("Proxy not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("Proxy support not compiled in. Enable 'proxy' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("Proxy not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::WebDav => {
@@ -627,15 +973,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] WebDAV server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] WebDAV server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start WebDAV server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start WebDAV server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -643,8 +1003,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "webdav"))]
             {
-                let _ = status_tx.send("WebDAV support not compiled in. Enable 'webdav' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("WebDAV not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("WebDAV support not compiled in. Enable 'webdav' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("WebDAV not compiled".to_string()),
+                    )
+                    .await;
             }
         }
         BaseStack::Nfs => {
@@ -660,15 +1026,29 @@ pub async fn start_server_by_id(
                     state_arc,
                     status_tx.clone(),
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     Ok(actual_addr) => {
-                        state.update_server_status(server_id, ServerStatus::Running).await;
-                        let _ = status_tx.send(format!("[SERVER] NFS server #{} listening on {}", server_id.as_u32(), actual_addr));
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] NFS server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     Err(e) => {
-                        state.update_server_status(server_id, ServerStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send(format!("[ERROR] Failed to start NFS server #{}: {}", server_id.as_u32(), e));
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start NFS server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         return Err(e);
                     }
@@ -676,8 +1056,14 @@ pub async fn start_server_by_id(
             }
             #[cfg(not(feature = "nfs"))]
             {
-                let _ = status_tx.send("NFS support not compiled in. Enable 'nfs' feature.".to_string());
-                state.update_server_status(server_id, ServerStatus::Error("NFS not compiled".to_string())).await;
+                let _ = status_tx
+                    .send("NFS support not compiled in. Enable 'nfs' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("NFS not compiled".to_string()),
+                    )
+                    .await;
             }
         }
     }
