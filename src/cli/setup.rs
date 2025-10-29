@@ -164,6 +164,7 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
 
 /// Initialize terminal for TUI mode
 /// Returns a guard that will clean up the terminal on drop
+#[allow(dead_code)] // Not used with rolling terminal, kept for compatibility
 pub fn init_terminal() -> Result<TerminalGuard> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
