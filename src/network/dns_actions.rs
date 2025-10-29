@@ -39,10 +39,7 @@ impl ProtocolActions for DnsProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -83,16 +80,11 @@ impl DnsProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'ip' parameter")?;
 
-        let ttl = action
-            .get("ttl")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300) as u32;
+        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
 
         // Build DNS response
-        let name = Name::from_str(domain)
-            .context("Invalid domain name")?;
-        let ipv4 = Ipv4Addr::from_str(ip)
-            .context("Invalid IPv4 address")?;
+        let name = Name::from_str(domain).context("Invalid domain name")?;
+        let ipv4 = Ipv4Addr::from_str(ip).context("Invalid IPv4 address")?;
 
         let mut message = DnsMessage::new();
         let mut header = Header::new();
@@ -109,7 +101,8 @@ impl DnsProtocol {
         message.add_answer(record);
 
         // Serialize to bytes
-        let bytes = message.to_vec()
+        let bytes = message
+            .to_vec()
             .context("Failed to serialize DNS message")?;
 
         Ok(ActionResult::Output(bytes))
@@ -131,16 +124,11 @@ impl DnsProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'ip' parameter")?;
 
-        let ttl = action
-            .get("ttl")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300) as u32;
+        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
 
         // Build DNS response
-        let name = Name::from_str(domain)
-            .context("Invalid domain name")?;
-        let ipv6 = Ipv6Addr::from_str(ip)
-            .context("Invalid IPv6 address")?;
+        let name = Name::from_str(domain).context("Invalid domain name")?;
+        let ipv6 = Ipv6Addr::from_str(ip).context("Invalid IPv6 address")?;
 
         let mut message = DnsMessage::new();
         let mut header = Header::new();
@@ -157,7 +145,8 @@ impl DnsProtocol {
         message.add_answer(record);
 
         // Serialize to bytes
-        let bytes = message.to_vec()
+        let bytes = message
+            .to_vec()
             .context("Failed to serialize DNS message")?;
 
         Ok(ActionResult::Output(bytes))
@@ -179,16 +168,11 @@ impl DnsProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'target' parameter")?;
 
-        let ttl = action
-            .get("ttl")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300) as u32;
+        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
 
         // Build DNS response
-        let name = Name::from_str(domain)
-            .context("Invalid domain name")?;
-        let target_name = Name::from_str(target)
-            .context("Invalid target domain name")?;
+        let name = Name::from_str(domain).context("Invalid domain name")?;
+        let target_name = Name::from_str(target).context("Invalid target domain name")?;
 
         let mut message = DnsMessage::new();
         let mut header = Header::new();
@@ -205,7 +189,8 @@ impl DnsProtocol {
         message.add_answer(record);
 
         // Serialize to bytes
-        let bytes = message.to_vec()
+        let bytes = message
+            .to_vec()
             .context("Failed to serialize DNS message")?;
 
         Ok(ActionResult::Output(bytes))
@@ -232,16 +217,11 @@ impl DnsProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as u16;
 
-        let ttl = action
-            .get("ttl")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300) as u32;
+        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
 
         // Build DNS response
-        let name = Name::from_str(domain)
-            .context("Invalid domain name")?;
-        let exchange_name = Name::from_str(exchange)
-            .context("Invalid exchange domain name")?;
+        let name = Name::from_str(domain).context("Invalid domain name")?;
+        let exchange_name = Name::from_str(exchange).context("Invalid exchange domain name")?;
 
         let mut message = DnsMessage::new();
         let mut header = Header::new();
@@ -258,7 +238,8 @@ impl DnsProtocol {
         message.add_answer(record);
 
         // Serialize to bytes
-        let bytes = message.to_vec()
+        let bytes = message
+            .to_vec()
             .context("Failed to serialize DNS message")?;
 
         Ok(ActionResult::Output(bytes))
@@ -280,14 +261,10 @@ impl DnsProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'text' parameter")?;
 
-        let ttl = action
-            .get("ttl")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300) as u32;
+        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
 
         // Build DNS response
-        let name = Name::from_str(domain)
-            .context("Invalid domain name")?;
+        let name = Name::from_str(domain).context("Invalid domain name")?;
 
         let mut message = DnsMessage::new();
         let mut header = Header::new();
@@ -304,7 +281,8 @@ impl DnsProtocol {
         message.add_answer(record);
 
         // Serialize to bytes
-        let bytes = message.to_vec()
+        let bytes = message
+            .to_vec()
             .context("Failed to serialize DNS message")?;
 
         Ok(ActionResult::Output(bytes))
@@ -322,8 +300,7 @@ impl DnsProtocol {
             .context("Missing 'domain' parameter")?;
 
         // Build DNS NXDOMAIN response
-        let _name = Name::from_str(domain)
-            .context("Invalid domain name")?;
+        let _name = Name::from_str(domain).context("Invalid domain name")?;
 
         let mut message = DnsMessage::new();
         let mut header = Header::new();
@@ -335,7 +312,8 @@ impl DnsProtocol {
         message.set_header(header);
 
         // Serialize to bytes
-        let bytes = message.to_vec()
+        let bytes = message
+            .to_vec()
             .context("Failed to serialize DNS message")?;
 
         Ok(ActionResult::Output(bytes))
@@ -505,7 +483,8 @@ fn send_dns_mx_response_action() -> ActionDefinition {
             Parameter {
                 name: "preference".to_string(),
                 type_hint: "number".to_string(),
-                description: "MX preference (priority, lower = higher priority). Default: 10".to_string(),
+                description: "MX preference (priority, lower = higher priority). Default: 10"
+                    .to_string(),
                 required: false,
             },
             Parameter {

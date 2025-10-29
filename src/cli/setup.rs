@@ -4,8 +4,10 @@ use anyhow::Result;
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -125,12 +127,14 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
             .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", Level::TRACE)));
 
         tracing_subscriber::registry()
-            .with(fmt::layer()
-                .with_writer(colored_writer)
-                .with_ansi(true)
-                .with_target(true)
-                .with_thread_ids(false)
-                .with_line_number(true))
+            .with(
+                fmt::layer()
+                    .with_writer(colored_writer)
+                    .with_ansi(true)
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_line_number(true),
+            )
             .with(filter)
             .init();
     } else {
@@ -143,12 +147,14 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
 
         // Log to stderr in non-interactive mode
         tracing_subscriber::registry()
-            .with(fmt::layer()
-                .with_writer(io::stderr)
-                .with_ansi(true)
-                .with_target(false)
-                .with_thread_ids(false)
-                .with_line_number(false))
+            .with(
+                fmt::layer()
+                    .with_writer(io::stderr)
+                    .with_ansi(true)
+                    .with_target(false)
+                    .with_thread_ids(false)
+                    .with_line_number(false),
+            )
             .with(filter)
             .init();
     }

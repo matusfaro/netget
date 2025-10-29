@@ -31,10 +31,7 @@ impl ProtocolActions for SnmpProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -79,10 +76,7 @@ impl SnmpProtocol {
     }
 
     /// Execute send_snmp_response sync action
-    fn execute_send_snmp_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_snmp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let variables = action
             .get("variables")
             .and_then(|v| v.as_array())
@@ -96,16 +90,12 @@ impl SnmpProtocol {
         });
 
         Ok(ActionResult::Output(
-            serde_json::to_vec(&response_data)
-                .context("Failed to serialize SNMP response")?,
+            serde_json::to_vec(&response_data).context("Failed to serialize SNMP response")?,
         ))
     }
 
     /// Execute send_snmp_error sync action
-    fn execute_send_snmp_error(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_snmp_error(&self, action: serde_json::Value) -> Result<ActionResult> {
         let error_message = action
             .get("error_message")
             .and_then(|v| v.as_str())
@@ -118,8 +108,7 @@ impl SnmpProtocol {
         });
 
         Ok(ActionResult::Output(
-            serde_json::to_vec(&response_data)
-                .context("Failed to serialize SNMP error")?,
+            serde_json::to_vec(&response_data).context("Failed to serialize SNMP error")?,
         ))
     }
 }

@@ -4,10 +4,13 @@
 //! 1. User input handler - interprets user commands and manages the server
 //! 2. Network event handler - handles incoming network events based on instructions
 
+use crate::llm::actions::{
+    generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions,
+    ActionDefinition,
+};
 use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use crate::llm::actions::{ActionDefinition, get_user_input_common_actions, generate_base_stack_documentation};
 
 /// Builder for constructing LLM prompts
 pub struct PromptBuilder;
@@ -25,7 +28,9 @@ impl PromptBuilder {
         protocol_prompt: (&str, &str),
     ) -> String {
         // Get first server ID as fallback
-        let server_id = state.get_first_server_id().await
+        let server_id = state
+            .get_first_server_id()
+            .await
             .unwrap_or(ServerId::new(1)); // Fallback to ID 1 if no servers
 
         Self::build_network_event_prompt_for_server(
@@ -34,7 +39,8 @@ impl PromptBuilder {
             _connection_id,
             event_description,
             protocol_prompt,
-        ).await
+        )
+        .await
     }
 
     /// Build prompt for handling network events
@@ -99,10 +105,18 @@ Response (JSON only):"#,
             server_id.as_u32(),
             base_stack,
             port,
-            if memory.is_empty() { "(empty)" } else { &memory },
+            if memory.is_empty() {
+                "(empty)"
+            } else {
+                &memory
+            },
             stack_context,
             event_description,
-            if instruction.is_empty() { "No specific instruction provided. Use your best judgment based on the protocol." } else { &instruction },
+            if instruction.is_empty() {
+                "No specific instruction provided. Use your best judgment based on the protocol."
+            } else {
+                &instruction
+            },
             output_format
         )
     }
@@ -112,6 +126,10 @@ Response (JSON only):"#,
     // ============================================================================
 
     /// Build unified prompt with action system
+    ///
+    /// This builds the INITIAL prompt only. In message-based conversation mode,
+    /// tool results and subsequent turns are appended to the conversation history
+    /// by generate_with_tools, NOT by rebuilding this prompt.
     ///
     /// # Arguments
     /// * `state` - Application state for context
@@ -162,7 +180,10 @@ Response (JSON only):"#,
             for server in &servers {
                 state_text.push_str(&format!(
                     "- Server #{}: {} on port {} ({})\n",
-                    server.id.as_u32(), server.base_stack, server.port, server.status
+                    server.id.as_u32(),
+                    server.base_stack,
+                    server.port,
+                    server.status
                 ));
             }
             state_text
@@ -204,18 +225,26 @@ Trigger: {}
 Instructions: {}
 
 {}
-
 {}
 
 RESPONSE FORMAT:
 Respond with JSON: {{"actions": [...]}}
 The "actions" array can contain one or more actions, executed in order.
+You can mix regular actions and tool calls in the same response.
 
-Example:
+Example with tools:
 {{
   "actions": [
-    {{"type": "show_message", "message": "Done"}},
-    {{"type": "update_instruction", "instruction": "New behavior"}}
+    {{"type": "read_file", "path": "schema.json", "mode": "full"}},
+    {{"type": "show_message", "message": "Reading schema..."}}
+  ]
+}}
+
+Example with server:
+{{
+  "actions": [
+    {{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Act as REST API"}},
+    {{"type": "show_message", "message": "Server started"}}
   ]
 }}
 
@@ -225,6 +254,9 @@ Response (JSON only):"#,
     }
 
     /// Build prompt for user input using new action system
+    ///
+    /// This builds the INITIAL prompt for user input. Subsequent turns in the conversation
+    /// will append to the message history automatically (handled by generate_with_tools).
     ///
     /// # Arguments
     /// * `state` - Application state
@@ -236,18 +268,31 @@ Response (JSON only):"#,
         protocol_async_actions: Vec<ActionDefinition>,
     ) -> String {
         let mut actions = get_user_input_common_actions();
+
+        // Add tool actions
+        actions.extend(get_all_tool_actions());
+
+        // Add protocol async actions
         actions.extend(protocol_async_actions);
 
         let trigger = format!("User input: \"{}\"", user_input);
         let instructions =
-            "Interpret what the user wants and respond with appropriate actions.";
+            "Interpret what the user wants and respond with appropriate actions. You can use tools like read_file and web_search to gather information before responding.";
 
         // Include full base stack docs only if no servers are running
         // (user might want to start a new server)
         let servers = state.get_all_servers().await;
         let include_base_stacks = servers.is_empty();
 
-        Self::build_action_prompt(state, None, &trigger, instructions, actions, include_base_stacks).await
+        Self::build_action_prompt(
+            state,
+            None,
+            &trigger,
+            instructions,
+            actions,
+            include_base_stacks,
+        )
+        .await
     }
 
     /// Build prompt for network events using new action system (legacy - no server_id)
@@ -261,43 +306,73 @@ Response (JSON only):"#,
         protocol_sync_actions: Vec<ActionDefinition>,
     ) -> String {
         // Get first server ID as fallback
-        let server_id = state.get_first_server_id().await
+        let server_id = state
+            .get_first_server_id()
+            .await
             .unwrap_or(ServerId::new(1)); // Fallback to ID 1 if no servers
 
         Self::build_network_event_action_prompt_for_server(
             state,
             server_id,
             event_description,
+            serde_json::json!({}), // Empty context
             protocol_sync_actions,
-        ).await
+        )
+        .await
     }
 
     /// Build prompt for network events using new action system
+    ///
+    /// This builds the INITIAL prompt for a network event. Subsequent turns in the conversation
+    /// will append to the message history automatically (handled by generate_with_tools).
     ///
     /// # Arguments
     /// * `state` - Application state
     /// * `server_id` - ID of the server handling this event
     /// * `event_description` - Description of the network event
-    /// * `protocol_sync_actions` - Sync actions from protocol (with context)
+    /// * `context_json` - Structured context data (protocol-specific parameters)
+    /// * `all_actions` - All actions (common + protocol + custom, pre-assembled)
     pub async fn build_network_event_action_prompt_for_server(
         state: &AppState,
         server_id: ServerId,
         event_description: &str,
-        all_actions: Vec<ActionDefinition>,
+        context_json: serde_json::Value,
+        mut all_actions: Vec<ActionDefinition>,
     ) -> String {
+        // Add tool actions to network events
+        all_actions.extend(get_all_tool_actions());
+
         // Note: all_actions already contains common + protocol + custom actions
         // They are pre-assembled by the action_helper, so we don't add common actions here
         let instruction = state.get_instruction(server_id).await.unwrap_or_default();
         let instructions = if instruction.is_empty() {
-            "No specific instruction provided. Use your best judgment based on the protocol and event."
+            "No specific instruction provided. Use your best judgment based on the protocol and event. You can use tools like read_file and web_search to gather information before responding."
         } else {
             &instruction
         };
 
-        let trigger = format!("Event: {}", event_description);
+        // Build trigger with structured context
+        let trigger = if context_json.is_null() || context_json == serde_json::json!({}) {
+            format!("Event: {}", event_description)
+        } else {
+            format!(
+                "Event: {}\n\nContext data:\n{}",
+                event_description,
+                serde_json::to_string_pretty(&context_json)
+                    .unwrap_or_else(|_| context_json.to_string())
+            )
+        };
 
         // Network events don't need base stack docs (server already running, handling specific event)
-        Self::build_action_prompt(state, Some(server_id), &trigger, instructions, all_actions, false).await
+        Self::build_action_prompt(
+            state,
+            Some(server_id),
+            &trigger,
+            instructions,
+            all_actions,
+            false,
+        )
+        .await
     }
 
     // ========================================================================

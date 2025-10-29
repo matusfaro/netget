@@ -71,11 +71,10 @@ impl Settings {
             anyhow::bail!("Could not determine home directory for settings file");
         };
 
-        let contents = serde_json::to_string_pretty(self)
-            .context("Failed to serialize settings")?;
+        let contents =
+            serde_json::to_string_pretty(self).context("Failed to serialize settings")?;
 
-        fs::write(&path, contents)
-            .context(format!("Failed to write settings to {:?}", path))?;
+        fs::write(&path, contents).context(format!("Failed to write settings to {:?}", path))?;
 
         debug!("Saved settings to {:?}", path);
         Ok(())

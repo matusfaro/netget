@@ -7,8 +7,8 @@ mod setup;
 mod terminal_cleanup;
 mod tui;
 
-pub use args::Args;
 use anyhow::Result;
+pub use args::Args;
 use clap::Parser;
 
 use crate::events::EventHandler;

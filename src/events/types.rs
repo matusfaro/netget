@@ -37,25 +37,17 @@ pub enum UserCommand {
     /// Show current model (slash command: /model)
     ShowModel,
     /// Change the Ollama model (slash command: /model <name>)
-    ChangeModel {
-        model: String,
-    },
+    ChangeModel { model: String },
     /// Show current log level (slash command: /log)
     ShowLogLevel,
     /// Change log level (slash command: /log <level>)
-    ChangeLogLevel {
-        level: String,
-    },
+    ChangeLogLevel { level: String },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
-    UnknownSlashCommand {
-        command: String,
-    },
+    UnknownSlashCommand { command: String },
     /// Regular user input (not a slash command) - send to LLM for interpretation
-    Interpret {
-        input: String,
-    },
+    Interpret { input: String },
 }
 
 impl UserCommand {
@@ -90,7 +82,9 @@ impl UserCommand {
                 // Show current model
                 return UserCommand::ShowModel;
             }
-            return UserCommand::ChangeModel { model: rest.to_string() };
+            return UserCommand::ChangeModel {
+                model: rest.to_string(),
+            };
         }
 
         // /log command
@@ -100,7 +94,9 @@ impl UserCommand {
                 // Show current log level
                 return UserCommand::ShowLogLevel;
             }
-            return UserCommand::ChangeLogLevel { level: rest.to_string() };
+            return UserCommand::ChangeLogLevel {
+                level: rest.to_string(),
+            };
         }
 
         // Unknown slash command - return error, don't send to LLM
