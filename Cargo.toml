@@ -33,11 +33,10 @@ e2e-tests = []
 tokio = { version = "1.41", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
-# Terminal UI - using ratatui for TUI
-ratatui = { version = "0.29", features = ["crossterm"] }
+# Terminal UI - using crossterm for rolling terminal
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
-tui-textarea = "0.7"
+textwrap = "0.16"
 
 # HTTP client for Ollama
 reqwest = { version = "0.12", features = ["json"] }
@@ -143,11 +142,15 @@ tokio-test = "0.4"
 # For e2e test setup/teardown
 ctor = "0.2"
 
+# Terminal snapshot testing
+pty-process = "0.4"
+vt100 = "0.15"
+
 # E2E test dependencies (only used when e2e-tests feature is enabled via test files' cfg gates)
 # FTP client for e2e integration tests
 suppaftp = "6.0"
-# For process management in e2e tests (Unix signals)
-nix = { version = "0.29", features = ["signal", "process"] }
+# For process management in e2e tests (Unix signals) and PTY window size
+nix = { version = "0.29", features = ["signal", "process", "term", "ioctl"] }
 # SNMP client for e2e integration tests
 snmp = "0.2"
 # DNS client for e2e integration tests (Hickory DNS, formerly Trust-DNS)

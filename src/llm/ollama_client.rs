@@ -348,15 +348,19 @@ impl OllamaClient {
             let pretty = serde_json::to_string_pretty(&json).unwrap_or(response.response.clone());
             trace!("Full LLM response (JSON):\n{}", pretty);
             if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!("[TRACE] LLM response (JSON):\n{}", pretty));
+                // Send each line separately to ensure proper formatting
+                let _ = tx.send("[TRACE] LLM response (JSON):".to_string());
+                for line in pretty.lines() {
+                    let _ = tx.send(format!("[TRACE] {}", line));
+                }
             }
         } else {
             trace!("Full LLM response (text):\n{}", response.response);
             if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!(
-                    "[TRACE] LLM response (text):\n{}",
-                    response.response
-                ));
+                let _ = tx.send("[TRACE] LLM response (text):".to_string());
+                for line in response.response.lines() {
+                    let _ = tx.send(format!("[TRACE] {}", line));
+                }
             }
         }
 

@@ -74,6 +74,20 @@ impl EventHandler {
                 }
                 Ok(false)
             }
+            UserCommand::TestOutput { count } => {
+                // Generate test output lines (used for terminal overflow testing)
+                for i in 0..count {
+                    ui.add_llm_message(format!("Test line {} of {}", i + 1, count));
+                }
+                Ok(false)
+            }
+            UserCommand::SetFooterStatus { message } => {
+                // This command is only supported in rolling TUI mode
+                if message.is_some() {
+                    ui.add_llm_message("Footer status command is only supported in rolling TUI mode".to_string());
+                }
+                Ok(false)
+            }
             UserCommand::Quit => {
                 self.handle_quit(ui).await?;
                 Ok(true) // Signal to quit
