@@ -1,7 +1,7 @@
 //! IPP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,7 +20,7 @@ impl IppProtocol {
     }
 }
 
-impl Protocol for IppProtocol {
+impl ProtocolActions for IppProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_print_jobs_action()]
     }

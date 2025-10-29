@@ -1,7 +1,7 @@
 //! HTTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,7 +20,7 @@ impl HttpProtocol {
     }
 }
 
-impl Protocol for HttpProtocol {
+impl ProtocolActions for HttpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // HTTP has no async actions - it's purely request-response
         Vec::new()

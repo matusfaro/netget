@@ -1,7 +1,7 @@
 //! NTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,7 +19,7 @@ impl NtpProtocol {
     }
 }
 
-impl Protocol for NtpProtocol {
+impl ProtocolActions for NtpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new()
     }

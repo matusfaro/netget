@@ -17,7 +17,6 @@ pub use common::{
 pub use summary::{summarize_action, summarize_actions};
 pub use tools::{execute_tool, get_all_tool_actions, ToolAction, ToolResult};
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Definition of a configuration parameter for prompt generation

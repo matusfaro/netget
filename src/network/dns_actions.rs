@@ -1,7 +1,7 @@
 //! DNS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -23,7 +23,7 @@ impl DnsProtocol {
     }
 }
 
-impl Protocol for DnsProtocol {
+impl ProtocolActions for DnsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new() // DNS has no async actions
     }

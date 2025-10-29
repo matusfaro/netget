@@ -1,7 +1,7 @@
 //! PostgreSQL protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -36,7 +36,7 @@ impl PostgresqlProtocol {
     }
 }
 
-impl Protocol for PostgresqlProtocol {
+impl ProtocolActions for PostgresqlProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_postgresql_connections_action()]
     }

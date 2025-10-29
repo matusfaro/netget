@@ -1,7 +1,7 @@
 //! TCP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -60,7 +60,7 @@ impl TcpProtocol {
     }
 }
 
-impl Protocol for TcpProtocol {
+impl ProtocolActions for TcpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             send_to_connection_action(),

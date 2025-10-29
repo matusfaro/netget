@@ -1,7 +1,7 @@
 //! Redis protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -36,7 +36,7 @@ impl RedisProtocol {
     }
 }
 
-impl Protocol for RedisProtocol {
+impl ProtocolActions for RedisProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_redis_connections_action()]
     }

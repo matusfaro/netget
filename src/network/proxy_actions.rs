@@ -8,7 +8,7 @@
 //! - Handling HTTPS connections in pass-through mode (allow/block)
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::network::proxy_filter::{
@@ -30,7 +30,7 @@ impl ProxyProtocol {
     }
 }
 
-impl Protocol for ProxyProtocol {
+impl ProtocolActions for ProxyProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {

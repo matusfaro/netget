@@ -1,7 +1,7 @@
 //! mDNS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,7 +20,7 @@ impl MdnsProtocol {
     }
 }
 
-impl Protocol for MdnsProtocol {
+impl ProtocolActions for MdnsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![register_mdns_service_action()]
     }

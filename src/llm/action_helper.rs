@@ -13,7 +13,7 @@ use crate::llm::actions::{
     executor::{execute_actions, ExecutionResult},
     get_network_event_common_actions,
     protocol_trait::ProtocolActions,
-    ActionDefinition,
+    ActionDefinition, ActionResponse,
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -38,6 +38,7 @@ use tracing::{debug, warn};
 /// * `server_id` - Server ID for context
 /// * `connection_id` - Optional connection ID for context (for scripts)
 /// * `event_description` - High-level description of the event (e.g., "NFS lookup requested")
+/// * `context_json` - Structured context data for the prompt
 /// * `protocol` - Optional protocol for protocol-specific sync actions
 /// * `custom_actions` - Additional custom actions specific to this call
 /// * `event_data` - Optional structured event data for scripts
@@ -71,6 +72,7 @@ pub async fn call_llm_with_actions(
     server_id: ServerId,
     connection_id: Option<crate::network::connection::ConnectionId>,
     event_description: &str,
+    context_json: serde_json::Value,
     protocol: Option<&dyn ProtocolActions>,
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
@@ -243,7 +245,7 @@ pub async fn call_llm_with_protocol(
     server_id: ServerId,
     connection_id: Option<crate::network::connection::ConnectionId>,
     event_description: &str,
-    protocol: &dyn Protocol,
+    protocol: &dyn ProtocolActions,
 ) -> Result<ExecutionResult> {
     call_llm_with_actions(
         llm_client,
@@ -329,7 +331,7 @@ pub async fn call_llm(
     server_id: ServerId,
     connection_id: Option<crate::network::connection::ConnectionId>,
     event: &Event,
-    protocol: &dyn Protocol,
+    protocol: &dyn ProtocolActions,
 ) -> Result<ExecutionResult> {
     // TRY SCRIPT FIRST if configured
     let script_config = state.get_script_config(server_id).await;
@@ -437,6 +439,7 @@ pub async fn call_llm(
         state,
         server_id,
         &event_description,
+        event.data.clone(), // Use event data as context
         all_actions,
     )
     .await;

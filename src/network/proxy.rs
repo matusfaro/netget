@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn, trace};
 
 use crate::llm::action_helper::call_llm;
-use crate::llm::actions::protocol_trait::{Protocol, ActionResult};
+use crate::llm::actions::protocol_trait::{ProtocolActions, ActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::network::proxy_actions::{PROXY_HTTP_REQUEST_EVENT, PROXY_HTTPS_CONNECT_EVENT};
 use crate::network::ProxyProtocol;
@@ -897,7 +897,7 @@ impl ProxyServer {
             server_id,
             None, // TODO: Add connection_id for proxy requests
             &event,
-            protocol.as_ref() as &dyn Protocol,
+            protocol.as_ref() as &dyn ProtocolActions,
         ).await.context("LLM request failed")?;
 
         // Extract request action from protocol results
@@ -941,7 +941,7 @@ impl ProxyServer {
             server_id,
             None, // TODO: Add connection_id for proxy responses
             &event,
-            protocol.as_ref() as &dyn Protocol,
+            protocol.as_ref() as &dyn ProtocolActions,
         ).await.context("LLM request failed")?;
 
         // Extract HTTPS connection action from protocol results

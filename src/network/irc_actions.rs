@@ -1,7 +1,7 @@
 //! IRC protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -102,7 +102,7 @@ impl IrcProtocol {
     }
 }
 
-impl Protocol for IrcProtocol {
+impl ProtocolActions for IrcProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // IRC could have async actions like broadcast_message in the future
         Vec::new()
