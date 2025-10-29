@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-use crate::network::ConnectionId;
+use crate::server::ConnectionId;
 use crate::protocol::BaseStack;
 
 /// Response from LLM when interpreting a user command

@@ -70,7 +70,7 @@ pub async fn call_llm_with_actions(
     llm_client: &OllamaClient,
     state: &AppState,
     server_id: ServerId,
-    connection_id: Option<crate::network::connection::ConnectionId>,
+    connection_id: Option<crate::server::connection::ConnectionId>,
     event_description: &str,
     context_json: serde_json::Value,
     protocol: Option<&dyn ProtocolActions>,
@@ -243,7 +243,7 @@ pub async fn call_llm_with_protocol(
     llm_client: &OllamaClient,
     state: &AppState,
     server_id: ServerId,
-    connection_id: Option<crate::network::connection::ConnectionId>,
+    connection_id: Option<crate::server::connection::ConnectionId>,
     event_description: &str,
     protocol: &dyn ProtocolActions,
 ) -> Result<ExecutionResult> {
@@ -269,7 +269,7 @@ pub async fn call_llm_with_custom_actions(
     llm_client: &OllamaClient,
     state: &AppState,
     server_id: ServerId,
-    connection_id: Option<crate::network::connection::ConnectionId>,
+    connection_id: Option<crate::server::connection::ConnectionId>,
     event_description: &str,
     custom_actions: Vec<ActionDefinition>,
 ) -> Result<ExecutionResult> {
@@ -329,7 +329,7 @@ pub async fn call_llm(
     llm_client: &OllamaClient,
     state: &AppState,
     server_id: ServerId,
-    connection_id: Option<crate::network::connection::ConnectionId>,
+    connection_id: Option<crate::server::connection::ConnectionId>,
     event: &Event,
     protocol: &dyn ProtocolActions,
 ) -> Result<ExecutionResult> {

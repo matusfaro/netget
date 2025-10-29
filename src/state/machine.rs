@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::network::connection::ConnectionId;
+use crate::server::connection::ConnectionId;
 
 /// Generic state machine for protocol handling
 #[derive(Debug)]

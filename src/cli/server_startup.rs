@@ -47,7 +47,7 @@ pub async fn start_server_by_id(
         BaseStack::Tcp => {
             #[cfg(feature = "tcp")]
             {
-                use crate::network::tcp::TcpServer;
+                use crate::server::tcp::TcpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn TCP server
@@ -102,7 +102,7 @@ pub async fn start_server_by_id(
         BaseStack::Http => {
             #[cfg(feature = "http")]
             {
-                use crate::network::http::HttpServer;
+                use crate::server::http::HttpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn HTTP server
@@ -158,7 +158,7 @@ pub async fn start_server_by_id(
         BaseStack::Udp => {
             #[cfg(feature = "udp")]
             {
-                use crate::network::UdpServer;
+                use crate::server::UdpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn UDP server
@@ -211,7 +211,7 @@ pub async fn start_server_by_id(
         BaseStack::Dns => {
             #[cfg(feature = "dns")]
             {
-                use crate::network::dns::DnsServer;
+                use crate::server::dns::DnsServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn DNS server
@@ -264,7 +264,7 @@ pub async fn start_server_by_id(
         BaseStack::Dhcp => {
             #[cfg(feature = "dhcp")]
             {
-                use crate::network::dhcp::DhcpServer;
+                use crate::server::dhcp::DhcpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn DHCP server
@@ -317,7 +317,7 @@ pub async fn start_server_by_id(
         BaseStack::Ntp => {
             #[cfg(feature = "ntp")]
             {
-                use crate::network::ntp::NtpServer;
+                use crate::server::ntp::NtpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn NTP server
@@ -370,7 +370,7 @@ pub async fn start_server_by_id(
         BaseStack::Snmp => {
             #[cfg(feature = "snmp")]
             {
-                use crate::network::snmp::SnmpServer;
+                use crate::server::snmp::SnmpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn SNMP server
@@ -423,7 +423,7 @@ pub async fn start_server_by_id(
         BaseStack::Ssh => {
             #[cfg(feature = "ssh")]
             {
-                use crate::network::ssh::SshServer;
+                use crate::server::ssh::SshServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn SSH server
@@ -477,7 +477,7 @@ pub async fn start_server_by_id(
         BaseStack::Irc => {
             #[cfg(feature = "irc")]
             {
-                use crate::network::irc::IrcServer;
+                use crate::server::irc::IrcServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn IRC server
@@ -530,7 +530,7 @@ pub async fn start_server_by_id(
         BaseStack::Telnet => {
             #[cfg(feature = "telnet")]
             {
-                use crate::network::telnet::TelnetServer;
+                use crate::server::telnet::TelnetServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn Telnet server
@@ -583,7 +583,7 @@ pub async fn start_server_by_id(
         BaseStack::Smtp => {
             #[cfg(feature = "smtp")]
             {
-                use crate::network::smtp::SmtpServer;
+                use crate::server::smtp::SmtpServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn SMTP server
@@ -636,7 +636,7 @@ pub async fn start_server_by_id(
         BaseStack::Mdns => {
             #[cfg(feature = "mdns")]
             {
-                use crate::network::mdns::MdnsServer;
+                use crate::server::mdns::MdnsServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn mDNS server
@@ -689,7 +689,7 @@ pub async fn start_server_by_id(
         BaseStack::Mysql => {
             #[cfg(feature = "mysql")]
             {
-                use crate::network::mysql::MysqlServer;
+                use crate::server::mysql::MysqlServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn MySQL server
@@ -743,7 +743,7 @@ pub async fn start_server_by_id(
         BaseStack::Ipp => {
             #[cfg(feature = "ipp")]
             {
-                use crate::network::ipp::IppServer;
+                use crate::server::ipp::IppServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn IPP server
@@ -797,7 +797,7 @@ pub async fn start_server_by_id(
         BaseStack::Postgresql => {
             #[cfg(feature = "postgresql")]
             {
-                use crate::network::postgresql::PostgresqlServer;
+                use crate::server::postgresql::PostgresqlServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn PostgreSQL server
@@ -852,7 +852,7 @@ pub async fn start_server_by_id(
         BaseStack::Redis => {
             #[cfg(feature = "redis")]
             {
-                use crate::network::redis::RedisServer;
+                use crate::server::redis::RedisServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn Redis server
@@ -906,7 +906,7 @@ pub async fn start_server_by_id(
         BaseStack::Proxy => {
             #[cfg(feature = "proxy")]
             {
-                use crate::network::proxy::ProxyServer;
+                use crate::server::proxy::ProxyServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Get startup params from server
@@ -963,7 +963,7 @@ pub async fn start_server_by_id(
         BaseStack::WebDav => {
             #[cfg(feature = "webdav")]
             {
-                use crate::network::webdav::WebDavServer;
+                use crate::server::webdav::WebDavServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn WebDAV server
@@ -1016,7 +1016,7 @@ pub async fn start_server_by_id(
         BaseStack::Nfs => {
             #[cfg(feature = "nfs")]
             {
-                use crate::network::nfs::NfsServer;
+                use crate::server::nfs::NfsServer;
                 let state_arc = Arc::new(state.clone());
 
                 // Spawn NFS server
