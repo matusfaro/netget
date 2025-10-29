@@ -185,8 +185,11 @@ impl StickyFooter {
         let input_lines = self.calculate_input_lines();
         let status_lines = 1;
 
-        // Add separator lines (2: one above content, one above input)
-        content_lines + 2 + input_lines + status_lines
+        // Add separator lines:
+        // - If we have content: 2 separators (one above content, one above input)
+        // - If no content: 1 separator (only above input)
+        let separator_lines = if content_lines > 0 { 2 } else { 1 };
+        content_lines + separator_lines + input_lines + status_lines
     }
 
     /// Calculate lines needed for normal content (servers/connections)
@@ -427,11 +430,11 @@ impl StickyFooter {
     ) -> Result<u16> {
         let mut current_line = start_line;
 
-        // Render separator at top
-        current_line = self.render_separator(stdout, current_line)?;
-
-        // If custom status is set, render it instead
+        // If custom status is set, render it with separator
         if let Some(ref custom) = self.custom_status {
+            // Render separator at top
+            current_line = self.render_separator(stdout, current_line)?;
+
             for line in custom.lines() {
                 execute!(
                     stdout,
@@ -446,9 +449,12 @@ impl StickyFooter {
         }
 
         if servers.is_empty() {
-            // Don't show anything when no servers - just return current line
+            // Don't show anything when no servers - no separator, no content
             return Ok(current_line);
         }
+
+        // Render separator at top (only when we have servers)
+        current_line = self.render_separator(stdout, current_line)?;
 
         let max_content_lines = self.calculate_normal_content_lines(servers, connections, expand_all);
 
