@@ -1,7 +1,7 @@
 //! NFS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,7 +19,7 @@ impl NfsProtocol {
     }
 }
 
-impl Protocol for NfsProtocol {
+impl ProtocolActions for NfsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![mount_filesystem_action(), unmount_filesystem_action()]
     }

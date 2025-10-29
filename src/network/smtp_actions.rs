@@ -1,7 +1,7 @@
 //! SMTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -126,7 +126,7 @@ impl SmtpProtocol {
     }
 }
 
-impl Protocol for SmtpProtocol {
+impl ProtocolActions for SmtpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // SMTP doesn't need async actions for now
         Vec::new()

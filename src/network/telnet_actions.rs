@@ -1,7 +1,7 @@
 //! Telnet protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -59,7 +59,7 @@ impl TelnetProtocol {
     }
 }
 
-impl Protocol for TelnetProtocol {
+impl ProtocolActions for TelnetProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // Telnet doesn't need async actions for now
         Vec::new()

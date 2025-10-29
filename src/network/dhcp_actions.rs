@@ -1,7 +1,7 @@
 //! DHCP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -43,7 +43,7 @@ impl DhcpProtocol {
     }
 }
 
-impl Protocol for DhcpProtocol {
+impl ProtocolActions for DhcpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new()
     }

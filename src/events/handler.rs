@@ -197,6 +197,10 @@ impl EventHandler {
                 initial_memory,
                 instruction,
                 startup_params,
+                script_language,
+                script_path,
+                script_inline,
+                script_handles,
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
@@ -223,6 +227,33 @@ impl EventHandler {
 
                 // Add server to state (this assigns the real ID)
                 let server_id = self.state.add_server(server).await;
+
+                // Set up script configuration if provided
+                if script_language.is_some() || script_path.is_some() || script_inline.is_some() {
+                    match crate::scripting::ScriptManager::build_config(
+                        script_language.as_deref(),
+                        script_path.as_deref(),
+                        script_inline.as_deref(),
+                        script_handles,
+                    ) {
+                        Ok(Some(config)) => {
+                            let scripting_env = self.state.get_scripting_env().await;
+                            if scripting_env.is_available(config.language) {
+                                self.state.set_script_config(server_id, Some(config)).await;
+                                let _ = status_tx.send("[INFO] Script configuration applied to server".to_string());
+                            } else {
+                                let _ = status_tx.send(format!(
+                                    "[WARN] {} not available, script not configured",
+                                    config.language.as_str()
+                                ));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let _ = status_tx.send(format!("[WARN] Failed to build script config: {}", e));
+                        }
+                    }
+                }
 
                 let _ = status_tx.send(format!(
                     "[SERVER] Opening server #{} on port {} with stack {}",

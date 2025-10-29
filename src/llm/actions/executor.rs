@@ -5,7 +5,7 @@
 
 use super::{
     common::CommonAction,
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
 };
 use crate::state::app_state::AppState;
 use anyhow::{Context as AnyhowContext, Result};
@@ -55,7 +55,7 @@ impl ExecutionResult {
 pub async fn execute_actions(
     actions: Vec<serde_json::Value>,
     state: &AppState,
-    protocol: Option<&dyn Protocol>,
+    protocol: Option<&dyn ProtocolActions>,
 ) -> Result<ExecutionResult> {
     let mut result = ExecutionResult::new();
 

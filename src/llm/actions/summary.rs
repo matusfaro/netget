@@ -91,6 +91,9 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("append_memory: \"{}\"", preview)
         }
+        CommonAction::UpdateScript { operation, .. } => {
+            format!("update_script: {}", operation)
+        }
     }
 }
 

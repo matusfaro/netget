@@ -1,7 +1,7 @@
 //! MySQL protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -39,7 +39,7 @@ impl MysqlProtocol {
     }
 }
 
-impl Protocol for MysqlProtocol {
+impl ProtocolActions for MysqlProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_mysql_connections_action()]
     }

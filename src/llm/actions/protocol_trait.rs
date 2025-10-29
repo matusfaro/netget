@@ -135,7 +135,7 @@ impl ActionResult {
 /// 2. Async actions - executable anytime from user input
 /// 3. Sync actions - executable during network events
 /// 4. Action executor - parses and executes protocol actions
-pub trait Protocol: Send + Sync {
+pub trait ProtocolActions: Send + Sync {
     /// Get startup parameters that can be provided when opening a server
     ///
     /// These parameters configure the protocol before it starts accepting

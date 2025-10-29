@@ -362,7 +362,7 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
 
 /// Create a protocol instance for getting startup parameters
 /// Returns None if the protocol doesn't support the ProtocolActions trait or isn't compiled in
-fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn Protocol>> {
+fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> {
     match stack {
         #[cfg(feature = "tcp")]
         BaseStack::Tcp => {

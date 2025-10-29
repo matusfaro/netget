@@ -1,7 +1,7 @@
 //! SSH protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
@@ -82,7 +82,7 @@ impl SshProtocol {
     }
 }
 
-impl Protocol for SshProtocol {
+impl ProtocolActions for SshProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![close_ssh_connection_action(), list_ssh_connections_action()]
     }

@@ -1,7 +1,7 @@
 //! SNMP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Protocol},
+    protocol_trait::{ActionResult, ProtocolActions},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,7 +19,7 @@ impl SnmpProtocol {
     }
 }
 
-impl Protocol for SnmpProtocol {
+impl ProtocolActions for SnmpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // SNMP has async action for sending traps
         vec![send_trap_action()]
