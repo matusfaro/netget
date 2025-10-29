@@ -110,7 +110,19 @@ Example:
   "message": "Server started successfully on port 8080"
 }
 
-9. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
+9. append_to_log. Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.
+Parameters:
+  • output_name: string (required) - Name of the log output (e.g., 'access_logs'). Used to construct the log filename.
+  • content: string (required) - Content to append to the log file.
+
+Example:
+{
+  "type": "append_to_log",
+  "output_name": "access_logs",
+  "content": "127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"
+}
+
+10. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
 Parameters:
   • path: string (required) - Path to the file (relative to current directory or absolute)
   • mode: string (optional) - Read mode: 'full' (default), 'head', 'tail', or 'grep'
@@ -126,7 +138,7 @@ Example:
   "mode": "full"
 }
 
-10. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
+11. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 Parameters:
   • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
 

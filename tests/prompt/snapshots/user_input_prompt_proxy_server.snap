@@ -87,7 +87,19 @@ Example:
   "message": "Server started successfully on port 8080"
 }
 
-8. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
+8. append_to_log. Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.
+Parameters:
+  • output_name: string (required) - Name of the log output (e.g., 'access_logs'). Used to construct the log filename.
+  • content: string (required) - Content to append to the log file.
+
+Example:
+{
+  "type": "append_to_log",
+  "output_name": "access_logs",
+  "content": "127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"
+}
+
+9. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
 Parameters:
   • path: string (required) - Path to the file (relative to current directory or absolute)
   • mode: string (optional) - Read mode: 'full' (default), 'head', 'tail', or 'grep'
@@ -103,7 +115,7 @@ Example:
   "mode": "full"
 }
 
-9. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
+10. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 Parameters:
   • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
 
@@ -113,7 +125,7 @@ Example:
   "query": "https://datatracker.ietf.org/doc/html/rfc7168"
 }
 
-10. configure_certificate. Configure certificate mode for proxy (generate, load from file, or none for pass-through)
+11. configure_certificate. Configure certificate mode for proxy (generate, load from file, or none for pass-through)
 Parameters:
   • mode: string (required) - Certificate mode: 'generate', 'load_from_file', or 'none'
   • cert_path: string (optional) - Path to certificate file (required if mode is 'load_from_file')
@@ -125,7 +137,7 @@ Example:
   "mode": "generate"
 }
 
-11. configure_request_filters. Set up filters to determine which requests to intercept and send to LLM
+12. configure_request_filters. Set up filters to determine which requests to intercept and send to LLM
 Parameters:
   • filters: array (required) - Array of request filter objects with optional regex patterns for host, path, method, headers, body
 
@@ -141,7 +153,7 @@ Example:
   ]
 }
 
-12. configure_response_filters. Set up filters to determine which responses to intercept and send to LLM
+13. configure_response_filters. Set up filters to determine which responses to intercept and send to LLM
 Parameters:
   • filters: array (required) - Array of response filter objects with optional regex patterns for status, headers, body, request_host, request_path
 
@@ -156,7 +168,7 @@ Example:
   ]
 }
 
-13. configure_https_connection_filters. Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.
+14. configure_https_connection_filters. Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.
 Parameters:
   • filters: array (required) - Array of HTTPS connection filter objects with optional regex patterns for host, port, sni, client_addr
 
@@ -172,7 +184,7 @@ Example:
   ]
 }
 
-14. set_filter_mode. Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)
+15. set_filter_mode. Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)
 Parameters:
   • request_filter_mode: string (optional) - Mode for request filtering: 'all', 'match_only', or 'none'
   • response_filter_mode: string (optional) - Mode for response filtering: 'all', 'match_only', or 'none'
