@@ -8,16 +8,18 @@
 //! - Handling HTTPS connections in pass-through mode (allow/block)
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::network::proxy_filter::{
     CertificateMode, RequestFilter, ResponseFilter, HttpsConnectionFilter,
     RequestAction, ResponseAction, HttpsConnectionAction, FilterMode,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 
 /// HTTP Proxy protocol action handler
 pub struct ProxyProtocol;
@@ -28,7 +30,7 @@ impl ProxyProtocol {
     }
 }
 
-impl ProtocolActions for ProxyProtocol {
+impl Protocol for ProxyProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -140,6 +142,10 @@ impl ProtocolActions for ProxyProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "Proxy"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_proxy_event_types()
     }
 }
 
@@ -805,4 +811,106 @@ fn handle_https_connection_block_action() -> ActionDefinition {
             "reason": "Destination blocked by security policy"
         }),
     }
+}
+
+// ============================================================================
+// Proxy Event Type Constants
+// ============================================================================
+
+/// HTTP request event - triggered when proxy receives HTTP request
+pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "proxy_http_request",
+        "HTTP request intercepted by proxy"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (GET, POST, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Full request URL".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "host".to_string(),
+            type_hint: "string".to_string(),
+            description: "Host header value".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request path".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        ActionDefinition {
+            name: "handle_request_pass".to_string(),
+            description: "Pass HTTP request through to destination".to_string(),
+            parameters: vec![],
+            example: json!({"type": "handle_request_pass"}),
+        },
+        ActionDefinition {
+            name: "handle_request_block".to_string(),
+            description: "Block HTTP request and return error to client".to_string(),
+            parameters: vec![],
+            example: json!({"type": "handle_request_block"}),
+        },
+    ])
+});
+
+/// HTTPS connection event - triggered when proxy receives CONNECT request
+pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "proxy_https_connect",
+        "HTTPS CONNECT request intercepted by proxy (pass-through mode)"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "destination_host".to_string(),
+            type_hint: "string".to_string(),
+            description: "Destination hostname".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "destination_port".to_string(),
+            type_hint: "number".to_string(),
+            description: "Destination port".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "sni".to_string(),
+            type_hint: "string".to_string(),
+            description: "SNI (Server Name Indication) from TLS handshake".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        ActionDefinition {
+            name: "handle_https_connection_allow".to_string(),
+            description: "Allow HTTPS connection to proceed".to_string(),
+            parameters: vec![],
+            example: json!({"type": "handle_https_connection_allow"}),
+        },
+        ActionDefinition {
+            name: "handle_https_connection_block".to_string(),
+            description: "Block HTTPS connection".to_string(),
+            parameters: vec![],
+            example: json!({"type": "handle_https_connection_block"}),
+        },
+    ])
+});
+
+/// Get Proxy event types
+pub fn get_proxy_event_types() -> Vec<EventType> {
+    vec![
+        PROXY_HTTP_REQUEST_EVENT.clone(),
+        PROXY_HTTPS_CONNECT_EVENT.clone(),
+    ]
 }

@@ -26,7 +26,9 @@ pub use http::HttpServer;
 pub use http_actions::HttpProtocol;
 
 pub mod datalink;
+pub mod datalink_actions;
 pub use datalink::DataLinkServer;
+pub use datalink_actions::DataLinkProtocol;
 
 #[cfg(feature = "udp")]
 pub mod udp;

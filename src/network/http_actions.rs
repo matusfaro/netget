@@ -1,13 +1,15 @@
 //! HTTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// HTTP protocol action handler
 pub struct HttpProtocol;
@@ -18,7 +20,7 @@ impl HttpProtocol {
     }
 }
 
-impl ProtocolActions for HttpProtocol {
+impl Protocol for HttpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // HTTP has no async actions - it's purely request-response
         Vec::new()
@@ -45,6 +47,10 @@ impl ProtocolActions for HttpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "HTTP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_http_event_types()
     }
 }
 
@@ -123,4 +129,58 @@ fn send_http_response_action() -> ActionDefinition {
             "body": "<html><body>Hello World</body></html>"
         }),
     }
+}
+
+// ============================================================================
+// HTTP Action Constants
+// ============================================================================
+
+pub static SEND_HTTP_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_http_response_action());
+
+// ============================================================================
+// HTTP Event Type Constants
+// ============================================================================
+
+/// HTTP request event - triggered when client sends an HTTP request
+pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "http_request",
+        "HTTP request received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (GET, POST, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "uri".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request URI".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "headers".to_string(),
+            type_hint: "object".to_string(),
+            description: "Request headers as key-value pairs".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request body".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        SEND_HTTP_RESPONSE_ACTION.clone(),
+    ])
+});
+
+/// Get HTTP event types
+pub fn get_http_event_types() -> Vec<EventType> {
+    vec![
+        HTTP_REQUEST_EVENT.clone(),
+    ]
 }

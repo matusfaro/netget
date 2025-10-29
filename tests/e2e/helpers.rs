@@ -9,9 +9,95 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
+use std::future::Future;
 
 /// Result type for e2e tests
 pub type E2EResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+/// Retry a condition with exponential backoff until it succeeds or times out
+///
+/// # Arguments
+/// * `condition` - A closure that returns Ok(T) when successful, Err otherwise
+/// * `initial_delay` - Initial delay between retries (default: 50ms)
+/// * `max_delay` - Maximum delay between retries (default: 1s)
+/// * `timeout_duration` - Total timeout for all retries (default: 10s)
+///
+/// # Returns
+/// * `Ok(T)` - The successful result from the condition
+/// * `Err(_)` - If timeout is reached before condition succeeds
+///
+/// # Example
+/// ```rust,ignore
+/// // Wait for server to be ready
+/// retry_with_backoff(
+///     || async {
+///         match TcpStream::connect(addr).await {
+///             Ok(stream) => Ok(stream),
+///             Err(e) => Err(e.into()),
+///         }
+///     },
+///     Duration::from_millis(50),
+///     Duration::from_secs(1),
+///     Duration::from_secs(5),
+/// ).await?;
+/// ```
+pub async fn retry_with_backoff<F, Fut, T, E>(
+    mut condition: F,
+    initial_delay: Duration,
+    max_delay: Duration,
+    timeout_duration: Duration,
+) -> Result<T, Box<dyn std::error::Error>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::error::Error + 'static,
+{
+    let start = std::time::Instant::now();
+    let mut delay = initial_delay;
+    let mut attempts = 0;
+
+    loop {
+        attempts += 1;
+
+        match condition().await {
+            Ok(result) => {
+                if attempts > 1 {
+                    println!("  [RETRY] Condition succeeded after {} attempts in {:?}", attempts, start.elapsed());
+                }
+                return Ok(result);
+            }
+            Err(e) => {
+                if start.elapsed() >= timeout_duration {
+                    return Err(format!(
+                        "Retry timeout after {:?} ({} attempts). Last error: {}",
+                        timeout_duration, attempts, e
+                    )
+                    .into());
+                }
+
+                // Sleep with exponential backoff
+                sleep(delay).await;
+                delay = (delay * 2).min(max_delay);
+            }
+        }
+    }
+}
+
+/// Retry a condition with default settings (50ms initial, 1s max, 10s timeout)
+pub async fn retry<F, Fut, T, E>(condition: F) -> Result<T, Box<dyn std::error::Error>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::error::Error + 'static,
+{
+    retry_with_backoff(
+        condition,
+        Duration::from_millis(50),
+        Duration::from_secs(1),
+        Duration::from_secs(10),
+    )
+    .await
+}
 
 /// Get an available port for testing
 pub async fn get_available_port() -> E2EResult<u16> {
@@ -72,6 +158,8 @@ pub struct NetGetServer {
     pub port: u16,
     /// The actual protocol stack that was started
     pub stack: String,
+    /// Captured server output lines (for verification)
+    pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
 }
 
 impl NetGetServer {
@@ -107,6 +195,23 @@ impl NetGetServer {
     /// Check if the server is still running
     pub fn is_running(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// Check if output contains a specific string
+    pub async fn output_contains(&self, needle: &str) -> bool {
+        let lines = self.output_lines.lock().await;
+        lines.iter().any(|line| line.contains(needle))
+    }
+
+    /// Count occurrences of a pattern in output
+    pub async fn count_in_output(&self, needle: &str) -> usize {
+        let lines = self.output_lines.lock().await;
+        lines.iter().filter(|line| line.contains(needle)).count()
+    }
+
+    /// Get all output lines
+    pub async fn get_output(&self) -> Vec<String> {
+        self.output_lines.lock().await.clone()
     }
 }
 
@@ -162,14 +267,19 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     let expected_port = extract_port_from_prompt(&config.prompt);
     let expected_stack = extract_stack_from_prompt(&config.prompt);
 
+    // Create shared storage for output lines (BEFORE reading so we capture everything)
+    let output_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let output_lines_clone = output_lines.clone();
+
     // Wait for the server to start and parse the actual configuration
-    let (actual_port, actual_stack) = wait_for_server_startup(&mut reader).await?;
+    let (actual_port, actual_stack) = wait_for_server_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
 
     // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
     // Without this, the server will crash with "Broken pipe" when stdout buffer fills
     tokio::spawn(async move {
         while let Some(line) = reader.next_line().await.ok().flatten() {
             println!("[DEBUG] Server output: {}", line);
+            output_lines_clone.lock().await.push(line);
         }
     });
 
@@ -206,6 +316,7 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         child,
         port: actual_port,
         stack: actual_stack,
+        output_lines,
     })
 }
 
@@ -301,8 +412,9 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
 }
 
 /// Wait for server startup and extract port and stack info
-async fn wait_for_server_startup(
+async fn wait_for_server_startup_with_capture(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
 ) -> E2EResult<(u16, String)> {
     let wait_future = async {
         let mut port = 0u16;
@@ -311,6 +423,7 @@ async fn wait_for_server_startup(
 
         while let Some(line) = reader.next_line().await? {
             println!("[DEBUG] Server output: {}", line); // Debug output
+            output_lines.lock().await.push(line.clone()); // Capture for assertions
 
             // Look for SERVER message pattern: "[SERVER] Starting server #N (<STACK>) on <ADDRESS>:<PORT>"
             if line.contains("[SERVER]") && line.contains("Starting server") && line.contains("on ") {
@@ -386,8 +499,8 @@ async fn wait_for_server_startup(
             }
 
             // For some protocols (mDNS, MySQL, IPP), the "listening on" message might differ
-            // Also accept "Server is running" as confirmation after seeing the starting message
-            if found_starting_message && line.contains("Server is running") {
+            // Also accept "Server is running" or "advertising" as confirmation after seeing the starting message
+            if found_starting_message && (line.contains("Server is running") || line.contains("advertising")) {
                 println!("[DEBUG] Server confirmed running on port {}", port);
                 return Ok((port, stack));
             }

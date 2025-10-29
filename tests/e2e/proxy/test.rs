@@ -63,7 +63,6 @@ async fn start_test_http_server() -> E2EResult<(u16, tokio::task::JoinHandle<()>
     });
 
     // Give server time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     Ok((port, handle))
 }
@@ -122,7 +121,6 @@ async fn start_test_https_server() -> E2EResult<(u16, tokio::task::JoinHandle<()
     });
 
     // Give server time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     Ok((port, handle))
 }

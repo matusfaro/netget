@@ -29,7 +29,6 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Use command-line snmpget tool (more reliable than Rust snmp crate)
     println!("Querying sysDescr OID with snmpget...");
@@ -106,7 +105,6 @@ async fn test_snmp_get_next() -> E2EResult<()> {
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Send GETNEXT request
     println!("Sending GETNEXT request...");
@@ -153,7 +151,6 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query interface statistics
     let agent_addr = format!("127.0.0.1:{}", server.port);
@@ -205,7 +202,6 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query custom enterprise OIDs
     let agent_addr = format!("127.0.0.1:{}", server.port);

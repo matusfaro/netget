@@ -1,15 +1,16 @@
 //! TCP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 
 /// Connection data for TCP protocol
@@ -59,7 +60,7 @@ impl TcpProtocol {
     }
 }
 
-impl ProtocolActions for TcpProtocol {
+impl Protocol for TcpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             send_to_connection_action(),
@@ -131,6 +132,10 @@ impl ProtocolActions for TcpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "TCP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_tcp_event_types()
     }
 }
 
@@ -246,4 +251,58 @@ fn close_this_connection_action() -> ActionDefinition {
             "type": "close_this_connection"
         }),
     }
+}
+
+// ============================================================================
+// TCP Action Constants
+// ============================================================================
+
+pub static SEND_TCP_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_tcp_data_action());
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
+pub static CLOSE_THIS_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_this_connection_action());
+
+// ============================================================================
+// TCP Event Type Constants
+// ============================================================================
+
+/// TCP connection opened event - triggered when new connection is established
+pub static TCP_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tcp_connection_opened",
+        "New TCP connection established (send initial greeting/banner if needed)"
+    )
+    // No parameters - just connection opened notification
+    .with_actions(vec![
+        SEND_TCP_DATA_ACTION.clone(),
+        CLOSE_THIS_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// TCP data received event - triggered when data is received on connection
+pub static TCP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tcp_data_received",
+        "Data received on TCP connection"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "The data received (as hex string or UTF-8 if printable)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        SEND_TCP_DATA_ACTION.clone(),
+        WAIT_FOR_MORE_ACTION.clone(),
+        CLOSE_THIS_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// Get TCP event types
+pub fn get_tcp_event_types() -> Vec<EventType> {
+    vec![
+        TCP_CONNECTION_OPENED_EVENT.clone(),
+        TCP_DATA_RECEIVED_EVENT.clone(),
+    ]
 }

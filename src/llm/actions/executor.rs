@@ -5,7 +5,7 @@
 
 use super::{
     common::CommonAction,
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
 };
 use crate::state::app_state::AppState;
 use anyhow::{Context as AnyhowContext, Result};
@@ -18,6 +18,10 @@ pub struct ExecutionResult {
 
     /// Protocol-specific action results
     pub protocol_results: Vec<ActionResult>,
+
+    /// Raw action JSON (for protocols that need to manually process actions)
+    /// This is used by protocols like mDNS and NFS that have special manual processing
+    pub raw_actions: Vec<serde_json::Value>,
 }
 
 impl ExecutionResult {
@@ -25,6 +29,7 @@ impl ExecutionResult {
         Self {
             messages: Vec::new(),
             protocol_results: Vec::new(),
+            raw_actions: Vec::new(),
         }
     }
 
@@ -50,9 +55,12 @@ impl ExecutionResult {
 pub async fn execute_actions(
     actions: Vec<serde_json::Value>,
     state: &AppState,
-    protocol: Option<&dyn ProtocolActions>,
+    protocol: Option<&dyn Protocol>,
 ) -> Result<ExecutionResult> {
     let mut result = ExecutionResult::new();
+
+    // Store raw actions for protocols that need manual processing (mDNS, NFS, etc.)
+    result.raw_actions = actions.clone();
 
     for (i, action) in actions.iter().enumerate() {
         debug!("Executing action {}: {:?}", i, action);
@@ -146,6 +154,11 @@ async fn execute_common_action(
                 state.set_memory(server_id, new_memory).await;
                 debug!("Server #{} memory appended", server_id.as_u32());
             }
+        }
+
+        CommonAction::UpdateScript { .. } => {
+            // This should be handled by the caller
+            warn!("update_script action cannot be executed by action executor - must be handled by caller");
         }
     }
 

@@ -10,9 +10,10 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::{execute_actions, ActionResponse, ProtocolActions};
-use crate::llm::prompt::PromptBuilder;
+use crate::network::udp_actions::UDP_DATAGRAM_RECEIVED_EVENT;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// UDP server that manages UDP connections
@@ -94,101 +95,82 @@ impl UdpServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-
-                            // Build event description
-                            let event_description = {
-                                let data_preview = if data.len() > 200 {
-                                    format!("{} bytes from {} (preview: {:?}...)", data.len(), peer_addr, &data[..200])
-                                } else {
-                                    format!("{} bytes from {}: {:?}", data.len(), peer_addr, data)
-                                };
-                                format!("UDP datagram received: {}", data_preview)
+                            // Build event data with data preview
+                            let data_preview = if data.len() > 200 {
+                                format!("{:?}...", &data[..200])
+                            } else {
+                                format!("{:?}", data)
                             };
 
-                            // Get protocol sync actions
-                            let protocol_actions = protocol_clone.get_sync_actions();
+                            let event = Event::new(&UDP_DATAGRAM_RECEIVED_EVENT, serde_json::json!({
+                                "peer_address": peer_addr.to_string(),
+                                "data_length": data.len(),
+                                "data_preview": data_preview
+                            }));
 
-                            // Build prompt
-                            let prompt = PromptBuilder::build_network_event_action_prompt(
+                            debug!("UDP calling LLM for datagram from {}", peer_addr);
+                            let _ = status_clone.send(format!("[DEBUG] UDP calling LLM for datagram from {}", peer_addr));
+
+                            match call_llm(
+                                &llm_clone,
                                 &state_clone,
-                                &event_description,
-                                protocol_actions,
-                            ).await;
+                                server_id,
+                                None,
+                                &event,
+                                protocol_clone.as_ref(),
+                            ).await {
+                                Ok(execution_result) => {
+                                    for message in &execution_result.messages {
+                                        info!("{}", message);
+                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                    }
 
-                            // Call LLM
-                            match llm_clone.generate(&model, &prompt).await {
-                                Ok(llm_output) => {
-                                    debug!("LLM UDP response: {}", llm_output);
+                                    debug!("UDP got {} protocol results", execution_result.protocol_results.len());
+                                    let _ = status_clone.send(format!("[DEBUG] UDP got {} protocol results", execution_result.protocol_results.len()));
 
-                                    // Parse action response
-                                    match ActionResponse::from_str(&llm_output) {
-                                        Ok(action_response) => {
-                                            // Execute actions
-                                            match execute_actions(
-                                                action_response.actions,
-                                                &state_clone,
-                                                Some(protocol_clone.as_ref()),
-                                            ).await {
-                                                Ok(result) => {
-                                                    // Display messages
-                                                    for msg in result.messages {
-                                                        let _ = status_clone.send(msg);
-                                                    }
+                                    for protocol_result in execution_result.protocol_results {
+                                        if let Some(output_data) = protocol_result.get_all_output().first() {
+                                            if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
+                                                error!("Failed to send UDP response: {}", e);
+                                            } else {
+                                                // DEBUG: Log summary with data preview
+                                                if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                                    let data_str = String::from_utf8_lossy(output_data);
+                                                    let preview = if data_str.len() > 100 {
+                                                        format!("{}...", &data_str[..100])
+                                                    } else {
+                                                        data_str.to_string()
+                                                    };
+                                                    debug!("UDP sent {} bytes to {}: {}", output_data.len(), peer_addr, preview);
+                                                    let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {}: {}", output_data.len(), peer_addr, preview));
 
-                                                    // Handle protocol results
-                                                    for protocol_result in result.protocol_results {
-                                                        if let Some(output_data) = protocol_result.get_all_output().first() {
-                                                            if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
-                                                                error!("Failed to send UDP response: {}", e);
-                                                            } else {
-                                                                // DEBUG: Log summary with data preview
-                                                                if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
-                                                                    let data_str = String::from_utf8_lossy(output_data);
-                                                                    let preview = if data_str.len() > 100 {
-                                                                        format!("{}...", &data_str[..100])
-                                                                    } else {
-                                                                        data_str.to_string()
-                                                                    };
-                                                                    debug!("UDP sent {} bytes to {}: {}", output_data.len(), peer_addr, preview);
-                                                                    let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {}: {}", output_data.len(), peer_addr, preview));
+                                                    // TRACE: Log full text payload
+                                                    trace!("UDP sent (text): {:?}", data_str);
+                                                    let _ = status_clone.send(format!("[TRACE] UDP sent (text): {:?}", data_str));
+                                                } else {
+                                                    debug!("UDP sent {} bytes to {} (binary data)", output_data.len(), peer_addr);
+                                                    let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {} (binary data)", output_data.len(), peer_addr));
 
-                                                                    // TRACE: Log full text payload
-                                                                    trace!("UDP sent (text): {:?}", data_str);
-                                                                    let _ = status_clone.send(format!("[TRACE] UDP sent (text): {:?}", data_str));
-                                                                } else {
-                                                                    debug!("UDP sent {} bytes to {} (binary data)", output_data.len(), peer_addr);
-                                                                    let _ = status_clone.send(format!("[DEBUG] UDP sent {} bytes to {} (binary data)", output_data.len(), peer_addr));
-
-                                                                    // TRACE: Log full hex payload
-                                                                    let hex_str = hex::encode(output_data);
-                                                                    trace!("UDP sent (hex): {}", hex_str);
-                                                                    let _ = status_clone.send(format!("[TRACE] UDP sent (hex): {}", hex_str));
-                                                                }
-
-                                                                let _ = status_clone.send(format!(
-                                                                    "→ UDP response to {} ({} bytes)",
-                                                                    peer_addr, output_data.len()
-                                                                ));
-                                                            }
-                                                        }
-                                                    }
+                                                    // TRACE: Log full hex payload
+                                                    let hex_str = hex::encode(output_data);
+                                                    trace!("UDP sent (hex): {}", hex_str);
+                                                    let _ = status_clone.send(format!("[TRACE] UDP sent (hex): {}", hex_str));
                                                 }
-                                                Err(e) => {
-                                                    error!("Failed to execute actions: {}", e);
-                                                    let _ = status_clone.send(format!("✗ Action execution error: {e}"));
-                                                }
+
+                                                let _ = status_clone.send(format!(
+                                                    "→ UDP response to {} ({} bytes)",
+                                                    peer_addr, output_data.len()
+                                                ));
                                             }
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to parse action response: {}", e);
-                                            let _ = status_clone.send(format!("✗ Parse error: {e}"));
+                                        } else {
+                                            debug!("UDP protocol result has no output data");
+                                            let _ = status_clone.send("[DEBUG] UDP protocol result has no output data".to_string());
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("LLM error for UDP: {}", e);
-                                    let _ = status_clone.send(format!("✗ LLM error for UDP: {}", e));
+                                    error!("UDP LLM call failed: {}", e);
+                                    let _ = status_clone.send(format!("✗ UDP LLM error: {}", e));
                                 }
                             }
                         });

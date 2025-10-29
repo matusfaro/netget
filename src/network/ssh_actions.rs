@@ -1,15 +1,16 @@
 //! SSH protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 use tracing::debug;
 
@@ -81,7 +82,7 @@ impl SshProtocol {
     }
 }
 
-impl ProtocolActions for SshProtocol {
+impl Protocol for SshProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             close_ssh_connection_action(),
@@ -121,6 +122,10 @@ impl ProtocolActions for SshProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "SSH"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_ssh_event_types()
     }
 }
 
@@ -284,37 +289,13 @@ fn list_ssh_connections_action() -> ActionDefinition {
     }
 }
 
-/// Custom action for SSH authentication decisions
-///
-/// This action is used when SSH receives an authentication request.
-/// The LLM decides whether to allow or deny the authentication.
-pub fn ssh_auth_decision_action(username: &str, auth_type: &str) -> ActionDefinition {
-    ActionDefinition {
-        name: "ssh_auth_decision".to_string(),
-        description: format!(
-            "Decide whether to allow SSH authentication for user '{}' using method '{}'. \
-            Consider the user instruction to determine if this user should be allowed. \
-            Common scenarios: allow all users, allow specific usernames, deny all.",
-            username, auth_type
-        ),
-        parameters: vec![Parameter {
-            name: "allowed".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "true to allow authentication, false to deny".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "ssh_auth_decision",
-            "allowed": true
-        }),
-    }
-}
 
-/// Custom action for SSH shell banner/greeting
-///
-/// This action is used when an SSH shell session is opened.
-/// The LLM can optionally send a banner or greeting message.
-pub fn ssh_send_banner_action() -> ActionDefinition {
+// ============================================================================
+// SSH Action Constants
+// ============================================================================
+
+/// SSH send banner action constant
+pub static SSH_SEND_BANNER_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
         name: "ssh_send_banner".to_string(),
         description: "Send a banner or greeting message when the SSH shell session opens. \
@@ -331,22 +312,36 @@ pub fn ssh_send_banner_action() -> ActionDefinition {
             "banner": "Welcome to NetGet SSH Server!\nType 'help' for available commands.\n"
         }),
     }
-}
+});
 
-/// Custom action for SSH shell command responses
-///
-/// This action is used when the SSH shell receives a command.
-/// The LLM interprets the command and generates an appropriate response.
-pub fn ssh_shell_response_action(command: &str) -> ActionDefinition {
+/// SSH authentication decision action constant
+pub static SSH_AUTH_DECISION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "ssh_auth_decision".to_string(),
+        description: "Decide whether to allow SSH authentication for this user. \
+            Consider the user instruction to determine if this user should be allowed. \
+            Common scenarios: allow all users, allow specific usernames, deny all.".to_string(),
+        parameters: vec![Parameter {
+            name: "allowed".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "true to allow authentication, false to deny".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "ssh_auth_decision",
+            "allowed": true
+        }),
+    }
+});
+
+/// SSH shell response action constant
+pub static SSH_SHELL_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
         name: "ssh_shell_response".to_string(),
-        description: format!(
-            "Respond to the SSH shell command: '{}'. \
+        description: "Respond to the SSH shell command. \
             Parse the command and generate appropriate output. \
             Common commands: pwd, ls, cd, cat, echo, help, exit, logout. \
-            Use memory (set_memory/append_memory) to track state like current directory or session variables.",
-            command
-        ),
+            Use memory (set_memory/append_memory) to track state like current directory or session variables.".to_string(),
         parameters: vec![Parameter {
             name: "response".to_string(),
             type_hint: "string".to_string(),
@@ -358,14 +353,10 @@ pub fn ssh_shell_response_action(command: &str) -> ActionDefinition {
             "response": "/home/user\n"
         }),
     }
-}
+});
 
-/// Custom action for closing SSH connection (for shell commands)
-///
-/// This action allows the LLM to close the SSH connection,
-/// typically in response to commands like 'exit', 'logout', or explicit close requests.
-/// This is just an alias for close_this_connection for use in custom action lists.
-pub fn ssh_close_connection_action() -> ActionDefinition {
+/// SSH close connection action constant
+pub static SSH_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
         name: "close_this_connection".to_string(),
         description: "Close the SSH connection. Use this when the user types 'exit', 'logout', \
@@ -375,4 +366,153 @@ pub fn ssh_close_connection_action() -> ActionDefinition {
             "type": "close_this_connection"
         }),
     }
+});
+
+// ============================================================================
+// SSH Event Type Constants
+// ============================================================================
+// These are static definitions that can be referenced throughout the codebase
+
+/// SSH authentication event - triggered when a client attempts to authenticate
+pub static SSH_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ssh_auth",
+        "SSH authentication request received (username and auth method provided)"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "username".to_string(),
+            type_hint: "string".to_string(),
+            description: "Username attempting to authenticate".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "auth_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Authentication method (e.g., 'password', 'publickey')".to_string(),
+            required: true,
+        },
+    ])
+    .with_action(SSH_AUTH_DECISION_ACTION.clone())
+});
+
+/// SSH banner event - triggered when a shell session opens
+pub static SSH_BANNER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ssh_banner",
+        "SSH shell session opened (send welcome banner/greeting)"
+    )
+    // No parameters - banner is shown before any data is available
+    .with_action(SSH_SEND_BANNER_ACTION.clone())
+});
+
+/// SSH shell command event - triggered when user enters a command
+pub static SSH_SHELL_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ssh_shell_command",
+        "SSH shell command received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "The command entered by the user".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        SSH_SHELL_RESPONSE_ACTION.clone(),
+        SSH_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// SFTP operation event - triggered when SFTP client performs a filesystem operation
+pub static SFTP_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sftp_operation",
+        "SFTP client requested a filesystem operation"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "The SFTP operation type (opendir, readdir, open, read, close, lstat, fstat, realpath)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "params".to_string(),
+            type_hint: "string".to_string(),
+            description: "Operation-specific parameters (path, handle, offset, etc.)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        // SFTP uses raw_actions for manual response construction
+    ])
+});
+
+/// Get SSH event types
+pub fn get_ssh_event_types() -> Vec<EventType> {
+    vec![
+        SSH_AUTH_EVENT.clone(),
+        SSH_BANNER_EVENT.clone(),
+        SSH_SHELL_COMMAND_EVENT.clone(),
+        SFTP_OPERATION_EVENT.clone(),
+    ]
+}
+
+// ============================================================================
+// Legacy action builder functions (for backward compatibility)
+// ============================================================================
+// These are kept for places that need dynamic descriptions
+
+/// Custom action for SSH authentication decisions (with context)
+///
+/// This is a legacy function kept for backward compatibility where dynamic
+/// descriptions are needed. For new code, use SSH_AUTH_DECISION_ACTION constant.
+#[allow(dead_code)]
+pub fn ssh_auth_decision_action(username: &str, auth_type: &str) -> ActionDefinition {
+    ActionDefinition {
+        name: "ssh_auth_decision".to_string(),
+        description: format!(
+            "Decide whether to allow SSH authentication for user '{}' using method '{}'. \
+            Consider the user instruction to determine if this user should be allowed. \
+            Common scenarios: allow all users, allow specific usernames, deny all.",
+            username, auth_type
+        ),
+        parameters: SSH_AUTH_DECISION_ACTION.parameters.clone(),
+        example: SSH_AUTH_DECISION_ACTION.example.clone(),
+    }
+}
+
+/// Custom action for SSH shell command responses (with context)
+///
+/// This is a legacy function kept for backward compatibility where dynamic
+/// descriptions are needed. For new code, use SSH_SHELL_RESPONSE_ACTION constant.
+#[allow(dead_code)]
+pub fn ssh_shell_response_action(command: &str) -> ActionDefinition {
+    ActionDefinition {
+        name: "ssh_shell_response".to_string(),
+        description: format!(
+            "Respond to the SSH shell command: '{}'. \
+            Parse the command and generate appropriate output. \
+            Common commands: pwd, ls, cd, cat, echo, help, exit, logout. \
+            Use memory (set_memory/append_memory) to track state like current directory or session variables.",
+            command
+        ),
+        parameters: SSH_SHELL_RESPONSE_ACTION.parameters.clone(),
+        example: SSH_SHELL_RESPONSE_ACTION.example.clone(),
+    }
+}
+
+/// Legacy wrapper for SSH banner action
+#[allow(dead_code)]
+pub fn ssh_send_banner_action() -> ActionDefinition {
+    SSH_SEND_BANNER_ACTION.clone()
+}
+
+/// Legacy wrapper for SSH close connection action
+#[allow(dead_code)]
+pub fn ssh_close_connection_action() -> ActionDefinition {
+    SSH_CLOSE_CONNECTION_ACTION.clone()
 }

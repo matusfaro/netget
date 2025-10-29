@@ -1,12 +1,14 @@
 //! IPP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
 
 /// IPP protocol action handler
@@ -18,7 +20,7 @@ impl IppProtocol {
     }
 }
 
-impl ProtocolActions for IppProtocol {
+impl Protocol for IppProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             list_print_jobs_action(),
@@ -53,6 +55,10 @@ impl ProtocolActions for IppProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "IPP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_ipp_event_types()
     }
 }
 
@@ -322,4 +328,56 @@ fn build_ipp_job_attributes_response(attributes: &serde_json::Map<String, serde_
     response.push(0x03);
 
     response
+}
+
+// ============================================================================
+// IPP Action Constants
+// ============================================================================
+
+pub static IPP_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ipp_response_action());
+pub static IPP_PRINTER_ATTRIBUTES_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ipp_printer_attributes_action());
+pub static IPP_JOB_ATTRIBUTES_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ipp_job_attributes_action());
+
+// ============================================================================
+// IPP Event Type Constants
+// ============================================================================
+
+/// IPP request event - triggered when client sends an IPP request
+pub static IPP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ipp_request",
+        "IPP request received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (usually POST)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "uri".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request URI".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "IPP operation name (e.g., Print-Job, Get-Printer-Attributes)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        IPP_RESPONSE_ACTION.clone(),
+        IPP_PRINTER_ATTRIBUTES_ACTION.clone(),
+        IPP_JOB_ATTRIBUTES_ACTION.clone(),
+    ])
+});
+
+/// Get IPP event types
+pub fn get_ipp_event_types() -> Vec<EventType> {
+    vec![
+        IPP_REQUEST_EVENT.clone(),
+    ]
 }

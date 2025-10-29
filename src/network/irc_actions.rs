@@ -1,15 +1,16 @@
 //! IRC protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 use tracing::debug;
 
@@ -101,7 +102,7 @@ impl IrcProtocol {
     }
 }
 
-impl ProtocolActions for IrcProtocol {
+impl Protocol for IrcProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // IRC could have async actions like broadcast_message in the future
         Vec::new()
@@ -145,6 +146,10 @@ impl ProtocolActions for IrcProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "IRC"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_irc_event_types()
     }
 }
 
@@ -617,4 +622,41 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection"
         }),
     }
+}
+
+// ============================================================================
+// IRC Event Type Constants
+// ============================================================================
+
+pub static IRC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "irc_message_received",
+        "IRC message received from a client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message".to_string(),
+            type_hint: "string".to_string(),
+            description: "The IRC message line received".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_irc_message_action(),
+        send_irc_welcome_action(),
+        send_irc_pong_action(),
+        send_irc_join_action(),
+        send_irc_part_action(),
+        send_irc_privmsg_action(),
+        send_irc_notice_action(),
+        send_irc_numeric_action(),
+        wait_for_more_action(),
+        close_connection_action(),
+    ])
+});
+
+pub fn get_irc_event_types() -> Vec<EventType> {
+    vec![
+        IRC_MESSAGE_RECEIVED_EVENT.clone(),
+    ]
 }

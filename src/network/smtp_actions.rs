@@ -1,12 +1,14 @@
 //! SMTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
 
 /// SMTP protocol action handler
@@ -131,7 +133,7 @@ impl SmtpProtocol {
     }
 }
 
-impl ProtocolActions for SmtpProtocol {
+impl Protocol for SmtpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // SMTP doesn't need async actions for now
         Vec::new()
@@ -173,6 +175,10 @@ impl ProtocolActions for SmtpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "SMTP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_smtp_event_types()
     }
 }
 
@@ -338,4 +344,56 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection"
         }),
     }
+}
+
+// ============================================================================
+// SMTP Action Constants
+// ============================================================================
+
+pub static SEND_SMTP_GREETING_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_greeting_action());
+pub static SEND_SMTP_OK_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_ok_action());
+pub static SEND_SMTP_EHLO_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_ehlo_action());
+pub static SEND_SMTP_START_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_start_data_action());
+pub static SEND_SMTP_ERROR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_error_action());
+pub static SEND_SMTP_QUIT_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_quit_action());
+pub static SEND_SMTP_MESSAGE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_message_action());
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
+pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_connection_action());
+
+// ============================================================================
+// SMTP Event Type Constants
+// ============================================================================
+
+/// SMTP command event - triggered when client sends an SMTP command
+pub static SMTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "smtp_command",
+        "SMTP command received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "The SMTP command received (e.g., 'EHLO example.com', 'MAIL FROM:<sender@example.com>')".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        SEND_SMTP_GREETING_ACTION.clone(),
+        SEND_SMTP_OK_ACTION.clone(),
+        SEND_SMTP_EHLO_ACTION.clone(),
+        SEND_SMTP_START_DATA_ACTION.clone(),
+        SEND_SMTP_ERROR_ACTION.clone(),
+        SEND_SMTP_QUIT_ACTION.clone(),
+        SEND_SMTP_MESSAGE_ACTION.clone(),
+        WAIT_FOR_MORE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// Get SMTP event types
+pub fn get_smtp_event_types() -> Vec<EventType> {
+    vec![
+        SMTP_COMMAND_EVENT.clone(),
+    ]
 }

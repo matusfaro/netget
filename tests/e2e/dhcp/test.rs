@@ -122,7 +122,6 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
     println!("DHCP server started on port {}", server.port);
 
     // Wait for DHCP server to fully initialize (needs LLM call)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Send DHCP DISCOVER
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -179,7 +178,6 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
     ).await?;
     println!("DHCP server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Send DHCP REQUEST (simplified - usually follows DISCOVER/OFFER)
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -241,7 +239,6 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
     ).await?;
     println!("DHCP server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Send DHCP DISCOVER and check for options in response
     let socket = UdpSocket::bind("0.0.0.0:0")?;

@@ -1,9 +1,11 @@
 //! PostgreSQL server implementation using pgwire
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
 use crate::network::connection::ConnectionId;
-use crate::network::postgresql_actions::PostgresqlProtocol;
+use crate::network::postgresql_actions::{PostgresqlProtocol, POSTGRESQL_QUERY_EVENT};
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use anyhow::Result;
 use pgwire::api::auth::noop::NoopStartupHandler;
@@ -230,23 +232,23 @@ impl SimpleQueryHandler for PostgresqlHandler {
 
         trace!("Simple query handler calling LLM for: {}", query);
 
-        // Build context for LLM
-        let _context = serde_json::json!({
-            "query": query,
-            "connection_id": self.connection_id.to_string(),
-        });
+        // Create query event
+        let event = Event::new(
+            &POSTGRESQL_QUERY_EVENT,
+            serde_json::json!({
+                "query": query,
+            }),
+        );
 
-        // Call LLM with actions
         let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
-        let event_description = format!("SQL Query: {}", query);
 
-        let llm_result = crate::llm::call_llm_with_actions(
+        let llm_result = call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            &event_description,
-            Some(self.protocol.as_ref()),
-            vec![],
+            Some(self.connection_id),
+            &event,
+            self.protocol.as_ref(),
         )
         .await;
 
@@ -385,17 +387,23 @@ impl ExtendedQueryHandler for PostgresqlHandler {
             .status_tx
             .send(format!("[DEBUG] Extended query handler calling LLM for: {}", sql));
 
-        // Call LLM with actions
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
-        let event_description = format!("SQL Query: {}", sql);
+        // Create query event
+        let event = Event::new(
+            &POSTGRESQL_QUERY_EVENT,
+            serde_json::json!({
+                "query": sql,
+            }),
+        );
 
-        let llm_result = crate::llm::call_llm_with_actions(
+        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+
+        let llm_result = call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            &event_description,
-            Some(self.protocol.as_ref()),
-            vec![],
+            Some(self.connection_id),
+            &event,
+            self.protocol.as_ref(),
         )
         .await;
 

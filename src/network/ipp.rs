@@ -181,25 +181,23 @@ async fn handle_ipp_request_with_llm(
 
     trace!("IPP operation: {}", operation_name);
 
-    // Build context for LLM
-    let _context = serde_json::json!({
-        "method": method,
-        "uri": uri,
-        "headers": headers,
-        "body_length": body_bytes.len(),
-        "operation": operation_name,
-    });
+    // Create IPP request event
+    let event = crate::protocol::Event::new(
+        &crate::network::ipp_actions::IPP_REQUEST_EVENT,
+        serde_json::json!({
+            "method": method,
+            "uri": uri,
+            "operation": operation_name,
+        }),
+    );
 
-    // Call LLM with actions
-    let event_description = format!("IPP {} {} - Operation: {}", method, uri, operation_name);
-
-    let llm_result = crate::llm::call_llm_with_actions(
+    let llm_result = crate::llm::action_helper::call_llm(
         &llm_client,
         &app_state,
         server_id,
-        &event_description,
-        Some(protocol.as_ref()),
-        vec![],
+        None, // TODO: Add connection_id when available
+        &event,
+        protocol.as_ref(),
     )
     .await;
 

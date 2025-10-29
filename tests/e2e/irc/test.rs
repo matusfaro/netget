@@ -27,7 +27,6 @@ async fn test_irc_welcome() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect and perform IRC registration
     println!("Connecting to IRC server...");
@@ -99,7 +98,6 @@ async fn test_irc_ping_pong() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Send PING and verify PONG
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -162,7 +160,6 @@ async fn test_irc_join_channel() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect and join a channel
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -223,7 +220,6 @@ async fn test_irc_privmsg() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Send PRIVMSG and check for response
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -276,7 +272,6 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect multiple clients
     println!("Testing multiple IRC clients...");
@@ -308,7 +303,6 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
         }
 
         // Small delay between clients
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     println!("✓ Multiple client handling tested");

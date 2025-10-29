@@ -177,6 +177,8 @@ This policy ensures NetGet respects user privacy and works in isolated/air-gappe
 
 ## Logging (CRITICAL)
 
+**IMPORTANT**: Do NOT use `info!()`, `debug!()`, `trace!()`, `error!()`, or `warn!()` macros directly without also sending to status_tx. These macros alone only write to the log file and are not visible in the TUI.
+
 **Dual logging pattern** - ALL logs MUST go to BOTH:
 1. Tracing macros (`debug!`, `trace!`, `error!`, `warn!`, `info!`) → `netget.log` file
 2. Status channel (`status_tx.send()`) → TUI Status panel
@@ -187,6 +189,8 @@ debug!("TCP sent {} bytes to {}", len, conn_id);
 let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id));
 ```
 
+**Exception**: In synchronous code without access to `status_tx` (like script executor), use tracing macros only. The tracing framework automatically adds prefixes like `[DEBUG]` and `[TRACE]`.
+
 **Prefixes**: `[DEBUG]`, `[TRACE]`, `[ERROR]`, `[WARN]`, `[INFO]`
 **User-facing symbols**: `→` (success), `✗` (failure), `✓` (confirmation)
 
@@ -194,8 +198,8 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id))
 - ERROR - Critical failures
 - WARN - Non-fatal issues
 - INFO - Major lifecycle events (server start/stop, connections)
-- DEBUG - Request/response summaries
-- TRACE - Full payloads (pretty-printed JSON)
+- DEBUG - Request/response summaries, general info
+- TRACE - Full payloads (pretty-printed JSON), script input/output, detailed execution traces
 
 **Default**: INFO for non-interactive, TRACE for interactive (logged to `netget.log`)
 

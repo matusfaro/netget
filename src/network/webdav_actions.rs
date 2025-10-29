@@ -1,7 +1,7 @@
 //! WebDAV protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
@@ -17,7 +17,7 @@ impl WebDavProtocol {
     }
 }
 
-impl ProtocolActions for WebDavProtocol {
+impl Protocol for WebDavProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             create_file_action(),

@@ -28,7 +28,6 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
     println!("Server started, mDNS should be advertising");
 
     // Give mDNS time to start advertising
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Query for mDNS services
     println!("Querying for mDNS services...");
@@ -91,7 +90,6 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     if found_service {
@@ -128,7 +126,6 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
     println!("Server started, mDNS should be advertising multiple services");
 
     // Give mDNS time to start advertising
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Query for mDNS services
     println!("Querying for mDNS services...");
@@ -170,7 +167,6 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
                 }
                 _ => break,
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -206,7 +202,6 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
     println!("Server started, mDNS advertising with properties");
 
     // Give mDNS time to start
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Query and check properties
     println!("Querying for mDNS service properties...");
@@ -244,7 +239,6 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
             }
             _ => break,
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     if found_properties {
@@ -276,7 +270,6 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started with custom service type");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Query for custom service type
     println!("Querying for custom service type...");
@@ -314,7 +307,6 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
             }
             _ => break,
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     if found_custom {

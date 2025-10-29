@@ -1,14 +1,15 @@
 //! UDP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::net::UdpSocket;
 
 /// UDP protocol action handler
@@ -30,7 +31,7 @@ impl UdpProtocol {
     }
 }
 
-impl ProtocolActions for UdpProtocol {
+impl Protocol for UdpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![send_to_address_action()]
     }
@@ -58,6 +59,10 @@ impl ProtocolActions for UdpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "UDP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_udp_event_types()
     }
 }
 
@@ -153,4 +158,45 @@ fn ignore_datagram_action() -> ActionDefinition {
             "type": "ignore_datagram"
         }),
     }
+}
+
+// ============================================================================
+// UDP Event Type Constants
+// ============================================================================
+
+pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "udp_datagram_received",
+        "UDP datagram received from a peer"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "peer_address".to_string(),
+            type_hint: "string".to_string(),
+            description: "Source address of the datagram (IP:port)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_length".to_string(),
+            type_hint: "number".to_string(),
+            description: "Length of the received data in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_preview".to_string(),
+            type_hint: "string".to_string(),
+            description: "Preview of the received data".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_udp_response_action(),
+        ignore_datagram_action(),
+    ])
+});
+
+pub fn get_udp_event_types() -> Vec<EventType> {
+    vec![
+        UDP_DATAGRAM_RECEIVED_EVENT.clone(),
+    ]
 }

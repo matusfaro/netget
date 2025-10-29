@@ -153,7 +153,7 @@ impl ActionResult {
 /// 2. Async actions - executable anytime from user input
 /// 3. Sync actions - executable during network events
 /// 4. Action executor - parses and executes protocol actions
-pub trait ProtocolActions: Send + Sync {
+pub trait Protocol: Send + Sync {
     /// Get startup parameters that can be provided when opening a server
     ///
     /// These parameters configure the protocol before it starts accepting
@@ -198,4 +198,19 @@ pub trait ProtocolActions: Send + Sync {
 
     /// Get protocol name for debugging
     fn protocol_name(&self) -> &'static str;
+
+    /// Get the event types that this protocol can emit
+    ///
+    /// Each event type includes:
+    /// - A unique ID (e.g., "http_request", "ssh_auth")
+    /// - A description of when it occurs
+    /// - The actions that can be used to respond to this event
+    ///
+    /// # Returns
+    /// A vector of EventType definitions for this protocol
+    ///
+    /// Default implementation returns empty vector (protocol hasn't migrated to event system yet)
+    fn get_event_types(&self) -> Vec<crate::protocol::EventType> {
+        Vec::new()
+    }
 }

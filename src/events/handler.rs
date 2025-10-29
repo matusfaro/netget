@@ -2,12 +2,12 @@
 
 use anyhow::Result;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
 use crate::llm::OllamaClient;
-use crate::llm::{ActionResponse, CommonAction, execute_actions, ProtocolActions};
+use crate::llm::{ActionResponse, CommonAction, execute_actions, Protocol};
 use crate::protocol::BaseStack;
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
@@ -100,7 +100,7 @@ impl EventHandler {
         &mut self,
         input: String,
         status_tx: mpsc::UnboundedSender<String>,
-        protocol: Option<Box<dyn ProtocolActions + Send>>,
+        protocol: Option<Box<dyn Protocol + Send>>,
     ) -> Result<()> {
         use crate::llm::PromptBuilder;
 
@@ -132,8 +132,8 @@ impl EventHandler {
                     Ok(action_response) => {
                         // Execute actions
                         // Convert protocol reference properly
-                        let protocol_ref: Option<&dyn ProtocolActions> = protocol.as_ref()
-                            .map(|p| p.as_ref() as &dyn ProtocolActions);
+                        let protocol_ref: Option<&dyn Protocol> = protocol.as_ref()
+                            .map(|p| p.as_ref() as &dyn Protocol);
 
                         match execute_actions(
                             action_response.actions.clone(),
@@ -181,7 +181,18 @@ impl EventHandler {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match action {
-            CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction, startup_params } => {
+            CommonAction::OpenServer {
+                port,
+                base_stack,
+                send_first: _,
+                initial_memory,
+                instruction,
+                startup_params,
+                script_language,
+                script_path,
+                script_inline,
+                script_handles,
+            } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
                 // Parse base stack
@@ -203,6 +214,50 @@ impl EventHandler {
 
                 // Set startup params if provided
                 server.startup_params = startup_params;
+
+                // Build script configuration if provided
+                if let Ok(Some(script_config)) = crate::scripting::ScriptManager::build_config(
+                    script_language.as_deref(),
+                    script_path.as_deref(),
+                    script_inline.as_deref(),
+                    script_handles,
+                ) {
+                    // Check if the language is available
+                    let scripting_env = self.state.get_scripting_env().await;
+                    if scripting_env.is_available(script_config.language) {
+                        // Display the LLM-generated script in TUI with syntax highlighting
+                        if let Ok(code) = script_config.source.get_code() {
+                            let language_token = match script_config.language {
+                                crate::scripting::ScriptLanguage::Python => "python",
+                                crate::scripting::ScriptLanguage::JavaScript => "javascript",
+                            };
+                            let formatted = crate::scripting::highlight::format_script_for_log(&code, language_token);
+
+                            // Send to log file with colors
+                            debug!("LLM generated script:{}", formatted);
+
+                            // Send to TUI (split by lines to respect TUI formatting)
+                            let _ = status_tx.send(format!("[DEBUG] LLM generated {} script:", script_config.language.as_str()));
+                            let _ = status_tx.send("┌─────────────────────────────────────────────┐".to_string());
+                            for line in code.lines() {
+                                let _ = status_tx.send(format!("│ {}", line));
+                            }
+                            let _ = status_tx.send("└─────────────────────────────────────────────┘".to_string());
+                        }
+
+                        server.script_config = Some(script_config);
+                        info!("Script configured for server on port {}", port);
+                    } else {
+                        warn!(
+                            "{} is not available. Server will use LLM only.",
+                            script_config.language.as_str()
+                        );
+                        let _ = status_tx.send(format!(
+                            "[WARN] {} not available, using LLM only",
+                            script_config.language.as_str()
+                        ));
+                    }
+                }
 
                 server.status = ServerStatus::Starting;
 
@@ -271,6 +326,119 @@ impl EventHandler {
             CommonAction::AppendMemory { value } => {
                 if let Some(server_id) = self.state.get_first_server_id().await {
                     self.state.append_memory(server_id, value).await;
+                }
+            }
+            CommonAction::UpdateScript {
+                server_id,
+                operation,
+                script_language,
+                script_path,
+                script_inline,
+                script_handles,
+            } => {
+                use crate::scripting::types::ScriptUpdateOperation;
+
+                // Determine which server to update
+                let target_server_id = if let Some(sid) = server_id {
+                    crate::state::ServerId::new(sid)
+                } else if let Some(sid) = self.state.get_first_server_id().await {
+                    sid
+                } else {
+                    let _ = status_tx.send("[WARN] No server to update script for".to_string());
+                    return Ok(());
+                };
+
+                // Parse operation
+                let op = ScriptUpdateOperation::from_str(&operation)
+                    .unwrap_or(ScriptUpdateOperation::Set);
+
+                match op {
+                    ScriptUpdateOperation::Set => {
+                        // Build new script configuration
+                        match crate::scripting::ScriptManager::build_config(
+                            script_language.as_deref(),
+                            script_path.as_deref(),
+                            script_inline.as_deref(),
+                            script_handles,
+                        ) {
+                            Ok(Some(new_config)) => {
+                                // Check if language is available
+                                let scripting_env = self.state.get_scripting_env().await;
+                                if scripting_env.is_available(new_config.language) {
+                                    self.state.set_script_config(target_server_id, Some(new_config.clone())).await;
+                                    let _ = status_tx.send(format!(
+                                        "[INFO] Server #{} script updated ({} handling {:?})",
+                                        target_server_id.as_u32(),
+                                        new_config.language.as_str(),
+                                        new_config.handles_contexts
+                                    ));
+                                } else {
+                                    let _ = status_tx.send(format!(
+                                        "[WARN] {} not available, script not updated",
+                                        new_config.language.as_str()
+                                    ));
+                                }
+                            }
+                            Ok(None) => {
+                                let _ = status_tx.send("[WARN] No script configuration provided for 'set' operation".to_string());
+                            }
+                            Err(e) => {
+                                let _ = status_tx.send(format!("[ERROR] Failed to build script config: {}", e));
+                            }
+                        }
+                    }
+                    ScriptUpdateOperation::AddContexts => {
+                        if let Some(contexts) = script_handles {
+                            if let Some(mut config) = self.state.get_script_config(target_server_id).await {
+                                config.add_contexts(contexts.clone());
+                                self.state.set_script_config(target_server_id, Some(config.clone())).await;
+                                let _ = status_tx.send(format!(
+                                    "[INFO] Server #{} script now handles: {:?}",
+                                    target_server_id.as_u32(),
+                                    config.handles_contexts
+                                ));
+                            } else {
+                                let _ = status_tx.send(format!(
+                                    "[WARN] Server #{} has no script configuration to update",
+                                    target_server_id.as_u32()
+                                ));
+                            }
+                        }
+                    }
+                    ScriptUpdateOperation::RemoveContexts => {
+                        if let Some(contexts) = script_handles {
+                            if let Some(mut config) = self.state.get_script_config(target_server_id).await {
+                                config.remove_contexts(&contexts);
+                                if config.handles_contexts.is_empty() {
+                                    // No contexts left, disable script
+                                    self.state.set_script_config(target_server_id, None).await;
+                                    let _ = status_tx.send(format!(
+                                        "[INFO] Server #{} script disabled (no contexts remaining)",
+                                        target_server_id.as_u32()
+                                    ));
+                                } else {
+                                    self.state.set_script_config(target_server_id, Some(config.clone())).await;
+                                    let _ = status_tx.send(format!(
+                                        "[INFO] Server #{} script now handles: {:?}",
+                                        target_server_id.as_u32(),
+                                        config.handles_contexts
+                                    ));
+                                }
+                            } else {
+                                let _ = status_tx.send(format!(
+                                    "[WARN] Server #{} has no script configuration to update",
+                                    target_server_id.as_u32()
+                                ));
+                            }
+                        }
+                    }
+                    ScriptUpdateOperation::Disable => {
+                        self.state.set_script_config(target_server_id, None).await;
+                        let _ = status_tx.send(format!(
+                            "[INFO] Server #{} script disabled, using LLM only",
+                            target_server_id.as_u32()
+                        ));
+                    }
                 }
             }
         }

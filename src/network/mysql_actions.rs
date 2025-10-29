@@ -1,14 +1,15 @@
 //! MySQL protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -38,7 +39,7 @@ impl MysqlProtocol {
     }
 }
 
-impl ProtocolActions for MysqlProtocol {
+impl Protocol for MysqlProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             list_mysql_connections_action(),
@@ -75,6 +76,10 @@ impl ProtocolActions for MysqlProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "MySQL"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_mysql_event_types()
     }
 }
 
@@ -301,4 +306,132 @@ pub fn mysql_close_connection_action() -> ActionDefinition {
             "connection_id": "conn-123"
         }),
     }
+}
+
+// ============================================================================
+// MySQL Action Constants
+// ============================================================================
+
+/// MySQL query response action constant
+pub static MYSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "mysql_query_response".to_string(),
+        description: "Send a result set in response to a SELECT query".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "columns".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'VARCHAR', 'INT', 'BIGINT')".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "rows".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of rows. Each row is an array of values matching the column order".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "mysql_query_response",
+            "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "VARCHAR"}],
+            "rows": [[1, "Alice"], [2, "Bob"]]
+        }),
+    }
+});
+
+/// MySQL error response action constant
+pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "mysql_error_response".to_string(),
+        description: "Send an error response to the client".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "error_code".to_string(),
+                type_hint: "number".to_string(),
+                description: "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error message to display to the client".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "mysql_error_response",
+            "error_code": 1146,
+            "message": "Table 'database.table_name' doesn't exist"
+        }),
+    }
+});
+
+/// MySQL OK response action constant
+pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "mysql_ok_response".to_string(),
+        description: "Send an OK response for INSERT, UPDATE, DELETE, or other non-SELECT queries".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "affected_rows".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of rows affected by the query".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "last_insert_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Last insert ID for INSERT queries with auto_increment".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "mysql_ok_response",
+            "affected_rows": 1,
+            "last_insert_id": 42
+        }),
+    }
+});
+
+/// MySQL close connection action constant
+pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "close_this_connection".to_string(),
+        description: "Close the current MySQL connection".to_string(),
+        parameters: vec![],
+        example: json!({"type": "close_this_connection"}),
+    }
+});
+
+// ============================================================================
+// MySQL Event Type Constants
+// ============================================================================
+
+/// MySQL query event - triggered when client sends a query
+pub static MYSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "mysql_query",
+        "MySQL query received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "query".to_string(),
+            type_hint: "string".to_string(),
+            description: "The SQL query string sent by the client".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        MYSQL_QUERY_RESPONSE_ACTION.clone(),
+        MYSQL_ERROR_RESPONSE_ACTION.clone(),
+        MYSQL_OK_RESPONSE_ACTION.clone(),
+        MYSQL_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// Get MySQL event types
+pub fn get_mysql_event_types() -> Vec<EventType> {
+    vec![
+        MYSQL_QUERY_EVENT.clone(),
+    ]
 }

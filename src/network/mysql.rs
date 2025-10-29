@@ -1,9 +1,11 @@
 //! MySQL server implementation using opensrv-mysql
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
 use crate::network::connection::ConnectionId;
-use crate::network::mysql_actions::MysqlProtocol;
+use crate::network::mysql_actions::{MysqlProtocol, MYSQL_QUERY_EVENT};
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -287,23 +289,23 @@ impl MysqlHandler {
     ) -> io::Result<()> {
         trace!("Calling LLM for MySQL query: {}", query);
 
-        // Build context for LLM
-        let _context = serde_json::json!({
-            "query": query,
-            "connection_id": self.connection_id.to_string(),
-        });
+        // Create query event
+        let event = Event::new(
+            &MYSQL_QUERY_EVENT,
+            serde_json::json!({
+                "query": query,
+            }),
+        );
 
-        // Call LLM with actions
         let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
-        let event_description = format!("SQL Query: {}", query);
 
-        let llm_result = crate::llm::call_llm_with_actions(
+        let llm_result = call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            &event_description,
-            Some(self.protocol.as_ref()),
-            vec![],
+            Some(self.connection_id),
+            &event,
+            self.protocol.as_ref(),
         )
         .await;
 

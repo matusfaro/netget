@@ -1,9 +1,11 @@
 //! Redis server implementation with RESP protocol
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
 use crate::network::connection::ConnectionId;
-use crate::network::redis_actions::RedisProtocol;
+use crate::network::redis_actions::{RedisProtocol, REDIS_COMMAND_EVENT};
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use anyhow::Result;
 use redis_protocol::resp2::decode::decode;
@@ -181,17 +183,23 @@ impl RedisHandler {
                             .status_tx
                             .send(format!("[DEBUG] Redis command: {}", command_str));
 
-                        // Call LLM with command
-                        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
-                        let event_description = format!("Redis command: {}", command_str);
+                        // Create command event
+                        let event = Event::new(
+                            &REDIS_COMMAND_EVENT,
+                            serde_json::json!({
+                                "command": command_str.clone(),
+                            }),
+                        );
 
-                        let llm_result = crate::llm::call_llm_with_actions(
+                        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+
+                        let llm_result = call_llm(
                             &self.llm_client,
                             &self.app_state,
                             server_id,
-                            &event_description,
-                            Some(protocol.as_ref()),
-                            vec![],
+                            Some(self.connection_id),
+                            &event,
+                            protocol.as_ref(),
                         )
                         .await;
 

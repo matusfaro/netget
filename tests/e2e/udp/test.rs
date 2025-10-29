@@ -27,7 +27,6 @@ async fn test_udp_echo_server() -> E2EResult<()> {
     println!("Server started on port {}", server.port);
 
     // Give server time to start
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // VALIDATION: Use UDP client to verify behavior
     let socket = UdpSocket::bind("127.0.0.1:0")?;

@@ -1,12 +1,13 @@
 //! SSH server implementation using russh
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::{call_llm_with_actions, ActionResult};
 use crate::network::connection::ConnectionId;
 use crate::network::ssh_actions::{
-    ssh_auth_decision_action, ssh_close_connection_action, ssh_send_banner_action,
-    ssh_shell_response_action, SshProtocol,
+    SshProtocol, SSH_AUTH_EVENT, SSH_BANNER_EVENT, SSH_SHELL_COMMAND_EVENT,
 };
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -211,23 +212,24 @@ impl SshHandler {
     /// Ask LLM about authentication using action-based framework
     async fn llm_auth_decision(&self, username: &str, auth_type: &str) -> Result<bool> {
         let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
-        let event_description = format!(
-            "SSH authentication request: user='{}', type='{}'",
-            username, auth_type
-        );
-
         debug!("SSH auth request for user '{}' via {}", username, auth_type);
 
-        // Use action helper with custom SSH auth action and protocol
-        let custom_action = ssh_auth_decision_action(username, auth_type);
+        // Create event with auth data
+        let event = Event::new(
+            &SSH_AUTH_EVENT,
+            serde_json::json!({
+                "username": username,
+                "auth_type": auth_type,
+            }),
+        );
 
-        match call_llm_with_actions(
+        match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            &event_description,
-            Some(self.protocol.as_ref()),
-            vec![custom_action],
+            None, // SSH auth doesn't have connection_id yet at this stage
+            &event,
+            self.protocol.as_ref(),
         )
         .await
         {
@@ -268,20 +270,19 @@ impl SshHandler {
     /// Ask LLM for shell banner/greeting using action-based framework
     async fn llm_shell_banner(&self) -> Result<Option<String>> {
         let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
-        let event_description = "SSH shell session opened - send banner/greeting if needed";
 
         debug!("SSH requesting shell banner from LLM");
 
-        // Use action helper with custom SSH banner action and protocol
-        let custom_action = ssh_send_banner_action();
+        // Create banner event with no data
+        let event = Event::new(&SSH_BANNER_EVENT, serde_json::json!({}));
 
-        match call_llm_with_actions(
+        match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            event_description,
-            Some(self.protocol.as_ref()),
-            vec![custom_action],
+            None, // Banner sent before connection established
+            &event,
+            self.protocol.as_ref(),
         )
         .await
         {
@@ -313,24 +314,25 @@ impl SshHandler {
     async fn llm_shell_command(&self, command: &[u8]) -> Result<(Option<String>, bool)> {
         let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
         let command_str = String::from_utf8_lossy(command);
-        let event_description = format!("SSH shell command received: {:?}", command_str);
 
         debug!("SSH shell command: {:?}", command_str);
         trace!("SSH shell command (full): {}", command_str);
 
-        // Use action helper with custom SSH shell response action and protocol
-        let custom_actions = vec![
-            ssh_shell_response_action(&command_str),
-            ssh_close_connection_action(),
-        ];
+        // Create shell command event with command data
+        let event = Event::new(
+            &SSH_SHELL_COMMAND_EVENT,
+            serde_json::json!({
+                "command": command_str.to_string(),
+            }),
+        );
 
-        match call_llm_with_actions(
+        match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            &event_description,
-            Some(self.protocol.as_ref()),
-            custom_actions,
+            Some(self.connection_id),
+            &event,
+            self.protocol.as_ref(),
         )
         .await
         {
@@ -530,10 +532,13 @@ impl russh::server::Handler for SshHandler {
                 session.channel_success(channel_id);
 
                 // Create LLM-controlled SFTP handler
+                let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
                 let sftp_handler = crate::network::LlmSftpHandler::new(
                     self.connection_id,
+                    server_id,
                     self.llm_client.clone(),
                     self.app_state.clone(),
+                    self.protocol.clone(),
                     self.status_tx.clone(),
                 );
 

@@ -1,9 +1,10 @@
 //! DNS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use hickory_proto::op::{Header, Message as DnsMessage, MessageType, OpCode, ResponseCode};
@@ -11,6 +12,7 @@ use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
 use serde_json::json;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 /// DNS protocol action handler
 pub struct DnsProtocol;
@@ -21,7 +23,7 @@ impl DnsProtocol {
     }
 }
 
-impl ProtocolActions for DnsProtocol {
+impl Protocol for DnsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new() // DNS has no async actions
     }
@@ -63,6 +65,10 @@ impl ProtocolActions for DnsProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "DNS"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_dns_event_types()
     }
 }
 
@@ -618,4 +624,53 @@ fn ignore_query_action() -> ActionDefinition {
             "type": "ignore_query"
         }),
     }
+}
+
+// ============================================================================
+// DNS Event Type Constants
+// ============================================================================
+
+/// DNS query event - triggered when DNS client sends a query
+pub static DNS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "dns_query",
+        "DNS client sent a query for domain resolution"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "query_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "DNS query ID from the request packet".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "domain".to_string(),
+            type_hint: "string".to_string(),
+            description: "Domain name being queried".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "query_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "DNS query type (A, AAAA, MX, TXT, CNAME, etc.)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_dns_a_response_action(),
+        send_dns_aaaa_response_action(),
+        send_dns_cname_response_action(),
+        send_dns_mx_response_action(),
+        send_dns_txt_response_action(),
+        send_dns_nxdomain_action(),
+        send_dns_response_action(),
+        ignore_query_action(),
+    ])
+});
+
+/// Get DNS event types
+pub fn get_dns_event_types() -> Vec<EventType> {
+    vec![
+        DNS_QUERY_EVENT.clone(),
+    ]
 }

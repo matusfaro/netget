@@ -10,9 +10,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
 use crate::network::connection::ConnectionId;
+use crate::network::datalink_actions::{DataLinkProtocol, DATALINK_PACKET_CAPTURED_EVENT};
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for DataLink stack
@@ -55,11 +57,15 @@ impl DataLinkServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         filter: Option<String>,
+        server_id: crate::state::ServerId,
     ) -> Result<String> {
         info!("Starting packet capture on interface: {}", interface);
 
+        let protocol = Arc::new(DataLinkProtocol::new());
+
         // Datalink/pcap is blocking, so we run it in a blocking task
         let interface_clone = interface.clone();
+        let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
             // Find device
             let device = match Self::find_device(&interface_clone) {
@@ -97,7 +103,7 @@ impl DataLinkServer {
                 match cap.next_packet() {
                     Ok(packet) => {
                         let data = Bytes::copy_from_slice(packet.data);
-                        let connection_id = ConnectionId::new();
+                        let _connection_id = ConnectionId::new();
 
                         // DEBUG: Log summary
                         debug!("Datalink received {} bytes", data.len());
@@ -111,48 +117,45 @@ impl DataLinkServer {
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
+                        let protocol_task_clone = protocol_clone.clone();
 
                         // Spawn async task to handle packet with LLM
                         runtime.spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-                            let prompt_config = get_llm_protocol_prompt();
+                            // Build event data
+                            let hex_str = hex::encode(&data);
+                            let event = Event::new(&DATALINK_PACKET_CAPTURED_EVENT, serde_json::json!({
+                                "packet_length": data.len(),
+                                "packet_hex": hex_str
+                            }));
 
-                            // Build event description
-                            let event_description = format!(
-                                "Datalink packet captured ({} bytes)",
-                                data.len()
-                            );
+                            debug!("Datalink calling LLM for packet ({} bytes)", data.len());
+                            let _ = status_clone.send(format!("[DEBUG] Datalink calling LLM for packet ({} bytes)", data.len()));
 
-                            let prompt = PromptBuilder::build_network_event_prompt(
+                            match call_llm(
+                                &llm_clone,
                                 &state_clone,
-                                connection_id,
-                                &event_description,
-                                prompt_config,
-                            ).await;
+                                server_id,
+                                None,
+                                &event,
+                                protocol_task_clone.as_ref(),
+                            ).await {
+                                Ok(execution_result) => {
+                                    for message in &execution_result.messages {
+                                        info!("{}", message);
+                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                    }
 
-                            match llm_clone.generate(&model, &prompt).await {
-                                Ok(llm_output) => {
-                                    let output_data = llm_output.as_bytes();
-
-                                    // DEBUG: Log summary (no actual send for datalink capture)
-                                    debug!("Datalink processed {} bytes → {} bytes response", data.len(), output_data.len());
-                                    let _ = status_clone.send(format!("[DEBUG] Datalink processed {} bytes → {} bytes response", data.len(), output_data.len()));
-
-                                    // TRACE: Log full payload (always hex for datalink)
-                                    let hex_str = hex::encode(output_data);
-                                    trace!("Datalink response (hex): {}", hex_str);
-                                    let _ = status_clone.send(format!("[TRACE] Datalink response (hex): {}", hex_str));
+                                    debug!("Datalink got {} protocol results", execution_result.protocol_results.len());
+                                    let _ = status_clone.send(format!("[DEBUG] Datalink got {} protocol results", execution_result.protocol_results.len()));
 
                                     let _ = status_clone.send(format!(
-                                        "→ Datalink packet processed: {} bytes → {} bytes response",
-                                        data.len(),
-                                        output_data.len()
+                                        "→ Datalink packet processed: {} bytes",
+                                        data.len()
                                     ));
-                                    // Note: Injecting packets back would require mutable cap access
                                 }
                                 Err(e) => {
-                                    error!("LLM error for datalink: {}", e);
-                                    let _ = status_clone.send(format!("✗ LLM error for datalink: {}", e));
+                                    error!("Datalink LLM call failed: {}", e);
+                                    let _ = status_clone.send(format!("✗ Datalink LLM error: {}", e));
                                 }
                             }
                         });
