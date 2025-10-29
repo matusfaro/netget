@@ -332,7 +332,8 @@ mod tests {
 
     #[test]
     fn test_add_to_history_deduplicates() {
-        let mut app = App::new();
+        // Use default() to avoid loading existing history from ~/.netget_history
+        let mut app = App::default();
         app.add_to_history("command1".to_string());
         app.add_to_history("command1".to_string()); // Duplicate
         assert_eq!(app.command_history.len(), 1);
