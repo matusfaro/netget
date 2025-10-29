@@ -2,13 +2,16 @@
 
 use std::collections::HashMap;
 
+use crate::llm::actions::{
+    execute_tool, summarize_actions, ActionResponse, ToolAction, ToolResult,
+};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, trace};
+use tracing::{debug, error, info, trace, warn};
 
 /// Structured response from the LLM
 ///
@@ -162,7 +165,7 @@ impl HttpLlmResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandAction {
     UpdateInstruction {
-        instruction: String
+        instruction: String,
     },
     OpenServer {
         port: u16,
@@ -228,13 +231,19 @@ impl OllamaClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         let url_str = base_url.into();
         let ollama = Ollama::new(url_str.as_str(), 11434);
-        Self { ollama, status_tx: None }
+        Self {
+            ollama,
+            status_tx: None,
+        }
     }
 
     /// Create a default client pointing to localhost
     pub fn default() -> Self {
         let ollama = Ollama::default();
-        Self { ollama, status_tx: None }
+        Self {
+            ollama,
+            status_tx: None,
+        }
     }
 
     /// Set the status channel for sending trace logs to TUI
@@ -265,7 +274,7 @@ impl OllamaClient {
         &self,
         model: &str,
         prompt: &str,
-        format: Option<serde_json::Value>
+        format: Option<serde_json::Value>,
     ) -> Result<String> {
         // DEBUG: Summary
         debug!(
@@ -288,9 +297,15 @@ impl OllamaClient {
             let _ = tx.send(format!("[TRACE] LLM prompt:\n{}", prompt));
         }
         if let Some(ref schema) = format {
-            trace!("JSON schema:\n{}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string()));
+            trace!(
+                "JSON schema:\n{}",
+                serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
+            );
             if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!("[TRACE] JSON schema:\n{}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())));
+                let _ = tx.send(format!(
+                    "[TRACE] JSON schema:\n{}",
+                    serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
+                ));
             }
         }
 
@@ -310,7 +325,8 @@ impl OllamaClient {
             request = request.format(FormatType::Json);
         }
 
-        let response = self.ollama
+        let response = self
+            .ollama
             .generate(request)
             .await
             .map_err(|e| anyhow::anyhow!("Ollama request failed: {}", e))?;
@@ -337,7 +353,10 @@ impl OllamaClient {
         } else {
             trace!("Full LLM response (text):\n{}", response.response);
             if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!("[TRACE] LLM response (text):\n{}", response.response));
+                let _ = tx.send(format!(
+                    "[TRACE] LLM response (text):\n{}",
+                    response.response
+                ));
             }
         }
 
@@ -357,7 +376,11 @@ impl OllamaClient {
     }
 
     /// Generate a structured HttpLlmResponse for HTTP requests
-    pub async fn generate_http_response(&self, model: &str, prompt: &str) -> Result<HttpLlmResponse> {
+    pub async fn generate_http_response(
+        &self,
+        model: &str,
+        prompt: &str,
+    ) -> Result<HttpLlmResponse> {
         // Disabled structured outputs - see generate_llm_response
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
@@ -366,12 +389,213 @@ impl OllamaClient {
     }
 
     /// Generate a structured CommandInterpretation for user commands
-    pub async fn generate_command_interpretation(&self, model: &str, prompt: &str) -> Result<CommandInterpretation> {
+    pub async fn generate_command_interpretation(
+        &self,
+        model: &str,
+        prompt: &str,
+    ) -> Result<CommandInterpretation> {
         // Disabled structured outputs - see generate_llm_response
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
         // Parse the JSON response
         CommandInterpretation::from_str(&response_text)
+    }
+
+    /// Generate action response with multi-turn tool calling support using message-based conversation
+    ///
+    /// This method implements a message-based conversation loop:
+    /// 1. Build initial prompt (system + user message)
+    /// 2. LLM responds with actions (may include tool calls)
+    /// 3. Regular actions are collected
+    /// 4. Tool calls are executed
+    /// 5. Tool results appended to conversation history
+    /// 6. Repeat with full conversation context (no iteration numbers)
+    ///
+    /// # Arguments
+    /// * `model` - Model name
+    /// * `initial_prompt_builder` - Function that builds the initial system+user prompt
+    /// * `max_iterations` - Maximum number of LLM calls (default: 5)
+    ///
+    /// # Returns
+    /// * `Vec<serde_json::Value>` - All non-tool actions collected across conversation turns
+    pub async fn generate_with_tools<F, Fut>(
+        &self,
+        model: &str,
+        initial_prompt_builder: F,
+        max_iterations: usize,
+    ) -> Result<Vec<serde_json::Value>>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = String>,
+    {
+        let mut all_actions = Vec::new();
+        let mut conversation_history = String::new();
+
+        // Build initial prompt (system + user message)
+        let initial_prompt = initial_prompt_builder().await;
+        conversation_history.push_str(&initial_prompt);
+
+        trace!(
+            "Initial conversation setup: {} chars",
+            conversation_history.len()
+        );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[TRACE] Initial conversation: {} chars",
+                conversation_history.len()
+            ));
+        }
+
+        for turn in 1..=max_iterations {
+            // Generate response with full conversation history
+            debug!("Conversation turn {}/{}", turn, max_iterations);
+            trace!("Full conversation history:\n{}", conversation_history);
+
+            let response_text = self
+                .generate_with_format(model, &conversation_history, None)
+                .await?;
+
+            // Parse as action response
+            let action_response = ActionResponse::from_str(&response_text)
+                .context("Failed to parse action response")?;
+
+            // Log action summary
+            let summary = summarize_actions(&action_response.actions);
+            info!("LLM response (turn {}): {}", turn, summary);
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!("[INFO] LLM response (turn {}): {}", turn, summary));
+            }
+
+            // Separate tool calls from regular actions
+            let (tools, regular): (Vec<_>, Vec<_>) = action_response
+                .actions
+                .into_iter()
+                .partition(|action| ToolAction::is_tool_action(action));
+
+            // Collect regular actions
+            all_actions.extend(regular);
+
+            // If no tool calls, we're done
+            if tools.is_empty() {
+                debug!("No tool calls in response, conversation complete");
+                break;
+            }
+
+            // If this is the last iteration, warn about unused tool calls
+            if turn == max_iterations {
+                warn!(
+                    "Maximum iterations reached with {} pending tool calls",
+                    tools.len()
+                );
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[WARN] Maximum iterations reached with {} pending tool calls",
+                        tools.len()
+                    ));
+                }
+                break;
+            }
+
+            // Append assistant's tool call actions to conversation
+            conversation_history.push_str("\n\n--- Assistant Response ---\n");
+            conversation_history.push_str(&response_text);
+
+            // Execute tool calls and append results to conversation
+            conversation_history.push_str("\n\n--- Tool Results ---\n");
+
+            for tool_json in tools {
+                match ToolAction::from_json(&tool_json) {
+                    Ok(tool_action) => {
+                        info!("→ Executing tool: {}", tool_action.describe());
+                        if let Some(ref tx) = self.status_tx {
+                            let _ = tx.send(format!(
+                                "[INFO] → Executing tool: {}",
+                                tool_action.describe()
+                            ));
+                        }
+                        let result = execute_tool(&tool_action).await;
+                        info!("  Result: {}", result.summary());
+                        if let Some(ref tx) = self.status_tx {
+                            let _ = tx.send(format!("[INFO]   Result: {}", result.summary()));
+                        }
+
+                        // Append tool result to conversation
+                        conversation_history.push_str(&format!("\n{}\n", result.to_prompt_text()));
+                    }
+                    Err(e) => {
+                        error!("Failed to parse tool action: {}", e);
+                        if let Some(ref tx) = self.status_tx {
+                            let _ = tx.send(format!("[ERROR] Failed to parse tool action: {}", e));
+                        }
+
+                        let error_result = ToolResult::error(
+                            "unknown",
+                            "parse_error",
+                            format!("Failed to parse tool action: {}", e),
+                        );
+                        conversation_history
+                            .push_str(&format!("\n{}\n", error_result.to_prompt_text()));
+                    }
+                }
+            }
+
+            // Add reminder to complete the original request using the tool results
+            conversation_history.push_str("\nNow that you have the tool results, use the information to COMPLETE the original request.\n");
+            conversation_history.push_str("If the user asked you to extract information, use show_message to report what you found.\n");
+            conversation_history.push_str("If the user asked you to perform a task, execute the appropriate actions to finish it.\n");
+            conversation_history.push_str("RESPONSE FORMAT: Respond with JSON: {{\"actions\": [...]}}\n");
+
+            let conv_size = conversation_history.len();
+            trace!(
+                "Conversation history after tool results: {} chars",
+                conv_size
+            );
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!(
+                    "[TRACE] Conversation updated: {} chars (added tool results)",
+                    conv_size
+                ));
+            }
+
+            // Performance warning if conversation is getting large
+            if conv_size > 50_000 {
+                warn!("Conversation history is large: {} chars ({:.1} KB) - consider reducing max_iterations",
+                    conv_size, conv_size as f64 / 1024.0);
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[WARN] ⚠ Large conversation: {:.1} KB",
+                        conv_size as f64 / 1024.0
+                    ));
+                }
+            } else if conv_size > 20_000 {
+                debug!(
+                    "Conversation size: {} chars ({:.1} KB)",
+                    conv_size,
+                    conv_size as f64 / 1024.0
+                );
+            }
+
+            debug!(
+                "Completed turn {}/{}, continuing conversation with tool results",
+                turn, max_iterations
+            );
+        }
+
+        let final_size = conversation_history.len();
+        info!(
+            "Multi-turn conversation complete: {} actions, final size: {} chars ({:.1} KB)",
+            all_actions.len(),
+            final_size,
+            final_size as f64 / 1024.0
+        );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[INFO] ✓ Conversation complete: {} actions, {:.1} KB history",
+                all_actions.len(),
+                final_size as f64 / 1024.0
+            ));
+        }
+        Ok(all_actions)
     }
 
     /// Check if Ollama is available
@@ -382,7 +606,8 @@ impl OllamaClient {
 
     /// List available models
     pub async fn list_models(&self) -> Result<Vec<String>> {
-        let models = self.ollama
+        let models = self
+            .ollama
             .list_local_models()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to list models: {}", e))?;

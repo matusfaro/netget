@@ -2,10 +2,13 @@
 
 use std::collections::HashMap;
 
+use crate::llm::actions::{
+    execute_tool, summarize_actions, ActionResponse, ToolAction, ToolResult,
+};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Structured response from the LLM
 ///
@@ -158,7 +161,9 @@ impl HttpLlmResponse {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandAction {
-    UpdateInstruction { instruction: String },
+    UpdateInstruction {
+        instruction: String,
+    },
     OpenServer {
         port: u16,
         base_stack: String,
@@ -240,14 +245,17 @@ impl OllamaClient {
         &self,
         model: &str,
         prompt: &str,
-        format: Option<serde_json::Value>
+        format: Option<serde_json::Value>,
     ) -> Result<String> {
         let url = format!("{}/api/generate", self.base_url);
 
         debug!("Sending prompt to Ollama (model: {})", model);
         if let Some(ref schema) = format {
             debug!("Using structured output with JSON schema");
-            debug!("Schema: {}", serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string()));
+            debug!(
+                "Schema: {}",
+                serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
+            );
         }
         debug!("Prompt: {}", prompt);
 
@@ -278,7 +286,10 @@ impl OllamaClient {
             .await
             .context("Failed to parse Ollama response")?;
 
-        info!("Received response from Ollama ({} tokens)", response.eval_count.unwrap_or(0));
+        info!(
+            "Received response from Ollama ({} tokens)",
+            response.eval_count.unwrap_or(0)
+        );
         debug!("Response: {}", response.response);
 
         Ok(response.response)
@@ -300,7 +311,11 @@ impl OllamaClient {
     }
 
     /// Generate a structured HttpLlmResponse for HTTP requests
-    pub async fn generate_http_response(&self, model: &str, prompt: &str) -> Result<HttpLlmResponse> {
+    pub async fn generate_http_response(
+        &self,
+        model: &str,
+        prompt: &str,
+    ) -> Result<HttpLlmResponse> {
         // NOTE: Structured outputs disabled - see generate_llm_response for details
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
@@ -309,12 +324,126 @@ impl OllamaClient {
     }
 
     /// Generate a structured CommandInterpretation for user commands
-    pub async fn generate_command_interpretation(&self, model: &str, prompt: &str) -> Result<CommandInterpretation> {
+    pub async fn generate_command_interpretation(
+        &self,
+        model: &str,
+        prompt: &str,
+    ) -> Result<CommandInterpretation> {
         // NOTE: Structured outputs disabled - see generate_llm_response for details
         let response_text = self.generate_with_format(model, prompt, None).await?;
 
         // Parse the JSON response
         CommandInterpretation::from_str(&response_text)
+    }
+
+    /// Generate action response with multi-turn tool calling support
+    ///
+    /// This method implements a loop where:
+    /// 1. LLM returns actions (may include tool calls)
+    /// 2. Regular actions are collected
+    /// 3. Tool calls are executed
+    /// 4. If tool calls exist, append results and call LLM again
+    /// 5. Repeat until no tool calls or max iterations reached
+    ///
+    /// # Arguments
+    /// * `model` - Model name
+    /// * `prompt_builder` - Async function that builds prompts with iteration and tool results
+    /// * `max_iterations` - Maximum number of LLM calls (default: 5)
+    ///
+    /// # Returns
+    /// * `Vec<serde_json::Value>` - All non-tool actions collected across iterations
+    pub async fn generate_with_tools<F, Fut>(
+        &self,
+        model: &str,
+        prompt_builder: F,
+        max_iterations: usize,
+    ) -> Result<Vec<serde_json::Value>>
+    where
+        F: Fn(usize, usize, Vec<ToolResult>) -> Fut,
+        Fut: std::future::Future<Output = String>,
+    {
+        let mut all_actions = Vec::new();
+        let mut tool_results = Vec::new();
+
+        for iteration in 1..=max_iterations {
+            // Build prompt for this iteration
+            let prompt = prompt_builder(iteration, max_iterations, tool_results.clone()).await;
+
+            // Generate response
+            debug!("Multi-turn iteration {}/{}", iteration, max_iterations);
+            let response_text = self.generate_with_format(model, &prompt, None).await?;
+
+            // Parse as action response
+            let action_response = ActionResponse::from_str(&response_text)
+                .context("Failed to parse action response")?;
+
+            // Log action summary
+            let summary = summarize_actions(&action_response.actions);
+            info!(
+                "LLM response (iteration {}/{}): {}",
+                iteration, max_iterations, summary
+            );
+
+            // Separate tool calls from regular actions
+            let (tools, regular): (Vec<_>, Vec<_>) = action_response
+                .actions
+                .into_iter()
+                .partition(|action| ToolAction::is_tool_action(action));
+
+            // Collect regular actions
+            all_actions.extend(regular);
+
+            // If no tool calls, we're done
+            if tools.is_empty() {
+                debug!("No tool calls in response, finishing multi-turn loop");
+                break;
+            }
+
+            // If this is the last iteration, warn about unused tool calls
+            if iteration == max_iterations {
+                warn!(
+                    "Maximum iterations reached with {} pending tool calls",
+                    tools.len()
+                );
+                break;
+            }
+
+            // Execute tool calls
+            debug!("Executing {} tool calls", tools.len());
+            tool_results.clear();
+
+            for tool_json in tools {
+                match ToolAction::from_json(&tool_json) {
+                    Ok(tool_action) => {
+                        info!("→ Executing tool: {}", tool_action.describe());
+                        let result = execute_tool(&tool_action).await;
+                        info!("  Result: {}", result.summary());
+                        tool_results.push(result);
+                    }
+                    Err(e) => {
+                        error!("Failed to parse tool action: {}", e);
+                        tool_results.push(ToolResult::error(
+                            "unknown",
+                            "parse_error",
+                            format!("Failed to parse tool action: {}", e),
+                        ));
+                    }
+                }
+            }
+
+            debug!(
+                "Completed iteration {}/{}, {} tool results to include in next iteration",
+                iteration,
+                max_iterations,
+                tool_results.len()
+            );
+        }
+
+        info!(
+            "Multi-turn generation complete: {} total actions collected",
+            all_actions.len()
+        );
+        Ok(all_actions)
     }
 
     /// Check if Ollama is available

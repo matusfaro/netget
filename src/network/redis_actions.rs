@@ -89,10 +89,9 @@ impl RedisProtocol {
             .context("Missing 'value' field")?;
 
         debug!("Redis simple string response: {}", value);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Redis → Simple string: {}",
-            value
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] Redis → Simple string: {}", value));
 
         Ok(ActionResult::RedisSimpleString {
             value: value.to_string(),
@@ -130,10 +129,9 @@ impl RedisProtocol {
             .context("Missing 'values' array")?;
 
         debug!("Redis array response: {} elements", values.len());
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Redis → Array: {} elements",
-            values.len()
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] Redis → Array: {} elements", values.len()));
 
         Ok(ActionResult::RedisArray {
             values: values.clone(),
@@ -147,10 +145,9 @@ impl RedisProtocol {
             .context("Missing 'value' field")?;
 
         debug!("Redis integer response: {}", value);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Redis → Integer: {}",
-            value
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] Redis → Integer: {}", value));
 
         Ok(ActionResult::RedisInteger { value })
     }
@@ -162,10 +159,9 @@ impl RedisProtocol {
             .context("Missing 'message' field")?;
 
         debug!("Redis error response: {}", message);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Redis ✗ Error: {}",
-            message
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] Redis ✗ Error: {}", message));
 
         Ok(ActionResult::RedisError {
             message: message.to_string(),
@@ -229,7 +225,8 @@ pub fn redis_bulk_string_action() -> ActionDefinition {
 pub fn redis_array_action() -> ActionDefinition {
     ActionDefinition {
         name: "redis_array".to_string(),
-        description: "Send an array response. Each element will be encoded as bulk string".to_string(),
+        description: "Send an array response. Each element will be encoded as bulk string"
+            .to_string(),
         parameters: vec![Parameter {
             name: "values".to_string(),
             type_hint: "array".to_string(),

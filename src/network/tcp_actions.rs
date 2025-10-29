@@ -43,10 +43,10 @@ impl TcpProtocol {
         connection_id: ConnectionId,
         write_half: Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
     ) {
-        self.connections.lock().await.insert(
-            connection_id,
-            ConnectionData { write_half },
-        );
+        self.connections
+            .lock()
+            .await
+            .insert(connection_id, ConnectionData { write_half });
     }
 
     /// Remove a connection from the protocol handler
@@ -77,10 +77,7 @@ impl Protocol for TcpProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -141,10 +138,7 @@ impl Protocol for TcpProtocol {
 
 impl TcpProtocol {
     /// Execute send_tcp_data sync action
-    fn execute_send_tcp_data(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_tcp_data(&self, action: serde_json::Value) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
@@ -233,7 +227,8 @@ fn send_tcp_data_action() -> ActionDefinition {
 fn wait_for_more_action() -> ActionDefinition {
     ActionDefinition {
         name: "wait_for_more".to_string(),
-        description: "Wait for more data before responding (accumulate incomplete protocol data)".to_string(),
+        description: "Wait for more data before responding (accumulate incomplete protocol data)"
+            .to_string(),
         parameters: vec![],
         example: json!({
             "type": "wait_for_more"

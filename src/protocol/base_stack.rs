@@ -206,7 +206,11 @@ impl BaseStack {
 
         // mDNS stack (check before DNS to avoid substring match)
         #[cfg(feature = "mdns")]
-        if s_lower.contains("mdns") || s_lower.contains("bonjour") || s_lower.contains("dns-sd") || s_lower.contains("zeroconf") {
+        if s_lower.contains("mdns")
+            || s_lower.contains("bonjour")
+            || s_lower.contains("dns-sd")
+            || s_lower.contains("zeroconf")
+        {
             return Some(Self::Mdns);
         }
 
@@ -308,7 +312,8 @@ impl BaseStack {
             || s_lower.contains("l2")
             || s_lower.contains("ethernet")
             || s_lower.contains("arp")
-            || s_lower.contains("pcap") {
+            || s_lower.contains("pcap")
+        {
             return Some(Self::DataLink);
         }
 
@@ -317,7 +322,8 @@ impl BaseStack {
         if s_lower.contains("http stack")
             || s_lower.contains("http server")
             || (s_lower.contains("via http") && !s_lower.contains("tcp"))
-            || s_lower.contains("hyper") {
+            || s_lower.contains("hyper")
+        {
             return Some(Self::Http);
         }
 
@@ -326,7 +332,8 @@ impl BaseStack {
         if s_lower.contains("tcp")
             || s_lower.contains("raw")
             || s_lower.contains("ftp")
-            || s_lower.contains("custom") {
+            || s_lower.contains("custom")
+        {
             return Some(Self::Tcp);
         }
 
@@ -490,7 +497,10 @@ mod tests {
     #[test]
     fn test_parse_telnet_stack() {
         assert_eq!(BaseStack::from_str("telnet"), Some(BaseStack::Telnet));
-        assert_eq!(BaseStack::from_str("telnet server"), Some(BaseStack::Telnet));
+        assert_eq!(
+            BaseStack::from_str("telnet server"),
+            Some(BaseStack::Telnet)
+        );
     }
 
     #[test]

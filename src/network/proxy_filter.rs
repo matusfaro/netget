@@ -345,10 +345,18 @@ pub enum FilterMode {
 }
 
 // Default values for serde
-fn default_block_status() -> u16 { 403 }
-fn default_block_body() -> String { "Request blocked by proxy".to_string() }
-fn default_response_block_status() -> u16 { 502 }
-fn default_response_block_body() -> String { "Response blocked by proxy".to_string() }
+fn default_block_status() -> u16 {
+    403
+}
+fn default_block_body() -> String {
+    "Request blocked by proxy".to_string()
+}
+fn default_response_block_status() -> u16 {
+    502
+}
+fn default_response_block_body() -> String {
+    "Response blocked by proxy".to_string()
+}
 
 impl RequestFilter {
     /// Check if this filter matches the given request
@@ -572,7 +580,9 @@ impl ProxyFilterConfig {
                     false
                 } else {
                     // Intercept if any filter matches
-                    self.request_filters.iter().any(|f| f.matches(host, path, method, headers, body))
+                    self.request_filters
+                        .iter()
+                        .any(|f| f.matches(host, path, method, headers, body))
                 }
             }
         }
@@ -596,9 +606,9 @@ impl ProxyFilterConfig {
                     false
                 } else {
                     // Intercept if any filter matches
-                    self.response_filters.iter().any(|f| {
-                        f.matches(status, headers, body, request_host, request_path)
-                    })
+                    self.response_filters
+                        .iter()
+                        .any(|f| f.matches(status, headers, body, request_host, request_path))
                 }
             }
         }
@@ -626,9 +636,9 @@ impl ProxyFilterConfig {
                     false
                 } else {
                     // Intercept if any filter matches
-                    self.https_connection_filters.iter().any(|f| {
-                        f.matches(destination_host, destination_port, sni, client_addr)
-                    })
+                    self.https_connection_filters
+                        .iter()
+                        .any(|f| f.matches(destination_host, destination_port, sni, client_addr))
                 }
             }
         }

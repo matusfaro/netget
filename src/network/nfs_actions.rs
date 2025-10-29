@@ -21,10 +21,7 @@ impl NfsProtocol {
 
 impl Protocol for NfsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            mount_filesystem_action(),
-            unmount_filesystem_action(),
-        ]
+        vec![mount_filesystem_action(), unmount_filesystem_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -43,10 +40,7 @@ impl Protocol for NfsProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -80,10 +74,7 @@ impl Protocol for NfsProtocol {
 
 impl NfsProtocol {
     /// Mount a filesystem export
-    fn execute_mount_filesystem(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_mount_filesystem(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -93,10 +84,7 @@ impl NfsProtocol {
     }
 
     /// Unmount a filesystem
-    fn execute_unmount_filesystem(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_unmount_filesystem(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -106,10 +94,7 @@ impl NfsProtocol {
     }
 
     /// NFS LOOKUP response
-    fn execute_nfs_lookup_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_lookup_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "fileid": action.get("fileid").and_then(|v| v.as_u64()),
             "error": action.get("error").and_then(|v| v.as_str()),
@@ -118,10 +103,7 @@ impl NfsProtocol {
     }
 
     /// NFS READ response
-    fn execute_nfs_read_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_read_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "data": action.get("data").and_then(|v| v.as_str()).unwrap_or(""),
             "eof": action.get("eof").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -131,10 +113,7 @@ impl NfsProtocol {
     }
 
     /// NFS WRITE response
-    fn execute_nfs_write_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_write_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "size": action.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
             "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o644),
@@ -145,10 +124,7 @@ impl NfsProtocol {
     }
 
     /// NFS GETATTR response
-    fn execute_nfs_getattr_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_getattr_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "file_type": action.get("file_type").and_then(|v| v.as_str()).unwrap_or("regular"),
             "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o644),
@@ -164,10 +140,7 @@ impl NfsProtocol {
     }
 
     /// NFS CREATE response
-    fn execute_nfs_create_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_create_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "fileid": action.get("fileid").and_then(|v| v.as_u64()),
             "size": action.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -178,10 +151,7 @@ impl NfsProtocol {
     }
 
     /// NFS REMOVE response
-    fn execute_nfs_remove_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_remove_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "success": action.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
             "error": action.get("error").and_then(|v| v.as_str()),
@@ -190,10 +160,7 @@ impl NfsProtocol {
     }
 
     /// NFS MKDIR response
-    fn execute_nfs_mkdir_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_mkdir_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "fileid": action.get("fileid").and_then(|v| v.as_u64()),
             "mode": action.get("mode").and_then(|v| v.as_u64()).unwrap_or(0o755),
@@ -203,10 +170,7 @@ impl NfsProtocol {
     }
 
     /// NFS READDIR response
-    fn execute_nfs_readdir_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_readdir_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "entries": action.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
             "eof": action.get("eof").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -216,10 +180,7 @@ impl NfsProtocol {
     }
 
     /// NFS RENAME response
-    fn execute_nfs_rename_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_rename_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "success": action.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
             "error": action.get("error").and_then(|v| v.as_str()),
@@ -228,10 +189,7 @@ impl NfsProtocol {
     }
 
     /// NFS SETATTR response
-    fn execute_nfs_setattr_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_nfs_setattr_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
             "size": action.get("size").and_then(|v| v.as_u64()),
             "mode": action.get("mode").and_then(|v| v.as_u64()),
@@ -247,14 +205,12 @@ fn mount_filesystem_action() -> ActionDefinition {
     ActionDefinition {
         name: "mount_filesystem".to_string(),
         description: "Mount an NFS filesystem export".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Export path to mount".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Export path to mount".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "mount_filesystem",
             "path": "/export/data"
@@ -266,14 +222,12 @@ fn unmount_filesystem_action() -> ActionDefinition {
     ActionDefinition {
         name: "unmount_filesystem".to_string(),
         description: "Unmount an NFS filesystem".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Export path to unmount".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Export path to unmount".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "unmount_filesystem",
             "path": "/export/data"
@@ -295,7 +249,9 @@ fn nfs_lookup_response_action() -> ActionDefinition {
             Parameter {
                 name: "error".to_string(),
                 type_hint: "string".to_string(),
-                description: "NFS error code if operation failed (e.g. 'NFS3ERR_NOENT', 'NFS3ERR_ACCES')".to_string(),
+                description:
+                    "NFS error code if operation failed (e.g. 'NFS3ERR_NOENT', 'NFS3ERR_ACCES')"
+                        .to_string(),
                 required: false,
             },
         ],
@@ -551,7 +507,9 @@ fn nfs_readdir_response_action() -> ActionDefinition {
             Parameter {
                 name: "entries".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of directory entries [{\"name\": \"file.txt\", \"fileid\": 42}, ...]".to_string(),
+                description:
+                    "Array of directory entries [{\"name\": \"file.txt\", \"fileid\": 42}, ...]"
+                        .to_string(),
                 required: true,
             },
             Parameter {

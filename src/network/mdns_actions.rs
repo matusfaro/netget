@@ -22,9 +22,7 @@ impl MdnsProtocol {
 
 impl Protocol for MdnsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            register_mdns_service_action(),
-        ]
+        vec![register_mdns_service_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -68,7 +66,8 @@ fn register_mdns_service_action() -> ActionDefinition {
             Parameter {
                 name: "service_type".to_string(),
                 type_hint: "string".to_string(),
-                description: "Service type (e.g., '_http._tcp.local.', '_ftp._tcp.local.')".to_string(),
+                description: "Service type (e.g., '_http._tcp.local.', '_ftp._tcp.local.')"
+                    .to_string(),
                 required: true,
             },
             Parameter {

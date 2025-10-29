@@ -22,9 +22,7 @@ impl IppProtocol {
 
 impl Protocol for IppProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            list_print_jobs_action(),
-        ]
+        vec![list_print_jobs_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -35,10 +33,7 @@ impl Protocol for IppProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -63,19 +58,10 @@ impl Protocol for IppProtocol {
 }
 
 impl IppProtocol {
-    fn execute_ipp_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let status = action
-            .get("status")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(200) as u16;
+    fn execute_ipp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let status = action.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
 
-        let body = action
-            .get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let body = action.get("body").and_then(|v| v.as_str()).unwrap_or("");
 
         debug!("IPP response: status={}", status);
 
@@ -85,10 +71,7 @@ impl IppProtocol {
         })
     }
 
-    fn execute_ipp_printer_attributes(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_ipp_printer_attributes(&self, action: serde_json::Value) -> Result<ActionResult> {
         let attributes = action
             .get("attributes")
             .and_then(|v| v.as_object())
@@ -99,16 +82,10 @@ impl IppProtocol {
         // Build IPP response with printer attributes
         let body = build_ipp_printer_attributes_response(attributes);
 
-        Ok(ActionResult::IppResponse {
-            status: 200,
-            body,
-        })
+        Ok(ActionResult::IppResponse { status: 200, body })
     }
 
-    fn execute_ipp_job_attributes(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_ipp_job_attributes(&self, action: serde_json::Value) -> Result<ActionResult> {
         let attributes = action
             .get("attributes")
             .and_then(|v| v.as_object())
@@ -119,16 +96,10 @@ impl IppProtocol {
         // Build IPP response with job attributes
         let body = build_ipp_job_attributes_response(attributes);
 
-        Ok(ActionResult::IppResponse {
-            status: 200,
-            body,
-        })
+        Ok(ActionResult::IppResponse { status: 200, body })
     }
 
-    fn execute_list_print_jobs(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_list_print_jobs(&self, _action: serde_json::Value) -> Result<ActionResult> {
         debug!("IPP list print jobs");
 
         // This is a placeholder - in a real implementation, we'd track jobs
@@ -225,7 +196,9 @@ pub fn list_print_jobs_action() -> ActionDefinition {
 }
 
 /// Build IPP printer attributes response
-fn build_ipp_printer_attributes_response(attributes: &serde_json::Map<String, serde_json::Value>) -> Vec<u8> {
+fn build_ipp_printer_attributes_response(
+    attributes: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<u8> {
     // Build a minimal IPP response
     // IPP format: version(2) + status-code(2) + request-id(4) + attributes + end-tag
     let mut response = Vec::new();
@@ -279,7 +252,9 @@ fn build_ipp_printer_attributes_response(attributes: &serde_json::Map<String, se
 }
 
 /// Build IPP job attributes response
-fn build_ipp_job_attributes_response(attributes: &serde_json::Map<String, serde_json::Value>) -> Vec<u8> {
+fn build_ipp_job_attributes_response(
+    attributes: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<u8> {
     // Similar to printer attributes but with job-specific tags
     let mut response = Vec::new();
 

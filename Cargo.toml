@@ -75,6 +75,8 @@ syntect = "5.3"
 # Utilities
 chrono = "0.4"
 regex = "1.11"
+urlencoding = "2.1"
+html2text = "0.12"
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }

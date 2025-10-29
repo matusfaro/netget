@@ -62,7 +62,10 @@ impl Protocol for PostgresqlProtocol {
             "postgresql_ok_response" => self.execute_postgresql_ok_response(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
             "list_postgresql_connections" => self.execute_list_postgresql_connections(action),
-            _ => Err(anyhow::anyhow!("Unknown PostgreSQL action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown PostgreSQL action: {}",
+                action_type
+            )),
         }
     }
 
@@ -122,7 +125,10 @@ impl PostgresqlProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
 
-        debug!("PostgreSQL error response: {} {} - {}", severity, code, message);
+        debug!(
+            "PostgreSQL error response: {} {} - {}",
+            severity, code, message
+        );
 
         let _ = self.status_tx.send(format!(
             "[DEBUG] PostgreSQL ✗ {} {}: {}",
@@ -137,24 +143,23 @@ impl PostgresqlProtocol {
     }
 
     fn execute_postgresql_ok_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let tag = action
-            .get("tag")
-            .and_then(|v| v.as_str())
-            .unwrap_or("OK");
+        let tag = action.get("tag").and_then(|v| v.as_str()).unwrap_or("OK");
 
         debug!("PostgreSQL OK response: {}", tag);
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] PostgreSQL → OK: {}",
-            tag
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] PostgreSQL → OK: {}", tag));
 
         Ok(ActionResult::PostgresqlOk {
             tag: tag.to_string(),
         })
     }
 
-    fn execute_list_postgresql_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_list_postgresql_connections(
+        &self,
+        _action: serde_json::Value,
+    ) -> Result<ActionResult> {
         debug!("PostgreSQL list connections");
 
         // Placeholder - in a real implementation, we'd track connections
