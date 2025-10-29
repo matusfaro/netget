@@ -67,8 +67,13 @@ pub async fn run_rolling_tui(
 
     // BEFORE setting scrolling region, push any existing terminal content up
     // by printing newlines. This makes room for the footer without overwriting content.
-    // Position at bottom of terminal and print footer_height newlines
-    execute!(stdout(), cursor::MoveTo(0, height.saturating_sub(1)))?;
+    // Move to actual bottom of terminal using a large line number that will clamp.
+    // Note: terminal::size() may return wrong values in PTY tests, so we use ESC[9999;1H
+    // which moves to line 9999 (clamped to actual terminal height) instead of relying on detected height
+    print!("\x1b[9999;1H"); // CSI 9999;1 H - Move to line 9999, column 1 (clamps to actual terminal bottom)
+    stdout().flush()?;
+
+    // Print footer_height newlines to push existing content up
     for _ in 0..footer_height {
         execute!(stdout(), Print("\n"))?;
     }
@@ -293,7 +298,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("✗ "),
             ResetColor,
             Print(line.strip_prefix("[ERROR]").unwrap()),
-            Print("\n"),
         )?;
     } else if line.starts_with("[WARN]") {
         execute!(
@@ -302,7 +306,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("⚠ "),
             ResetColor,
             Print(line.strip_prefix("[WARN]").unwrap()),
-            Print("\n"),
         )?;
     } else if line.starts_with("[INFO]") {
         execute!(
@@ -311,7 +314,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("● "),
             ResetColor,
             Print(line.strip_prefix("[INFO]").unwrap()),
-            Print("\n"),
         )?;
     } else if line.starts_with("[DEBUG]") {
         execute!(
@@ -320,7 +322,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("○ "),
             ResetColor,
             Print(line.strip_prefix("[DEBUG]").unwrap()),
-            Print("\n"),
         )?;
     } else if line.starts_with("[TRACE]") {
         execute!(
@@ -329,7 +330,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("· "),
             Print(line.strip_prefix("[TRACE]").unwrap()),
             ResetColor,
-            Print("\n"),
         )?;
     } else if line.starts_with("[USER]") {
         execute!(
@@ -338,7 +338,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("▶ "),
             ResetColor,
             Print(line.strip_prefix("[USER]").unwrap()),
-            Print("\n"),
         )?;
     } else if line.starts_with("[SERVER]") {
         execute!(
@@ -347,7 +346,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("◆ "),
             ResetColor,
             Print(line.strip_prefix("[SERVER]").unwrap()),
-            Print("\n"),
         )?;
     } else if line.starts_with("[CONN]") {
         execute!(
@@ -356,7 +354,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print("◇ "),
             ResetColor,
             Print(line.strip_prefix("[CONN]").unwrap()),
-            Print("\n"),
         )?;
     } else {
         execute!(stdout, Print(line))?;
@@ -450,9 +447,13 @@ async fn handle_key_event(
                 // Parse command
                 let command = UserCommand::parse(&text);
 
-                // IMPORTANT: For SetFooterStatus, we print the command echo AFTER handling
-                // to avoid pushing content into the footer area before it expands
-                let print_echo_before = !matches!(command, UserCommand::SetFooterStatus { .. });
+                // IMPORTANT: For SetFooterStatus and TestOutput, we DON'T print the command echo
+                // - SetFooterStatus: Avoids positioning issues during footer expansion/shrinking
+                // - TestOutput: Direct scroll region manipulation makes the echo unnecessary
+                let print_echo_before = !matches!(
+                    command,
+                    UserCommand::SetFooterStatus { .. } | UserCommand::TestOutput { .. }
+                );
 
                 if print_echo_before {
                     print_output_line(&format!("[USER] {}", text), footer)?;
@@ -482,30 +483,13 @@ async fn handle_key_event(
                         }
                     }
                     UserCommand::TestOutput { count } => {
-                        // Generate test output lines directly in the scroll region
-                        let scroll_height = footer.scroll_region_height();
-
-                        // Calculate which lines to show (if overflow, show the LAST N lines)
-                        let start_index = if count > scroll_height as usize {
-                            count - scroll_height as usize
-                        } else {
-                            0
-                        };
-
-                        let lines_to_show = count.min(scroll_height as usize);
-                        let start_row = scroll_height.saturating_sub(lines_to_show as u16);
-
-                        // Print each line at its position within the scroll region
-                        for i in 0..lines_to_show {
-                            let line_number = start_index + i + 1;
-                            let row = start_row + i as u16;
-                            execute!(stdout(), cursor::MoveTo(0, row))?;
-                            execute!(stdout(), Print(format!("Test line {} of {}", line_number, count)))?;
-                            execute!(stdout(), terminal::Clear(terminal::ClearType::UntilNewLine))?;
+                        // Generate test output lines using print_output_line (scrolling mechanism)
+                        // This ensures content is properly preserved during footer expansion/shrinking
+                        for i in 1..=count {
+                            print_output_line(&format!("Test line {} of {}", i, count), footer)?;
                         }
-                        stdout().flush()?;
 
-                        // Re-render footer - it's positioned AFTER the scroll region, so won't overwrite
+                        // Re-render footer
                         footer.render(&mut stdout())?;
                     }
                     UserCommand::SetFooterStatus { message } => {
@@ -543,59 +527,35 @@ async fn handle_key_event(
                             // Footer is EXPANDING (e.g., 5 lines → 7 lines, increase by 2)
                             let lines_to_add = new_footer_height - old_footer_height;
 
-                            // OPTIMIZATION: Try to consume from blank lines buffer first
+                            // Try to consume from blank lines buffer first
                             let consumed = footer.consume_blank_lines_buffer(lines_to_add);
                             let lines_to_push = lines_to_add - consumed;
 
                             // Write debug info to file
                             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
-                                let _ = writeln!(file, "[DEBUG-EXPAND] Footer expanding: old_height={}, new_height={}, lines_to_add={}",
-                                    old_footer_height, new_footer_height, lines_to_add);
-                                let _ = writeln!(file, "[DEBUG-EXPAND] Buffer consumed={}, lines_to_push={}", consumed, lines_to_push);
-                                let _ = writeln!(file, "[DEBUG-EXPAND] Old footer: start={}, scroll_height={}", old_footer_start, old_scroll_height);
-                                let _ = writeln!(file, "[DEBUG-EXPAND] New footer: scroll_height={}", new_scroll_height);
+                                let _ = writeln!(file, "[DEBUG-EXPAND] Footer expanding: old_height={}, new_height={}, lines_to_add={}, consumed={}, lines_to_push={}",
+                                    old_footer_height, new_footer_height, lines_to_add, consumed, lines_to_push);
                             }
 
-                            // Only push terminal up if we need more space than what's in the buffer
+                            // If buffer didn't have enough space, push content up BEFORE changing scroll region
                             if lines_to_push > 0 {
-                                // Step 1: Clear top N lines of the OLD footer (not the new footer position)
-                                // This clears footer content but preserves scroll region content above it
-                                let blank_line = " ".repeat(term_width as usize);
-                                for row in old_footer_start..(old_footer_start + lines_to_push) {
-                                    execute!(stdout(), cursor::MoveTo(0, row), Print(&blank_line))?;
+                                // Move cursor to bottom of the OLD scroll region (0-indexed)
+                                let last_old_scroll_line = old_scroll_height.saturating_sub(1);
+                                execute!(stdout(), cursor::MoveTo(0, last_old_scroll_line))?;
+
+                                // Print newlines to scroll content up within the OLD scroll region
+                                // This preserves all content by scrolling it up before we shrink the region
+                                for _ in 0..lines_to_push {
+                                    execute!(stdout(), Print("\n"))?;
                                 }
                                 stdout().flush()?;
-
-                                // Step 2: Temporarily REMOVE scrolling region to allow whole terminal to scroll
-                                print!("\x1b[r"); // Reset scrolling region to full terminal
-                                stdout().flush()?;
-
-                                // Step 3: Push WHOLE TERMINAL up using ANSI scroll sequence
-                                // First move cursor to top-left, then use scroll up sequence
-                                execute!(stdout(), cursor::MoveTo(0, 0))?;
-                                // Use ANSI ESC[<n>S to scroll up n lines
-                                print!("\x1b[{}S", lines_to_push);
-                                stdout().flush()?;
-
-                                // Step 4: Set new scrolling region
-                                print!("\x1b[1;{}r", new_scroll_height);
-                                stdout().flush()?;
-
-                                // Move cursor to safe position (inside scroll region)
-                                execute!(stdout(), cursor::MoveTo(0, 0))?;
-                            } else {
-                                // Just update the scrolling region without pushing
-                                print!("\x1b[1;{}r", new_scroll_height);
-                                stdout().flush()?;
                             }
 
-                            // Clear the new footer area before rendering
-                            let new_footer_start = term_height.saturating_sub(new_footer_height);
-                            let blank_line = " ".repeat(term_width as usize);
-                            for row in new_footer_start..term_height {
-                                execute!(stdout(), cursor::MoveTo(0, row), Print(&blank_line))?;
-                            }
+                            // NOW set the new (smaller) scrolling region
+                            print!("\x1b[1;{}r", new_scroll_height);
                             stdout().flush()?;
+
+                            // Footer.render() will clear and draw the footer area
                         } else if new_footer_height < old_footer_height {
                             // Footer is SHRINKING (e.g., 7 lines → 5 lines, decrease by 2)
                             let lines_to_remove = old_footer_height - new_footer_height;
@@ -642,37 +602,7 @@ async fn handle_key_event(
                         }
                         footer.render(&mut stdout())?;
 
-                        // NOW print the command echo AFTER footer expansion/shrinking
-                        // This prevents the echo from pushing content into the footer area
-                        // IMPORTANT: Only add a preliminary newline if the footer EXPANDED
-                        // AND actually pushed lines (buffer was empty)
-                        // If buffer > 0, the expansion consumed from buffer (no push), so no extra newline needed
-                        let buffer_before_echo = footer.blank_lines_buffer();
-                        let expansion_pushed_lines = new_footer_height > old_footer_height && buffer_before_echo == 0;
-
-                        if expansion_pushed_lines {
-                            // Footer expanded and pushed lines - we need to scroll first, then print
-                            // Move to last line and print newline to scroll the region
-                            let scroll_height = footer.scroll_region_height();
-                            let last_line = scroll_height.saturating_sub(1);
-                            execute!(stdout(), cursor::MoveTo(0, last_line), Print("\n"))?;
-
-                            // Now print the command echo at the last line (without calling print_output_line
-                            // which would scroll again)
-                            execute!(stdout(),
-                                SetForegroundColor(Color::Green),
-                                Print("▶ "),
-                                ResetColor,
-                                Print(&text)
-                            )?;
-                            stdout().flush()?;
-
-                            // Decrement buffer since we just printed a line
-                            footer.decrement_blank_lines_buffer();
-                        } else {
-                            // No expansion or consumed from buffer - use normal print_output_line
-                            print_output_line(&format!("[USER] {}", text), footer)?;
-                        }
+                        // Command echo is suppressed for SetFooterStatus (see print_echo_before logic above)
                     }
                     UserCommand::Quit => {
                         return Ok(true);
@@ -921,14 +851,64 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
         local_addr: app.connection_info.local_addr.clone(),
     });
 
-    // CRITICAL: Update ANSI scroll region if footer size changed
+    // CRITICAL: Handle footer size changes (expansion/shrinking)
     let new_scroll_height = footer.scroll_region_height();
     let new_footer_height = term_height.saturating_sub(new_scroll_height);
 
     if new_footer_height != old_footer_height {
-        // Footer size changed - update the ANSI scroll region
-        print!("\x1b[1;{}r", new_scroll_height);
-        stdout().flush().ok();
+        let term_width = footer.terminal_width();
+        let old_footer_start = term_height.saturating_sub(old_footer_height);
+
+        if new_footer_height > old_footer_height {
+            // Footer is EXPANDING (e.g., connection added, causing footer to grow)
+            let lines_to_add = new_footer_height - old_footer_height;
+
+            // Try to consume from blank lines buffer first
+            let consumed = footer.consume_blank_lines_buffer(lines_to_add);
+            let lines_to_push = lines_to_add - consumed;
+
+            // If buffer didn't have enough space, push content up BEFORE changing scroll region
+            if lines_to_push > 0 {
+                // Move cursor to bottom of the OLD scroll region (0-indexed)
+                let last_old_scroll_line = old_scroll_height.saturating_sub(1);
+                execute!(stdout(), cursor::MoveTo(0, last_old_scroll_line)).ok();
+
+                // Print newlines to scroll content up within the OLD scroll region
+                // This preserves all content by scrolling it up before we shrink the region
+                for _ in 0..lines_to_push {
+                    execute!(stdout(), Print("\n")).ok();
+                }
+                stdout().flush().ok();
+            }
+
+            // NOW set the new (smaller) scrolling region
+            print!("\x1b[1;{}r", new_scroll_height);
+            stdout().flush().ok();
+
+            // Footer.render() will clear and draw the footer area
+
+        } else if new_footer_height < old_footer_height {
+            // Footer is SHRINKING (e.g., connection removed, causing footer to shrink)
+            let lines_to_remove = old_footer_height - new_footer_height;
+
+            // Add shrunk lines to blank lines buffer
+            footer.add_to_blank_lines_buffer(lines_to_remove);
+
+            // Clear the top N lines of the old footer
+            let blank_line = " ".repeat(term_width as usize);
+            for line_offset in 0..lines_to_remove {
+                execute!(
+                    stdout(),
+                    cursor::MoveTo(0, old_footer_start + line_offset),
+                    Print(&blank_line),
+                ).ok();
+            }
+            stdout().flush().ok();
+
+            // Update scrolling region to new height
+            print!("\x1b[1;{}r", new_scroll_height);
+            stdout().flush().ok();
+        }
     }
 
     // NOTE: Callers are responsible for rendering the footer after this function
