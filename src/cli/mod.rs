@@ -1,11 +1,13 @@
 //! CLI module - handles command-line interface and application startup
 
 mod args;
+mod input_state;
 mod non_interactive;
+mod rolling_tui;
 pub mod server_startup;
 mod setup;
+mod sticky_footer;
 mod terminal_cleanup;
-mod tui;
 
 pub use args::Args;
 use anyhow::Result;
@@ -44,8 +46,8 @@ pub async fn run() -> Result<()> {
         let llm = OllamaClient::default();
         let event_handler = EventHandler::new(state.clone(), llm.clone());
 
-        let _terminal_guard = setup::init_terminal()?;
-        tui::run_tui(state, app, event_handler, llm, settings, &args).await
+        // Note: init_terminal not needed for rolling TUI (manages terminal itself)
+        rolling_tui::run_rolling_tui(state, app, event_handler, llm, settings, &args).await
     } else {
         // No prompt and no terminal available
         anyhow::bail!(

@@ -1,0 +1,2 @@
+# Ignore actual snapshot files created when tests fail
+*.actual.snap

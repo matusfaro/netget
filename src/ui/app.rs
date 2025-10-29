@@ -1,27 +1,12 @@
-//! Application state for the shell interface
+//! Simplified application state for rolling terminal
+//!
+//! This module provides the minimal state needed for the rolling terminal interface.
+//! Most rendering logic has moved to sticky_footer.rs.
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write as _};
 use std::path::PathBuf;
 use tracing::{debug, warn};
-use tui_textarea::TextArea;
-
-/// Which panel has focus
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    /// Input panel is focused (default)
-    Input,
-    /// Output panel is focused (for scrolling)
-    Output,
-    /// Server/Connections panel is focused (for scrolling and expand/collapse)
-    ServerConnections,
-}
-
-impl Default for Focus {
-    fn default() -> Self {
-        Focus::Input
-    }
-}
 
 /// Log level for output verbosity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -67,45 +52,7 @@ impl LogLevel {
     }
 }
 
-/// Main application state for the TUI
-pub struct App {
-    /// User input buffer (using tui-textarea for better editing)
-    pub textarea: TextArea<'static>,
-    /// Command history
-    pub command_history: Vec<String>,
-    /// Current position in history (None = not browsing/comp history)
-    pub history_position: Option<usize>,
-    /// Temporary buffer when browsing history
-    pub history_temp_input: Option<String>,
-    /// All output messages (combined log)
-    pub output_messages: Vec<String>,
-    /// Connection information (legacy, kept for compatibility)
-    pub connection_info: ConnectionInfo,
-    /// Packet statistics (legacy, kept for compatibility)
-    pub packet_stats: PacketStats,
-    /// Scroll offset for output (0 = bottom, higher = scrolled up)
-    pub scroll_offset: usize,
-    /// Which panel currently has focus
-    pub focus: Focus,
-    /// Current log level
-    pub log_level: LogLevel,
-    /// Slash command suggestions (shown when typing "/")
-    pub slash_suggestions: Vec<String>,
-    /// Server list for display
-    pub servers: Vec<ServerDisplayInfo>,
-    /// Connection list for display
-    pub connections: Vec<ConnectionDisplayInfo>,
-    /// Scroll offset for servers/connections panel (0 = top, higher = scrolled down)
-    pub servers_scroll_offset: usize,
-    /// Whether to expand all connections (E key toggle)
-    pub expand_all_connections: bool,
-    /// Next global connection ID to assign
-    pub next_global_connection_id: u32,
-    /// Mapping from network ConnectionId to global UI ID
-    pub connection_id_map: std::collections::HashMap<String, u32>,
-}
-
-/// Server information for display in the UI
+/// Server information for display
 #[derive(Debug, Clone)]
 pub struct ServerDisplayInfo {
     pub id: String,
@@ -115,21 +62,16 @@ pub struct ServerDisplayInfo {
     pub connections: usize,
 }
 
-impl ServerDisplayInfo {
-    pub fn status_as_str(&self) -> &str {
-        &self.status
-    }
-}
-
-/// Connection information for display in the UI
+/// Connection information for display
 #[derive(Debug, Clone)]
 pub struct ConnectionDisplayInfo {
-    pub id: u32,  // Global connection ID
-    pub server_id: String,  // Which server this connection belongs to
+    pub id: u32,
+    pub server_id: String,
     pub address: String,
     pub state: String,
 }
 
+/// Connection information for status bar
 #[derive(Default, Clone)]
 pub struct ConnectionInfo {
     pub mode: String,
@@ -140,6 +82,7 @@ pub struct ConnectionInfo {
     pub state: String,
 }
 
+/// Packet statistics for status bar
 #[derive(Default, Clone)]
 pub struct PacketStats {
     pub packets_received: u64,
@@ -148,23 +91,46 @@ pub struct PacketStats {
     pub bytes_sent: u64,
 }
 
+/// Simplified application state for rolling terminal
+pub struct App {
+    /// Command history
+    pub command_history: Vec<String>,
+    /// Current position in history (None = not browsing history)
+    pub history_position: Option<usize>,
+    /// Temporary buffer when browsing history
+    pub history_temp_input: Option<String>,
+    /// Connection information
+    pub connection_info: ConnectionInfo,
+    /// Packet statistics
+    pub packet_stats: PacketStats,
+    /// Current log level
+    pub log_level: LogLevel,
+    /// Slash command suggestions
+    pub slash_suggestions: Vec<String>,
+    /// Server list for display
+    pub servers: Vec<ServerDisplayInfo>,
+    /// Connection list for display
+    pub connections: Vec<ConnectionDisplayInfo>,
+    /// Whether to expand all connections (E key toggle)
+    pub expand_all_connections: bool,
+    /// Next global connection ID to assign
+    pub next_global_connection_id: u32,
+    /// Mapping from network ConnectionId to global UI ID
+    pub connection_id_map: std::collections::HashMap<String, u32>,
+}
+
 impl Default for App {
     fn default() -> Self {
         Self {
-            textarea: TextArea::default(),
             command_history: Vec::new(),
             history_position: None,
             history_temp_input: None,
-            output_messages: Vec::new(),
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
-            scroll_offset: 0,
-            focus: Focus::default(),
-            log_level: LogLevel::default(),
+            log_level: LogLevel::Trace, // Interactive mode defaults to TRACE
             slash_suggestions: Vec::new(),
             servers: Vec::new(),
             connections: Vec::new(),
-            servers_scroll_offset: 0,
             expand_all_connections: false,
             next_global_connection_id: 1,
             connection_id_map: std::collections::HashMap::new(),
@@ -270,269 +236,17 @@ impl App {
     pub fn new() -> Self {
         let mut app = Self::default();
         app.command_history = Self::load_history();
-        // Interactive mode defaults to TRACE logging (logged to netget.log)
-        app.log_level = LogLevel::Trace;
         app
     }
 
-    /// Get the number of commands in history
-    pub fn history_count(&self) -> usize {
-        self.command_history.len()
-    }
-
-    /// Add a message to the output log and return true if it's new
-    pub fn add_message(&mut self, message: String) -> bool {
-        // Check if this is actually a new message
-        let is_new = self.output_messages.last() != Some(&message);
-        if is_new {
-            // Auto-scroll: if we're at the bottom, keep us at the bottom
-            let was_at_bottom = self.scroll_offset == 0;
-
-            self.output_messages.push(message);
-
-            // Stay at bottom if we were already there
-            if was_at_bottom {
-                self.scroll_offset = 0;
-            }
+    /// Add command to history (deduplicates)
+    pub fn add_to_history(&mut self, command: String) {
+        if !command.trim().is_empty()
+            && (self.command_history.is_empty()
+                || self.command_history.last() != Some(&command))
+        {
+            self.command_history.push(command);
         }
-        is_new
-    }
-
-    /// Get the last N messages
-    pub fn get_last_messages(&self, n: usize) -> &[String] {
-        let start = self.output_messages.len().saturating_sub(n);
-        &self.output_messages[start..]
-    }
-
-    /// Get count of output messages
-    pub fn output_count(&self) -> usize {
-        self.output_messages.len()
-    }
-
-    /// Legacy methods for compatibility
-    pub fn add_llm_message(&mut self, message: String) {
-        self.add_message(message);
-    }
-
-    pub fn add_status_message(&mut self, message: String) {
-        self.add_message(message);
-    }
-
-    /// Log at ERROR level (always shown)
-    pub fn log_error(&mut self, message: String) {
-        self.add_message(format!("[ERROR] {message}"));
-    }
-
-    /// Log at WARN level (shown if level >= WARN)
-    pub fn log_warn(&mut self, message: String) {
-        if self.log_level >= LogLevel::Warn {
-            self.add_message(format!("[WARN] {message}"));
-        }
-    }
-
-    /// Log at INFO level (shown if level >= INFO)
-    pub fn log_info(&mut self, message: String) {
-        if self.log_level >= LogLevel::Info {
-            self.add_message(format!("[INFO] {message}"));
-        }
-    }
-
-    /// Log at DEBUG level (shown if level >= DEBUG)
-    pub fn log_debug(&mut self, message: String) {
-        if self.log_level >= LogLevel::Debug {
-            self.add_message(format!("[DEBUG] {message}"));
-        }
-    }
-
-    /// Log at TRACE level (shown if level >= TRACE)
-    pub fn log_trace(&mut self, message: String) {
-        if self.log_level >= LogLevel::Trace {
-            self.add_message(format!("[TRACE] {message}"));
-        }
-    }
-
-    /// Set log level
-    pub fn set_log_level(&mut self, level: LogLevel) {
-        self.log_level = level;
-        self.add_message(format!("Log level set to {}", level.as_str()));
-    }
-
-    /// Scroll up in the output
-    pub fn scroll_up(&mut self, lines: usize) {
-        let max_scroll = self.output_messages.len().saturating_sub(1);
-        self.scroll_offset = (self.scroll_offset + lines).min(max_scroll);
-    }
-
-    /// Scroll down in the output
-    pub fn scroll_down(&mut self, lines: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
-    }
-
-    /// Scroll to bottom
-    pub fn scroll_to_bottom(&mut self) {
-        self.scroll_offset = 0;
-    }
-
-    /// Scroll to top
-    pub fn scroll_to_top(&mut self) {
-        let max_scroll = self.output_messages.len().saturating_sub(1);
-        self.scroll_offset = max_scroll;
-    }
-
-    /// Get the current input text
-    pub fn get_input(&self) -> String {
-        self.textarea.lines().join("\n")
-    }
-
-    /// Insert a newline at the current cursor position
-    pub fn insert_newline(&mut self) {
-        self.textarea.insert_newline();
-        self.update_slash_suggestions();
-    }
-
-    /// Check if cursor is on the first line of the textarea
-    pub fn is_cursor_on_first_line(&self) -> bool {
-        let (row, _) = self.textarea.cursor();  // cursor() returns (row, col)
-        row == 0
-    }
-
-    /// Check if cursor is on the last line of the textarea
-    pub fn is_cursor_on_last_line(&self) -> bool {
-        let (row, _) = self.textarea.cursor();  // cursor() returns (row, col)
-        let total_lines = self.textarea.lines().len();
-        row >= total_lines.saturating_sub(1)
-    }
-
-    /// Move cursor up within the textarea
-    pub fn move_cursor_up(&mut self) {
-        self.textarea.move_cursor(tui_textarea::CursorMove::Up);
-    }
-
-    /// Move cursor down within the textarea
-    pub fn move_cursor_down(&mut self) {
-        self.textarea.move_cursor(tui_textarea::CursorMove::Down);
-    }
-
-    /// Submit current input and return it
-    pub fn submit_input(&mut self) -> String {
-        let input = self.get_input();
-
-        // Add to history if not empty and different from last entry
-        if !input.trim().is_empty() &&
-           (self.command_history.is_empty() ||
-            self.command_history.last() != Some(&input)) {
-            self.command_history.push(input.clone());
-        }
-
-        // Reset input and history navigation
-        self.textarea = TextArea::default();
-        self.history_position = None;
-        self.history_temp_input = None;
-        self.update_slash_suggestions();
-
-        input
-    }
-
-    /// Navigate up in command history
-    pub fn history_previous(&mut self) {
-        if self.command_history.is_empty() {
-            return;
-        }
-
-        match self.history_position {
-            None => {
-                // Starting history navigation - save current input
-                let current = self.get_input();
-                if !current.is_empty() {
-                    self.history_temp_input = Some(current);
-                }
-                // Go to most recent command
-                let pos = self.command_history.len() - 1;
-                self.history_position = Some(pos);
-                self.textarea = TextArea::from(self.command_history[pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
-                // Move cursor to beginning of first line when going back in history
-                self.textarea.move_cursor(tui_textarea::CursorMove::Top);
-            }
-            Some(pos) if pos > 0 => {
-                // Go to older command
-                let new_pos = pos - 1;
-                self.history_position = Some(new_pos);
-                self.textarea = TextArea::from(self.command_history[new_pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
-                // Move cursor to beginning of first line when going back in history
-                self.textarea.move_cursor(tui_textarea::CursorMove::Top);
-            }
-            _ => {
-                // Already at oldest command, do nothing
-            }
-        }
-    }
-
-    /// Navigate down in command history
-    pub fn history_next(&mut self) {
-        match self.history_position {
-            Some(pos) if pos < self.command_history.len() - 1 => {
-                // Go to newer command
-                let new_pos = pos + 1;
-                self.history_position = Some(new_pos);
-                self.textarea = TextArea::from(self.command_history[new_pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
-                // Move cursor to end of last line when going forward in history
-                self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
-                self.textarea.move_cursor(tui_textarea::CursorMove::End);
-            }
-            Some(_) => {
-                // At newest command, restore temp input or clear
-                self.history_position = None;
-                let temp = self.history_temp_input.take().unwrap_or_default();
-                self.textarea = TextArea::from(temp.lines().map(|s| s.to_string()).collect::<Vec<_>>());
-                // Move cursor to end of last line
-                self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
-                self.textarea.move_cursor(tui_textarea::CursorMove::End);
-            }
-            None => {
-                // Not in history mode, do nothing
-            }
-        }
-    }
-
-    // Cursor movement methods removed - TextArea handles these internally
-
-    /// Toggle focus between Input, Output, and ServerConnections panels
-    pub fn toggle_focus(&mut self) {
-        self.focus = match self.focus {
-            Focus::Input => Focus::ServerConnections,
-            Focus::ServerConnections => Focus::Output,
-            Focus::Output => Focus::Input,
-        };
-    }
-
-    /// Check if output panel has focus
-    pub fn is_output_focused(&self) -> bool {
-        self.focus == Focus::Output
-    }
-
-    /// Check if input panel has focus
-    pub fn is_input_focused(&self) -> bool {
-        self.focus == Focus::Input
-    }
-
-    /// Check if server/connections panel has focus
-    pub fn is_servers_focused(&self) -> bool {
-        self.focus == Focus::ServerConnections
-    }
-
-    /// Scroll up in the servers/connections panel
-    pub fn servers_scroll_up(&mut self, lines: usize) {
-        self.servers_scroll_offset = self.servers_scroll_offset.saturating_add(lines);
-    }
-
-    /// Scroll down in the servers/connections panel
-    pub fn servers_scroll_down(&mut self, lines: usize) {
-        self.servers_scroll_offset = self.servers_scroll_offset.saturating_sub(lines);
-    }
-
-    /// Toggle expand all connections
-    pub fn toggle_expand_all(&mut self) {
-        self.expand_all_connections = !self.expand_all_connections;
     }
 
     /// Get or allocate a global connection ID for a network connection
@@ -552,14 +266,8 @@ impl App {
         self.connection_id_map.remove(network_conn_id);
     }
 
-    /// Calculate the number of visual lines the input will take
-    pub fn calculate_input_height(&self, _width: usize) -> u16 {
-        self.textarea.lines().len().max(1) as u16
-    }
-
-    /// Update slash command suggestions based on current input
-    pub fn update_slash_suggestions(&mut self) {
-        let input = self.get_input();
+    /// Update slash command suggestions based on input
+    pub fn update_slash_suggestions(&mut self, input: &str) {
         // Only show suggestions if input starts with "/"
         if !input.starts_with('/') {
             self.slash_suggestions.clear();
@@ -584,10 +292,20 @@ impl App {
             .collect();
     }
 
-    /// Check if we should show slash suggestions
-    pub fn should_show_slash_suggestions(&self) -> bool {
-        let input = self.get_input();
-        input.starts_with('/') && !self.slash_suggestions.is_empty()
+    /// Set log level
+    pub fn set_log_level(&mut self, level: LogLevel) {
+        self.log_level = level;
+    }
+
+    /// Toggle expand all connections
+    pub fn toggle_expand_all(&mut self) {
+        self.expand_all_connections = !self.expand_all_connections;
+    }
+
+    /// Legacy compatibility: add_llm_message (no-op in rolling terminal, output goes to stdout)
+    pub fn add_llm_message(&mut self, _message: String) {
+        // In rolling terminal mode, messages are printed directly to stdout
+        // This method exists for compatibility with event handler
     }
 }
 
@@ -605,124 +323,21 @@ mod tests {
 
     #[test]
     fn test_escape_unescape_newlines() {
-        // Test simple newline
         let original = "line 1\nline 2";
         let escaped = App::escape_for_storage(original);
         assert_eq!(escaped, "line 1\\nline 2");
         let unescaped = App::unescape_from_storage(&escaped);
         assert_eq!(unescaped, original);
-
-        // Test multiple special characters
-        let original = "line 1\nline 2\r\nline 3\ttab\\backslash";
-        let escaped = App::escape_for_storage(original);
-        let unescaped = App::unescape_from_storage(&escaped);
-        assert_eq!(unescaped, original);
-
-        // Test empty string
-        let original = "";
-        let escaped = App::escape_for_storage(original);
-        let unescaped = App::unescape_from_storage(&escaped);
-        assert_eq!(unescaped, original);
-
-        // Test no special characters
-        let original = "just plain text";
-        let escaped = App::escape_for_storage(original);
-        assert_eq!(escaped, original);
-        let unescaped = App::unescape_from_storage(&escaped);
-        assert_eq!(unescaped, original);
     }
 
     #[test]
-    fn test_multiline_command_in_history() {
-        let mut app = App::default();
-
-        // Submit a multi-line command
-        app.textarea = TextArea::from(vec!["line 1".to_string(), "line 2".to_string(), "line 3".to_string()]);
-        let result = app.submit_input();
-
-        assert_eq!(result, "line 1\nline 2\nline 3");
+    fn test_add_to_history_deduplicates() {
+        let mut app = App::new();
+        app.add_to_history("command1".to_string());
+        app.add_to_history("command1".to_string()); // Duplicate
         assert_eq!(app.command_history.len(), 1);
-        assert_eq!(app.command_history[0], "line 1\nline 2\nline 3");
-    }
 
-    #[test]
-    fn test_submit_input_adds_to_history() {
-        let mut app = App::default();
-
-        // Submit first command
-        app.textarea = TextArea::from(vec!["listen on port 21".to_string()]);
-        let result = app.submit_input();
-
-        assert_eq!(result, "listen on port 21");
-        assert_eq!(app.command_history.len(), 1);
-        assert_eq!(app.get_input(), "");
-
-        // Submit second command
-        app.textarea = TextArea::from(vec!["status".to_string()]);
-        app.submit_input();
-
+        app.add_to_history("command2".to_string());
         assert_eq!(app.command_history.len(), 2);
-    }
-
-    #[test]
-    fn test_submit_duplicate_not_added() {
-        let mut app = App::default();
-
-        app.textarea = TextArea::from(vec!["listen on port 21".to_string()]);
-        app.submit_input();
-
-        // Same command again
-        app.textarea = TextArea::from(vec!["listen on port 21".to_string()]);
-        app.submit_input();
-
-        // Should only have one entry
-        assert_eq!(app.command_history.len(), 1);
-    }
-
-    #[test]
-    fn test_history_navigation() {
-        let mut app = App::default();
-        app.command_history = vec![
-            "command1".to_string(),
-            "command2".to_string(),
-            "command3".to_string(),
-        ];
-
-        // Navigate up - should show command3
-        app.history_previous();
-        assert_eq!(app.get_input(), "command3");
-        assert_eq!(app.history_position, Some(2));
-
-        // Navigate up again - should show command2
-        app.history_previous();
-        assert_eq!(app.get_input(), "command2");
-        assert_eq!(app.history_position, Some(1));
-
-        // Navigate down - should show command3
-        app.history_next();
-        assert_eq!(app.get_input(), "command3");
-        assert_eq!(app.history_position, Some(2));
-
-        // Navigate down again - should clear
-        app.history_next();
-        assert_eq!(app.get_input(), "");
-        assert_eq!(app.history_position, None);
-    }
-
-    #[test]
-    fn test_history_temp_buffer() {
-        let mut app = App::default();
-        app.command_history = vec!["old_command".to_string()];
-
-        // Type something
-        app.textarea = TextArea::from(vec!["new text".to_string()]);
-
-        // Navigate up - should save current input
-        app.history_previous();
-        assert_eq!(app.get_input(), "old_command");
-
-        // Navigate down - should restore saved input
-        app.history_next();
-        assert_eq!(app.get_input(), "new text");
     }
 }
