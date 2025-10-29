@@ -131,6 +131,7 @@ impl AppState {
                 script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
+                log_files: s.log_files.clone(),
             }
         })
     }
@@ -163,6 +164,7 @@ impl AppState {
                 script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
+                log_files: s.log_files.clone(),
             })
             .collect()
     }
@@ -493,6 +495,19 @@ impl AppState {
             .values()
             .next()
             .and_then(|s| s.local_addr)
+    }
+
+    /// Execute a closure with mutable access to a server
+    pub async fn with_server_mut<F, R>(&self, server_id: ServerId, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut ServerInstance) -> R,
+    {
+        self.inner
+            .write()
+            .await
+            .servers
+            .get_mut(&server_id)
+            .map(f)
     }
 }
 

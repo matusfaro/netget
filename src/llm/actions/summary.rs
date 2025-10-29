@@ -94,6 +94,17 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::UpdateScript { operation, .. } => {
             format!("update_script: {}", operation)
         }
+        CommonAction::AppendToLog {
+            output_name,
+            content,
+        } => {
+            let preview = if content.len() > 30 {
+                format!("{}...", &content[..27])
+            } else {
+                content.clone()
+            };
+            format!("append_to_log: {} \"{}\"", output_name, preview)
+        }
     }
 }
 

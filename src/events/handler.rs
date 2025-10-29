@@ -159,7 +159,20 @@ impl EventHandler {
 
         match actions {
             Ok(action_values) => {
-                // Execute all collected actions
+                // Handle server management actions FIRST (they need to be executed before other actions)
+                for action_value in &action_values {
+                    if let Ok(common_action) = CommonAction::from_json(action_value) {
+                        if let Err(e) = self
+                            .execute_server_management_action(common_action, &status_tx)
+                            .await
+                        {
+                            let _ = status_tx
+                                .send(format!("[ERROR] Error executing action: {e}"));
+                        }
+                    }
+                }
+
+                // Then execute all other actions (including append_to_log)
                 let protocol_ref: Option<&dyn ProtocolActions> = protocol
                     .as_ref()
                     .map(|p| p.as_ref() as &dyn ProtocolActions);
@@ -169,19 +182,6 @@ impl EventHandler {
                         // Display messages
                         for msg in result.messages {
                             let _ = status_tx.send(msg);
-                        }
-
-                        // Handle server management actions separately
-                        for action_value in &action_values {
-                            if let Ok(common_action) = CommonAction::from_json(action_value) {
-                                if let Err(e) = self
-                                    .execute_server_management_action(common_action, &status_tx)
-                                    .await
-                                {
-                                    let _ = status_tx
-                                        .send(format!("[ERROR] Error executing action: {e}"));
-                                }
-                            }
                         }
                     }
                     Err(e) => {
@@ -469,6 +469,10 @@ impl EventHandler {
                         ));
                     }
                 }
+            }
+            CommonAction::AppendToLog { .. } => {
+                // AppendToLog is handled by the action executor, not here
+                // This match arm exists to satisfy exhaustiveness checking
             }
         }
 
