@@ -17,7 +17,7 @@ pub mod client;  // Keep the old client module for reference
 pub use actions::{
     ActionDefinition, ActionResponse, Parameter,
     common::{CommonAction, get_all_common_actions, get_user_input_common_actions, get_network_event_common_actions},
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     executor::{execute_actions, ExecutionResult},
 };
 

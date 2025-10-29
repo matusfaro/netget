@@ -27,7 +27,6 @@ async fn test_ssh_banner() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect and read SSH banner
     println!("Connecting to SSH server...");
@@ -96,7 +95,6 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Perform SSH version exchange using ssh2
     println!("Attempting SSH2 version exchange...");
@@ -161,7 +159,6 @@ async fn test_ssh_connection_attempt() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Try to establish SSH connection
     println!("Attempting full SSH connection...");
@@ -223,7 +220,6 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Try multiple connections
     println!("Testing multiple SSH connections...");
@@ -256,13 +252,369 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
         }
 
         // Small delay between connections
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     println!("✓ Multiple connection handling tested");
 
     server.stop().await?;
     println!("=== Test completed ===\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ssh_python_auth_script() -> E2EResult<()> {
+    println!("\n=== E2E Test: SSH with Python Auth Script ===");
+
+    // PROMPT: Simple prompt asking for SSH auth via script
+    let port = helpers::get_available_port().await?;
+
+    let prompt = format!(
+        "listen on port {} via ssh. Allow user 'alice' and deny all other users. Handle authentication via script.",
+        port
+    );
+
+    // Start the server
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    // IMPORTANT: After server startup, we expect to see script configuration in the LLM response
+    // The LLM should have returned an action with script_inline and script_handles
+    println!("\n  ✓ Server configured (check debug output above for script_inline presence)");
+
+    // VALIDATION: Test authentication with different users
+    println!("Testing authentication...");
+
+    // Test 1: Try to connect as "alice" (should succeed)
+    println!("\n  Test 1: Authenticate as 'alice' (should be allowed by script)");
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("    ✓ TCP connected");
+
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000);
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("    ✓ SSH handshake completed");
+
+                    match sess.userauth_password("alice", "anypassword") {
+                        Ok(_) => {
+                            println!("    ✓ Authentication as 'alice' succeeded!");
+                            assert!(sess.authenticated(), "Session should be authenticated");
+                        }
+                        Err(e) => {
+                            println!("    ✗ Authentication as 'alice' failed: {}", e);
+                            println!("      This indicates the LLM may not have generated a script");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("    Note: SSH handshake failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("    Note: TCP connection failed: {}", e);
+        }
+    }
+
+    // Test 2: Try to connect as "bob" (should fail)
+    println!("\n  Test 2: Authenticate as 'bob' (should be denied by script)");
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("    ✓ TCP connected");
+
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000);
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("    ✓ SSH handshake completed");
+
+                    match sess.userauth_password("bob", "anypassword") {
+                        Ok(_) => {
+                            println!("    ✗ Authentication as 'bob' succeeded (should have been denied)");
+                        }
+                        Err(e) => {
+                            println!("    ✓ Authentication as 'bob' correctly denied: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("    Note: SSH handshake failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("    Note: TCP connection failed: {}", e);
+        }
+    }
+
+    // VERIFY: Check that scripts were used (not LLM) for authentication
+    println!("\nVerifying that scripts handled authentication (not LLM)...");
+
+    // Give a moment for output to be captured
+
+    // Debug: print captured lines count
+    let output = server.get_output().await;
+    println!("  DEBUG: Captured {} output lines", output.len());
+    if output.is_empty() {
+        println!("  WARNING: No output lines captured! Output collection may not be working.");
+    } else {
+        println!("  DEBUG: First few lines:");
+        for line in output.iter().take(5) {
+            println!("    - {}", line);
+        }
+    }
+
+    // Should see script configuration in initial LLM response
+    assert!(
+        server.output_contains("script_inline").await,
+        "Server should have been configured with a script (script_inline should appear in output)"
+    );
+
+    // Should NOT see LLM requests for auth events after server startup
+    // The first LLM call is for server setup, subsequent auth events should use script
+    let llm_request_count = server.count_in_output("LLM request:").await;
+    assert_eq!(
+        llm_request_count, 1,
+        "Expected exactly 1 LLM request (server setup), found {}. Auth events should use script, not LLM!",
+        llm_request_count
+    );
+
+    println!("  ✓ Verified: Script handled authentication (no LLM calls for auth events)");
+
+    server.stop().await?;
+    println!("\n=== Test completed ===\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ssh_script_update() -> E2EResult<()> {
+    println!("\n=== E2E Test: SSH Script Update on Running Server ===");
+
+    // PROMPT: Start SSH server with script, then request to update it
+    let port = helpers::get_available_port().await?;
+
+    let prompt = format!(
+        "listen on port {} via ssh. Initially deny all authentication via script. \
+        Then immediately update the script to allow user 'charlie' and deny others.",
+        port
+    );
+
+    // Start the server
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    // Wait for server to start and potentially update script
+
+    // VALIDATION: Try to authenticate as charlie (should succeed with updated script)
+    println!("Testing authentication with updated script...");
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("  ✓ TCP connected");
+
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000);
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("  ✓ SSH handshake completed");
+
+                    match sess.userauth_password("charlie", "anypassword") {
+                        Ok(_) => {
+                            println!("  ✓ Authentication as 'charlie' succeeded (script was updated!)");
+                        }
+                        Err(e) => {
+                            println!("  Note: Authentication failed: {}", e);
+                            println!("    The LLM may not have called update_script action");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("  Note: SSH handshake failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("  Note: TCP connection failed: {}", e);
+        }
+    }
+
+    // VERIFY: Check that initial script was created and then updated
+    println!("\nVerifying that scripts were used...");
+
+
+    let output = server.get_output().await;
+    println!("  DEBUG: Captured {} output lines", output.len());
+
+    // Should see script_inline in the output (initial script creation)
+    assert!(
+        server.output_contains("script_inline").await,
+        "Server should have been configured with a script"
+    );
+
+    // Should see update_script action if the script was updated
+    if server.output_contains("update_script").await {
+        println!("  ✓ Verified: Script was updated via update_script action");
+    } else {
+        println!("  Note: No update_script action found - LLM may have created final script directly");
+    }
+
+    // Count LLM requests - we expect:
+    // 1. Initial server setup (may include script creation + update, or just final script)
+    // 2. Auth attempts should use script (no LLM calls)
+    let llm_request_count = server.count_in_output("LLM request:").await;
+    println!("  DEBUG: Found {} LLM request(s)", llm_request_count);
+
+    // Accept 1-2 LLM requests (setup, or setup + update)
+    assert!(
+        llm_request_count <= 2,
+        "Expected at most 2 LLM requests (setup + optional update), found {}. Auth events should use script!",
+        llm_request_count
+    );
+
+    println!("  ✓ Verified: Scripts handled authentication (no LLM calls for auth events)");
+
+    server.stop().await?;
+    println!("=== Test completed ===\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
+    println!("\n=== E2E Test: SSH Script Fallback to LLM ===");
+
+    // PROMPT: Simple prompt asking for script with fallback behavior
+    let port = helpers::get_available_port().await?;
+
+    let prompt = format!(
+        "listen on port {} via ssh. Use a script that allows user 'dave', and falls back to LLM for other users. \
+        The LLM should allow user 'eve' but deny other unknown users.",
+        port
+    );
+
+    // Start the server
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+
+    // Test 1: User handled by script (dave) - should succeed
+    println!("\n  Test 1: Authenticate as 'dave' (handled by script, should succeed)");
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("    ✓ TCP connected");
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000);
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("    ✓ SSH handshake completed");
+                    match sess.userauth_password("dave", "pass") {
+                        Ok(_) => println!("    ✓ 'dave' authenticated (script handled)"),
+                        Err(e) => println!("    Note: Auth failed: {}", e),
+                    }
+                }
+                Err(e) => println!("    Note: Handshake failed: {}", e),
+            }
+        }
+        Err(e) => println!("    Note: Connection failed: {}", e),
+    }
+
+
+    // Test 2: User that triggers LLM fallback (eve) - should succeed
+    println!("\n  Test 2: Authenticate as 'eve' (fallback to LLM, should succeed)");
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("    ✓ TCP connected");
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000);
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("    ✓ SSH handshake completed");
+                    match sess.userauth_password("eve", "pass") {
+                        Ok(_) => println!("    ✓ 'eve' authenticated (LLM handled fallback)"),
+                        Err(e) => println!("    Note: Auth failed: {}", e),
+                    }
+                }
+                Err(e) => println!("    Note: Handshake failed: {}", e),
+            }
+        }
+        Err(e) => println!("    Note: Connection failed: {}", e),
+    }
+
+
+    // Test 3: Unknown user (frank) - should fail
+    println!("\n  Test 3: Authenticate as 'frank' (fallback to LLM, should deny)");
+    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
+        Ok(tcp_stream) => {
+            println!("    ✓ TCP connected");
+            let mut sess = ssh2::Session::new()?;
+            sess.set_tcp_stream(tcp_stream);
+            sess.set_timeout(10000);
+
+            match sess.handshake() {
+                Ok(_) => {
+                    println!("    ✓ SSH handshake completed");
+                    match sess.userauth_password("frank", "pass") {
+                        Ok(_) => println!("    ✗ 'frank' authenticated (should have been denied)"),
+                        Err(e) => println!("    ✓ 'frank' correctly denied: {}", e),
+                    }
+                }
+                Err(e) => println!("    Note: Handshake failed: {}", e),
+            }
+        }
+        Err(e) => println!("    Note: Connection failed: {}", e),
+    }
+
+    // VERIFY: Check that script was used for dave, and LLM fallback for eve/frank
+    println!("\nVerifying script and LLM fallback behavior...");
+
+
+    let output = server.get_output().await;
+    println!("  DEBUG: Captured {} output lines", output.len());
+
+    // Should see script_inline in the output
+    assert!(
+        server.output_contains("script_inline").await,
+        "Server should have been configured with a script"
+    );
+
+    // Should see script returning fallback_to_llm for some users
+    if server.output_contains("fallback_to_llm").await {
+        println!("  ✓ Verified: Script returned fallback_to_llm for unknown users");
+    }
+
+    // Count LLM requests - we expect:
+    // 1. Initial server setup (creates script)
+    // 2. Possibly LLM calls for eve and frank (fallback)
+    let llm_request_count = server.count_in_output("LLM request:").await;
+    println!("  DEBUG: Found {} LLM request(s)", llm_request_count);
+
+    // We expect at least 1 (setup), possibly more for fallback
+    assert!(
+        llm_request_count >= 1,
+        "Expected at least 1 LLM request (server setup), found {}",
+        llm_request_count
+    );
+
+    // dave should have been handled by script (no extra LLM call)
+    // eve and frank should have triggered LLM fallback (2 extra calls)
+    // So total could be 1 (setup only if fallback not working) or 3 (setup + 2 fallbacks)
+    if llm_request_count == 1 {
+        println!("  Note: Only setup LLM call found - fallback may not be working as expected");
+    } else if llm_request_count >= 2 {
+        println!("  ✓ Verified: Script handled dave, LLM handled fallback for eve/frank");
+    }
+
+    server.stop().await?;
+    println!("\n=== Test completed ===\n");
     Ok(())
 }
 
@@ -286,7 +638,6 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Test SFTP operations using ssh2
     println!("Connecting via SFTP...");

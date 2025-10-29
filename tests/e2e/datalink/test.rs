@@ -32,7 +32,6 @@ async fn test_arp_responder() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Use arp command or arping to verify
     println!("Sending ARP request for 192.168.100.50...");

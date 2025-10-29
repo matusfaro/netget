@@ -28,7 +28,6 @@ async fn test_redis_ping() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Connect and execute PING using redis client
     println!("Connecting to Redis server...");
@@ -93,7 +92,6 @@ async fn test_redis_get_set() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
@@ -132,7 +130,6 @@ async fn test_redis_integer_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
@@ -165,7 +162,6 @@ async fn test_redis_array_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
@@ -201,7 +197,6 @@ async fn test_redis_null_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
@@ -234,7 +229,6 @@ async fn test_redis_error_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);

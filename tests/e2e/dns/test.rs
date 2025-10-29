@@ -33,7 +33,6 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
     println!("DNS server started on port {}", server.port);
 
     // Wait for DNS server to fully initialize (needs LLM call)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Use hickory-client to query DNS
     println!("Querying example.com A record...");
@@ -82,7 +81,6 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     ).await?;
     println!("DNS server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query multiple domains
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -126,7 +124,6 @@ async fn test_dns_txt_record() -> E2EResult<()> {
     ).await?;
     println!("DNS server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query TXT record
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -170,7 +167,6 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
     ).await?;
     println!("DNS server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Query an unknown domain
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;

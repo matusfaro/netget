@@ -11,7 +11,6 @@ pub mod common;
 pub use common::{get_user_input_common_actions, get_network_event_common_actions, generate_base_stack_documentation};
 
 use serde::{Deserialize, Serialize};
-use schemars::JsonSchema;
 
 /// Definition of a configuration parameter for prompt generation
 ///
@@ -116,7 +115,7 @@ pub struct Parameter {
 ///
 /// WARNING: If you modify this struct, you MUST also update the corresponding
 /// JSON schema file at: src/llm/schemas/action_response.json
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ActionResponse {
     /// Array of actions to execute in order
     pub actions: Vec<serde_json::Value>,

@@ -1,12 +1,14 @@
 //! Telnet protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
 
 /// Telnet protocol action handler
@@ -57,7 +59,7 @@ impl TelnetProtocol {
     }
 }
 
-impl ProtocolActions for TelnetProtocol {
+impl Protocol for TelnetProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // Telnet doesn't need async actions for now
         Vec::new()
@@ -91,6 +93,10 @@ impl ProtocolActions for TelnetProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "Telnet"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_telnet_event_types()
     }
 }
 
@@ -167,4 +173,36 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection"
         }),
     }
+}
+
+// ============================================================================
+// Telnet Event Type Constants
+// ============================================================================
+
+pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "telnet_message_received",
+        "Telnet message received from a client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message".to_string(),
+            type_hint: "string".to_string(),
+            description: "The Telnet message line received".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_telnet_message_action(),
+        send_telnet_line_action(),
+        send_telnet_prompt_action(),
+        wait_for_more_action(),
+        close_connection_action(),
+    ])
+});
+
+pub fn get_telnet_event_types() -> Vec<EventType> {
+    vec![
+        TELNET_MESSAGE_RECEIVED_EVENT.clone(),
+    ]
 }

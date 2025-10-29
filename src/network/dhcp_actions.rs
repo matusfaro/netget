@@ -1,13 +1,15 @@
 //! DHCP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result, anyhow};
 use serde_json::json;
 use std::net::Ipv4Addr;
+use std::sync::LazyLock;
 
 #[cfg(feature = "dhcp")]
 use dhcproto::{v4, Encodable, Encoder};
@@ -41,7 +43,7 @@ impl DhcpProtocol {
     }
 }
 
-impl ProtocolActions for DhcpProtocol {
+impl Protocol for DhcpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new()
     }
@@ -77,6 +79,10 @@ impl ProtocolActions for DhcpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "DHCP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_dhcp_event_types()
     }
 }
 
@@ -459,4 +465,48 @@ fn ignore_request_action() -> ActionDefinition {
             "type": "ignore_request"
         }),
     }
+}
+
+// ============================================================================
+// DHCP Event Type Constants
+// ============================================================================
+
+pub static DHCP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "dhcp_request",
+        "DHCP client sent a request (DISCOVER, REQUEST, INFORM, etc.)"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "DHCP message type (DISCOVER, REQUEST, INFORM, RELEASE, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_mac".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client MAC address".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "requested_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "Requested IP address (if any)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_dhcp_offer_action(),
+        send_dhcp_ack_action(),
+        send_dhcp_nak_action(),
+        send_dhcp_response_action(),
+        ignore_request_action(),
+    ])
+});
+
+pub fn get_dhcp_event_types() -> Vec<EventType> {
+    vec![
+        DHCP_REQUEST_EVENT.clone(),
+    ]
 }

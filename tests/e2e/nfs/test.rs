@@ -68,7 +68,6 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
     let addr = format!("127.0.0.1:{}", server.port);
 
     // Give the server a moment to fully initialize
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Try to connect
     match tokio::net::TcpStream::connect(&addr).await {
@@ -76,7 +75,6 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
             println!("✓ TCP connection to NFS server successful");
 
             // Verify connection is maintained
-            tokio::time::sleep(Duration::from_millis(500)).await;
 
             // Try to read to verify socket is open (non-blocking)
             let mut buf = [0u8; 1];
@@ -125,7 +123,6 @@ async fn test_nfs_multiple_connections() -> E2EResult<()> {
     println!("NFS server started on port {}", server.port);
 
     let addr = format!("127.0.0.1:{}", server.port);
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // VALIDATION: Open multiple concurrent connections
     let mut connections = Vec::new();
@@ -143,7 +140,6 @@ async fn test_nfs_multiple_connections() -> E2EResult<()> {
     }
 
     // Verify all connections are maintained
-    tokio::time::sleep(Duration::from_millis(500)).await;
     println!("✓ All {} connections maintained", connections.len());
 
     // Close connections
@@ -173,7 +169,6 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     println!("NFS server started on port {}", server.port);
 
     let addr = format!("127.0.0.1:{}", server.port);
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // VALIDATION: Test connection lifecycle
 
@@ -182,7 +177,6 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     println!("✓ Connection established");
 
     // 2. Hold connection
-    tokio::time::sleep(Duration::from_millis(300)).await;
     println!("✓ Connection held");
 
     // 3. Close gracefully
@@ -190,7 +184,6 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     println!("✓ Connection closed gracefully");
 
     // 4. Reconnect to verify server still accepting
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let stream2 = tokio::net::TcpStream::connect(&addr).await?;
     println!("✓ Reconnection successful");
     drop(stream2);
@@ -220,7 +213,6 @@ async fn test_nfs_port_configuration() -> E2EResult<()> {
 
     // Verify it's listening
     let addr = format!("127.0.0.1:{}", server.port);
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let stream = tokio::net::TcpStream::connect(&addr).await?;
     println!("✓ Server listening on correct port");
@@ -247,7 +239,6 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     println!("NFS server started on port {}", server.port);
 
     let addr = format!("127.0.0.1:{}", server.port);
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Establish connection
     let stream = tokio::net::TcpStream::connect(&addr).await?;
@@ -258,7 +249,6 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     println!("✓ Server stopped gracefully");
 
     // Verify port is released
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     match tokio::net::TcpStream::connect(&addr).await {
         Ok(_) => {

@@ -8,10 +8,11 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions};
+use crate::network::dhcp_actions::DHCP_REQUEST_EVENT;
 use crate::network::DhcpProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 #[cfg(feature = "dhcp")]
@@ -144,60 +145,59 @@ impl DhcpServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-
                             #[cfg(feature = "dhcp")]
-                            let event_description = if let Some((desc, context)) = parsed_info {
-                                // Set the request context so actions can access it
+                            if let Some((_, context)) = parsed_info.as_ref() {
                                 if let Some(ctx) = context {
-                                    protocol_clone.set_request_context(ctx);
+                                    protocol_clone.set_request_context(ctx.clone());
                                 }
-                                desc
+                            }
+
+                            // Extract event data
+                            #[cfg(feature = "dhcp")]
+                            let (message_type, client_mac, requested_ip) = if let Some((_, Some(ctx))) = &parsed_info {
+                                (
+                                    format!("{:?}", ctx.message_type),
+                                    hex::encode(&ctx.chaddr),
+                                    ctx.requested_ip.map(|ip| ip.to_string())
+                                )
                             } else {
-                                format!("DHCP request from {} ({} bytes). Warning: Could not parse DHCP message", peer_addr, data.len())
+                                ("unknown".to_string(), "unknown".to_string(), None)
                             };
 
                             #[cfg(not(feature = "dhcp"))]
-                            let event_description = format!("DHCP request from {} ({} bytes)", peer_addr, data.len());
+                            let (message_type, client_mac, requested_ip) = ("unknown".to_string(), "unknown".to_string(), None::<String>);
 
-                            let protocol_actions = protocol_clone.get_sync_actions();
-                            let prompt = PromptBuilder::build_network_event_action_prompt(
-                                &state_clone, &event_description, protocol_actions).await;
+                            let mut event_data = serde_json::json!({
+                                "message_type": message_type,
+                                "client_mac": client_mac
+                            });
+                            if let Some(ip) = requested_ip {
+                                event_data["requested_ip"] = serde_json::json!(ip);
+                            }
 
-                            // DEBUG: Log LLM prompt
-                            debug!("DHCP LLM request ({} chars)", prompt.len());
-                            let _ = status_clone.send(format!("[DEBUG] DHCP LLM request ({} chars)", prompt.len()));
+                            let event = Event::new(&DHCP_REQUEST_EVENT, event_data);
 
-                            // TRACE: Log full prompt
-                            trace!("DHCP LLM prompt:\n{}", prompt);
-                            let _ = status_clone.send(format!("[TRACE] DHCP LLM prompt:\n{}", prompt));
+                            debug!("DHCP calling LLM for request from {}", peer_addr);
+                            let _ = status_clone.send(format!("[DEBUG] DHCP calling LLM for request from {}", peer_addr));
 
-                            match llm_clone.generate(&model, &prompt).await {
-                                Ok(llm_output) => {
-                                    // DEBUG: Log LLM response summary
-                                    debug!("DHCP LLM response ({} chars)", llm_output.len());
-                                    let _ = status_clone.send(format!("[DEBUG] DHCP LLM response ({} chars)", llm_output.len()));
+                            match call_llm(
+                                &llm_clone,
+                                &state_clone,
+                                server_id,
+                                None,
+                                &event,
+                                protocol_clone.as_ref(),
+                            ).await {
+                                Ok(execution_result) => {
+                                    for message in &execution_result.messages {
+                                        info!("{}", message);
+                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                    }
 
-                                    // TRACE: Log full LLM response
-                                    trace!("DHCP LLM raw output:\n{}", llm_output);
-                                    let _ = status_clone.send(format!("[TRACE] DHCP LLM raw output:\n{}", llm_output));
+                                    debug!("DHCP got {} protocol results", execution_result.protocol_results.len());
+                                    let _ = status_clone.send(format!("[DEBUG] DHCP got {} protocol results", execution_result.protocol_results.len()));
 
-                                    match ActionResponse::from_str(&llm_output) {
-                                        Ok(action_response) => {
-                                            debug!("DHCP parsed {} actions", action_response.actions.len());
-                                            let _ = status_clone.send(format!("[DEBUG] DHCP parsed {} actions", action_response.actions.len()));
-
-                                            match execute_actions(action_response.actions, &state_clone,
-                                                Some(protocol_clone.as_ref())).await {
-                                                Ok(result) => {
-                                                    for msg in result.messages {
-                                                        let _ = status_clone.send(msg);
-                                                    }
-
-                                                    debug!("DHCP got {} protocol results", result.protocol_results.len());
-                                                    let _ = status_clone.send(format!("[DEBUG] DHCP got {} protocol results", result.protocol_results.len()));
-
-                                                    for protocol_result in result.protocol_results {
+                                    for protocol_result in execution_result.protocol_results {
                                                         if let Some(output_data) = protocol_result.get_all_output().first() {
                                                             let _ = socket_clone.send_to(output_data, peer_addr).await;
 
@@ -211,26 +211,14 @@ impl DhcpServer {
                                                             let _ = status_clone.send(format!("[TRACE] DHCP sent (hex): {}", hex_str));
 
                                                             let _ = status_clone.send(format!("→ DHCP response to {} ({} bytes)", peer_addr, output_data.len()));
-                                                        } else {
-                                                            debug!("DHCP protocol result has no output data");
-                                                            let _ = status_clone.send("[DEBUG] DHCP protocol result has no output data".to_string());
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    error!("DHCP action execution error: {}", e);
-                                                    let _ = status_clone.send(format!("✗ DHCP action execution error: {}", e));
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("DHCP failed to parse LLM response as actions: {}", e);
-                                            let _ = status_clone.send(format!("✗ DHCP failed to parse LLM response: {}", e));
+                                        } else {
+                                            debug!("DHCP protocol result has no output data");
+                                            let _ = status_clone.send("[DEBUG] DHCP protocol result has no output data".to_string());
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("DHCP LLM generation error: {}", e);
+                                    error!("DHCP LLM call failed: {}", e);
                                     let _ = status_clone.send(format!("✗ DHCP LLM error: {}", e));
                                 }
                             }

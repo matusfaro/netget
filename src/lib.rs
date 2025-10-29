@@ -11,3 +11,8 @@ pub mod state;
 pub mod llm;
 pub mod events;
 pub mod settings;
+pub mod scripting;
+
+#[cfg(test)]
+#[path = "../tests/e2e/mod.rs"]
+mod e2e;

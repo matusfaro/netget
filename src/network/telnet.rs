@@ -8,10 +8,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions, ActionResult};
+use crate::network::telnet_actions::TELNET_MESSAGE_RECEIVED_EVENT;
 use crate::network::TelnetProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// Telnet server that forwards messages to LLM
@@ -75,7 +77,6 @@ impl TelnetServer {
                             use tokio::io::{AsyncBufReadExt, BufReader};
                             let mut reader = BufReader::new(read_half);
                             let mut line = String::new();
-                            let model = state_clone.get_ollama_model().await;
 
                             while let Ok(n) = reader.read_line(&mut line).await {
                                 if n == 0 { break; }
@@ -93,43 +94,61 @@ impl TelnetServer {
                                 trace!("Telnet data (text): {:?}", line.trim());
                                 let _ = status_clone.send(format!("[TRACE] Telnet data (text): {:?}", line.trim()));
 
-                                let event_description = format!("Telnet message: {}", line.trim());
-                                let protocol_actions = protocol_clone.get_sync_actions();
-                                let prompt = PromptBuilder::build_network_event_action_prompt(
-                                    &state_clone, &event_description, protocol_actions).await;
+                                let event = Event::new(&TELNET_MESSAGE_RECEIVED_EVENT, serde_json::json!({
+                                    "message": line.trim()
+                                }));
 
-                                if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
-                                    if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                                        if let Ok(result) = execute_actions(action_response.actions, &state_clone,
-                                            Some(protocol_clone.as_ref())).await {
-                                            for protocol_result in result.protocol_results {
-                                                match protocol_result {
-                                                    ActionResult::Output(data) => {
-                                                        let response = String::from_utf8_lossy(&data);
-                                                        let mut write = write_half_arc.lock().await;
+                                debug!("Telnet calling LLM for connection {}", connection_id);
+                                let _ = status_clone.send(format!("[DEBUG] Telnet calling LLM for connection {}", connection_id));
 
-                                                        use tokio::io::AsyncWriteExt;
-                                                        let _ = write.write_all(response.as_bytes()).await;
-                                                        let _ = write.flush().await;
+                                match call_llm(
+                                    &llm_clone,
+                                    &state_clone,
+                                    server_id,
+                                    Some(connection_id),
+                                    &event,
+                                    protocol_clone.as_ref(),
+                                ).await {
+                                    Ok(execution_result) => {
+                                        for message in &execution_result.messages {
+                                            info!("{}", message);
+                                            let _ = status_clone.send(format!("[INFO] {}", message));
+                                        }
 
-                                                        // DEBUG: Log summary with text preview
-                                                        let preview = if response.len() > 100 {
-                                                            format!("{}...", &response[..100])
-                                                        } else {
-                                                            response.to_string()
-                                                        };
-                                                        debug!("Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim());
-                                                        let _ = status_clone.send(format!("[DEBUG] Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim()));
+                                        debug!("Telnet got {} protocol results", execution_result.protocol_results.len());
+                                        let _ = status_clone.send(format!("[DEBUG] Telnet got {} protocol results", execution_result.protocol_results.len()));
 
-                                                        // TRACE: Log full text payload
-                                                        trace!("Telnet sent (text): {:?}", response.trim());
-                                                        let _ = status_clone.send(format!("[TRACE] Telnet sent (text): {:?}", response.trim()));
-                                                    }
-                                                    ActionResult::CloseConnection => break,
-                                                    _ => {}
+                                        for protocol_result in execution_result.protocol_results {
+                                            match protocol_result {
+                                                ActionResult::Output(data) => {
+                                                    let response = String::from_utf8_lossy(&data);
+                                                    let mut write = write_half_arc.lock().await;
+
+                                                    use tokio::io::AsyncWriteExt;
+                                                    let _ = write.write_all(response.as_bytes()).await;
+                                                    let _ = write.flush().await;
+
+                                                    // DEBUG: Log summary with text preview
+                                                    let preview = if response.len() > 100 {
+                                                        format!("{}...", &response[..100])
+                                                    } else {
+                                                        response.to_string()
+                                                    };
+                                                    debug!("Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim());
+                                                    let _ = status_clone.send(format!("[DEBUG] Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim()));
+
+                                                    // TRACE: Log full text payload
+                                                    trace!("Telnet sent (text): {:?}", response.trim());
+                                                    let _ = status_clone.send(format!("[TRACE] Telnet sent (text): {:?}", response.trim()));
                                                 }
+                                                ActionResult::CloseConnection => break,
+                                                _ => {}
                                             }
                                         }
+                                    }
+                                    Err(e) => {
+                                        error!("Telnet LLM call failed: {}", e);
+                                        let _ = status_clone.send(format!("✗ Telnet LLM error: {}", e));
                                     }
                                 }
                                 line.clear();

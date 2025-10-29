@@ -30,7 +30,6 @@ async fn test_ntp_basic_query() -> E2EResult<()> {
     println!("NTP server started on port {}", server.port);
 
     // Wait for NTP server to fully initialize (needs LLM call)
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Send NTP request using rsntp library
     println!("Sending NTP request...");
@@ -95,7 +94,6 @@ async fn test_ntp_time_sync() -> E2EResult<()> {
     ).await?;
     println!("NTP server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Use rsntp to synchronize time
     let client = SntpClient::new();
@@ -153,7 +151,6 @@ async fn test_ntp_stratum_levels() -> E2EResult<()> {
     ).await?;
     println!("NTP server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // VALIDATION: Send NTP request and check stratum
     let socket = UdpSocket::bind("0.0.0.0:0")?;

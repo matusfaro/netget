@@ -8,10 +8,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions, ActionResult};
+use crate::network::irc_actions::IRC_MESSAGE_RECEIVED_EVENT;
 use crate::network::IrcProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// IRC server that forwards messages to LLM
@@ -72,7 +74,6 @@ impl IrcServer {
 
                             let mut reader = BufReader::new(read_half);
                             let mut line = String::new();
-                            let model = state_clone.get_ollama_model().await;
 
                             while let Ok(n) = reader.read_line(&mut line).await {
                                 if n == 0 { break; }
@@ -90,48 +91,66 @@ impl IrcServer {
                                 trace!("IRC data (text): {:?}", line.trim());
                                 let _ = status_clone.send(format!("[TRACE] IRC data (text): {:?}", line.trim()));
 
-                                let event_description = format!("IRC message: {}", line.trim());
-                                let protocol_actions = protocol_clone.get_sync_actions();
-                                let prompt = PromptBuilder::build_network_event_action_prompt(
-                                    &state_clone, &event_description, protocol_actions).await;
+                                let event = Event::new(&IRC_MESSAGE_RECEIVED_EVENT, serde_json::json!({
+                                    "message": line.trim()
+                                }));
 
-                                if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
-                                    if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                                        if let Ok(result) = execute_actions(action_response.actions, &state_clone,
-                                            Some(protocol_clone.as_ref())).await {
-                                            for protocol_result in result.protocol_results {
-                                                match protocol_result {
-                                                    ActionResult::Output(data) => {
-                                                        let response = String::from_utf8_lossy(&data);
-                                                        let formatted = if response.ends_with("\r\n") {
-                                                            response.to_string()
-                                                        } else if response.ends_with('\n') {
-                                                            format!("{response}\r")
-                                                        } else {
-                                                            format!("{response}\r\n")
-                                                        };
-                                                        let mut write = write_half_arc.lock().await;
-                                                        let _ = write.write_all(formatted.as_bytes()).await;
-                                                        let _ = write.flush().await;
+                                debug!("IRC calling LLM for connection {}", connection_id);
+                                let _ = status_clone.send(format!("[DEBUG] IRC calling LLM for connection {}", connection_id));
 
-                                                        // DEBUG: Log summary with text preview
-                                                        let preview = if formatted.len() > 100 {
-                                                            format!("{}...", &formatted[..100])
-                                                        } else {
-                                                            formatted.clone()
-                                                        };
-                                                        debug!("IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim());
-                                                        let _ = status_clone.send(format!("[DEBUG] IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim()));
+                                match call_llm(
+                                    &llm_clone,
+                                    &state_clone,
+                                    server_id,
+                                    Some(connection_id),
+                                    &event,
+                                    protocol_clone.as_ref(),
+                                ).await {
+                                    Ok(execution_result) => {
+                                        for message in &execution_result.messages {
+                                            info!("{}", message);
+                                            let _ = status_clone.send(format!("[INFO] {}", message));
+                                        }
 
-                                                        // TRACE: Log full text payload
-                                                        trace!("IRC sent (text): {:?}", formatted.trim());
-                                                        let _ = status_clone.send(format!("[TRACE] IRC sent (text): {:?}", formatted.trim()));
-                                                    }
-                                                    ActionResult::CloseConnection => break,
-                                                    _ => {}
+                                        debug!("IRC got {} protocol results", execution_result.protocol_results.len());
+                                        let _ = status_clone.send(format!("[DEBUG] IRC got {} protocol results", execution_result.protocol_results.len()));
+
+                                        for protocol_result in execution_result.protocol_results {
+                                            match protocol_result {
+                                                ActionResult::Output(data) => {
+                                                    let response = String::from_utf8_lossy(&data);
+                                                    let formatted = if response.ends_with("\r\n") {
+                                                        response.to_string()
+                                                    } else if response.ends_with('\n') {
+                                                        format!("{response}\r")
+                                                    } else {
+                                                        format!("{response}\r\n")
+                                                    };
+                                                    let mut write = write_half_arc.lock().await;
+                                                    let _ = write.write_all(formatted.as_bytes()).await;
+                                                    let _ = write.flush().await;
+
+                                                    // DEBUG: Log summary with text preview
+                                                    let preview = if formatted.len() > 100 {
+                                                        format!("{}...", &formatted[..100])
+                                                    } else {
+                                                        formatted.clone()
+                                                    };
+                                                    debug!("IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim());
+                                                    let _ = status_clone.send(format!("[DEBUG] IRC sent {} bytes on connection {}: {}", formatted.len(), connection_id, preview.trim()));
+
+                                                    // TRACE: Log full text payload
+                                                    trace!("IRC sent (text): {:?}", formatted.trim());
+                                                    let _ = status_clone.send(format!("[TRACE] IRC sent (text): {:?}", formatted.trim()));
                                                 }
+                                                ActionResult::CloseConnection => break,
+                                                _ => {}
                                             }
                                         }
+                                    }
+                                    Err(e) => {
+                                        error!("IRC LLM call failed: {}", e);
+                                        let _ = status_clone.send(format!("✗ IRC LLM error: {}", e));
                                     }
                                 }
                                 line.clear();

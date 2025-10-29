@@ -235,6 +235,8 @@ pub struct ServerInstance {
     pub local_addr: Option<SocketAddr>,
     /// Protocol-specific startup parameters
     pub startup_params: Option<serde_json::Value>,
+    /// Script configuration for handling protocol events
+    pub script_config: Option<crate::scripting::ScriptConfig>,
     /// Proxy filter configuration (only for proxy servers)
     #[cfg(feature = "proxy")]
     pub proxy_filter_config: Option<crate::network::proxy_filter::ProxyFilterConfig>,
@@ -262,6 +264,7 @@ impl ServerInstance {
             status_changed_at: now,
             local_addr: None,
             startup_params: None,
+            script_config: None,
             #[cfg(feature = "proxy")]
             proxy_filter_config: None,
         }

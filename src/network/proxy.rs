@@ -18,10 +18,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn, trace};
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::{Protocol, ActionResult};
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::call_llm_with_actions;
-use crate::llm::actions::protocol_trait::{ProtocolActions, ActionResult};
+use crate::network::proxy_actions::{PROXY_HTTP_REQUEST_EVENT, PROXY_HTTPS_CONNECT_EVENT};
 use crate::network::ProxyProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 
@@ -870,7 +872,7 @@ impl ProxyServer {
         let _ = status_tx.send("[DEBUG] Consulting LLM about HTTP request...".to_string());
 
         // Format request info for event description
-        let body_preview = if request_info.body.len() > 500 {
+        let _body_preview = if request_info.body.len() > 500 {
             format!("{}... ({} bytes total)",
                 String::from_utf8_lossy(&request_info.body[..500]),
                 request_info.body.len())
@@ -878,36 +880,24 @@ impl ProxyServer {
             String::from_utf8_lossy(&request_info.body).to_string()
         };
 
-        let headers_text: String = request_info.headers.iter()
-            .map(|(k, v)| format!("  {}: {}", k, v))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let event_description = format!(
-            "HTTP {} {} from {}\n\n\
-             Host: {}\n\
-             Path: {}\n\
-             Full URL: {}\n\n\
-             Headers:\n{}\n\n\
-             Body:\n{}",
-            request_info.method,
-            request_info.path,
-            request_info.client_addr,
-            request_info.host,
-            request_info.path,
-            request_info.url,
-            headers_text,
-            body_preview
+        // Create HTTP request event
+        let event = Event::new(
+            &PROXY_HTTP_REQUEST_EVENT,
+            json!({
+                "method": request_info.method,
+                "url": request_info.url,
+                "host": request_info.host,
+                "path": request_info.path,
+            }),
         );
 
-        // Call LLM with action system
-        let execution_result = call_llm_with_actions(
+        let execution_result = call_llm(
             llm_client,
             app_state,
             server_id,
-            &event_description,
-            Some(protocol.as_ref() as &dyn ProtocolActions),
-            Vec::new(),
+            None, // TODO: Add connection_id for proxy requests
+            &event,
+            protocol.as_ref() as &dyn Protocol,
         ).await.context("LLM request failed")?;
 
         // Extract request action from protocol results
@@ -935,28 +925,23 @@ impl ProxyServer {
     ) -> Result<HttpsConnectionAction> {
         let _ = status_tx.send("[DEBUG] Consulting LLM about HTTPS connection...".to_string());
 
-        // Format connection info for event description
-        let event_description = format!(
-            "HTTPS CONNECT Request:\n\n\
-             Destination: {}:{}\n\
-             SNI: {}\n\
-             Client: {}\n\n\
-             Note: This connection uses TLS encryption. Without MITM certificate, \
-             you can only allow or block the connection, but cannot inspect or modify the traffic.",
-            conn_info.destination_host,
-            conn_info.destination_port,
-            conn_info.sni.as_ref().unwrap_or(&"(not available)".to_string()),
-            conn_info.client_addr
+        // Create HTTPS CONNECT event
+        let event = Event::new(
+            &PROXY_HTTPS_CONNECT_EVENT,
+            json!({
+                "destination_host": conn_info.destination_host,
+                "destination_port": conn_info.destination_port,
+                "sni": conn_info.sni.as_ref().unwrap_or(&String::new()),
+            }),
         );
 
-        // Call LLM with action system
-        let execution_result = call_llm_with_actions(
+        let execution_result = call_llm(
             llm_client,
             app_state,
             server_id,
-            &event_description,
-            Some(protocol.as_ref() as &dyn ProtocolActions),
-            Vec::new(),
+            None, // TODO: Add connection_id for proxy responses
+            &event,
+            protocol.as_ref() as &dyn Protocol,
         ).await.context("LLM request failed")?;
 
         // Extract HTTPS connection action from protocol results

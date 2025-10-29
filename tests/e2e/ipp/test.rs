@@ -27,7 +27,6 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Send HTTP POST request to IPP endpoint
     println!("Sending Get-Printer-Attributes request...");
@@ -133,7 +132,6 @@ async fn test_ipp_print_job() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Sending Print-Job request...");
 
@@ -218,7 +216,6 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Sending basic HTTP request...");
 

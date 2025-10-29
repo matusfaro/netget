@@ -4,9 +4,12 @@
 //! filesystem operations to the LLM, creating a virtual filesystem
 //! entirely controlled by the AI.
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
 use crate::network::connection::ConnectionId;
+use crate::network::ssh_actions::SFTP_OPERATION_EVENT;
+use crate::network::SshProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use russh_sftp::protocol::*;
@@ -22,8 +25,10 @@ use tracing::{debug, error, info, trace};
 /// using a real filesystem.
 pub struct LlmSftpHandler {
     connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
+    protocol: Arc<SshProtocol>,
     status_tx: mpsc::UnboundedSender<String>,
     /// Track handles that the LLM creates
     handles: Arc<Mutex<HashMap<String, HandleInfo>>>,
@@ -45,14 +50,18 @@ impl LlmSftpHandler {
     /// Create a new LLM-controlled SFTP handler
     pub fn new(
         connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
+        protocol: Arc<SshProtocol>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Self {
         Self {
             connection_id,
+            server_id,
             llm_client,
             app_state,
+            protocol,
             status_tx,
             handles: Arc::new(Mutex::new(HashMap::new())),
             version: None,
@@ -61,49 +70,56 @@ impl LlmSftpHandler {
 
     /// Ask LLM to handle an SFTP operation
     async fn llm_sftp_operation(&self, operation: &str, params: &str) -> Result<serde_json::Value> {
-        let model = self.app_state.get_ollama_model().await;
-        let event_description = format!("SFTP operation: {} - {}", operation, params);
-
-        let prompt = PromptBuilder::build_network_event_prompt(
-            &self.app_state,
-            self.connection_id,
-            &event_description,
-            crate::network::ssh::get_llm_protocol_prompt(),
-        )
-        .await;
-
         // DEBUG: LLM request summary
-        debug!("SFTP LLM request: operation={}, model={}, prompt_len={} chars",
-            operation, model, prompt.len());
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP LLM request: operation={}, model={}, prompt_len={} chars",
-            operation, model, prompt.len()));
+        debug!("SFTP LLM request: operation={}, params={}", operation, params);
+        let _ = self.status_tx.send(format!("[DEBUG] SFTP LLM request: operation={}, params={}", operation, params));
 
-        // TRACE: Full LLM prompt
-        trace!("SFTP LLM prompt ({}): {}", operation, prompt);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP LLM prompt ({}): {}", operation, prompt));
+        // Create SFTP operation event
+        let event = Event::new(&SFTP_OPERATION_EVENT, serde_json::json!({
+            "operation": operation,
+            "params": params
+        }));
 
-        match self.llm_client.generate(&model, &prompt).await {
-            Ok(response) => {
+        // TRACE: Event details
+        trace!("SFTP calling LLM for operation: {}", operation);
+        let _ = self.status_tx.send(format!("[TRACE] SFTP calling LLM for operation: {}", operation));
+
+        // Call LLM with Event-based approach
+        match call_llm(
+            &self.llm_client,
+            &self.app_state,
+            self.server_id,
+            Some(self.connection_id),
+            &event,
+            self.protocol.as_ref(),
+        ).await {
+            Ok(execution_result) => {
+                // Display messages from LLM
+                for message in &execution_result.messages {
+                    info!("{}", message);
+                    let _ = self.status_tx.send(format!("[INFO] {}", message));
+                }
+
                 // DEBUG: LLM response summary
-                debug!("SFTP LLM response: operation={}, response_len={} chars",
-                    operation, response.len());
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP LLM response: operation={}, response_len={} chars",
-                    operation, response.len()));
+                debug!("SFTP LLM returned {} actions for operation: {}",
+                    execution_result.raw_actions.len(), operation);
+                let _ = self.status_tx.send(format!("[DEBUG] SFTP LLM returned {} actions for operation: {}",
+                    execution_result.raw_actions.len(), operation));
 
-                // TRACE: Full LLM response with pretty-printed JSON
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
-                    let pretty = serde_json::to_string_pretty(&json).unwrap_or(response.clone());
+                // TRACE: Full response
+                if !execution_result.raw_actions.is_empty() {
+                    let pretty = serde_json::to_string_pretty(&execution_result.raw_actions[0])
+                        .unwrap_or_else(|_| format!("{:?}", execution_result.raw_actions[0]));
                     trace!("SFTP LLM response ({}) JSON:\n{}", operation, pretty);
                     let _ = self.status_tx.send(format!("[TRACE] SFTP LLM response ({}) JSON:\n{}", operation, pretty));
-                    Ok(json)
+                }
+
+                // Return first action as the response (SFTP expects a single JSON response)
+                if let Some(first_action) = execution_result.raw_actions.first() {
+                    Ok(first_action.clone())
                 } else {
-                    trace!("SFTP LLM response ({}) text: {}", operation, response);
-                    let _ = self.status_tx.send(format!("[TRACE] SFTP LLM response ({}) text: {}", operation, response));
-                    // Fallback: wrap plain text response
-                    Ok(serde_json::json!({
-                        "response": response,
-                        "type": "text"
-                    }))
+                    // No actions returned, return empty object
+                    Ok(serde_json::json!({}))
                 }
             }
             Err(e) => {

@@ -30,7 +30,6 @@ async fn test_ftp_greeting() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Send CONNECT and verify FTP greeting
     println!("Connecting TCP client...");
@@ -81,7 +80,6 @@ async fn test_ftp_user_command() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Send USER command and verify response
     println!("Connecting TCP client...");
@@ -132,7 +130,6 @@ async fn test_ftp_pwd_command() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Send PWD command and verify response
     println!("Connecting TCP client...");
@@ -180,7 +177,6 @@ async fn test_simple_echo() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // VALIDATION: Send data and verify echo response
     println!("Connecting TCP client...");
@@ -239,7 +235,6 @@ async fn test_custom_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // VALIDATION: Verify PING/PONG
     println!("Connecting TCP client...");

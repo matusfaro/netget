@@ -4,7 +4,7 @@
 //! and network event prompts (show_message, memory operations, etc.).
 
 use super::{ActionDefinition, Parameter};
-use super::protocol_trait::ProtocolActions;
+use super::protocol_trait::Protocol;
 use crate::protocol::BaseStack;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,15 @@ pub enum CommonAction {
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
+        // Script configuration fields
+        #[serde(default)]
+        script_language: Option<String>,
+        #[serde(default)]
+        script_path: Option<String>,
+        #[serde(default)]
+        script_inline: Option<String>,
+        #[serde(default)]
+        script_handles: Option<Vec<String>>,
     },
 
     /// Close a server (closes all if server_id not specified)
@@ -56,6 +65,21 @@ pub enum CommonAction {
     /// Append to global memory
     AppendMemory {
         value: String,
+    },
+
+    /// Update script configuration for a running server
+    UpdateScript {
+        #[serde(default)]
+        server_id: Option<u32>,
+        operation: String,
+        #[serde(default)]
+        script_language: Option<String>,
+        #[serde(default)]
+        script_path: Option<String>,
+        #[serde(default)]
+        script_inline: Option<String>,
+        #[serde(default)]
+        script_handles: Option<Vec<String>>,
     },
 }
 
@@ -127,6 +151,30 @@ pub fn open_server_action() -> ActionDefinition {
                 name: "startup_params".to_string(),
                 type_hint: "object".to_string(),
                 description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_language".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: Use 'python' or 'javascript' to handle deterministic responses via script instead of LLM.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: Path to script file (alternative to script_inline).".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_inline".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: Inline script code (alternative to script_path).".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_handles".to_string(),
+                type_hint: "array".to_string(),
+                description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
                 required: false,
             },
         ],
@@ -233,6 +281,60 @@ pub fn append_memory_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for update_script
+pub fn update_script_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "update_script".to_string(),
+        description: "Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "server_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Optional: Server ID to update (defaults to first/current server)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "operation".to_string(),
+                type_hint: "string".to_string(),
+                description: "Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "script_language".to_string(),
+                type_hint: "string".to_string(),
+                description: "Script language: 'python' or 'javascript' (required for 'set' operation)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to script file (alternative to script_inline, required for 'set')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_inline".to_string(),
+                type_hint: "string".to_string(),
+                description: "Inline script code (alternative to script_path, required for 'set')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "script_handles".to_string(),
+                type_hint: "array".to_string(),
+                description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "update_script",
+            "server_id": 1,
+            "operation": "set",
+            "script_language": "python",
+            "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
+            "script_handles": ["ssh_auth"]
+        }),
+    }
+}
+
 /// Get all common action definitions
 ///
 /// Actions are organized logically:
@@ -247,6 +349,7 @@ pub fn get_all_common_actions() -> Vec<ActionDefinition> {
 
         // === Server Configuration ===
         update_instruction_action(),
+        update_script_action(),
         set_memory_action(),
         append_memory_action(),
 
@@ -278,7 +381,7 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
 
 /// Create a protocol instance for getting startup parameters
 /// Returns None if the protocol doesn't support the ProtocolActions trait or isn't compiled in
-fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> {
+fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn Protocol>> {
     match stack {
         #[cfg(feature = "tcp")]
         BaseStack::Tcp => {

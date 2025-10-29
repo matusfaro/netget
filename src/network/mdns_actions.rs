@@ -1,12 +1,14 @@
 //! mDNS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
 
 /// mDNS protocol action handler
@@ -18,7 +20,7 @@ impl MdnsProtocol {
     }
 }
 
-impl ProtocolActions for MdnsProtocol {
+impl Protocol for MdnsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             register_mdns_service_action(),
@@ -49,6 +51,10 @@ impl ProtocolActions for MdnsProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "mDNS"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_mdns_event_types()
     }
 }
 
@@ -95,4 +101,33 @@ fn register_mdns_service_action() -> ActionDefinition {
             }
         }),
     }
+}
+
+// ============================================================================
+// mDNS Action Constants
+// ============================================================================
+
+pub static REGISTER_MDNS_SERVICE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| register_mdns_service_action());
+
+// ============================================================================
+// mDNS Event Type Constants
+// ============================================================================
+
+/// mDNS server startup event - triggered when mDNS server starts
+pub static MDNS_SERVER_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "mdns_server_startup",
+        "mDNS server starting - register services for network discovery"
+    )
+    // No parameters - just startup notification
+    .with_actions(vec![
+        REGISTER_MDNS_SERVICE_ACTION.clone(),
+    ])
+});
+
+/// Get mDNS event types
+pub fn get_mdns_event_types() -> Vec<EventType> {
+    vec![
+        MDNS_SERVER_STARTUP_EVENT.clone(),
+    ]
 }

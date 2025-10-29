@@ -49,17 +49,23 @@ struct AppStateInner {
     next_server_id: u32,
     /// Current Ollama model
     ollama_model: String,
+    /// Available scripting environments (Python, Node.js)
+    scripting_env: crate::scripting::ScriptingEnvironment,
 }
 
 impl AppState {
     /// Create a new application state
     pub fn new() -> Self {
+        // Detect scripting environments at startup
+        let scripting_env = crate::scripting::ScriptingEnvironment::detect();
+
         Self {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
                 servers: HashMap::new(),
                 next_server_id: 1,
                 ollama_model: "qwen3-coder:30b".to_string(),
+                scripting_env,
             })),
         }
     }
@@ -122,6 +128,7 @@ impl AppState {
                 status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
                 startup_params: s.startup_params.clone(),
+                script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
             }
@@ -149,6 +156,7 @@ impl AppState {
                 status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
                 startup_params: s.startup_params.clone(),
+                script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
             }
@@ -205,6 +213,32 @@ impl AppState {
     /// Set the Ollama model name
     pub async fn set_ollama_model(&self, model: String) {
         self.inner.write().await.ollama_model = model;
+    }
+
+    /// Get the scripting environment information
+    pub async fn get_scripting_env(&self) -> crate::scripting::ScriptingEnvironment {
+        self.inner.read().await.scripting_env.clone()
+    }
+
+    /// Update script configuration for a server
+    pub async fn set_script_config(
+        &self,
+        server_id: ServerId,
+        config: Option<crate::scripting::ScriptConfig>,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            server.script_config = config;
+        }
+    }
+
+    /// Get script configuration for a server
+    pub async fn get_script_config(
+        &self,
+        server_id: ServerId,
+    ) -> Option<crate::scripting::ScriptConfig> {
+        self.inner.read().await
+            .servers.get(&server_id)
+            .and_then(|s| s.script_config.clone())
     }
 
     /// Get a summary of current state for LLM context

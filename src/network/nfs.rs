@@ -13,11 +13,11 @@ use nfsserve::nfs::{fattr3, fileid3, filename3, nfspath3, nfsstat3, nfstime3, ft
 #[cfg(feature = "nfs")]
 use async_trait::async_trait;
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::ActionResponse;
-use crate::llm::actions::protocol_trait::ProtocolActions;
+use crate::network::nfs_actions::NFS_OPERATION_EVENT;
 use crate::network::NfsProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// NFS server that provides LLM-controlled file system
@@ -118,44 +118,39 @@ impl LlmNfsFileSystem {
     }
 
     /// Consult the LLM for NFS operations
-    async fn consult_llm(&self, operation: &str, params: serde_json::Value) -> Result<ActionResponse> {
+    async fn consult_llm(&self, operation: &str, params: serde_json::Value) -> Result<Vec<serde_json::Value>> {
         debug!("Consulting LLM for NFS {} operation", operation);
         let _ = self.status_tx.send(format!("[DEBUG] NFS {}: {:?}", operation, params));
 
-        // Build event description
-        let event_description = format!(
-            "NFS {} operation requested.\nParameters: {}",
-            operation,
-            serde_json::to_string_pretty(&params)?
-        );
+        // Create NFS operation event
+        let event = Event::new(&NFS_OPERATION_EVENT, serde_json::json!({
+            "operation": operation,
+            "params": params
+        }));
 
-        // Get available sync actions
-        let actions = self.protocol.get_sync_actions();
-
-        // Build full prompt with actions using the proper method
-        let full_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
-            &self.app_state,
-            self.server_id,
-            &event_description,
-            actions,
-        ).await;
-
-        trace!("LLM prompt for NFS {}: {}", operation, full_prompt);
+        trace!("Calling LLM for NFS {} operation", operation);
         let _ = self.status_tx.send(format!("[TRACE] Calling LLM for NFS {}", operation));
 
-        // Get model
-        let model = self.app_state.get_ollama_model().await;
+        // Call LLM with Event-based approach
+        let execution_result = call_llm(
+            &self.llm_client,
+            &self.app_state,
+            self.server_id,
+            None,  // NFS doesn't use connection-specific context
+            &event,
+            self.protocol.as_ref(),
+        ).await?;
 
-        // Call LLM
-        let llm_output = self.llm_client.generate(&model, &full_prompt).await?;
+        // Display messages from LLM
+        for message in &execution_result.messages {
+            info!("{}", message);
+            let _ = self.status_tx.send(format!("[INFO] {}", message));
+        }
 
-        // Parse action response
-        let action_response = ActionResponse::from_str(&llm_output)
-            .context("Failed to parse LLM action response")?;
+        debug!("LLM returned {} actions for NFS {}", execution_result.raw_actions.len(), operation);
 
-        debug!("LLM returned {} actions for NFS {}", action_response.actions.len(), operation);
-
-        Ok(action_response)
+        // Return raw actions for manual processing
+        Ok(execution_result.raw_actions)
     }
 
     /// Parse file type from LLM response
@@ -258,9 +253,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("lookup", params).await;
 
         match result {
-            Ok(action_response) => {
+            Ok(actions) => {
                 // Find nfs_lookup_response action
-                for action in action_response.actions {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_lookup_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS lookup failed: {}", error);
@@ -291,8 +286,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("getattr", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_getattr_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS getattr failed: {}", error);
@@ -354,8 +349,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("setattr", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_setattr_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS setattr failed: {}", error);
@@ -395,8 +390,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("read", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_read_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS read failed: {}", error);
@@ -439,8 +434,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("write", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_write_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS write failed: {}", error);
@@ -498,8 +493,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("create", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_create_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS create failed: {}", error);
@@ -545,8 +540,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("create", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_create_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS create_exclusive failed: {}", error);
@@ -579,8 +574,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("mkdir", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_mkdir_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS mkdir failed: {}", error);
@@ -625,8 +620,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("remove", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_remove_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS remove failed: {}", error);
@@ -660,8 +655,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("rename", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_rename_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS rename failed: {}", error);
@@ -692,8 +687,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("readdir", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_readdir_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS readdir failed: {}", error);
@@ -786,8 +781,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("symlink", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_create_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {
                             debug!("NFS symlink failed: {}", error);
@@ -830,8 +825,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
         let result = self.consult_llm("readlink", params).await;
 
         match result {
-            Ok(action_response) => {
-                for action in action_response.actions {
+            Ok(actions) => {
+                for action in actions {
                     // Reuse nfs_read_response for readlink (returns target path in data field)
                     if action.get("type").and_then(|v| v.as_str()) == Some("nfs_read_response") {
                         if let Some(error) = action.get("error").and_then(|v| v.as_str()) {

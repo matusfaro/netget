@@ -1,12 +1,14 @@
 //! SNMP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 
 /// SNMP protocol action handler
 pub struct SnmpProtocol;
@@ -17,7 +19,7 @@ impl SnmpProtocol {
     }
 }
 
-impl ProtocolActions for SnmpProtocol {
+impl Protocol for SnmpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // SNMP has async action for sending traps
         vec![send_trap_action()]
@@ -51,6 +53,10 @@ impl ProtocolActions for SnmpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "SNMP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_snmp_event_types()
     }
 }
 
@@ -202,4 +208,46 @@ fn ignore_request_action() -> ActionDefinition {
             "type": "ignore_request"
         }),
     }
+}
+
+// ============================================================================
+// SNMP Event Type Constants
+// ============================================================================
+
+pub static SNMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "snmp_request",
+        "SNMP client sent a GET/GETNEXT/GETBULK request"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "request_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "SNMP request type (GET, GETNEXT, GETBULK, SET)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "oids".to_string(),
+            type_hint: "array".to_string(),
+            description: "Requested OIDs".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "community".to_string(),
+            type_hint: "string".to_string(),
+            description: "SNMP community string".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_snmp_response_action(),
+        send_snmp_error_action(),
+        ignore_request_action(),
+    ])
+});
+
+pub fn get_snmp_event_types() -> Vec<EventType> {
+    vec![
+        SNMP_REQUEST_EVENT.clone(),
+    ]
 }

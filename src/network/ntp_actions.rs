@@ -1,12 +1,14 @@
 //! NTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct NtpProtocol;
@@ -17,7 +19,7 @@ impl NtpProtocol {
     }
 }
 
-impl ProtocolActions for NtpProtocol {
+impl Protocol for NtpProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new()
     }
@@ -49,6 +51,10 @@ impl ProtocolActions for NtpProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "NTP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_ntp_event_types()
     }
 }
 
@@ -354,4 +360,48 @@ fn ignore_request_action() -> ActionDefinition {
             "type": "ignore_request"
         }),
     }
+}
+
+// ============================================================================
+// NTP Event Type Constants
+// ============================================================================
+
+/// NTP request event - triggered when NTP client sends a time request
+pub static NTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ntp_request",
+        "NTP client sent a time synchronization request"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "current_time".to_string(),
+            type_hint: "number".to_string(),
+            description: "Current server time as Unix timestamp".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_transmit_timestamp".to_string(),
+            type_hint: "number".to_string(),
+            description: "Client's transmit timestamp (Unix or NTP format) - must be echoed back as origin_timestamp".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "bytes_received".to_string(),
+            type_hint: "number".to_string(),
+            description: "Size of received NTP packet in bytes".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_ntp_time_response_action(),
+        send_ntp_response_action(),
+        ignore_request_action(),
+    ])
+});
+
+/// Get NTP event types
+pub fn get_ntp_event_types() -> Vec<EventType> {
+    vec![
+        NTP_REQUEST_EVENT.clone(),
+    ]
 }

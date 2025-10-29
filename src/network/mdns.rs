@@ -7,13 +7,15 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 
 #[cfg(feature = "mdns")]
+use crate::llm::action_helper::call_llm;
+#[cfg(feature = "mdns")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "mdns")]
-use crate::llm::prompt::PromptBuilder;
-#[cfg(feature = "mdns")]
-use crate::llm::{ActionResponse, ProtocolActions};
+use crate::network::mdns_actions::MDNS_SERVER_STARTUP_EVENT;
 #[cfg(feature = "mdns")]
 use crate::network::MdnsProtocol;
+#[cfg(feature = "mdns")]
+use crate::protocol::Event;
 #[cfg(feature = "mdns")]
 use crate::state::app_state::AppState;
 
@@ -28,7 +30,7 @@ impl MdnsServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         use mdns_sd::{ServiceDaemon, ServiceInfo};
 
@@ -37,23 +39,31 @@ impl MdnsServer {
 
         let protocol = Arc::new(MdnsProtocol::new());
 
-        // Get LLM to decide what services to advertise
-        let model = app_state.get_ollama_model().await;
-        let prompt = PromptBuilder::build_user_input_action_prompt(
-            &app_state,
-            "mDNS server starting. Register services to advertise on the network.",
-            protocol.get_async_actions(&app_state)
-        ).await;
-
         // Create mDNS daemon
         let mdns = ServiceDaemon::new().map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
         info!("mDNS daemon created");
 
+        // Create mDNS server startup event
+        let event = Event::new(&MDNS_SERVER_STARTUP_EVENT, serde_json::json!({}));
+
         // Get LLM's service registration instructions
-        if let Ok(llm_output) = llm_client.generate(&model, &prompt).await {
-            if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                // Execute actions to register services
-                for action in action_response.actions {
+        // mDNS manually processes register_mdns_service actions using raw_actions
+        if let Ok(execution_result) = call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            None,
+            &event,
+            protocol.as_ref(),
+        ).await {
+            // Display messages from LLM
+            for message in &execution_result.messages {
+                info!("{}", message);
+                let _ = status_tx.send(format!("[INFO] {}", message));
+            }
+
+            // Process raw actions for manual mDNS service registration
+            for action in execution_result.raw_actions {
                     if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
                         if action_type == "register_mdns_service" {
                             // Extract service parameters
@@ -112,15 +122,9 @@ impl MdnsServer {
                                     let _ = status_tx.send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
                                 }
                             }
-                        } else if action_type == "show_message" {
-                            if let Some(message) = action.get("message").and_then(|v| v.as_str()) {
-                                info!("{}", message);
-                                let _ = status_tx.send(format!("[INFO] {}", message));
-                            }
                         }
                     }
                 }
-            }
         }
 
         // Keep daemon running

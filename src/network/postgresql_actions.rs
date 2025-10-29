@@ -1,14 +1,15 @@
 //! PostgreSQL protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -35,7 +36,7 @@ impl PostgresqlProtocol {
     }
 }
 
-impl ProtocolActions for PostgresqlProtocol {
+impl Protocol for PostgresqlProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_postgresql_connections_action()]
     }
@@ -67,6 +68,10 @@ impl ProtocolActions for PostgresqlProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "PostgreSQL"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_postgresql_event_types()
     }
 }
 
@@ -259,4 +264,132 @@ pub fn list_postgresql_connections_action() -> ActionDefinition {
         parameters: vec![],
         example: json!({"type": "list_postgresql_connections"}),
     }
+}
+
+// ============================================================================
+// PostgreSQL Action Constants
+// ============================================================================
+
+/// PostgreSQL query response action constant
+pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "postgresql_query_response".to_string(),
+        description: "Send a result set in response to a SELECT query".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "columns".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'text', 'int4', 'int8', 'float8', 'bool')".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "rows".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of rows. Each row is an array of values matching the column order".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "postgresql_query_response",
+            "columns": [{"name": "id", "type": "int4"}, {"name": "name", "type": "text"}],
+            "rows": [[1, "Alice"], [2, "Bob"]]
+        }),
+    }
+});
+
+/// PostgreSQL error response action constant
+pub static POSTGRESQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "postgresql_error_response".to_string(),
+        description: "Send an error response to the client".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "severity".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error severity (ERROR, FATAL, PANIC, WARNING, NOTICE, DEBUG, INFO, LOG)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "code".to_string(),
+                type_hint: "string".to_string(),
+                description: "PostgreSQL error code (e.g. '42P01' for undefined_table, '42601' for syntax_error)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error message to display to the client".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "postgresql_error_response",
+            "severity": "ERROR",
+            "code": "42P01",
+            "message": "relation \"table_name\" does not exist"
+        }),
+    }
+});
+
+/// PostgreSQL OK response action constant
+pub static POSTGRESQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "postgresql_ok_response".to_string(),
+        description: "Send a command complete response for INSERT, UPDATE, DELETE, or other non-SELECT queries".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "tag".to_string(),
+                type_hint: "string".to_string(),
+                description: "Command tag (e.g. 'INSERT 0 1', 'UPDATE 3', 'DELETE 2', 'CREATE TABLE')".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "postgresql_ok_response",
+            "tag": "INSERT 0 1"
+        }),
+    }
+});
+
+/// PostgreSQL close connection action constant
+pub static POSTGRESQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "close_this_connection".to_string(),
+        description: "Close the current PostgreSQL connection".to_string(),
+        parameters: vec![],
+        example: json!({"type": "close_this_connection"}),
+    }
+});
+
+// ============================================================================
+// PostgreSQL Event Type Constants
+// ============================================================================
+
+/// PostgreSQL query event - triggered when client sends a query
+pub static POSTGRESQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "postgresql_query",
+        "PostgreSQL query received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "query".to_string(),
+            type_hint: "string".to_string(),
+            description: "The SQL query string sent by the client".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        POSTGRESQL_QUERY_RESPONSE_ACTION.clone(),
+        POSTGRESQL_ERROR_RESPONSE_ACTION.clone(),
+        POSTGRESQL_OK_RESPONSE_ACTION.clone(),
+        POSTGRESQL_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// Get PostgreSQL event types
+pub fn get_postgresql_event_types() -> Vec<EventType> {
+    vec![
+        POSTGRESQL_QUERY_EVENT.clone(),
+    ]
 }

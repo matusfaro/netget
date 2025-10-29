@@ -10,17 +10,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
-// Note: We still derive JsonSchema for development/testing purposes,
-// but at runtime we use the explicit JSON schemas in src/llm/schemas/
-#[allow(unused_imports)]
-use schemars::JsonSchema;
-
 /// Structured response from the LLM
 ///
 /// WARNING: If you modify this struct, you MUST also update the corresponding
 /// JSON schema file at: src/llm/schemas/llm_response.json
 /// The schema file is used for Ollama's structured output feature.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
     #[serde(default)]
@@ -102,7 +97,7 @@ impl LlmResponse {
 /// WARNING: If you modify this struct, you MUST also update the corresponding
 /// JSON schema file at: src/llm/schemas/http_response.json
 /// The schema file is used for Ollama's structured output feature.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HttpLlmResponse {
     /// HTTP status code
     pub status: u16,
@@ -163,7 +158,7 @@ impl HttpLlmResponse {
 /// WARNING: If you modify this enum, you MUST also update the corresponding
 /// JSON schema file at: src/llm/schemas/command_interpretation.json
 /// The schema file is used for Ollama's structured output feature.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandAction {
     UpdateInstruction {
@@ -201,7 +196,7 @@ pub enum CommandAction {
 /// WARNING: If you modify this struct, you MUST also update the corresponding
 /// JSON schema file at: src/llm/schemas/command_interpretation.json
 /// The schema file is used for Ollama's structured output feature.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CommandInterpretation {
     /// List of actions to take
     #[serde(default)]
@@ -256,7 +251,7 @@ impl OllamaClient {
     ///
     /// Only use this directly in:
     /// - action_helper module (the primary consumer)
-    /// - specialized methods like generate_command_interpretation for user commands
+    /// - handler for user input commands
     pub(crate) async fn generate(&self, model: &str, prompt: &str) -> Result<String> {
         self.generate_with_format(model, prompt, None).await
     }

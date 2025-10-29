@@ -53,7 +53,6 @@ http-body-util = "0.1"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-schemars = "0.8"
 
 # Error handling
 anyhow = "1.0"
@@ -69,6 +68,9 @@ socket2 = "0.5"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Syntax highlighting for script code
+syntect = "5.3"
 
 # Utilities
 chrono = "0.4"

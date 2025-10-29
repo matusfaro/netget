@@ -27,7 +27,6 @@ async fn test_telnet_echo() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect via raw TCP (Telnet protocol)
     println!("Connecting to Telnet server...");
@@ -90,7 +89,6 @@ async fn test_telnet_prompt() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect and verify welcome + prompt
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -100,7 +98,6 @@ async fn test_telnet_prompt() -> E2EResult<()> {
     let mut reader = BufReader::new(read_half);
 
     // Read welcome message (if sent immediately)
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send a command
     println!("Sending command: help");
@@ -149,7 +146,6 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Send multiple lines
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -176,7 +172,6 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     println!("✓ Multiple line handling tested");
@@ -202,7 +197,6 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // VALIDATION: Connect multiple clients concurrently
     println!("Testing concurrent Telnet clients...");

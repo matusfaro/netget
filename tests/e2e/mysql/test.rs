@@ -29,7 +29,6 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // VALIDATION: Connect and execute query using mysql_async
     println!("Connecting to MySQL server...");
@@ -109,7 +108,6 @@ async fn test_mysql_multi_row_query() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to MySQL server...");
     let opts = mysql_async::OptsBuilder::default()
@@ -151,7 +149,6 @@ async fn test_mysql_create_table() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Connecting to MySQL server...");
     let opts = mysql_async::OptsBuilder::default()

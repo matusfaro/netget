@@ -1,11 +1,11 @@
 //! DNS server implementation using hickory-server
 
-use crate::llm::actions::protocol_trait::ProtocolActions;
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::{ActionResponse, execute_actions};
-use crate::llm::prompt::PromptBuilder;
 use crate::network::connection::ConnectionId;
+use crate::network::dns_actions::DNS_QUERY_EVENT;
 use crate::network::DnsProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use anyhow::Result;
 use hickory_proto::op::Message as DnsMessage;
@@ -79,8 +79,6 @@ impl DnsServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-
                             // Parse DNS query using hickory-proto
                             match DnsMessage::from_vec(&data) {
                                 Ok(query) => {
@@ -106,45 +104,39 @@ impl DnsServer {
                                         ));
                                     }
 
-                                    let event_description = if query_descriptions.is_empty() {
-                                        format!("DNS query from {} ({} bytes, ID: {})", peer_addr, data.len(), query_id)
-                                    } else {
-                                        format!(
-                                            "DNS query from {}: {}",
-                                            peer_addr,
-                                            query_descriptions.join(", ")
-                                        )
-                                    };
+                                    // Create DNS query event
+                                    let first_query = queries.first();
+                                    let domain = first_query.map(|q| q.name().to_string()).unwrap_or_default();
+                                    let query_type = first_query.map(|q| q.query_type().to_string()).unwrap_or_default();
 
-                                    // Get protocol actions
-                                    let protocol_actions = protocol_clone.get_sync_actions();
-                                    let prompt = PromptBuilder::build_network_event_action_prompt(
-                                        &state_clone, &event_description, protocol_actions).await;
+                                    let event = Event::new(&DNS_QUERY_EVENT, serde_json::json!({
+                                        "query_id": query_id,
+                                        "domain": domain,
+                                        "query_type": query_type
+                                    }));
 
-                                    // Log the full prompt being sent to LLM
-                                    debug!("DNS LLM prompt:\n{}", prompt);
-                                    let _ = status_clone.send(format!("[DEBUG] DNS LLM prompt:\n{}", prompt));
+                                    debug!("DNS calling LLM for query from {}", peer_addr);
+                                    let _ = status_clone.send(format!("[DEBUG] DNS calling LLM for query from {}", peer_addr));
 
-                                    match llm_clone.generate(&model, &prompt).await {
-                                        Ok(llm_output) => {
-                                            debug!("DNS LLM raw output: {}", llm_output);
-                                            let _ = status_clone.send(format!("[DEBUG] DNS LLM raw output: {}", llm_output));
+                                    match call_llm(
+                                        &llm_clone,
+                                        &state_clone,
+                                        server_id,
+                                        None,
+                                        &event,
+                                        protocol_clone.as_ref(),
+                                    ).await {
+                                        Ok(execution_result) => {
+                                            // Display messages from LLM
+                                            for message in &execution_result.messages {
+                                                info!("{}", message);
+                                                let _ = status_clone.send(format!("[INFO] {}", message));
+                                            }
 
-                                            match ActionResponse::from_str(&llm_output) {
-                                                Ok(action_response) => {
-                                                    debug!("DNS parsed {} actions", action_response.actions.len());
-                                                    let _ = status_clone.send(format!("[DEBUG] DNS parsed {} actions", action_response.actions.len()));
+                                            debug!("DNS got {} protocol results", execution_result.protocol_results.len());
+                                            let _ = status_clone.send(format!("[DEBUG] DNS got {} protocol results", execution_result.protocol_results.len()));
 
-                                                    match execute_actions(action_response.actions, &state_clone,
-                                                        Some(protocol_clone.as_ref())).await {
-                                                        Ok(result) => {
-                                                            for msg in result.messages {
-                                                                let _ = status_clone.send(msg);
-                                                            }
-                                                            debug!("DNS got {} protocol results", result.protocol_results.len());
-                                                            let _ = status_clone.send(format!("[DEBUG] DNS got {} protocol results", result.protocol_results.len()));
-
-                                                            for protocol_result in result.protocol_results {
+                                            for protocol_result in execution_result.protocol_results {
                                                                 if let Some(output_data) = protocol_result.get_all_output().first() {
                                                                     let _ = socket_clone.send_to(output_data, peer_addr).await;
 
@@ -158,26 +150,14 @@ impl DnsServer {
                                                                     let _ = status_clone.send(format!("[TRACE] DNS sent (hex): {}", hex_str));
 
                                                                     let _ = status_clone.send(format!("→ DNS response to {} ({} bytes)", peer_addr, output_data.len()));
-                                                                } else {
-                                                                    debug!("DNS protocol result has no output data");
-                                                                    let _ = status_clone.send("[DEBUG] DNS protocol result has no output data".to_string());
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            error!("DNS action execution error: {}", e);
-                                                            let _ = status_clone.send(format!("✗ DNS action execution error: {e}"));
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    error!("DNS failed to parse LLM response as actions: {}", e);
-                                                    let _ = status_clone.send(format!("✗ DNS failed to parse LLM response: {e}"));
+                                                } else {
+                                                    debug!("DNS protocol result has no output data");
+                                                    let _ = status_clone.send("[DEBUG] DNS protocol result has no output data".to_string());
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            error!("DNS LLM generation error: {}", e);
+                                            error!("DNS LLM call failed: {}", e);
                                             let _ = status_clone.send(format!("✗ DNS LLM error: {e}"));
                                         }
                                     }

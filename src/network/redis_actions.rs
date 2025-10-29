@@ -1,14 +1,15 @@
 //! Redis protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::network::connection::ConnectionId;
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -35,7 +36,7 @@ impl RedisProtocol {
     }
 }
 
-impl ProtocolActions for RedisProtocol {
+impl Protocol for RedisProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_redis_connections_action()]
     }
@@ -73,6 +74,10 @@ impl ProtocolActions for RedisProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "Redis"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_redis_event_types()
     }
 }
 
@@ -304,4 +309,52 @@ pub fn list_redis_connections_action() -> ActionDefinition {
         parameters: vec![],
         example: json!({"type": "list_redis_connections"}),
     }
+}
+
+// ============================================================================
+// Redis Action Constants
+// ============================================================================
+
+pub static REDIS_SIMPLE_STRING_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_simple_string_action());
+pub static REDIS_BULK_STRING_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_bulk_string_action());
+pub static REDIS_ARRAY_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_array_action());
+pub static REDIS_INTEGER_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_integer_action());
+pub static REDIS_ERROR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_error_action());
+pub static REDIS_NULL_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_null_action());
+pub static REDIS_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_this_connection_action());
+
+// ============================================================================
+// Redis Event Type Constants
+// ============================================================================
+
+/// Redis command event - triggered when client sends a command
+pub static REDIS_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "redis_command",
+        "Redis command received from client"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "The Redis command string sent by the client".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        REDIS_SIMPLE_STRING_ACTION.clone(),
+        REDIS_BULK_STRING_ACTION.clone(),
+        REDIS_ARRAY_ACTION.clone(),
+        REDIS_INTEGER_ACTION.clone(),
+        REDIS_ERROR_ACTION.clone(),
+        REDIS_NULL_ACTION.clone(),
+        REDIS_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+});
+
+/// Get Redis event types
+pub fn get_redis_event_types() -> Vec<EventType> {
+    vec![
+        REDIS_COMMAND_EVENT.clone(),
+    ]
 }

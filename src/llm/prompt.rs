@@ -194,6 +194,83 @@ Response (JSON only):"#,
             format!("\nAvailable protocol stacks: {}\n", stacks.join(", "))
         };
 
+        // Get scripting environment information
+        let scripting_env = state.get_scripting_env().await;
+
+        // Note: Event types are no longer included in general prompts.
+        // When using call_llm_with_event_type(), the EventType's to_prompt_description()
+        // is used directly as the event description, which includes all event-specific actions.
+        let event_types_info = String::new();
+
+        let scripting_info = if include_base_stacks {
+            // Only show detailed scripting info when starting servers
+            let available = scripting_env.format_available();
+            if available != "None" {
+                // Script template will be shown in protocol-specific contexts
+                // when call_llm_with_event_type() is used
+                let script_template = String::new();
+
+                format!(
+                    r#"
+
+SCRIPT-BASED RESPONSES (for deterministic, repetitive responses):
+Available environments: {}
+
+For deterministic responses that don't require AI reasoning, you can configure Python or JavaScript scripts:
+- Use scripts for: static banners, fixed authentication rules, predetermined responses
+- Use LLM for: dynamic content, reasoning, adaptive behavior
+
+To use scripts in open_server, include:
+- script_language: "python" or "javascript"
+- script_inline: "your script code" (or script_path: "/path/to/script.py")
+- script_handles: ["ssh_auth", "ssh_banner"] or ["all"] (optional, defaults to ["all"])
+
+CRITICAL: Scripts must return ACTIONS in JSON format, NOT raw protocol responses.
+The script receives context via stdin and must print actions to stdout.
+
+Scripts receive JSON input via stdin with this structure:
+{{
+  "context_type": "ssh_auth",
+  "server": {{"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."}},
+  "connection": {{"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0}},
+  "event": {{"username": "alice", "auth_type": "password"}}
+}}
+
+Scripts MUST output JSON with an "actions" array containing action objects.
+Use the SAME action types that are available to you (e.g., send_http_response, ssh_auth_decision).
+DO NOT write raw protocol code (like res.writeHead() or socket operations).
+
+Example 1 - SSH authentication (Python):
+import json, sys
+data = json.load(sys.stdin)
+username = data['event']['username']
+allowed = (username == 'alice')
+print(json.dumps({{"actions": [{{"type": "ssh_auth_decision", "allowed": allowed}}]}}))
+
+Example 2 - HTTP response (JavaScript):
+const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+const pathname = data.event.path;
+const response = pathname.endsWith('.html')
+  ? {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<h1>Hello</h1>"}}
+  : {{"status": 404, "body": "Not Found"}};
+console.log(JSON.stringify({{"actions": [{{"type": "send_http_response", ...response}}]}}));
+
+Scripts must complete within {} seconds or they will be terminated.
+Scripts can return {{"fallback_to_llm": true}} to delegate complex cases to LLM.
+You can update scripts on running servers using the update_script action.
+{}
+"#,
+                    crate::scripting::SCRIPT_TIMEOUT_SECS,
+                    available,
+                    script_template
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
         format!(
             r#"You are NetGet, an LLM-controlled network application assistant.
 
@@ -205,7 +282,7 @@ Instructions: {}
 
 {}
 
-{}
+{}{}{}
 
 RESPONSE FORMAT:
 Respond with JSON: {{"actions": [...]}}
@@ -220,7 +297,7 @@ Example:
 }}
 
 Response (JSON only):"#,
-            current_state, trigger_reason, instructions, actions_text, base_stack_docs
+            current_state, trigger_reason, instructions, actions_text, event_types_info, base_stack_docs, scripting_info
         )
     }
 

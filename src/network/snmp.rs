@@ -12,10 +12,11 @@ use tracing::{debug, error, info, trace};
 use rasn_snmp::{v1, v2c, v2};
 use rasn::{ber, types::Integer};
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions};
+use crate::network::snmp_actions::SNMP_REQUEST_EVENT;
 use crate::network::SnmpProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// Get LLM context and output format instructions for SNMP stack
@@ -69,10 +70,13 @@ impl SnmpServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
         info!("SNMP agent listening on {}", local_addr);
+
+        let protocol = Arc::new(SnmpProtocol::new());
 
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
@@ -81,7 +85,7 @@ impl SnmpServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new();
+                        let _connection_id = ConnectionId::new();
 
                         // DEBUG: Log summary
                         debug!("SNMP received {} bytes from {}", n, peer_addr);
@@ -105,6 +109,7 @@ impl SnmpServer {
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let socket_clone = socket.clone();
+                        let protocol_clone = protocol.clone();
                         let version = parsed.version;
                         let request_id = parsed.request_id;
                         let community = parsed.community.clone();
@@ -112,67 +117,78 @@ impl SnmpServer {
 
                         // Spawn task to handle request with LLM
                         tokio::spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-                            let protocol_prompt = get_llm_protocol_prompt();
+                            // Create Event with SNMP request data
+                            let event = Event::new(&SNMP_REQUEST_EVENT, serde_json::json!({
+                                "request_type": parsed.request_type,
+                                "oids": parsed.requested_oids,
+                                "community": String::from_utf8_lossy(&parsed.community).to_string()
+                            }));
 
-                            // Build event description
-                            let event_description = format!(
-                                "SNMP {} from {}:\n{}Request ID: {}\nCommunity: {}\nOIDs: {}",
-                                parsed.request_type,
-                                peer_addr,
-                                parsed.description,
-                                parsed.request_id,
-                                String::from_utf8_lossy(&parsed.community),
-                                parsed.requested_oids.join(", ")
-                            );
+                            debug!("SNMP calling LLM for request from {}", peer_addr);
+                            let _ = status_clone.send(format!("[DEBUG] SNMP calling LLM for request from {}", peer_addr));
 
-                            let prompt = PromptBuilder::build_network_event_prompt(
+                            match call_llm(
+                                &llm_clone,
                                 &state_clone,
-                                connection_id,
-                                &event_description,
-                                protocol_prompt,
-                            ).await;
+                                server_id,
+                                None,
+                                &event,
+                                protocol_clone.as_ref(),
+                            ).await {
+                                Ok(execution_result) => {
+                                    for message in &execution_result.messages {
+                                        info!("{}", message);
+                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                    }
 
-                            match llm_clone.generate(&model, &prompt).await {
-                                Ok(llm_output) => {
-                                    debug!("LLM SNMP response: {}", llm_output);
+                                    debug!("SNMP got {} protocol results", execution_result.protocol_results.len());
+                                    let _ = status_clone.send(format!("[DEBUG] SNMP got {} protocol results", execution_result.protocol_results.len()));
 
-                                    // Build SNMP response from LLM output
-                                    match Self::build_snmp_response(&llm_output, version, request_id, &community, &requested_oids) {
-                                        Ok(snmp_response) => {
-                                            if let Err(e) = socket_clone.send_to(&snmp_response, peer_addr).await {
-                                                error!("Failed to send SNMP response: {}", e);
-                                            } else {
-                                                // DEBUG: Log summary
-                                                debug!("SNMP sent {} bytes to {}", snmp_response.len(), peer_addr);
-                                                let _ = status_clone.send(format!("[DEBUG] SNMP sent {} bytes to {}", snmp_response.len(), peer_addr));
+                                    // For legacy function, extract first raw action as JSON response
+                                    if let Some(first_action) = execution_result.raw_actions.first() {
+                                        let llm_output = serde_json::to_string(first_action).unwrap_or_default();
+                                        debug!("SNMP LLM response: {}", llm_output);
 
-                                                // TRACE: Log full payload
-                                                let hex_dump: String = snmp_response.iter()
-                                                    .map(|b| format!("{:02X}", b))
-                                                    .collect::<Vec<_>>()
-                                                    .join(" ");
-                                                trace!("SNMP sent (hex): {}", hex_dump);
-                                                let _ = status_clone.send(format!("[TRACE] SNMP sent (hex): {}", hex_dump));
+                                        // Build SNMP response from LLM output
+                                        match Self::build_snmp_response(&llm_output, version, request_id, &community, &requested_oids) {
+                                            Ok(snmp_response) => {
+                                                if let Err(e) = socket_clone.send_to(&snmp_response, peer_addr).await {
+                                                    error!("Failed to send SNMP response: {}", e);
+                                                } else {
+                                                    // DEBUG: Log summary
+                                                    debug!("SNMP sent {} bytes to {}", snmp_response.len(), peer_addr);
+                                                    let _ = status_clone.send(format!("[DEBUG] SNMP sent {} bytes to {}", snmp_response.len(), peer_addr));
 
-                                                let _ = status_clone.send(format!(
-                                                    "→ SNMP response to {} ({} bytes)",
-                                                    peer_addr, snmp_response.len()
-                                                ));
+                                                    // TRACE: Log full payload
+                                                    let hex_dump: String = snmp_response.iter()
+                                                        .map(|b| format!("{:02X}", b))
+                                                        .collect::<Vec<_>>()
+                                                        .join(" ");
+                                                    trace!("SNMP sent (hex): {}", hex_dump);
+                                                    let _ = status_clone.send(format!("[TRACE] SNMP sent (hex): {}", hex_dump));
+
+                                                    let _ = status_clone.send(format!(
+                                                        "→ SNMP response to {} ({} bytes)",
+                                                        peer_addr, snmp_response.len()
+                                                    ));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to build SNMP response: {}", e);
+                                                // Send error response
+                                                if let Ok(error_response) = Self::build_error_response(version, request_id, &community) {
+                                                    let _ = socket_clone.send_to(&error_response, peer_addr).await;
+                                                }
                                             }
                                         }
-                                        Err(e) => {
-                                            error!("Failed to build SNMP response: {}", e);
-                                            // Send error response
-                                            if let Ok(error_response) = Self::build_error_response(version, request_id, &community) {
-                                                let _ = socket_clone.send_to(&error_response, peer_addr).await;
-                                            }
-                                        }
+                                    } else {
+                                        debug!("SNMP no raw actions from LLM");
+                                        let _ = status_clone.send("[DEBUG] SNMP no raw actions from LLM".to_string());
                                     }
                                 }
                                 Err(e) => {
-                                    error!("LLM error for SNMP request: {}", e);
-                                    let _ = status_clone.send(format!("✗ LLM error for SNMP: {}", e));
+                                    error!("SNMP LLM call failed: {}", e);
+                                    let _ = status_clone.send(format!("✗ SNMP LLM error: {}", e));
                                 }
                             }
                         });
@@ -262,55 +278,41 @@ impl SnmpServer {
 
                         // Spawn task to handle request with LLM
                         tokio::spawn(async move {
-                            let model = state_clone.get_ollama_model().await;
-
-                            // Build event description
-                            let event_description = format!(
-                                "SNMP {} from {}:\n{}Request ID: {}\nCommunity: {}\nOIDs: {}",
-                                parsed.request_type,
-                                peer_addr,
-                                parsed.description,
-                                parsed.request_id,
-                                String::from_utf8_lossy(&parsed.community),
-                                parsed.requested_oids.join(", ")
-                            );
-
                             // Clone for BER encoding later
                             let requested_oids_clone = requested_oids.clone();
                             let community_clone = community.clone();
 
-                            // Get protocol sync actions
-                            let protocol_actions = protocol_clone.get_sync_actions();
+                            // Create SNMP request event
+                            let event = Event::new(&SNMP_REQUEST_EVENT, serde_json::json!({
+                                "request_type": parsed.request_type,
+                                "oids": parsed.requested_oids,
+                                "community": String::from_utf8_lossy(&parsed.community).to_string()
+                            }));
 
-                            // Build prompt
-                            let prompt = PromptBuilder::build_network_event_action_prompt(
-                                &state_clone,
-                                &event_description,
-                                protocol_actions,
-                            ).await;
+                            debug!("SNMP calling LLM for request from {}", peer_addr);
+                            let _ = status_clone.send(format!("[DEBUG] SNMP calling LLM for request from {}", peer_addr));
 
                             // Call LLM
-                            match llm_clone.generate(&model, &prompt).await {
-                                Ok(llm_output) => {
-                                    debug!("LLM SNMP response: {}", llm_output);
+                            match call_llm(
+                                &llm_clone,
+                                &state_clone,
+                                server_id,
+                                None,
+                                &event,
+                                protocol_clone.as_ref(),
+                            ).await {
+                                Ok(execution_result) => {
+                                    // Display messages from LLM
+                                    for message in &execution_result.messages {
+                                        info!("{}", message);
+                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                    }
 
-                                    // Parse action response
-                                    match ActionResponse::from_str(&llm_output) {
-                                        Ok(action_response) => {
-                                            // Execute actions
-                                            match execute_actions(
-                                                action_response.actions,
-                                                &state_clone,
-                                                Some(protocol_clone.as_ref()),
-                                            ).await {
-                                                Ok(result) => {
-                                                    // Display messages
-                                                    for msg in result.messages {
-                                                        let _ = status_clone.send(msg);
-                                                    }
+                                    debug!("SNMP got {} protocol results", execution_result.protocol_results.len());
+                                    let _ = status_clone.send(format!("[DEBUG] SNMP got {} protocol results", execution_result.protocol_results.len()));
 
-                                                    // Handle protocol results (send SNMP response)
-                                                    for protocol_result in result.protocol_results {
+                                    // Handle protocol results (send SNMP response)
+                                    for protocol_result in execution_result.protocol_results {
                                                         if let Some(output_data) = protocol_result.get_all_output().first() {
                                                             // Parse JSON response and convert to SNMP BER format
                                                             let json_str = String::from_utf8_lossy(output_data);
@@ -342,24 +344,12 @@ impl SnmpServer {
                                                                     let _ = status_clone.send(format!("✗ SNMP encoding error: {}", e));
                                                                 }
                                                             }
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    error!("Failed to execute actions: {}", e);
-                                                    let _ = status_clone.send(format!("✗ Action execution error: {}", e));
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to parse action response: {}", e);
-                                            let _ = status_clone.send(format!("✗ Parse error: {}", e));
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("LLM error for SNMP request: {}", e);
-                                    let _ = status_clone.send(format!("✗ LLM error for SNMP: {}", e));
+                                    error!("SNMP LLM call failed: {}", e);
+                                    let _ = status_clone.send(format!("✗ SNMP LLM error: {}", e));
                                 }
                             }
                         });

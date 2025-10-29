@@ -1,12 +1,14 @@
 //! NFS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Protocol},
     ActionDefinition, Parameter,
 };
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 
 /// NFS protocol action handler
 pub struct NfsProtocol;
@@ -17,7 +19,7 @@ impl NfsProtocol {
     }
 }
 
-impl ProtocolActions for NfsProtocol {
+impl Protocol for NfsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             mount_filesystem_action(),
@@ -69,6 +71,10 @@ impl ProtocolActions for NfsProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "NFS"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_nfs_event_types()
     }
 }
 
@@ -633,3 +639,42 @@ fn nfs_setattr_response_action() -> ActionDefinition {
         }),
     }
 }
+
+
+// ============================================================================
+// NFS Event Type Constants
+// ============================================================================
+
+/// NFS operation event - triggered when NFS client requests a filesystem operation
+pub static NFS_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "nfs_operation",
+        "NFS client requested a filesystem operation"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "The NFS operation type (lookup, getattr, setattr, read, write, create, mkdir, remove, rename, readdir, symlink, readlink)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "params".to_string(),
+            type_hint: "object".to_string(),
+            description: "Operation-specific parameters (path, fileid, offset, size, etc.)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        // Include all NFS response actions
+        // The LLM will choose the appropriate response based on the operation type
+    ])
+});
+
+/// Get NFS event types
+pub fn get_nfs_event_types() -> Vec<EventType> {
+    vec![
+        NFS_OPERATION_EVENT.clone(),
+    ]
+}
+

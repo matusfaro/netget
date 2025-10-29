@@ -11,10 +11,12 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
 use super::connection::ConnectionId;
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::{ActionResponse, execute_actions, ActionResult, ProtocolActions};
-use crate::llm::prompt::PromptBuilder;
+use crate::llm::ActionResult;
+use crate::network::tcp_actions::{TCP_CONNECTION_OPENED_EVENT, TCP_DATA_RECEIVED_EVENT};
 use crate::network::TcpProtocol;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
 
 /// Connection state for LLM processing
@@ -100,6 +102,7 @@ impl TcpServer {
                         tokio::spawn(async move {
                             Self::handle_connection_with_actions(
                                 connection_id,
+                                server_id,
                                 llm_client_clone,
                                 app_state_clone,
                                 status_tx_clone,
@@ -166,6 +169,7 @@ impl TcpServer {
                                         tokio::spawn(async move {
                                             Self::handle_data_with_actions(
                                                 connection_id,
+                                                server_id,
                                                 data,
                                                 llm_clone,
                                                 state_clone,
@@ -198,6 +202,7 @@ impl TcpServer {
     /// Handle new connection with LLM actions
     async fn handle_connection_with_actions(
         connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
@@ -216,90 +221,65 @@ impl TcpServer {
 
         // Send data first if requested
         if send_first {
-            let model = app_state.get_ollama_model().await;
-            let event_description = format!("New connection opened: {connection_id}");
-
-            // Get protocol sync actions
-            let protocol_actions = protocol.get_sync_actions();
-
-            // Build prompt
-            let prompt = PromptBuilder::build_network_event_action_prompt(
-                &app_state,
-                &event_description,
-                protocol_actions,
-            ).await;
+            // Create connection opened event
+            let event = Event::new(&TCP_CONNECTION_OPENED_EVENT, serde_json::json!({}));
 
             // Call LLM
-            match llm_client.generate(&model, &prompt).await {
-                Ok(llm_output) => {
-                    debug!("LLM TCP banner response: {}", llm_output);
+            match call_llm(
+                &llm_client,
+                &app_state,
+                server_id,
+                Some(connection_id),
+                &event,
+                protocol.as_ref(),
+            ).await {
+                Ok(execution_result) => {
+                    debug!("LLM TCP banner response received");
 
-                    // Parse action response
-                    match ActionResponse::from_str(&llm_output) {
-                        Ok(action_response) => {
-                            // Execute actions
-                            match execute_actions(
-                                action_response.actions,
-                                &app_state,
-                                Some(protocol.as_ref()),
-                            ).await {
-                                Ok(result) => {
-                                    // Display messages
-                                    for msg in result.messages {
-                                        let _ = status_tx.send(msg);
+                    // Display messages
+                    for msg in execution_result.messages {
+                        let _ = status_tx.send(msg);
+                    }
+
+                    // Handle protocol results (send banner)
+                    for protocol_result in execution_result.protocol_results {
+                        match protocol_result {
+                            ActionResult::Output(output_data) => {
+                                let mut write = write_half.lock().await;
+                                if let Err(e) = write.write_all(&output_data).await {
+                                    error!("Failed to send banner: {}", e);
+                                } else {
+                                    // DEBUG: Log summary with data preview
+                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                        let data_str = String::from_utf8_lossy(&output_data);
+                                        let preview = if data_str.len() > 100 {
+                                            format!("{}...", &data_str[..100])
+                                        } else {
+                                            data_str.to_string()
+                                        };
+                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+
+                                        // TRACE: Log full text payload
+                                        trace!("TCP sent (text): {:?}", data_str);
+                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
+                                    } else {
+                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+
+                                        // TRACE: Log full hex payload
+                                        let hex_str = hex::encode(&output_data);
+                                        trace!("TCP sent (hex): {}", hex_str);
+                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
                                     }
-
-                                    // Handle protocol results (send banner)
-                                    for protocol_result in result.protocol_results {
-                                        match protocol_result {
-                                            ActionResult::Output(output_data) => {
-                                                let mut write = write_half.lock().await;
-                                                if let Err(e) = write.write_all(&output_data).await {
-                                                    error!("Failed to send banner: {}", e);
-                                                } else {
-                                                    // DEBUG: Log summary with data preview
-                                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
-                                                        let data_str = String::from_utf8_lossy(&output_data);
-                                                        let preview = if data_str.len() > 100 {
-                                                            format!("{}...", &data_str[..100])
-                                                        } else {
-                                                            data_str.to_string()
-                                                        };
-                                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
-                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
-
-                                                        // TRACE: Log full text payload
-                                                        trace!("TCP sent (text): {:?}", data_str);
-                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
-                                                    } else {
-                                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
-                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
-
-                                                        // TRACE: Log full hex payload
-                                                        let hex_str = hex::encode(&output_data);
-                                                        trace!("TCP sent (hex): {}", hex_str);
-                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
-                                                    }
-                                                    let _ = status_tx.send(format!("→ Sent banner to {connection_id}"));
-                                                }
-                                            }
-                                            ActionResult::CloseConnection => {
-                                                connections.lock().await.remove(&connection_id);
-                                                let _ = status_tx.send(format!("✗ Closed connection {connection_id} after banner"));
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Failed to execute actions: {}", e);
-                                    let _ = status_tx.send(format!("✗ Action execution error: {e}"));
+                                    let _ = status_tx.send(format!("→ Sent banner to {connection_id}"));
                                 }
                             }
-                        }
-                        Err(e) => {
-                            error!("Failed to parse action response: {}", e);
-                            let _ = status_tx.send(format!("✗ Parse error: {e}"));
+                            ActionResult::CloseConnection => {
+                                connections.lock().await.remove(&connection_id);
+                                let _ = status_tx.send(format!("✗ Closed connection {connection_id} after banner"));
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -314,6 +294,7 @@ impl TcpServer {
     /// Handle data received on a connection with LLM actions
     async fn handle_data_with_actions(
         connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
         data: Bytes,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -354,8 +335,7 @@ impl TcpServer {
         };
 
         loop {
-            // Get model and memory
-            let model = app_state.get_ollama_model().await;
+            // Get memory
             let memory = {
                 let conns = connections.lock().await;
                 conns.get(&connection_id).map(|c| c.memory.clone()).unwrap_or_default()
@@ -371,154 +351,124 @@ impl TcpServer {
                 return; // Connection not found
             };
 
-            // Build event description
-            let event_description = {
-                let data_preview = if all_data.len() > 200 {
-                    format!("{} bytes (preview: {:?}...)", all_data.len(), &all_data[..200])
-                } else {
-                    format!("{:?}", all_data)
-                };
-                format!("Data received on connection {connection_id}: {data_preview}")
+            // Format data for event parameter
+            let data_str = if all_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                String::from_utf8_lossy(&all_data).to_string()
+            } else {
+                hex::encode(&all_data)
             };
 
-            // Get protocol sync actions
-            let protocol_actions = protocol.get_sync_actions();
+            // Create data received event
+            let event = Event::new(&TCP_DATA_RECEIVED_EVENT, serde_json::json!({
+                "data": data_str
+            }));
 
-            // Build prompt and call LLM
-            let prompt = PromptBuilder::build_network_event_action_prompt(
+            // Call LLM
+            match call_llm(
+                &llm_client,
                 &app_state,
-                &event_description,
-                protocol_actions,
-            ).await;
+                server_id,
+                Some(connection_id),
+                &event,
+                protocol.as_ref(),
+            ).await {
+                Ok(execution_result) => {
+                    debug!("LLM TCP response received");
 
-            match llm_client.generate(&model, &prompt).await {
-                Ok(llm_output) => {
-                    debug!("LLM TCP response: {}", llm_output);
+                    // Update memory
+                    connections.lock().await
+                        .entry(connection_id)
+                        .and_modify(|conn| conn.memory = memory.clone());
 
-                    // Parse action response
-                    match ActionResponse::from_str(&llm_output) {
-                        Ok(action_response) => {
-                            // Execute actions
-                            match execute_actions(
-                                action_response.actions,
-                                &app_state,
-                                Some(protocol.as_ref()),
-                            ).await {
-                                Ok(result) => {
-                                    // Update memory
-                                    connections.lock().await
-                                        .entry(connection_id)
-                                        .and_modify(|conn| conn.memory = memory.clone());
+                    // Display messages
+                    for msg in execution_result.messages {
+                        let _ = status_tx.send(msg);
+                    }
 
-                                    // Display messages
-                                    for msg in result.messages {
-                                        let _ = status_tx.send(msg);
-                                    }
+                    // Handle protocol results
+                    let mut should_close = false;
+                    let mut should_wait = false;
 
-                                    // Handle protocol results
-                                    let mut should_close = false;
-                                    let mut should_wait = false;
+                    for protocol_result in execution_result.protocol_results {
+                        match protocol_result {
+                            ActionResult::Output(output_data) => {
+                                let mut write = write_half.lock().await;
+                                if let Err(e) = write.write_all(&output_data).await {
+                                    error!("Failed to send response: {}", e);
+                                } else {
+                                    // DEBUG: Log summary with data preview
+                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                        let data_str = String::from_utf8_lossy(&output_data);
+                                        let preview = if data_str.len() > 100 {
+                                            format!("{}...", &data_str[..100])
+                                        } else {
+                                            data_str.to_string()
+                                        };
+                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
 
-                                    for protocol_result in result.protocol_results {
-                                        match protocol_result {
-                                            ActionResult::Output(output_data) => {
-                                                let mut write = write_half.lock().await;
-                                                if let Err(e) = write.write_all(&output_data).await {
-                                                    error!("Failed to send response: {}", e);
-                                                } else {
-                                                    // DEBUG: Log summary with data preview
-                                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
-                                                        let data_str = String::from_utf8_lossy(&output_data);
-                                                        let preview = if data_str.len() > 100 {
-                                                            format!("{}...", &data_str[..100])
-                                                        } else {
-                                                            data_str.to_string()
-                                                        };
-                                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
-                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
-
-                                                        // TRACE: Log full text payload
-                                                        trace!("TCP sent (text): {:?}", data_str);
-                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
-                                                    } else {
-                                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
-                                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
-
-                                                        // TRACE: Log full hex payload
-                                                        let hex_str = hex::encode(&output_data);
-                                                        trace!("TCP sent (hex): {}", hex_str);
-                                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
-                                                    }
-                                                    let _ = status_tx.send(format!("→ Sent {} bytes to {}", output_data.len(), connection_id));
-                                                }
-                                            }
-                                            ActionResult::CloseConnection => {
-                                                should_close = true;
-                                            }
-                                            ActionResult::WaitForMore => {
-                                                should_wait = true;
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-
-                                    // Handle wait_for_more
-                                    if should_wait {
-                                        connections.lock().await
-                                            .entry(connection_id)
-                                            .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                                        let _ = status_tx.send(format!("⏳ Waiting for more data from {connection_id}"));
-                                        return;
-                                    }
-
-                                    // Handle close_connection
-                                    if should_close {
-                                        connections.lock().await.remove(&connection_id);
-                                        let _ = status_tx.send(format!("✗ Closed connection {connection_id}"));
-                                        return;
-                                    }
-
-                                    // Check for queued data
-                                    let has_queued = {
-                                        let conns = connections.lock().await;
-                                        conns.get(&connection_id)
-                                            .map(|c| !c.queued_data.is_empty())
-                                            .unwrap_or(false)
-                                    };
-
-                                    if has_queued {
-                                        let _ = status_tx.send(format!("▶ Processing queued data for {connection_id}"));
-                                        // Loop continues to process queued data
+                                        // TRACE: Log full text payload
+                                        trace!("TCP sent (text): {:?}", data_str);
+                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
                                     } else {
-                                        // Go to Idle state
-                                        connections.lock().await
-                                            .entry(connection_id)
-                                            .and_modify(|conn| conn.state = ConnectionState::Idle);
-                                        return;
+                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+
+                                        // TRACE: Log full hex payload
+                                        let hex_str = hex::encode(&output_data);
+                                        trace!("TCP sent (hex): {}", hex_str);
+                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
                                     }
-                                }
-                                Err(e) => {
-                                    error!("Failed to execute actions: {}", e);
-                                    let _ = status_tx.send(format!("✗ Action execution error: {e}"));
-                                    connections.lock().await
-                                        .entry(connection_id)
-                                        .and_modify(|conn| conn.state = ConnectionState::Idle);
-                                    return;
+                                    let _ = status_tx.send(format!("→ Sent {} bytes to {}", output_data.len(), connection_id));
                                 }
                             }
+                            ActionResult::CloseConnection => {
+                                should_close = true;
+                            }
+                            ActionResult::WaitForMore => {
+                                should_wait = true;
+                            }
+                            _ => {}
                         }
-                        Err(e) => {
-                            error!("Failed to parse action response: {}", e);
-                            let _ = status_tx.send(format!("✗ Parse error: {e}"));
-                            connections.lock().await
-                                .entry(connection_id)
-                                .and_modify(|conn| conn.state = ConnectionState::Idle);
-                            return;
-                        }
+                    }
+
+                    // Handle wait_for_more
+                    if should_wait {
+                        connections.lock().await
+                            .entry(connection_id)
+                            .and_modify(|conn| conn.state = ConnectionState::Accumulating);
+                        let _ = status_tx.send(format!("⏳ Waiting for more data from {connection_id}"));
+                        return;
+                    }
+
+                    // Handle close_connection
+                    if should_close {
+                        connections.lock().await.remove(&connection_id);
+                        let _ = status_tx.send(format!("✗ Closed connection {connection_id}"));
+                        return;
+                    }
+
+                    // Check for queued data
+                    let has_queued = {
+                        let conns = connections.lock().await;
+                        conns.get(&connection_id)
+                            .map(|c| !c.queued_data.is_empty())
+                            .unwrap_or(false)
+                    };
+
+                    if has_queued {
+                        let _ = status_tx.send(format!("▶ Processing queued data for {connection_id}"));
+                        // Loop continues to process queued data
+                    } else {
+                        // Go to Idle state
+                        connections.lock().await
+                            .entry(connection_id)
+                            .and_modify(|conn| conn.state = ConnectionState::Idle);
+                        return;
                     }
                 }
                 Err(e) => {
-                    error!("LLM error: {}", e);
+                    error!("LLM error for TCP data: {}", e);
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
                     connections.lock().await
                         .entry(connection_id)

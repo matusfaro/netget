@@ -119,7 +119,84 @@ impl BaseStack {
     pub fn from_str(s: &str) -> Option<Self> {
         let s_lower = s.to_lowercase();
 
-        // Check for specific protocol keywords first (more specific matches)
+        // First, try exact match with stack names (for LLM-generated responses)
+        // This allows LLM to specify exact stack like "ETH>IP>TCP>HTTP"
+        match s_lower.as_str() {
+            "eth>ip>tcp" => return Some(Self::Tcp),
+            "eth>ip>tcp>http" => {
+                #[cfg(feature = "http")]
+                return Some(Self::Http);
+            }
+            "eth" => return Some(Self::DataLink),
+            "eth>ip>udp" => return Some(Self::Udp),
+            "eth>ip>udp>dns" => {
+                #[cfg(feature = "dns")]
+                return Some(Self::Dns);
+            }
+            "eth>ip>udp>dhcp" => {
+                #[cfg(feature = "dhcp")]
+                return Some(Self::Dhcp);
+            }
+            "eth>ip>udp>ntp" => {
+                #[cfg(feature = "ntp")]
+                return Some(Self::Ntp);
+            }
+            "eth>ip>udp>snmp" => {
+                #[cfg(feature = "snmp")]
+                return Some(Self::Snmp);
+            }
+            "eth>ip>tcp>ssh" => {
+                #[cfg(feature = "ssh")]
+                return Some(Self::Ssh);
+            }
+            "eth>ip>tcp>irc" => {
+                #[cfg(feature = "irc")]
+                return Some(Self::Irc);
+            }
+            "eth>ip>tcp>telnet" => {
+                #[cfg(feature = "telnet")]
+                return Some(Self::Telnet);
+            }
+            "eth>ip>tcp>smtp" => {
+                #[cfg(feature = "smtp")]
+                return Some(Self::Smtp);
+            }
+            "eth>ip>udp>mdns" => {
+                #[cfg(feature = "mdns")]
+                return Some(Self::Mdns);
+            }
+            "eth>ip>tcp>mysql" => {
+                #[cfg(feature = "mysql")]
+                return Some(Self::Mysql);
+            }
+            "eth>ip>tcp>http>ipp" => {
+                #[cfg(feature = "ipp")]
+                return Some(Self::Ipp);
+            }
+            "eth>ip>tcp>postgresql" => {
+                #[cfg(feature = "postgresql")]
+                return Some(Self::Postgresql);
+            }
+            "eth>ip>tcp>redis" => {
+                #[cfg(feature = "redis")]
+                return Some(Self::Redis);
+            }
+            "eth>ip>tcp>http>proxy" => {
+                #[cfg(feature = "proxy")]
+                return Some(Self::Proxy);
+            }
+            "eth>ip>tcp>http>webdav" => {
+                #[cfg(feature = "webdav")]
+                return Some(Self::WebDav);
+            }
+            "eth>ip>tcp>nfs" => {
+                #[cfg(feature = "nfs")]
+                return Some(Self::Nfs);
+            }
+            _ => {} // Fall through to keyword matching
+        }
+
+        // Check for specific protocol keywords (more specific matches)
 
         // SSH stack
         #[cfg(feature = "ssh")]
@@ -334,6 +411,11 @@ impl BaseStack {
 
         stacks
     }
+
+    // Note: get_event_types() method has been removed from BaseStack.
+    // Each protocol now implements the ProtocolStack trait directly.
+    // To get event types, instantiate the protocol and call .get_event_types() on it.
+    // Example: HttpProtocol::new().get_event_types()
 }
 
 impl std::fmt::Display for BaseStack {
