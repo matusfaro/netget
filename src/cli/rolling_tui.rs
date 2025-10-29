@@ -97,8 +97,9 @@ pub async fn run_rolling_tui(
     // Print welcome messages to scrolling region
     print_welcome_messages(&mut footer)?;
 
-    // NOTE: No initial footer render here - the event loop will render it
-    // after processing the "TUI initialized" message we send at line ~134
+    // Render footer initially to position cursor correctly
+    // Without this, the cursor sits at the terminal default position until first keystroke
+    footer.render(&mut stdout())?;
 
     // Create status channel for server messages
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
@@ -174,6 +175,14 @@ pub async fn run_rolling_tui(
                     ui_needs_update = true;
                 }
             }
+        }
+
+        // Render footer immediately if messages were printed to reposition cursor
+        // This ensures cursor is in the input field before select! blocks
+        if ui_needs_update {
+            update_ui_from_state(&mut app, &state, &mut footer).await;
+            footer.render(&mut stdout())?;
+            ui_needs_update = false; // Reset flag since we just rendered
         }
 
         tokio::select! {
@@ -432,8 +441,7 @@ async fn handle_key_event(
         // Ctrl+N or Alt+N to insert newline
         KeyCode::Char('n') | KeyCode::Char('N') if modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT) => {
             footer.input_mut().insert_newline();
-            app.update_slash_suggestions(&footer.input().text());
-            footer.render_input_only(&mut stdout())?;
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
@@ -446,6 +454,23 @@ async fn handle_key_event(
 
                 // Parse command
                 let command = UserCommand::parse(&text);
+
+                // CRITICAL: Clear input and slash suggestions BEFORE executing command
+                // This ensures the footer shrinks and scroll region is correct before we print output
+                footer.input_mut().clear();
+                app.update_slash_suggestions(&footer.input().text());
+
+                // Update footer content (switch back to Normal mode since input is cleared)
+                if app.slash_suggestions.is_empty() {
+                    footer.set_content(FooterContent::Normal {
+                        servers: app.servers.clone(),
+                        connections: app.connections.clone(),
+                        expand_all: app.expand_all_connections,
+                    });
+                }
+
+                // Render footer now so scroll region is updated before command execution
+                footer.render(&mut stdout())?;
 
                 // IMPORTANT: For SetFooterStatus and TestOutput, we DON'T print the command echo
                 // - SetFooterStatus: Avoids positioning issues during footer expansion/shrinking
@@ -463,7 +488,7 @@ async fn handle_key_event(
                 match command {
                     UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel => {
                         // Handle status/info commands
-                        handle_status_command(&command, app, state, footer)?;
+                        handle_status_command(&command, app, state, event_handler, footer).await?;
                     }
                     UserCommand::ChangeModel { model } => {
                         state.set_ollama_model(model.clone()).await;
@@ -619,12 +644,9 @@ async fn handle_key_event(
                         });
                     }
                 }
-
-                // Clear input
-                footer.input_mut().clear();
-                app.update_slash_suggestions(&footer.input().text());
             }
 
+            // Re-render footer after command execution (content may have changed)
             footer.render(&mut stdout())?;
             return Ok(false);
         }
@@ -632,16 +654,14 @@ async fn handle_key_event(
         // Up arrow - command history navigation
         KeyCode::Up if footer.input().is_on_first_line() => {
             navigate_history_previous(app, footer);
-            app.update_slash_suggestions(&footer.input().text());
-            footer.render_input_only(&mut stdout())?;
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
         // Down arrow - command history navigation
         KeyCode::Down if footer.input().is_on_last_line() => {
             navigate_history_next(app, footer);
-            app.update_slash_suggestions(&footer.input().text());
-            footer.render_input_only(&mut stdout())?;
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
@@ -662,24 +682,21 @@ async fn handle_key_event(
         // Ctrl+K - delete to end of line
         KeyCode::Char('k') | KeyCode::Char('K') if modifiers.contains(KeyModifiers::CONTROL) => {
             footer.input_mut().delete_to_end_of_line();
-            app.update_slash_suggestions(&footer.input().text());
-            footer.render_input_only(&mut stdout())?;
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
         // Ctrl+U - delete entire line
         KeyCode::Char('u') | KeyCode::Char('U') if modifiers.contains(KeyModifiers::CONTROL) => {
             footer.input_mut().delete_line();
-            app.update_slash_suggestions(&footer.input().text());
-            footer.render_input_only(&mut stdout())?;
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
         // Ctrl+W - delete word
         KeyCode::Char('w') | KeyCode::Char('W') if modifiers.contains(KeyModifiers::CONTROL) => {
             footer.input_mut().delete_word();
-            app.update_slash_suggestions(&footer.input().text());
-            footer.render_input_only(&mut stdout())?;
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
@@ -696,9 +713,7 @@ async fn handle_key_event(
 
     // Try to handle with InputState
     if footer.input_mut().handle_key(key_code, modifiers) {
-        app.update_slash_suggestions(&footer.input().text());
-        // Only update the input line, not the entire footer
-        footer.render_input_only(&mut stdout())?;
+        update_slash_suggestions_and_render(app, footer, &mut stdout())?;
         return Ok(false);
     }
 
@@ -777,7 +792,42 @@ fn navigate_history_next(app: &mut App, footer: &mut StickyFooter) {
     }
 }
 
-// Slash suggestion updates are now done directly via app.update_slash_suggestions()
+/// Update slash suggestions and render footer intelligently
+/// Only re-renders full footer if suggestions actually changed
+fn update_slash_suggestions_and_render(
+    app: &mut App,
+    footer: &mut StickyFooter,
+    stdout: &mut impl Write,
+) -> Result<()> {
+    // Store old suggestions before updating
+    let old_suggestions = app.slash_suggestions.clone();
+
+    // Update suggestions based on current input
+    app.update_slash_suggestions(&footer.input().text());
+
+    // Check if suggestions actually changed
+    if old_suggestions != app.slash_suggestions {
+        // Update footer content based on new suggestions
+        if app.slash_suggestions.is_empty() {
+            footer.set_content(FooterContent::Normal {
+                servers: app.servers.clone(),
+                connections: app.connections.clone(),
+                expand_all: app.expand_all_connections,
+            });
+        } else {
+            footer.set_content(FooterContent::SlashCommands {
+                suggestions: app.slash_suggestions.clone(),
+            });
+        }
+        // Re-render entire footer (content changed)
+        footer.render(stdout)?;
+    } else {
+        // Only re-render input line (suggestions unchanged)
+        footer.render_input_only(stdout)?;
+    }
+
+    Ok(())
+}
 
 /// Update UI with current application state
 async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut StickyFooter) {
@@ -916,10 +966,11 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
 }
 
 /// Handle status/info commands
-fn handle_status_command(
+async fn handle_status_command(
     command: &UserCommand,
     app: &App,
-    _state: &AppState, // Reserved for future use
+    state: &AppState,
+    event_handler: &mut EventHandler,
     footer: &mut StickyFooter,
 ) -> Result<()> {
     match command {
@@ -940,7 +991,35 @@ fn handle_status_command(
             }
         }
         UserCommand::ShowModel => {
-            print_output_line(&format!("Current model: {}", app.connection_info.model), footer)?;
+            let current_model = state.get_ollama_model().await;
+            print_output_line(&format!("Current model: {}", current_model), footer)?;
+            print_output_line("", footer)?;
+            print_output_line("Fetching available models...", footer)?;
+
+            // Fetch model list from Ollama via event handler's LLM client
+            match event_handler.list_models().await {
+                Ok(models) => {
+                    if models.is_empty() {
+                        print_output_line("No models found. Please pull a model first.", footer)?;
+                        print_output_line("Example: ollama pull llama3.2", footer)?;
+                    } else {
+                        print_output_line(&format!("Available models ({}):", models.len()), footer)?;
+                        for model in &models {
+                            if model == &current_model {
+                                print_output_line(&format!("  * {} (current)", model), footer)?;
+                            } else {
+                                print_output_line(&format!("    {}", model), footer)?;
+                            }
+                        }
+                        print_output_line("", footer)?;
+                        print_output_line("To change model, use: /model <name>", footer)?;
+                    }
+                }
+                Err(e) => {
+                    print_output_line(&format!("Failed to fetch models: {}", e), footer)?;
+                    print_output_line("Make sure Ollama is running.", footer)?;
+                }
+            }
         }
         UserCommand::ShowLogLevel => {
             print_output_line(
