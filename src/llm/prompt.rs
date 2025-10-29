@@ -234,12 +234,16 @@ Response (JSON only):"#,
                 format!(
                     r#"
 
-SCRIPT-BASED RESPONSES (for deterministic, repetitive responses):
+SCRIPT-BASED RESPONSES (Advanced feature - use only when explicitly requested):
 Available environments: {}
 
-For deterministic responses that don't require AI reasoning, you can configure Python or JavaScript scripts:
-- Use scripts for: static banners, fixed authentication rules, predetermined responses
-- Use LLM for: dynamic content, reasoning, adaptive behavior
+IMPORTANT: Only use scripts when the user explicitly requests scripted/programmatic behavior, or for complex authentication/state logic.
+For simple protocol responses (DNS records, HTTP responses, etc.), use the ACTIONS DIRECTLY via the LLM - do NOT create scripts.
+
+Scripts are appropriate for:
+- Complex SSH authentication logic (checking multiple conditions)
+- Multi-step protocols requiring state machines
+- When user explicitly asks for "scripted" or "programmatic" behavior
 
 To use scripts in open_server, include:
 - script_language: "python" or "javascript"
