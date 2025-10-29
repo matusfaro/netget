@@ -33,7 +33,7 @@ pub mod udp;
 #[cfg(feature = "udp")]
 pub mod udp_actions;
 #[cfg(feature = "udp")]
-pub use udp::{UdpServer, SharedUdpSocket, UdpPeerMap};
+pub use udp::{SharedUdpSocket, UdpPeerMap, UdpServer};
 #[cfg(feature = "udp")]
 pub use udp_actions::UdpProtocol;
 
@@ -74,17 +74,17 @@ pub use snmp::SnmpServer;
 pub use snmp_actions::SnmpProtocol;
 
 #[cfg(feature = "ssh")]
+pub mod sftp_handler;
+#[cfg(feature = "ssh")]
 pub mod ssh;
 #[cfg(feature = "ssh")]
 pub mod ssh_actions;
 #[cfg(feature = "ssh")]
-pub mod sftp_handler;
+pub use sftp_handler::LlmSftpHandler;
 #[cfg(feature = "ssh")]
 pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh_actions::SshProtocol;
-#[cfg(feature = "ssh")]
-pub use sftp_handler::LlmSftpHandler;
 
 #[cfg(feature = "irc")]
 pub mod irc;
@@ -170,9 +170,9 @@ pub use proxy::ProxyServer;
 pub use proxy_actions::ProxyProtocol;
 #[cfg(feature = "proxy")]
 pub use proxy_filter::{
-    ProxyFilterConfig, CertificateMode, RequestFilter, ResponseFilter,
-    RequestAction, ResponseAction, HttpsConnectionAction, FilterMode,
-    HttpsConnectionInfo, FullRequestInfo, FullResponseInfo,
+    CertificateMode, FilterMode, FullRequestInfo, FullResponseInfo, HttpsConnectionAction,
+    HttpsConnectionInfo, ProxyFilterConfig, RequestAction, RequestFilter, ResponseAction,
+    ResponseFilter,
 };
 
 #[cfg(feature = "webdav")]

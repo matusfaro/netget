@@ -7,10 +7,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions, ActionResult};
+use crate::llm::{execute_actions, ActionResponse, ActionResult, ProtocolActions};
 use crate::network::TelnetProtocol;
 use crate::state::app_state::AppState;
 
@@ -27,7 +26,8 @@ impl TelnetServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("Telnet server (action-based) listening on {}", local_addr);
 
@@ -49,7 +49,10 @@ impl TelnetServer {
                             let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
 
                             // Add connection to ServerInstance
-                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus, ProtocolState};
+                            use crate::state::server::{
+                                ConnectionState as ServerConnectionState, ConnectionStatus,
+                                ProtocolConnectionInfo, ProtocolState,
+                            };
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -68,7 +71,9 @@ impl TelnetServer {
                                     queued_data: Vec::new(),
                                 },
                             };
-                            state_clone.add_connection_to_server(server_id, conn_state).await;
+                            state_clone
+                                .add_connection_to_server(server_id, conn_state)
+                                .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
                             // Use nectar's TelnetCodec with line-based reading
@@ -78,7 +83,9 @@ impl TelnetServer {
                             let model = state_clone.get_ollama_model().await;
 
                             while let Ok(n) = reader.read_line(&mut line).await {
-                                if n == 0 { break; }
+                                if n == 0 {
+                                    break;
+                                }
 
                                 // DEBUG: Log summary with text preview
                                 let preview = if line.len() > 100 {
@@ -86,30 +93,55 @@ impl TelnetServer {
                                 } else {
                                     line.to_string()
                                 };
-                                debug!("Telnet received {} bytes on connection {}: {}", n, connection_id, preview.trim());
-                                let _ = status_clone.send(format!("[DEBUG] Telnet received {} bytes on connection {}: {}", n, connection_id, preview.trim()));
+                                debug!(
+                                    "Telnet received {} bytes on connection {}: {}",
+                                    n,
+                                    connection_id,
+                                    preview.trim()
+                                );
+                                let _ = status_clone.send(format!(
+                                    "[DEBUG] Telnet received {} bytes on connection {}: {}",
+                                    n,
+                                    connection_id,
+                                    preview.trim()
+                                ));
 
                                 // TRACE: Log full text payload
                                 trace!("Telnet data (text): {:?}", line.trim());
-                                let _ = status_clone.send(format!("[TRACE] Telnet data (text): {:?}", line.trim()));
+                                let _ = status_clone
+                                    .send(format!("[TRACE] Telnet data (text): {:?}", line.trim()));
 
                                 let event_description = format!("Telnet message: {}", line.trim());
                                 let protocol_actions = protocol_clone.get_sync_actions();
                                 let prompt = PromptBuilder::build_network_event_action_prompt(
-                                    &state_clone, &event_description, protocol_actions).await;
+                                    &state_clone,
+                                    &event_description,
+                                    protocol_actions,
+                                )
+                                .await;
 
                                 if let Ok(llm_output) = llm_clone.generate(&model, &prompt).await {
-                                    if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                                        if let Ok(result) = execute_actions(action_response.actions, &state_clone,
-                                            Some(protocol_clone.as_ref())).await {
+                                    if let Ok(action_response) =
+                                        ActionResponse::from_str(&llm_output)
+                                    {
+                                        if let Ok(result) = execute_actions(
+                                            action_response.actions,
+                                            &state_clone,
+                                            Some(protocol_clone.as_ref()),
+                                        )
+                                        .await
+                                        {
                                             for protocol_result in result.protocol_results {
                                                 match protocol_result {
                                                     ActionResult::Output(data) => {
-                                                        let response = String::from_utf8_lossy(&data);
+                                                        let response =
+                                                            String::from_utf8_lossy(&data);
                                                         let mut write = write_half_arc.lock().await;
 
                                                         use tokio::io::AsyncWriteExt;
-                                                        let _ = write.write_all(response.as_bytes()).await;
+                                                        let _ = write
+                                                            .write_all(response.as_bytes())
+                                                            .await;
                                                         let _ = write.flush().await;
 
                                                         // DEBUG: Log summary with text preview
@@ -122,8 +154,14 @@ impl TelnetServer {
                                                         let _ = status_clone.send(format!("[DEBUG] Telnet sent {} bytes on connection {}: {}", response.len(), connection_id, preview.trim()));
 
                                                         // TRACE: Log full text payload
-                                                        trace!("Telnet sent (text): {:?}", response.trim());
-                                                        let _ = status_clone.send(format!("[TRACE] Telnet sent (text): {:?}", response.trim()));
+                                                        trace!(
+                                                            "Telnet sent (text): {:?}",
+                                                            response.trim()
+                                                        );
+                                                        let _ = status_clone.send(format!(
+                                                            "[TRACE] Telnet sent (text): {:?}",
+                                                            response.trim()
+                                                        ));
                                                     }
                                                     ActionResult::CloseConnection => break,
                                                     _ => {}
@@ -136,7 +174,9 @@ impl TelnetServer {
                             }
 
                             // Connection closed - mark as closed
-                            state_clone.close_connection_on_server(server_id, connection_id).await;
+                            state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }

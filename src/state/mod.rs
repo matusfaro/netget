@@ -8,4 +8,6 @@ pub mod server;
 
 pub use app_state::AppState;
 pub use machine::StateMachine;
-pub use server::{ServerId, ServerInstance, ServerStatus, ConnectionState, ProtocolConnectionInfo, ProtocolState};
+pub use server::{
+    ConnectionState, ProtocolConnectionInfo, ProtocolState, ServerId, ServerInstance, ServerStatus,
+};

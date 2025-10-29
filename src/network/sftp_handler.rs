@@ -5,10 +5,9 @@
 //! entirely controlled by the AI.
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::prompt::PromptBuilder;
 use crate::network::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use russh_sftp::protocol::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +24,7 @@ pub struct LlmSftpHandler {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
+    server_id: Option<crate::state::ServerId>,
     /// Track handles that the LLM creates
     handles: Arc<Mutex<HashMap<String, HandleInfo>>>,
     /// SFTP protocol version
@@ -48,68 +48,89 @@ impl LlmSftpHandler {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        server_id: Option<crate::state::ServerId>,
     ) -> Self {
         Self {
             connection_id,
             llm_client,
             app_state,
             status_tx,
+            server_id,
             handles: Arc::new(Mutex::new(HashMap::new())),
             version: None,
         }
     }
 
-    /// Ask LLM to handle an SFTP operation
+    /// Ask LLM to handle an SFTP operation using new message-based system
+    ///
+    /// Note: SFTP uses legacy JSON response format (not action-based).
+    /// This preserves backward compatibility while adding tool call support.
     async fn llm_sftp_operation(&self, operation: &str, params: &str) -> Result<serde_json::Value> {
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(1));
+        let event_description = format!("SFTP {} operation: {}", operation, params);
+
+        debug!("SFTP LLM request: operation={}", operation);
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] SFTP {} request", operation));
+
         let model = self.app_state.get_ollama_model().await;
-        let event_description = format!("SFTP operation: {} - {}", operation, params);
+        let llm_client_clone = self.llm_client.clone();
+        let app_state_clone = self.app_state.clone();
+        let event_desc_clone = event_description.clone();
 
-        let prompt = PromptBuilder::build_network_event_prompt(
-            &self.app_state,
-            self.connection_id,
-            &event_description,
-            crate::network::ssh::get_llm_protocol_prompt(),
-        )
-        .await;
+        // Use generate_with_tools to get tool call support while maintaining legacy JSON format
+        // The LLM should return a direct JSON response (not wrapped in actions)
+        let (context_prompt, _output_format) = crate::network::ssh::get_llm_protocol_prompt();
 
-        // DEBUG: LLM request summary
-        debug!("SFTP LLM request: operation={}, model={}, prompt_len={} chars",
-            operation, model, prompt.len());
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP LLM request: operation={}, model={}, prompt_len={} chars",
-            operation, model, prompt.len()));
-
-        // TRACE: Full LLM prompt
-        trace!("SFTP LLM prompt ({}): {}", operation, prompt);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP LLM prompt ({}): {}", operation, prompt));
-
-        match self.llm_client.generate(&model, &prompt).await {
-            Ok(response) => {
-                // DEBUG: LLM response summary
-                debug!("SFTP LLM response: operation={}, response_len={} chars",
-                    operation, response.len());
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP LLM response: operation={}, response_len={} chars",
-                    operation, response.len()));
-
-                // TRACE: Full LLM response with pretty-printed JSON
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
-                    let pretty = serde_json::to_string_pretty(&json).unwrap_or(response.clone());
+        match llm_client_clone
+            .generate_with_tools(
+                &model,
+                || {
+                    let event = event_desc_clone.clone();
+                    let proto = String::from(context_prompt);
+                    async move {
+                        // Build a simple prompt for SFTP (doesn't use action framework yet)
+                        let mut prompt_text = String::new();
+                        prompt_text.push_str(&proto);
+                        prompt_text.push_str("\n\nEvent: ");
+                        prompt_text.push_str(&event);
+                        prompt_text.push_str(
+                            "\n\nRespond with a JSON object appropriate for this SFTP operation.",
+                        );
+                        prompt_text
+                    }
+                },
+                5, // max 5 iterations for tool calls
+            )
+            .await
+        {
+            Ok(actions) => {
+                // SFTP expects direct JSON response, not actions array
+                // For backward compatibility, return the first action if available
+                if let Some(first_action) = actions.first() {
+                    let pretty = serde_json::to_string_pretty(first_action)
+                        .unwrap_or_else(|_| first_action.to_string());
                     trace!("SFTP LLM response ({}) JSON:\n{}", operation, pretty);
-                    let _ = self.status_tx.send(format!("[TRACE] SFTP LLM response ({}) JSON:\n{}", operation, pretty));
-                    Ok(json)
+                    let _ = self.status_tx.send(format!(
+                        "[TRACE] SFTP response ({}):\n{}",
+                        operation, pretty
+                    ));
+                    Ok(first_action.clone())
                 } else {
-                    trace!("SFTP LLM response ({}) text: {}", operation, response);
-                    let _ = self.status_tx.send(format!("[TRACE] SFTP LLM response ({}) text: {}", operation, response));
-                    // Fallback: wrap plain text response
-                    Ok(serde_json::json!({
-                        "response": response,
-                        "type": "text"
-                    }))
+                    // No actions returned - return empty object
+                    debug!("SFTP LLM returned no data for {}", operation);
+                    Ok(serde_json::json!({}))
                 }
             }
             Err(e) => {
                 error!("LLM error for SFTP {}: {}", operation, e);
-                let _ = self.status_tx.send(format!("[ERROR] LLM error for SFTP {}: {}", operation, e));
-                Err(anyhow!("LLM error: {}", e))
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SFTP LLM error for {}: {}", operation, e));
+                Err(e)
             }
         }
     }
@@ -123,11 +144,16 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
         version: u32,
         extensions: HashMap<String, String>,
     ) -> Result<Version, Self::Error> {
-        info!("SFTP init: version={}, extensions={:?}", version, extensions);
+        info!(
+            "SFTP init: version={}, extensions={:?}",
+            version, extensions
+        );
         self.version = Some(version);
 
         // Send status update
-        let _ = self.status_tx.send(format!("SFTP session initialized (v{})", version));
+        let _ = self
+            .status_tx
+            .send(format!("SFTP session initialized (v{})", version));
 
         // Return version 3 (most widely supported)
         Ok(Version::new())
@@ -136,17 +162,24 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         // DEBUG: SFTP request summary
         debug!("SFTP request: SSH_FXP_OPENDIR id={}, path={}", id, path);
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_OPENDIR id={}, path={}", id, path));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_OPENDIR id={}, path={}",
+            id, path
+        ));
 
         // TRACE: Full SFTP request
         trace!("SFTP SSH_FXP_OPENDIR request: id={}, path='{}'", id, path);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_OPENDIR request: id={}, path='{}'", id, path));
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_OPENDIR request: id={}, path='{}'",
+            id, path
+        ));
 
         let params = format!("path='{}', id={}", path, id);
         match self.llm_sftp_operation("opendir", &params).await {
             Ok(response) => {
                 // LLM should return a handle for this directory
-                let handle_str = response.get("handle")
+                let handle_str = response
+                    .get("handle")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&path)
                     .to_string();
@@ -161,15 +194,32 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                     },
                 );
 
-                let _ = self.status_tx.send(format!("→ SFTP opened directory: {}", path));
+                let _ = self
+                    .status_tx
+                    .send(format!("→ SFTP opened directory: {}", path));
 
                 // DEBUG: SFTP response summary
-                debug!("SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes", id, handle_str.len());
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes", id, handle_str.len()));
+                debug!(
+                    "SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes",
+                    id,
+                    handle_str.len()
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes",
+                    id,
+                    handle_str.len()
+                ));
 
                 // TRACE: Full SFTP response
-                trace!("SFTP SSH_FXP_HANDLE response: id={}, handle='{}'", id, handle_str);
-                let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_HANDLE response: id={}, handle='{}'", id, handle_str));
+                trace!(
+                    "SFTP SSH_FXP_HANDLE response: id={}, handle='{}'",
+                    id,
+                    handle_str
+                );
+                let _ = self.status_tx.send(format!(
+                    "[TRACE] SFTP SSH_FXP_HANDLE response: id={}, handle='{}'",
+                    id, handle_str
+                ));
 
                 Ok(Handle {
                     id,
@@ -178,11 +228,19 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             }
             Err(_) => {
                 error!("SFTP opendir failed for path: {}", path);
-                let _ = self.status_tx.send(format!("[ERROR] SFTP opendir failed for path: {}", path));
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SFTP opendir failed for path: {}", path));
 
                 // DEBUG: SFTP error response
-                debug!("SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE", id);
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE", id));
+                debug!(
+                    "SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE",
+                    id
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE",
+                    id
+                ));
 
                 Err(StatusCode::NoSuchFile)
             }
@@ -191,83 +249,142 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         // DEBUG: SFTP request summary
-        debug!("SFTP request: SSH_FXP_READDIR id={}, handle_len={} bytes", id, handle.len());
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_READDIR id={}, handle_len={} bytes", id, handle.len()));
+        debug!(
+            "SFTP request: SSH_FXP_READDIR id={}, handle_len={} bytes",
+            id,
+            handle.len()
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_READDIR id={}, handle_len={} bytes",
+            id,
+            handle.len()
+        ));
 
         // TRACE: Full SFTP request
-        trace!("SFTP SSH_FXP_READDIR request: id={}, handle='{}'", id, handle);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_READDIR request: id={}, handle='{}'", id, handle));
+        trace!(
+            "SFTP SSH_FXP_READDIR request: id={}, handle='{}'",
+            id,
+            handle
+        );
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_READDIR request: id={}, handle='{}'",
+            id, handle
+        ));
 
         // Check if we've already read this directory
         let mut handles = self.handles.lock().await;
         if let Some(handle_info) = handles.get_mut(&handle) {
             if handle_info.dir_read_done {
                 // DEBUG: SFTP EOF response
-                debug!("SFTP response: SSH_FXP_STATUS id={}, status=EOF (directory already read)", id);
+                debug!(
+                    "SFTP response: SSH_FXP_STATUS id={}, status=EOF (directory already read)",
+                    id
+                );
                 let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=EOF (directory already read)", id));
 
                 return Err(StatusCode::Eof);
             }
 
             let path = handle_info.path.clone();
-            drop(handles);  // Release lock before async operation
+            drop(handles); // Release lock before async operation
 
             let params = format!("handle='{}', path='{}', id={}", handle, path, id);
             match self.llm_sftp_operation("readdir", &params).await {
                 Ok(response) => {
                     // Parse file list from LLM
-                    let files = response.get("entries")
+                    let files = response
+                        .get("entries")
                         .and_then(|v| v.as_array())
                         .map(|arr| {
-                            arr.iter().filter_map(|entry| {
-                                let name = entry.get("name")?.as_str()?.to_string();
-                                let is_dir = entry.get("is_dir")?.as_bool().unwrap_or(false);
-                                let size = entry.get("size")?.as_u64().unwrap_or(0);
+                            arr.iter()
+                                .filter_map(|entry| {
+                                    let name = entry.get("name")?.as_str()?.to_string();
+                                    let is_dir = entry.get("is_dir")?.as_bool().unwrap_or(false);
+                                    let size = entry.get("size")?.as_u64().unwrap_or(0);
 
-                                let mut attrs = FileAttributes::default();
-                                attrs.size = Some(size);
-                                // Set permissions: 0755 for dirs, 0644 for files
-                                attrs.permissions = Some(if is_dir { 0o40755 } else { 0o100644 });
+                                    let mut attrs = FileAttributes::default();
+                                    attrs.size = Some(size);
+                                    // Set permissions: 0755 for dirs, 0644 for files
+                                    attrs.permissions =
+                                        Some(if is_dir { 0o40755 } else { 0o100644 });
 
-                                Some(File::new(name, attrs))
-                            }).collect::<Vec<_>>()
+                                    Some(File::new(name, attrs))
+                                })
+                                .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
 
                     // Mark directory as read
-                    self.handles.lock().await.get_mut(&handle).map(|h| h.dir_read_done = true);
+                    self.handles
+                        .lock()
+                        .await
+                        .get_mut(&handle)
+                        .map(|h| h.dir_read_done = true);
 
-                    let _ = self.status_tx.send(format!("→ SFTP listed {} items in {}", files.len(), path));
+                    let _ = self.status_tx.send(format!(
+                        "→ SFTP listed {} items in {}",
+                        files.len(),
+                        path
+                    ));
 
                     // DEBUG: SFTP response summary
-                    debug!("SFTP response: SSH_FXP_NAME id={}, file_count={}", id, files.len());
-                    let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_NAME id={}, file_count={}", id, files.len()));
+                    debug!(
+                        "SFTP response: SSH_FXP_NAME id={}, file_count={}",
+                        id,
+                        files.len()
+                    );
+                    let _ = self.status_tx.send(format!(
+                        "[DEBUG] SFTP response: SSH_FXP_NAME id={}, file_count={}",
+                        id,
+                        files.len()
+                    ));
 
                     // TRACE: Full SFTP response
                     let file_names: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();
-                    trace!("SFTP SSH_FXP_NAME response: id={}, files={:?}", id, file_names);
-                    let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_NAME response: id={}, files={:?}", id, file_names));
+                    trace!(
+                        "SFTP SSH_FXP_NAME response: id={}, files={:?}",
+                        id,
+                        file_names
+                    );
+                    let _ = self.status_tx.send(format!(
+                        "[TRACE] SFTP SSH_FXP_NAME response: id={}, files={:?}",
+                        id, file_names
+                    ));
 
                     Ok(Name { id, files })
                 }
                 Err(_) => {
                     error!("SFTP readdir LLM error for handle: {}", handle);
-                    let _ = self.status_tx.send(format!("[ERROR] SFTP readdir LLM error for handle: {}", handle));
+                    let _ = self.status_tx.send(format!(
+                        "[ERROR] SFTP readdir LLM error for handle: {}",
+                        handle
+                    ));
 
                     // DEBUG: SFTP error response
                     debug!("SFTP response: SSH_FXP_STATUS id={}, status=FAILURE", id);
-                    let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=FAILURE", id));
+                    let _ = self.status_tx.send(format!(
+                        "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=FAILURE",
+                        id
+                    ));
 
                     Err(StatusCode::Failure)
                 }
             }
         } else {
             error!("SFTP readdir: invalid handle {}", handle);
-            let _ = self.status_tx.send(format!("[ERROR] SFTP readdir: invalid handle {}", handle));
+            let _ = self
+                .status_tx
+                .send(format!("[ERROR] SFTP readdir: invalid handle {}", handle));
 
             // DEBUG: SFTP error response
-            debug!("SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE", id);
-            let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE", id));
+            debug!(
+                "SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE",
+                id
+            );
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE",
+                id
+            ));
 
             Err(StatusCode::BadMessage)
         }
@@ -281,18 +398,33 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
         _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
         // DEBUG: SFTP request summary
-        debug!("SFTP request: SSH_FXP_OPEN id={}, path={}, flags={:?}", id, path, pflags);
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_OPEN id={}, path={}, flags={:?}", id, path, pflags));
+        debug!(
+            "SFTP request: SSH_FXP_OPEN id={}, path={}, flags={:?}",
+            id, path, pflags
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_OPEN id={}, path={}, flags={:?}",
+            id, path, pflags
+        ));
 
         // TRACE: Full SFTP request
-        trace!("SFTP SSH_FXP_OPEN request: id={}, path='{}', flags={:?}", id, path, pflags);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_OPEN request: id={}, path='{}', flags={:?}", id, path, pflags));
+        trace!(
+            "SFTP SSH_FXP_OPEN request: id={}, path='{}', flags={:?}",
+            id,
+            path,
+            pflags
+        );
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_OPEN request: id={}, path='{}', flags={:?}",
+            id, path, pflags
+        ));
 
         let params = format!("path='{}', id={}", path, id);
         match self.llm_sftp_operation("open", &params).await {
             Ok(response) => {
                 // Check if LLM says file exists
-                let exists = response.get("exists")
+                let exists = response
+                    .get("exists")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
 
@@ -300,7 +432,8 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                     return Err(StatusCode::NoSuchFile);
                 }
 
-                let handle_str = response.get("handle")
+                let handle_str = response
+                    .get("handle")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&path)
                     .to_string();
@@ -318,12 +451,27 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                 let _ = self.status_tx.send(format!("→ SFTP opened file: {}", path));
 
                 // DEBUG: SFTP response summary
-                debug!("SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes", id, handle_str.len());
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes", id, handle_str.len()));
+                debug!(
+                    "SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes",
+                    id,
+                    handle_str.len()
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SFTP response: SSH_FXP_HANDLE id={}, handle_len={} bytes",
+                    id,
+                    handle_str.len()
+                ));
 
                 // TRACE: Full SFTP response
-                trace!("SFTP SSH_FXP_HANDLE response: id={}, handle='{}'", id, handle_str);
-                let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_HANDLE response: id={}, handle='{}'", id, handle_str));
+                trace!(
+                    "SFTP SSH_FXP_HANDLE response: id={}, handle='{}'",
+                    id,
+                    handle_str
+                );
+                let _ = self.status_tx.send(format!(
+                    "[TRACE] SFTP SSH_FXP_HANDLE response: id={}, handle='{}'",
+                    id, handle_str
+                ));
 
                 Ok(Handle {
                     id,
@@ -332,11 +480,19 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             }
             Err(_) => {
                 error!("SFTP open failed for path: {}", path);
-                let _ = self.status_tx.send(format!("[ERROR] SFTP open failed for path: {}", path));
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SFTP open failed for path: {}", path));
 
                 // DEBUG: SFTP error response
-                debug!("SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE", id);
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE", id));
+                debug!(
+                    "SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE",
+                    id
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE",
+                    id
+                ));
 
                 Err(StatusCode::NoSuchFile)
             }
@@ -351,41 +507,80 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
         len: u32,
     ) -> Result<Data, Self::Error> {
         // DEBUG: SFTP request summary
-        debug!("SFTP request: SSH_FXP_READ id={}, offset={}, len={} bytes", id, offset, len);
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_READ id={}, offset={}, len={} bytes", id, offset, len));
+        debug!(
+            "SFTP request: SSH_FXP_READ id={}, offset={}, len={} bytes",
+            id, offset, len
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_READ id={}, offset={}, len={} bytes",
+            id, offset, len
+        ));
 
         // TRACE: Full SFTP request
-        trace!("SFTP SSH_FXP_READ request: id={}, handle='{}', offset={}, len={}", id, handle, offset, len);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_READ request: id={}, handle='{}', offset={}, len={}", id, handle, offset, len));
+        trace!(
+            "SFTP SSH_FXP_READ request: id={}, handle='{}', offset={}, len={}",
+            id,
+            handle,
+            offset,
+            len
+        );
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_READ request: id={}, handle='{}', offset={}, len={}",
+            id, handle, offset, len
+        ));
 
         let handles = self.handles.lock().await;
         if let Some(handle_info) = handles.get(&handle) {
             let path = handle_info.path.clone();
             drop(handles);
 
-            let params = format!("handle='{}', path='{}', offset={}, len={}, id={}", handle, path, offset, len, id);
+            let params = format!(
+                "handle='{}', path='{}', offset={}, len={}, id={}",
+                handle, path, offset, len, id
+            );
             match self.llm_sftp_operation("read", &params).await {
                 Ok(response) => {
                     // Get file content from LLM
-                    let content = response.get("content")
+                    let content = response
+                        .get("content")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
                     let data = content.as_bytes().to_vec();
                     let actual_len = data.len();
 
-                    let _ = self.status_tx.send(format!("→ SFTP read {} bytes from {}", actual_len, path));
+                    let _ = self
+                        .status_tx
+                        .send(format!("→ SFTP read {} bytes from {}", actual_len, path));
 
                     // DEBUG: SFTP response summary
-                    debug!("SFTP response: SSH_FXP_DATA id={}, data_len={} bytes", id, actual_len);
-                    let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_DATA id={}, data_len={} bytes", id, actual_len));
+                    debug!(
+                        "SFTP response: SSH_FXP_DATA id={}, data_len={} bytes",
+                        id, actual_len
+                    );
+                    let _ = self.status_tx.send(format!(
+                        "[DEBUG] SFTP response: SSH_FXP_DATA id={}, data_len={} bytes",
+                        id, actual_len
+                    ));
 
                     // TRACE: Full SFTP response (truncate if too long)
                     if actual_len <= 256 {
-                        trace!("SFTP SSH_FXP_DATA response: id={}, data={:?}", id, String::from_utf8_lossy(&data));
-                        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_DATA response: id={}, data={:?}", id, String::from_utf8_lossy(&data)));
+                        trace!(
+                            "SFTP SSH_FXP_DATA response: id={}, data={:?}",
+                            id,
+                            String::from_utf8_lossy(&data)
+                        );
+                        let _ = self.status_tx.send(format!(
+                            "[TRACE] SFTP SSH_FXP_DATA response: id={}, data={:?}",
+                            id,
+                            String::from_utf8_lossy(&data)
+                        ));
                     } else {
-                        trace!("SFTP SSH_FXP_DATA response: id={}, data_len={} bytes (truncated)", id, actual_len);
+                        trace!(
+                            "SFTP SSH_FXP_DATA response: id={}, data_len={} bytes (truncated)",
+                            id,
+                            actual_len
+                        );
                         let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_DATA response: id={}, data_len={} bytes (truncated)", id, actual_len));
                     }
 
@@ -396,22 +591,36 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                 }
                 Err(_) => {
                     error!("SFTP read LLM error for handle: {}", handle);
-                    let _ = self.status_tx.send(format!("[ERROR] SFTP read LLM error for handle: {}", handle));
+                    let _ = self.status_tx.send(format!(
+                        "[ERROR] SFTP read LLM error for handle: {}",
+                        handle
+                    ));
 
                     // DEBUG: SFTP error response
                     debug!("SFTP response: SSH_FXP_STATUS id={}, status=EOF", id);
-                    let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=EOF", id));
+                    let _ = self.status_tx.send(format!(
+                        "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=EOF",
+                        id
+                    ));
 
                     Err(StatusCode::Eof)
                 }
             }
         } else {
             error!("SFTP read: invalid handle {}", handle);
-            let _ = self.status_tx.send(format!("[ERROR] SFTP read: invalid handle {}", handle));
+            let _ = self
+                .status_tx
+                .send(format!("[ERROR] SFTP read: invalid handle {}", handle));
 
             // DEBUG: SFTP error response
-            debug!("SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE", id);
-            let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE", id));
+            debug!(
+                "SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE",
+                id
+            );
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE",
+                id
+            ));
 
             Err(StatusCode::BadMessage)
         }
@@ -419,28 +628,60 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
         // DEBUG: SFTP request summary
-        debug!("SFTP request: SSH_FXP_CLOSE id={}, handle_len={} bytes", id, handle.len());
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_CLOSE id={}, handle_len={} bytes", id, handle.len()));
+        debug!(
+            "SFTP request: SSH_FXP_CLOSE id={}, handle_len={} bytes",
+            id,
+            handle.len()
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_CLOSE id={}, handle_len={} bytes",
+            id,
+            handle.len()
+        ));
 
         // TRACE: Full SFTP request
         trace!("SFTP SSH_FXP_CLOSE request: id={}, handle='{}'", id, handle);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_CLOSE request: id={}, handle='{}'", id, handle));
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_CLOSE request: id={}, handle='{}'",
+            id, handle
+        ));
 
         // Remove handle from tracking
         if let Some(handle_info) = self.handles.lock().await.remove(&handle) {
-            let _ = self.status_tx.send(format!("→ SFTP closed: {}", handle_info.path));
+            let _ = self
+                .status_tx
+                .send(format!("→ SFTP closed: {}", handle_info.path));
 
             // DEBUG: SFTP response summary
-            debug!("SFTP response: SSH_FXP_STATUS id={}, status=OK (closed '{}')", id, handle_info.path);
-            let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=OK (closed '{}')", id, handle_info.path));
+            debug!(
+                "SFTP response: SSH_FXP_STATUS id={}, status=OK (closed '{}')",
+                id, handle_info.path
+            );
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=OK (closed '{}')",
+                id, handle_info.path
+            ));
 
             // TRACE: Full SFTP response
-            trace!("SFTP SSH_FXP_STATUS response: id={}, status=OK, path='{}'", id, handle_info.path);
-            let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_STATUS response: id={}, status=OK, path='{}'", id, handle_info.path));
+            trace!(
+                "SFTP SSH_FXP_STATUS response: id={}, status=OK, path='{}'",
+                id,
+                handle_info.path
+            );
+            let _ = self.status_tx.send(format!(
+                "[TRACE] SFTP SSH_FXP_STATUS response: id={}, status=OK, path='{}'",
+                id, handle_info.path
+            ));
         } else {
             // DEBUG: Unknown handle closed (still return OK per SFTP spec)
-            debug!("SFTP response: SSH_FXP_STATUS id={}, status=OK (unknown handle)", id);
-            let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=OK (unknown handle)", id));
+            debug!(
+                "SFTP response: SSH_FXP_STATUS id={}, status=OK (unknown handle)",
+                id
+            );
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=OK (unknown handle)",
+                id
+            ));
         }
 
         Ok(Status {
@@ -454,11 +695,17 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
     async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         // DEBUG: SFTP request summary
         debug!("SFTP request: SSH_FXP_LSTAT id={}, path={}", id, path);
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_LSTAT id={}, path={}", id, path));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_LSTAT id={}, path={}",
+            id, path
+        ));
 
         // TRACE: Full SFTP request
         trace!("SFTP SSH_FXP_LSTAT request: id={}, path='{}'", id, path);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_LSTAT request: id={}, path='{}'", id, path));
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_LSTAT request: id={}, path='{}'",
+            id, path
+        ));
 
         let params = format!("path='{}', id={}", path, id);
         match self.llm_sftp_operation("lstat", &params).await {
@@ -480,26 +727,44 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                 }
 
                 // DEBUG: SFTP response summary
-                debug!("SFTP response: SSH_FXP_ATTRS id={}, size={:?}, perms={:?}",
-                    id, attrs.size, attrs.permissions);
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_ATTRS id={}, size={:?}, perms={:?}",
-                    id, attrs.size, attrs.permissions));
+                debug!(
+                    "SFTP response: SSH_FXP_ATTRS id={}, size={:?}, perms={:?}",
+                    id, attrs.size, attrs.permissions
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SFTP response: SSH_FXP_ATTRS id={}, size={:?}, perms={:?}",
+                    id, attrs.size, attrs.permissions
+                ));
 
                 // TRACE: Full SFTP response
-                trace!("SFTP SSH_FXP_ATTRS response: id={}, path='{}', attrs={:?}",
-                    id, path, attrs);
-                let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_ATTRS response: id={}, path='{}', attrs={:?}",
-                    id, path, attrs));
+                trace!(
+                    "SFTP SSH_FXP_ATTRS response: id={}, path='{}', attrs={:?}",
+                    id,
+                    path,
+                    attrs
+                );
+                let _ = self.status_tx.send(format!(
+                    "[TRACE] SFTP SSH_FXP_ATTRS response: id={}, path='{}', attrs={:?}",
+                    id, path, attrs
+                ));
 
                 Ok(Attrs { id, attrs })
             }
             Err(_) => {
                 error!("SFTP lstat failed for path: {}", path);
-                let _ = self.status_tx.send(format!("[ERROR] SFTP lstat failed for path: {}", path));
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SFTP lstat failed for path: {}", path));
 
                 // DEBUG: SFTP error response
-                debug!("SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE", id);
-                let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE", id));
+                debug!(
+                    "SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE",
+                    id
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=NO_SUCH_FILE",
+                    id
+                ));
 
                 Err(StatusCode::NoSuchFile)
             }
@@ -508,12 +773,23 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
         // DEBUG: SFTP request summary
-        debug!("SFTP request: SSH_FXP_FSTAT id={}, handle_len={} bytes", id, handle.len());
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_FSTAT id={}, handle_len={} bytes", id, handle.len()));
+        debug!(
+            "SFTP request: SSH_FXP_FSTAT id={}, handle_len={} bytes",
+            id,
+            handle.len()
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_FSTAT id={}, handle_len={} bytes",
+            id,
+            handle.len()
+        ));
 
         // TRACE: Full SFTP request
         trace!("SFTP SSH_FXP_FSTAT request: id={}, handle='{}'", id, handle);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_FSTAT request: id={}, handle='{}'", id, handle));
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_FSTAT request: id={}, handle='{}'",
+            id, handle
+        ));
 
         let handles = self.handles.lock().await;
         if let Some(handle_info) = handles.get(&handle) {
@@ -522,15 +798,26 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
             // Delegate to lstat (which will log the lstat request/response)
             trace!("SFTP fstat delegating to lstat for path: '{}'", path);
-            let _ = self.status_tx.send(format!("[TRACE] SFTP fstat delegating to lstat for path: '{}'", path));
+            let _ = self.status_tx.send(format!(
+                "[TRACE] SFTP fstat delegating to lstat for path: '{}'",
+                path
+            ));
             self.lstat(id, path).await
         } else {
             error!("SFTP fstat: invalid handle {}", handle);
-            let _ = self.status_tx.send(format!("[ERROR] SFTP fstat: invalid handle {}", handle));
+            let _ = self
+                .status_tx
+                .send(format!("[ERROR] SFTP fstat: invalid handle {}", handle));
 
             // DEBUG: SFTP error response
-            debug!("SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE", id);
-            let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE", id));
+            debug!(
+                "SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE",
+                id
+            );
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] SFTP response: SSH_FXP_STATUS id={}, status=BAD_MESSAGE",
+                id
+            ));
 
             Err(StatusCode::BadMessage)
         }
@@ -539,11 +826,17 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         // DEBUG: SFTP request summary
         debug!("SFTP request: SSH_FXP_REALPATH id={}, path={}", id, path);
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP request: SSH_FXP_REALPATH id={}, path={}", id, path));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_REALPATH id={}, path={}",
+            id, path
+        ));
 
         // TRACE: Full SFTP request
         trace!("SFTP SSH_FXP_REALPATH request: id={}, path='{}'", id, path);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_REALPATH request: id={}, path='{}'", id, path));
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_REALPATH request: id={}, path='{}'",
+            id, path
+        ));
 
         // For simplicity, return the path as-is
         // LLM could canonicalize if needed
@@ -551,12 +844,21 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
         let file = File::new(path.clone(), attrs);
 
         // DEBUG: SFTP response summary
-        debug!("SFTP response: SSH_FXP_NAME id={}, resolved_path={}", id, path);
-        let _ = self.status_tx.send(format!("[DEBUG] SFTP response: SSH_FXP_NAME id={}, resolved_path={}", id, path));
+        debug!(
+            "SFTP response: SSH_FXP_NAME id={}, resolved_path={}",
+            id, path
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP response: SSH_FXP_NAME id={}, resolved_path={}",
+            id, path
+        ));
 
         // TRACE: Full SFTP response
         trace!("SFTP SSH_FXP_NAME response: id={}, path='{}'", id, path);
-        let _ = self.status_tx.send(format!("[TRACE] SFTP SSH_FXP_NAME response: id={}, path='{}'", id, path));
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SFTP SSH_FXP_NAME response: id={}, path='{}'",
+            id, path
+        ));
 
         Ok(Name {
             id,
@@ -566,7 +868,9 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
     fn unimplemented(&self) -> Self::Error {
         error!("SFTP unimplemented packet received");
-        let _ = self.status_tx.send(format!("[ERROR] SFTP unimplemented packet received"));
+        let _ = self
+            .status_tx
+            .send(format!("[ERROR] SFTP unimplemented packet received"));
         StatusCode::OpUnsupported
     }
 }

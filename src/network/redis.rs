@@ -182,7 +182,9 @@ impl RedisHandler {
                             .send(format!("[DEBUG] Redis command: {}", command_str));
 
                         // Call LLM with command
-                        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+                        let server_id = self
+                            .server_id
+                            .unwrap_or_else(|| crate::state::ServerId::new(0));
                         let event_description = format!("Redis command: {}", command_str);
 
                         let llm_result = crate::llm::call_llm_with_actions(
@@ -190,6 +192,7 @@ impl RedisHandler {
                             &self.app_state,
                             server_id,
                             &event_description,
+                            serde_json::json!({}), // No structured context for now
                             Some(protocol.as_ref()),
                             vec![],
                         )

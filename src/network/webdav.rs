@@ -12,7 +12,7 @@ use crate::network::WebDavProtocol;
 use crate::state::app_state::AppState;
 
 // WebDAV types
-use dav_server::{DavHandler, fakels::FakeLs, memfs::MemFs};
+use dav_server::{fakels::FakeLs, memfs::MemFs, DavHandler};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -61,10 +61,14 @@ impl WebDavServer {
                     Ok((stream, peer_addr)) => {
                         let connection_id = ConnectionId::new();
                         debug!("WebDAV connection {} from {}", connection_id, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] WebDAV connection from {}", peer_addr));
+                        let _ =
+                            status_tx.send(format!("[DEBUG] WebDAV connection from {}", peer_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -81,7 +85,9 @@ impl WebDavServer {
                                 recent_operations: Vec::new(),
                             },
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let dav_clone = dav_server.clone();
@@ -95,22 +101,22 @@ impl WebDavServer {
                             // Create service that uses DavHandler
                             let service = service_fn(move |req| {
                                 let dav = dav_clone.clone();
-                                async move {
-                                    Ok::<_, std::convert::Infallible>(dav.handle(req).await)
-                                }
+                                async move { Ok::<_, std::convert::Infallible>(dav.handle(req).await) }
                             });
 
                             // Serve HTTP/1 WebDAV requests
-                            if let Err(err) = http1::Builder::new()
-                                .serve_connection(io, service)
-                                .await
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
                             {
                                 error!("WebDAV connection error: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_clone.send(format!("✗ WebDAV connection {} closed", connection_id));
+                            app_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_clone
+                                .send(format!("✗ WebDAV connection {} closed", connection_id));
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }

@@ -18,10 +18,10 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::network::connection::ConnectionId;
-use crate::network::IppProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::network::connection::ConnectionId;
+use crate::network::IppProtocol;
 use crate::state::app_state::AppState;
 
 /// IPP server that delegates request handling to LLM
@@ -37,7 +37,8 @@ impl IppServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("IPP server listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] IPP server listening on {}", local_addr));
@@ -52,10 +53,14 @@ impl IppServer {
                         let connection_id = ConnectionId::new();
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("IPP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] IPP connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] IPP connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -72,7 +77,9 @@ impl IppServer {
                                 recent_jobs: Vec::new(),
                             },
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -106,19 +113,25 @@ impl IppServer {
                             });
 
                             // Serve HTTP/1 on this connection (IPP uses HTTP)
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving IPP connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] IPP connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] IPP connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
                         error!("Failed to accept IPP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept IPP connection: {}", e));
+                        let _ = status_tx
+                            .send(format!("[ERROR] Failed to accept IPP connection: {}", e));
                         break;
                     }
                 }
@@ -169,7 +182,9 @@ async fn handle_ipp_request_with_llm(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] IPP {} {} ({} bytes)",
-        method, uri, body_bytes.len()
+        method,
+        uri,
+        body_bytes.len()
     ));
 
     // Parse IPP request if body is present
@@ -198,6 +213,7 @@ async fn handle_ipp_request_with_llm(
         &app_state,
         server_id,
         &event_description,
+        serde_json::json!({}), // No structured context for now
         Some(protocol.as_ref()),
         vec![],
     )

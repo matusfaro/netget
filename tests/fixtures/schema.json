@@ -1,0 +1,24 @@
+{
+  "database": "testdb",
+  "tables": [
+    {
+      "name": "users",
+      "columns": [
+        {"name": "id", "type": "int", "primary_key": true},
+        {"name": "username", "type": "varchar(50)", "nullable": false},
+        {"name": "email", "type": "varchar(100)", "nullable": false},
+        {"name": "created_at", "type": "timestamp", "default": "CURRENT_TIMESTAMP"}
+      ]
+    },
+    {
+      "name": "posts",
+      "columns": [
+        {"name": "id", "type": "int", "primary_key": true},
+        {"name": "user_id", "type": "int", "foreign_key": "users.id"},
+        {"name": "title", "type": "varchar(200)", "nullable": false},
+        {"name": "content", "type": "text", "nullable": true},
+        {"name": "published_at", "type": "timestamp", "nullable": true}
+      ]
+    }
+  ]
+}

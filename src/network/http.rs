@@ -15,11 +15,10 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::ActionResult;
 use crate::network::connection::ConnectionId;
 use crate::network::HttpProtocol;
-use crate::llm::ollama_client::OllamaClient;
-use crate::llm::{ActionResponse, execute_actions, ActionResult, ProtocolActions};
-use crate::llm::prompt::PromptBuilder;
 use crate::state::app_state::AppState;
 
 /// HTTP server that delegates request handling to LLM
@@ -34,7 +33,8 @@ impl HttpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("HTTP server (action-based) listening on {}", local_addr);
 
@@ -47,10 +47,16 @@ impl HttpServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new();
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted HTTP connection {} from {}", connection_id, remote_addr);
+                        info!(
+                            "Accepted HTTP connection {} from {}",
+                            connection_id, remote_addr
+                        );
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -67,7 +73,9 @@ impl HttpServer {
                                 recent_requests: Vec::new(),
                             },
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -92,6 +100,7 @@ impl HttpServer {
                                 handle_http_request_with_llm_actions(
                                     req,
                                     connection_id,
+                                    server_id,
                                     llm_clone,
                                     state_clone,
                                     status_clone,
@@ -100,13 +109,18 @@ impl HttpServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving HTTP connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ HTTP connection {connection_id} closed"));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("✗ HTTP connection {connection_id} closed"));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -126,6 +140,7 @@ impl HttpServer {
 async fn handle_http_request_with_llm_actions(
     req: Request<Incoming>,
     connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
@@ -162,7 +177,9 @@ async fn handle_http_request_with_llm_actions(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] HTTP request: {} {} ({} bytes)",
-        method, uri, body_bytes.len()
+        method,
+        uri,
+        body_bytes.len()
     ));
 
     // TRACE: Log full request details
@@ -184,12 +201,16 @@ async fn handle_http_request_with_llm_actions(
             }
         } else {
             trace!("HTTP request body (binary): {} bytes", body_bytes.len());
-            let _ = status_tx.send(format!("[TRACE] HTTP request body (binary): {} bytes", body_bytes.len()));
+            let _ = status_tx.send(format!(
+                "[TRACE] HTTP request body (binary): {} bytes",
+                body_bytes.len()
+            ));
         }
     }
 
     // Build event description for HTTP request
-    let headers_text = headers.iter()
+    let headers_text = headers
+        .iter()
         .map(|(k, v)| format!("  {}: {}", k, v))
         .collect::<Vec<_>>()
         .join("\n");
@@ -204,105 +225,94 @@ async fn handle_http_request_with_llm_actions(
 - Body: {}"#,
         method,
         uri,
-        if headers_text.is_empty() { "  (none)" } else { &headers_text },
-        if body_text.is_empty() { "(empty)" } else { &body_text }
+        if headers_text.is_empty() {
+            "  (none)"
+        } else {
+            &headers_text
+        },
+        if body_text.is_empty() {
+            "(empty)"
+        } else {
+            &body_text
+        }
     );
 
-    // Get protocol sync actions
-    let protocol_actions = protocol.get_sync_actions();
+    // Build structured context for LLM
+    let context = serde_json::json!({
+        "method": method,
+        "uri": uri,
+        "headers": headers,
+        "body": body_text,
+    });
 
-    // Build prompt and call LLM
-    let model = app_state.get_ollama_model().await;
-
-    let prompt = PromptBuilder::build_network_event_action_prompt(
+    // Call LLM using unified action helper
+    match crate::llm::call_llm_with_actions(
+        &llm_client,
         &app_state,
+        server_id,
         &event_description,
-        protocol_actions,
-    ).await;
+        context,
+        Some(protocol.as_ref()),
+        vec![],
+    )
+    .await
+    {
+        Ok(result) => {
+            // Display messages
+            for msg in result.messages {
+                let _ = status_tx.send(msg);
+            }
 
-    // Call LLM to generate HTTP response
-    match llm_client.generate(&model, &prompt).await {
-        Ok(llm_output) => {
-            debug!("LLM HTTP response: {}", llm_output);
+            // Extract HTTP response from protocol results
+            // Default response in case nothing was produced
+            let mut status_code = 200;
+            let mut response_headers = HashMap::new();
+            let mut response_body = String::new();
 
-            // Parse action response
-            match ActionResponse::from_str(&llm_output) {
-                Ok(action_response) => {
-                    // Execute actions
-                    match execute_actions(
-                        action_response.actions,
-                        &app_state,
-                        Some(protocol.as_ref()),
-                    ).await {
-                        Ok(result) => {
-                            // Display messages
-                            for msg in result.messages {
-                                let _ = status_tx.send(msg);
-                            }
-
-                            // Extract HTTP response from protocol results
-                            // Default response in case nothing was produced
-                            let mut status_code = 200;
-                            let mut response_headers = HashMap::new();
-                            let mut response_body = String::new();
-
-                            for protocol_result in result.protocol_results {
-                                if let ActionResult::Output(output_data) = protocol_result {
-                                    // Parse the output as JSON containing HTTP response fields
-                                    if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&output_data) {
-                                        if let Some(status) = json_value.get("status").and_then(|v| v.as_u64()) {
-                                            status_code = status as u16;
-                                        }
-                                        if let Some(headers_obj) = json_value.get("headers").and_then(|v| v.as_object()) {
-                                            for (k, v) in headers_obj {
-                                                if let Some(v_str) = v.as_str() {
-                                                    response_headers.insert(k.clone(), v_str.to_string());
-                                                }
-                                            }
-                                        }
-                                        if let Some(body) = json_value.get("body").and_then(|v| v.as_str()) {
-                                            response_body = body.to_string();
-                                        }
-                                    }
+            for protocol_result in result.protocol_results {
+                if let ActionResult::Output(output_data) = protocol_result {
+                    // Parse the output as JSON containing HTTP response fields
+                    if let Ok(json_value) =
+                        serde_json::from_slice::<serde_json::Value>(&output_data)
+                    {
+                        if let Some(status) = json_value.get("status").and_then(|v| v.as_u64()) {
+                            status_code = status as u16;
+                        }
+                        if let Some(headers_obj) =
+                            json_value.get("headers").and_then(|v| v.as_object())
+                        {
+                            for (k, v) in headers_obj {
+                                if let Some(v_str) = v.as_str() {
+                                    response_headers.insert(k.clone(), v_str.to_string());
                                 }
                             }
-
-                            let _ = status_tx.send(format!(
-                                "→ HTTP {} {} → {} ({} bytes)",
-                                method, uri, status_code, response_body.len()
-                            ));
-
-                            // Build the HTTP response
-                            let mut response = Response::builder().status(status_code);
-
-                            // Add headers
-                            for (name, value) in response_headers {
-                                response = response.header(name, value);
-                            }
-
-                            Ok(response.body(Full::new(Bytes::from(response_body))).unwrap())
                         }
-                        Err(e) => {
-                            error!("Failed to execute actions: {}", e);
-                            let _ = status_tx.send(format!("✗ Action execution error: {e}"));
-
-                            Ok(Response::builder()
-                                .status(500)
-                                .body(Full::new(Bytes::from("Internal Server Error")))
-                                .unwrap())
+                        if let Some(body) = json_value.get("body").and_then(|v| v.as_str()) {
+                            response_body = body.to_string();
                         }
                     }
                 }
-                Err(e) => {
-                    error!("Failed to parse action response: {}", e);
-                    let _ = status_tx.send(format!("✗ Parse error: {e}"));
-
-                    Ok(Response::builder()
-                        .status(500)
-                        .body(Full::new(Bytes::from("Internal Server Error")))
-                        .unwrap())
-                }
             }
+
+            let _ = status_tx.send(format!(
+                "→ HTTP {} {} → {} ({} bytes)",
+                method,
+                uri,
+                status_code,
+                response_body.len()
+            ));
+
+            // Build the HTTP response
+            let mut response = Response::builder().status(status_code);
+
+            // Add headers
+            for (name, value) in response_headers {
+                response = response.header(name, value);
+            }
+
+            Ok(response
+                .body(Full::new(Bytes::from(response_body)))
+                .unwrap())
         }
         Err(e) => {
             error!("LLM error generating HTTP response: {}", e);

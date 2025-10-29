@@ -47,15 +47,28 @@ pub async fn run_tui(
     app.add_message("".to_string());
     app.add_message("Supported protocol stacks:".to_string());
     app.add_message("  TCP (Beta): \"Pretend to be FTP server on port 2121; serve file accounts.csv with 'balance,0'\"".to_string());
-    app.add_message("  HTTP (Beta): \"Pretend to be a sassy HTTP server on port 8080 serving cooking recipes\"".to_string());
-    app.add_message("  SSH/SFTP (Beta): \"Pretent to be a shell via SSH on port 2222\"".to_string());
-    app.add_message("  DNS (Beta): \"DNS server on port 5252 and resolve everything to 1.2.3.4\"".to_string());
-    app.add_message("  NTP (Beta; root-only): \"pretend to be a ntp server on port 123\"".to_string());
+    app.add_message(
+        "  HTTP (Beta): \"Pretend to be a sassy HTTP server on port 8080 serving cooking recipes\""
+            .to_string(),
+    );
+    app.add_message(
+        "  SSH/SFTP (Beta): \"Pretent to be a shell via SSH on port 2222\"".to_string(),
+    );
+    app.add_message(
+        "  DNS (Beta): \"DNS server on port 5252 and resolve everything to 1.2.3.4\"".to_string(),
+    );
+    app.add_message(
+        "  NTP (Beta; root-only): \"pretend to be a ntp server on port 123\"".to_string(),
+    );
     app.add_message("  SNMP (Alpha): \"SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'\"".to_string());
     app.add_message("  IRC (Alpha): \"Start an IRC server\"".to_string());
-    app.add_message("  Telnet (Alpha): \"Start a telnet server on port 23 that echoes commands\"".to_string());
+    app.add_message(
+        "  Telnet (Alpha): \"Start a telnet server on port 23 that echoes commands\"".to_string(),
+    );
     app.add_message("  SMTP (Alpha): \"Start an SMTP mail server on port 25\"".to_string());
-    app.add_message("  mDNS (Alpha): \"Advertise a web service via mDNS on port 8080\"".to_string());
+    app.add_message(
+        "  mDNS (Alpha): \"Advertise a web service via mDNS on port 8080\"".to_string(),
+    );
     app.add_message("  Ethernet (Alpha; root-only)".to_string());
     app.add_message("  UDP (Alpha)".to_string());
     app.add_message("  DHCP (Alpha)".to_string());
@@ -206,21 +219,24 @@ async fn handle_keyboard_event(
 
                 // Any modifier + N inserts a newline (Ctrl+N, Alt+N, Cmd+N, etc.) - except Shift alone
                 // More mnemonic than Ctrl+O and works reliably across all terminals
-                KeyCode::Char('n') | KeyCode::Char('N') if app.is_input_focused() && {
-                    let mods = key.modifiers;
-                    !mods.is_empty() && mods != KeyModifiers::SHIFT
-                } => {
+                KeyCode::Char('n') | KeyCode::Char('N')
+                    if app.is_input_focused() && {
+                        let mods = key.modifiers;
+                        !mods.is_empty() && mods != KeyModifiers::SHIFT
+                    } =>
+                {
                     app.insert_newline();
                     return Ok(false);
                 }
 
                 // Shift+Enter, Alt+Enter, or Ctrl+Enter inserts a newline (for terminals that support it)
                 // Note: Many terminals don't report modifiers with Enter key
-                KeyCode::Enter if app.is_input_focused() && (
-                    key.modifiers.contains(KeyModifiers::SHIFT) ||
-                    key.modifiers.contains(KeyModifiers::ALT) ||
-                    key.modifiers.contains(KeyModifiers::CONTROL)
-                ) => {
+                KeyCode::Enter
+                    if app.is_input_focused()
+                        && (key.modifiers.contains(KeyModifiers::SHIFT)
+                            || key.modifiers.contains(KeyModifiers::ALT)
+                            || key.modifiers.contains(KeyModifiers::CONTROL)) =>
+                {
                     app.insert_newline();
                     return Ok(false);
                 }
@@ -236,7 +252,13 @@ async fn handle_keyboard_event(
 
                         // Check if it's a slash command (handle immediately) or needs LLM
                         match command {
-                            UserCommand::Status | UserCommand::ShowModel | UserCommand::ChangeModel {..} | UserCommand::ShowLogLevel | UserCommand::ChangeLogLevel {..} | UserCommand::Quit | UserCommand::UnknownSlashCommand {..} => {
+                            UserCommand::Status
+                            | UserCommand::ShowModel
+                            | UserCommand::ChangeModel { .. }
+                            | UserCommand::ShowLogLevel
+                            | UserCommand::ChangeLogLevel { .. }
+                            | UserCommand::Quit
+                            | UserCommand::UnknownSlashCommand { .. } => {
                                 // Handle slash commands synchronously (they're fast)
                                 match event_handler
                                     .handle_event(AppEvent::UserCommand(command), app)
@@ -258,7 +280,13 @@ async fn handle_keyboard_event(
                                 let mut handler_clone = event_handler.clone();
                                 let status_tx_clone = _status_tx.clone();
                                 tokio::spawn(async move {
-                                    let _ = handler_clone.handle_interpret_with_actions(llm_input, status_tx_clone, None).await;
+                                    let _ = handler_clone
+                                        .handle_interpret_with_actions(
+                                            llm_input,
+                                            status_tx_clone,
+                                            None,
+                                        )
+                                        .await;
                                 });
                                 // UI will be updated when messages arrive via status_tx
                             }
@@ -283,38 +311,47 @@ async fn handle_keyboard_event(
 
 /// Update UI with current application state
 async fn update_ui_from_state(app: &mut App, state: &AppState) {
-    use crate::ui::app::{ServerDisplayInfo, ConnectionDisplayInfo};
+    use crate::ui::app::{ConnectionDisplayInfo, ServerDisplayInfo};
 
     app.connection_info.mode = state.get_mode().await.to_string();
     app.connection_info.model = state.get_ollama_model().await;
 
     // Update server list
     let servers = state.get_all_servers().await;
-    app.servers = servers.iter().map(|s| ServerDisplayInfo {
-        id: format!("#{}", s.id.as_u32()),
-        protocol: s.base_stack.to_string(),
-        port: s.port,
-        status: s.status.to_string(),
-        connections: s.connections.len(),
-    }).collect();
+    app.servers = servers
+        .iter()
+        .map(|s| ServerDisplayInfo {
+            id: format!("#{}", s.id.as_u32()),
+            protocol: s.base_stack.to_string(),
+            port: s.port,
+            status: s.status.to_string(),
+            connections: s.connections.len(),
+        })
+        .collect();
 
     // Update connection list (aggregate from all servers)
     // Use global connection IDs from the app's counter
-    app.connections = servers.iter().flat_map(|s| {
-        s.connections.values().map(|conn| {
-            let network_conn_id = conn.id.to_string();
-            let global_id = app.get_or_allocate_connection_id(network_conn_id);
-            ConnectionDisplayInfo {
-                id: global_id,
-                server_id: format!("#{}", s.id.as_u32()),
-                address: conn.remote_addr.to_string(),
-                state: match conn.status {
-                    crate::state::server::ConnectionStatus::Active => "Active".to_string(),
-                    crate::state::server::ConnectionStatus::Closed => "Closed".to_string(),
-                },
-            }
-        }).collect::<Vec<_>>()
-    }).collect();
+    app.connections = servers
+        .iter()
+        .flat_map(|s| {
+            s.connections
+                .values()
+                .map(|conn| {
+                    let network_conn_id = conn.id.to_string();
+                    let global_id = app.get_or_allocate_connection_id(network_conn_id);
+                    ConnectionDisplayInfo {
+                        id: global_id,
+                        server_id: format!("#{}", s.id.as_u32()),
+                        address: conn.remote_addr.to_string(),
+                        state: match conn.status {
+                            crate::state::server::ConnectionStatus::Active => "Active".to_string(),
+                            crate::state::server::ConnectionStatus::Closed => "Closed".to_string(),
+                        },
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
     // Update legacy fields for backwards compatibility
     if let Some(first_server) = servers.first() {
@@ -324,4 +361,3 @@ async fn update_ui_from_state(app: &mut App, state: &AppState) {
         }
     }
 }
-

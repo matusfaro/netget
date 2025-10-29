@@ -40,9 +40,7 @@ impl MysqlProtocol {
 
 impl ProtocolActions for MysqlProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            list_mysql_connections_action(),
-        ]
+        vec![list_mysql_connections_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -54,10 +52,7 @@ impl ProtocolActions for MysqlProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -79,10 +74,7 @@ impl ProtocolActions for MysqlProtocol {
 }
 
 impl MysqlProtocol {
-    fn execute_mysql_query_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_mysql_query_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         // Extract columns and rows from the action
         let columns = action
             .get("columns")
@@ -113,10 +105,7 @@ impl MysqlProtocol {
         })
     }
 
-    fn execute_mysql_error_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_mysql_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let error_code = action
             .get("error_code")
             .and_then(|v| v.as_u64())
@@ -129,10 +118,9 @@ impl MysqlProtocol {
 
         debug!("MySQL error response: {} - {}", error_code, message);
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] MySQL ✗ Error {}: {}",
-            error_code, message
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] MySQL ✗ Error {}: {}", error_code, message));
 
         Ok(ActionResult::MysqlError {
             error_code,
@@ -140,10 +128,7 @@ impl MysqlProtocol {
         })
     }
 
-    fn execute_mysql_ok_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_mysql_ok_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let affected_rows = action
             .get("affected_rows")
             .and_then(|v| v.as_u64())
@@ -170,10 +155,7 @@ impl MysqlProtocol {
         })
     }
 
-    fn execute_list_mysql_connections(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_list_mysql_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
         debug!("MySQL list connections");
 
         // This is a placeholder - in a real implementation, we'd track connections
@@ -220,7 +202,9 @@ pub fn mysql_error_response_action() -> ActionDefinition {
             Parameter {
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)".to_string(),
+                description:
+                    "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -242,7 +226,8 @@ pub fn mysql_error_response_action() -> ActionDefinition {
 pub fn mysql_ok_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "mysql_ok_response".to_string(),
-        description: "Send an OK response for INSERT, UPDATE, DELETE, or other non-SELECT queries".to_string(),
+        description: "Send an OK response for INSERT, UPDATE, DELETE, or other non-SELECT queries"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "affected_rows".to_string(),
