@@ -166,15 +166,16 @@ Example:
   "mode": "full"
 }
 
-13. web_search. Search the web using DuckDuckGo. Use this to find RFCs, protocol specifications, or documentation. Returns top 5 search results with titles, URLs, and snippets. Note: This makes external network requests.
+13. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 Parameters:
-  • query: string (required) - Search query (e.g., 'RFC 959 FTP protocol specification')
+  • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
 
 Example:
 {
   "type": "web_search",
-  "query": "RFC 959 FTP protocol specification"
+  "query": "https://datatracker.ietf.org/doc/html/rfc7168"
 }
+
 
 
 

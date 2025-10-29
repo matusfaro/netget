@@ -18,6 +18,10 @@ Parameters:
   • initial_memory: string (optional) - Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
   • instruction: string (required) - Detailed instructions for handling network events
   • startup_params: object (optional) - Optional protocol-specific startup parameters. See protocol documentation for available parameters.
+  • script_language: string (optional) - Optional: Use 'python' or 'javascript' to handle deterministic responses via script instead of LLM.
+  • script_path: string (optional) - Optional: Path to script file (alternative to script_inline).
+  • script_inline: string (optional) - Optional: Inline script code (alternative to script_path).
+  • script_handles: array (optional) - Optional: Context types the script handles, e.g. ["ssh_auth", "ssh_banner"] or ["all"]. Defaults to ["all"].
 
 Example:
 {
@@ -47,7 +51,28 @@ Example:
   "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
 }
 
-4. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
+4. update_script. Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.
+Parameters:
+  • server_id: number (optional) - Optional: Server ID to update (defaults to first/current server)
+  • operation: string (required) - Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)
+  • script_language: string (optional) - Script language: 'python' or 'javascript' (required for 'set' operation)
+  • script_path: string (optional) - Path to script file (alternative to script_inline, required for 'set')
+  • script_inline: string (optional) - Inline script code (alternative to script_path, required for 'set')
+  • script_handles: array (optional) - Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')
+
+Example:
+{
+  "type": "update_script",
+  "server_id": 1,
+  "operation": "set",
+  "script_language": "python",
+  "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
+  "script_handles": [
+    "ssh_auth"
+  ]
+}
+
+5. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
 Parameters:
   • value: string (required) - New memory value as a string. Replaces all existing memory.
 
@@ -57,7 +82,7 @@ Example:
   "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
 }
 
-5. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
+6. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
 Parameters:
   • value: string (required) - Text to append as a string. Will be added after existing memory with newline separator.
 
@@ -67,7 +92,7 @@ Example:
   "value": "connection_count: 5\nlast_file_requested: readme.md"
 }
 
-6. change_model. Switch to a different LLM model
+7. change_model. Switch to a different LLM model
 Parameters:
   • model: string (required) - Model name (e.g., 'llama3.2:latest')
 
@@ -77,7 +102,7 @@ Example:
   "model": "llama3.2:latest"
 }
 
-7. show_message. Display a message to the user controlling NetGet
+8. show_message. Display a message to the user controlling NetGet
 Parameters:
   • message: string (required) - Message to display
 
@@ -87,7 +112,7 @@ Example:
   "message": "Server started successfully on port 8080"
 }
 
-8. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
+9. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
 Parameters:
   • path: string (required) - Path to the file (relative to current directory or absolute)
   • mode: string (optional) - Read mode: 'full' (default), 'head', 'tail', or 'grep'
@@ -103,17 +128,17 @@ Example:
   "mode": "full"
 }
 
-9. web_search. Search the web using DuckDuckGo. Use this to find RFCs, protocol specifications, or documentation. Returns top 5 search results with titles, URLs, and snippets. Note: This makes external network requests.
+10. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 Parameters:
-  • query: string (required) - Search query (e.g., 'RFC 959 FTP protocol specification')
+  • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
 
 Example:
 {
   "type": "web_search",
-  "query": "RFC 959 FTP protocol specification"
+  "query": "https://datatracker.ietf.org/doc/html/rfc7168"
 }
 
-10. configure_certificate. Configure certificate mode for proxy (generate, load from file, or none for pass-through)
+11. configure_certificate. Configure certificate mode for proxy (generate, load from file, or none for pass-through)
 Parameters:
   • mode: string (required) - Certificate mode: 'generate', 'load_from_file', or 'none'
   • cert_path: string (optional) - Path to certificate file (required if mode is 'load_from_file')
@@ -125,7 +150,7 @@ Example:
   "mode": "generate"
 }
 
-11. configure_request_filters. Set up filters to determine which requests to intercept and send to LLM
+12. configure_request_filters. Set up filters to determine which requests to intercept and send to LLM
 Parameters:
   • filters: array (required) - Array of request filter objects with optional regex patterns for host, path, method, headers, body
 
@@ -141,7 +166,7 @@ Example:
   ]
 }
 
-12. configure_response_filters. Set up filters to determine which responses to intercept and send to LLM
+13. configure_response_filters. Set up filters to determine which responses to intercept and send to LLM
 Parameters:
   • filters: array (required) - Array of response filter objects with optional regex patterns for status, headers, body, request_host, request_path
 
@@ -156,7 +181,7 @@ Example:
   ]
 }
 
-13. configure_https_connection_filters. Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.
+14. configure_https_connection_filters. Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.
 Parameters:
   • filters: array (required) - Array of HTTPS connection filter objects with optional regex patterns for host, port, sni, client_addr
 
@@ -172,7 +197,7 @@ Example:
   ]
 }
 
-14. set_filter_mode. Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)
+15. set_filter_mode. Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)
 Parameters:
   • request_filter_mode: string (optional) - Mode for request filtering: 'all', 'match_only', or 'none'
   • response_filter_mode: string (optional) - Mode for response filtering: 'all', 'match_only', or 'none'
@@ -185,6 +210,7 @@ Example:
   "response_filter_mode": "all",
   "https_connection_filter_mode": "match_only"
 }
+
 
 
 
