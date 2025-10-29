@@ -45,7 +45,7 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
 }
 
 #[tokio::test]
-async fn test_user_input_prompt() {
+async fn test_user_input_prompt_proxy_server() {
     let state = create_test_state_with_proxy().await;
     let user_input = "enable request filtering";
 
@@ -82,11 +82,11 @@ async fn test_user_input_prompt() {
 }
 
 #[tokio::test]
-async fn test_user_input_prompt_with_scripting() {
+async fn test_user_input_prompt() {
     // Create state WITHOUT any servers to trigger base_stack documentation
     let state = Arc::new(AppState::new());
 
-    // Set up mock scripting environment so we can see the scripting section
+    // Set up mock scripting environment (the common case - Python/Node.js available)
     let scripting_env = netget::scripting::ScriptingEnvironment {
         python: Some("Python 3.11.0".to_string()),
         javascript: Some("v20.0.0".to_string()),
@@ -98,7 +98,7 @@ async fn test_user_input_prompt_with_scripting() {
     let prompt =
         PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
 
-    // Assert snapshot
+    // Assert snapshot (reuse the with_scripting snapshot as the main one)
     snapshot_util::assert_snapshot("user_input_prompt_with_scripting", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks - should include scripting info
@@ -110,7 +110,7 @@ async fn test_user_input_prompt_with_scripting() {
 }
 
 #[tokio::test]
-async fn test_user_input_prompt_without_scripting() {
+async fn test_user_input_prompt_no_scripting() {
     // Create state WITHOUT any servers to trigger base_stack documentation
     let state = Arc::new(AppState::new());
 
