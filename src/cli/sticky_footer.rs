@@ -576,7 +576,7 @@ impl StickyFooter {
                 break;
             }
 
-            let prefix = if idx == 0 { "Input: " } else { "       " };
+            let prefix = if idx == 0 { "> " } else { "  " };
             let text_with_prefix = format!("{}{}", prefix, line);
 
             let wrapped = self.wrap_text(&text_with_prefix);
@@ -641,7 +641,7 @@ impl StickyFooter {
     fn position_cursor(&self, stdout: &mut impl Write) -> Result<()> {
         let (cursor_row, cursor_col) = self.input.cursor_position();
 
-        // Calculate visual position considering wrapping and "Input: " prefix
+        // Calculate visual position considering wrapping and "> " prefix
         let input_start_line = self.terminal_height
             - self.calculate_input_lines()
             - 1; // -1 for status bar
@@ -652,7 +652,7 @@ impl StickyFooter {
         let input_lines = self.input.lines();
 
         for (idx, line) in input_lines.iter().enumerate() {
-            let prefix = if idx == 0 { "Input: " } else { "       " };
+            let prefix = if idx == 0 { "> " } else { "  " };
 
             if idx < cursor_row {
                 // Count wrapped lines for previous rows
