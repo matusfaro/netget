@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::network::connection::ConnectionId;
+use crate::server::connection::ConnectionId;
 use crate::protocol::BaseStack;
 
 /// Unique identifier for a server instance
@@ -238,7 +238,7 @@ pub struct ServerInstance {
     pub script_config: Option<crate::scripting::ScriptConfig>,
     /// Proxy filter configuration (only for proxy servers)
     #[cfg(feature = "proxy")]
-    pub proxy_filter_config: Option<crate::network::proxy_filter::ProxyFilterConfig>,
+    pub proxy_filter_config: Option<crate::server::proxy::filter::ProxyFilterConfig>,
     /// Log file paths (output_name -> log_file_path)
     pub log_files: HashMap<String, PathBuf>,
 }

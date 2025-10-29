@@ -302,7 +302,7 @@ impl AppState {
 
         let mut inner = self.inner.write().await;
         for server in inner.servers.values_mut() {
-            let to_remove: Vec<crate::network::connection::ConnectionId> = server
+            let to_remove: Vec<crate::server::connection::ConnectionId> = server
                 .connections
                 .iter()
                 .filter(|(_, conn)| {
@@ -362,7 +362,7 @@ impl AppState {
     pub async fn close_connection_on_server(
         &self,
         server_id: ServerId,
-        connection_id: crate::network::connection::ConnectionId,
+        connection_id: crate::server::connection::ConnectionId,
     ) {
         use super::server::ConnectionStatus;
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
@@ -377,7 +377,7 @@ impl AppState {
     pub async fn remove_connection_from_server(
         &self,
         server_id: ServerId,
-        connection_id: crate::network::connection::ConnectionId,
+        connection_id: crate::server::connection::ConnectionId,
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             server.remove_connection(connection_id);
@@ -391,7 +391,7 @@ impl AppState {
     pub async fn get_proxy_filter_config(
         &self,
         server_id: ServerId,
-    ) -> Option<crate::network::proxy_filter::ProxyFilterConfig> {
+    ) -> Option<crate::server::proxy::filter::ProxyFilterConfig> {
         self.inner
             .read()
             .await
@@ -405,7 +405,7 @@ impl AppState {
     pub async fn set_proxy_filter_config(
         &self,
         server_id: ServerId,
-        config: crate::network::proxy_filter::ProxyFilterConfig,
+        config: crate::server::proxy::filter::ProxyFilterConfig,
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             server.proxy_filter_config = Some(config);
@@ -417,14 +417,14 @@ impl AppState {
     pub async fn update_proxy_filter_config(
         &self,
         server_id: ServerId,
-        update_fn: impl FnOnce(&mut crate::network::proxy_filter::ProxyFilterConfig),
+        update_fn: impl FnOnce(&mut crate::server::proxy::filter::ProxyFilterConfig),
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(config) = &mut server.proxy_filter_config {
                 update_fn(config);
             } else {
                 // Initialize with default if not set
-                let mut config = crate::network::proxy_filter::ProxyFilterConfig::default();
+                let mut config = crate::server::proxy::filter::ProxyFilterConfig::default();
                 update_fn(&mut config);
                 server.proxy_filter_config = Some(config);
             }

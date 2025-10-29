@@ -6,10 +6,10 @@
 pub mod cli;
 pub mod events;
 pub mod llm;
-pub mod network;
 pub mod protocol;
-pub mod settings;
 pub mod scripting;
+pub mod server;
+pub mod settings;
 pub mod state;
 pub mod ui;
 

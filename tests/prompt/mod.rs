@@ -54,7 +54,7 @@ async fn test_user_input_prompt_proxy_server() {
     #[cfg(feature = "proxy")]
     let protocol_actions = {
         use netget::llm::actions::protocol_trait::ProtocolActions;
-        use netget::network::ProxyProtocol;
+        use netget::server::ProxyProtocol;
         let protocol = ProxyProtocol::new();
         protocol.get_async_actions(&state)
     };
@@ -170,7 +170,7 @@ async fn test_network_event_prompt_for_proxy() {
     let all_actions = {
         use netget::llm::actions::get_network_event_common_actions;
         use netget::llm::actions::protocol_trait::ProtocolActions;
-        use netget::network::ProxyProtocol;
+        use netget::server::ProxyProtocol;
 
         let protocol = ProxyProtocol::new();
         let mut actions = get_network_event_common_actions();

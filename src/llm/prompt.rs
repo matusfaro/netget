@@ -8,7 +8,7 @@ use crate::llm::actions::{
     generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions,
     ActionDefinition,
 };
-use crate::network::connection::ConnectionId;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 

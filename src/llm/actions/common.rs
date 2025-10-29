@@ -401,67 +401,67 @@ fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> 
     match stack {
         #[cfg(feature = "tcp")]
         BaseStack::Tcp => {
-            use crate::network::TcpProtocol;
+            use crate::server::TcpProtocol;
             Some(Box::new(TcpProtocol::new()))
         }
         #[cfg(feature = "http")]
         BaseStack::Http => {
-            use crate::network::HttpProtocol;
+            use crate::server::HttpProtocol;
             Some(Box::new(HttpProtocol::new()))
         }
         #[cfg(feature = "udp")]
         BaseStack::Udp => {
-            use crate::network::UdpProtocol;
+            use crate::server::UdpProtocol;
             Some(Box::new(UdpProtocol::new()))
         }
         #[cfg(feature = "dns")]
         BaseStack::Dns => {
-            use crate::network::DnsProtocol;
+            use crate::server::DnsProtocol;
             Some(Box::new(DnsProtocol::new()))
         }
         #[cfg(feature = "dhcp")]
         BaseStack::Dhcp => {
-            use crate::network::DhcpProtocol;
+            use crate::server::DhcpProtocol;
             Some(Box::new(DhcpProtocol::new()))
         }
         #[cfg(feature = "ntp")]
         BaseStack::Ntp => {
-            use crate::network::NtpProtocol;
+            use crate::server::NtpProtocol;
             Some(Box::new(NtpProtocol::new()))
         }
         #[cfg(feature = "snmp")]
         BaseStack::Snmp => {
-            use crate::network::SnmpProtocol;
+            use crate::server::SnmpProtocol;
             Some(Box::new(SnmpProtocol::new()))
         }
         #[cfg(feature = "ssh")]
         BaseStack::Ssh => {
-            use crate::network::SshProtocol;
+            use crate::server::SshProtocol;
             Some(Box::new(SshProtocol::new()))
         }
         #[cfg(feature = "irc")]
         BaseStack::Irc => {
-            use crate::network::IrcProtocol;
+            use crate::server::IrcProtocol;
             Some(Box::new(IrcProtocol::new()))
         }
         #[cfg(feature = "telnet")]
         BaseStack::Telnet => {
-            use crate::network::TelnetProtocol;
+            use crate::server::TelnetProtocol;
             Some(Box::new(TelnetProtocol::new()))
         }
         #[cfg(feature = "smtp")]
         BaseStack::Smtp => {
-            use crate::network::SmtpProtocol;
+            use crate::server::SmtpProtocol;
             Some(Box::new(SmtpProtocol::new()))
         }
         #[cfg(feature = "mdns")]
         BaseStack::Mdns => {
-            use crate::network::MdnsProtocol;
+            use crate::server::MdnsProtocol;
             Some(Box::new(MdnsProtocol::new()))
         }
         #[cfg(feature = "ipp")]
         BaseStack::Ipp => {
-            use crate::network::IppProtocol;
+            use crate::server::IppProtocol;
             Some(Box::new(IppProtocol::new()))
         }
         #[cfg(feature = "mysql")]
@@ -484,17 +484,17 @@ fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> 
         }
         #[cfg(feature = "proxy")]
         BaseStack::Proxy => {
-            use crate::network::ProxyProtocol;
+            use crate::server::ProxyProtocol;
             Some(Box::new(ProxyProtocol::new()))
         }
         #[cfg(feature = "webdav")]
         BaseStack::WebDav => {
-            use crate::network::WebDavProtocol;
+            use crate::server::WebDavProtocol;
             Some(Box::new(WebDavProtocol::new()))
         }
         #[cfg(feature = "nfs")]
         BaseStack::Nfs => {
-            use crate::network::NfsProtocol;
+            use crate::server::NfsProtocol;
             Some(Box::new(NfsProtocol::new()))
         }
         _ => None,
