@@ -1,10 +1,8 @@
 You are NetGet, an LLM-controlled network application assistant.
 
-Current servers:
-- Server #1: ETH>IP>TCP>HTTP>PROXY on port 8080 (Running)
+No servers currently running.
 
-
-Trigger: User input: "enable request filtering"
+Trigger: User input: "start a DNS server on port 53"
 
 Instructions: Interpret what the user wants and respond with appropriate actions. You can use tools like read_file and web_search to gather information before responding.
 
@@ -138,83 +136,156 @@ Example:
   "query": "https://datatracker.ietf.org/doc/html/rfc7168"
 }
 
-11. configure_certificate. Configure certificate mode for proxy (generate, load from file, or none for pass-through)
-Parameters:
-  • mode: string (required) - Certificate mode: 'generate', 'load_from_file', or 'none'
-  • cert_path: string (optional) - Path to certificate file (required if mode is 'load_from_file')
-  • key_path: string (optional) - Path to private key file (required if mode is 'load_from_file')
 
-Example:
+
+## Available Base Stacks
+
+Each protocol stack has a specific name to use in the 'base_stack' field:
+
+### ETH>IP>TCP
+Stack name: "ETH>IP>TCP"
+No startup parameters.
+
+### ETH>IP>TCP>HTTP
+Stack name: "ETH>IP>TCP>HTTP"
+No startup parameters.
+
+### ETH
+Stack name: "ETH"
+No startup parameters.
+
+### ETH>IP>UDP
+Stack name: "ETH>IP>UDP"
+No startup parameters.
+
+### ETH>IP>UDP>DNS
+Stack name: "ETH>IP>UDP>DNS"
+No startup parameters.
+
+### ETH>IP>UDP>DHCP
+Stack name: "ETH>IP>UDP>DHCP"
+No startup parameters.
+
+### ETH>IP>UDP>NTP
+Stack name: "ETH>IP>UDP>NTP"
+No startup parameters.
+
+### ETH>IP>UDP>SNMP
+Stack name: "ETH>IP>UDP>SNMP"
+No startup parameters.
+
+### ETH>IP>TCP>SSH
+Stack name: "ETH>IP>TCP>SSH"
+No startup parameters.
+
+### ETH>IP>TCP>IRC
+Stack name: "ETH>IP>TCP>IRC"
+No startup parameters.
+
+### ETH>IP>TCP>Telnet
+Stack name: "ETH>IP>TCP>Telnet"
+No startup parameters.
+
+### ETH>IP>TCP>SMTP
+Stack name: "ETH>IP>TCP>SMTP"
+No startup parameters.
+
+### ETH>IP>UDP>mDNS
+Stack name: "ETH>IP>UDP>mDNS"
+No startup parameters.
+
+### ETH>IP>TCP>MySQL
+Stack name: "ETH>IP>TCP>MySQL"
+No startup parameters.
+
+### ETH>IP>TCP>HTTP>IPP
+Stack name: "ETH>IP>TCP>HTTP>IPP"
+No startup parameters.
+
+### ETH>IP>TCP>PostgreSQL
+Stack name: "ETH>IP>TCP>PostgreSQL"
+No startup parameters.
+
+### ETH>IP>TCP>Redis
+Stack name: "ETH>IP>TCP>Redis"
+No startup parameters.
+
+### ETH>IP>TCP>HTTP>PROXY
+Stack name: "ETH>IP>TCP>HTTP>PROXY"
+Startup parameters:
+  • certificate_mode (optional) - Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)
+    Example: "generate"
+  • cert_path (optional) - Path to certificate file (only if certificate_mode is 'load_from_file')
+    Example: "/path/to/cert.pem"
+  • key_path (optional) - Path to private key file (only if certificate_mode is 'load_from_file')
+    Example: "/path/to/key.pem"
+  • request_filter_mode (optional) - Request filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass through)
+    Example: "match_only"
+  • response_filter_mode (optional) - Response filter mode: 'all', 'match_only', or 'none'
+    Example: "all"
+  • https_connection_filter_mode (optional) - HTTPS connection filter mode (pass-through only): 'all', 'match_only', or 'none'
+    Example: "match_only"
+
+### ETH>IP>TCP>HTTP>WEBDAV
+Stack name: "ETH>IP>TCP>HTTP>WEBDAV"
+No startup parameters.
+
+### ETH>IP>TCP>NFS
+Stack name: "ETH>IP>TCP>NFS"
+No startup parameters.
+
+
+
+SCRIPT-BASED RESPONSES (Advanced feature - use only when explicitly requested):
+Available environments: Python (Python 3.11.0), Node.js (v20.0.0)
+
+IMPORTANT: Only use scripts when the user explicitly requests scripted/programmatic behavior, or for complex authentication/state logic.
+For simple protocol responses (DNS records, HTTP responses, etc.), use the ACTIONS DIRECTLY via the LLM - do NOT create scripts.
+
+Scripts are appropriate for:
+- Complex SSH authentication logic (checking multiple conditions)
+- Multi-step protocols requiring state machines
+- When user explicitly asks for "scripted" or "programmatic" behavior
+
+To use scripts in open_server, include:
+- script_language: "python" or "javascript"
+- script_inline: "your script code" (or script_path: "/path/to/script.py")
+- script_handles: ["ssh_auth", "ssh_banner"] or ["all"] (optional, defaults to ["all"])
+
+CRITICAL: Scripts must return ACTIONS in JSON format, NOT raw protocol responses.
+The script receives context via stdin and must print actions to stdout.
+
+Scripts receive JSON input via stdin with this structure:
 {
-  "type": "configure_certificate",
-  "mode": "generate"
+  "context_type": "ssh_auth",
+  "server": {"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."},
+  "connection": {"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0},
+  "event": {"username": "alice", "auth_type": "password"}
 }
 
-12. configure_request_filters. Set up filters to determine which requests to intercept and send to LLM
-Parameters:
-  • filters: array (required) - Array of request filter objects with optional regex patterns for host, path, method, headers, body
+Scripts MUST output JSON with an "actions" array containing action objects.
+Use the SAME action types that are available to you (e.g., send_http_response, ssh_auth_decision).
+DO NOT write raw protocol code (like res.writeHead() or socket operations).
 
-Example:
-{
-  "type": "configure_request_filters",
-  "filters": [
-    {
-      "host_regex": "^api\\.example\\.com$",
-      "path_regex": "^/api/.*",
-      "method_regex": "^(POST|PUT)$"
-    }
-  ]
-}
+Example 1 - SSH authentication (Python):
+import json, sys
+data = json.load(sys.stdin)
+username = data['event']['username']
+allowed = (username == 'alice')
+print(json.dumps({"actions": [{"type": "ssh_auth_decision", "allowed": allowed}]}))
 
-13. configure_response_filters. Set up filters to determine which responses to intercept and send to LLM
-Parameters:
-  • filters: array (required) - Array of response filter objects with optional regex patterns for status, headers, body, request_host, request_path
+Example 2 - HTTP response (JavaScript):
+const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+const pathname = data.event.path;
+const response = pathname.endsWith('.html')
+  ? {"status": 200, "headers": {"Content-Type": "text/html"}, "body": "<h1>Hello</h1>"}
+  : {"status": 404, "body": "Not Found"};
+console.log(JSON.stringify({"actions": [{"type": "send_http_response", ...response}]}));
 
-Example:
-{
-  "type": "configure_response_filters",
-  "filters": [
-    {
-      "status_regex": "^(4|5)\\d{2}$",
-      "request_host_regex": "^api\\.example\\.com$"
-    }
-  ]
-}
+Scripts must complete within 30 seconds or they will be terminated.
+Scripts can return {"fallback_to_llm": true} to delegate complex cases to LLM.
+You can update scripts on running servers using the update_script action.
 
-14. configure_https_connection_filters. Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.
-Parameters:
-  • filters: array (required) - Array of HTTPS connection filter objects with optional regex patterns for host, port, sni, client_addr
-
-Example:
-{
-  "type": "configure_https_connection_filters",
-  "filters": [
-    {
-      "host_regex": "^.*\\.example\\.com$",
-      "port_regex": "^443$",
-      "sni_regex": "^secure\\.example\\.com$"
-    }
-  ]
-}
-
-15. set_filter_mode. Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)
-Parameters:
-  • request_filter_mode: string (optional) - Mode for request filtering: 'all', 'match_only', or 'none'
-  • response_filter_mode: string (optional) - Mode for response filtering: 'all', 'match_only', or 'none'
-  • https_connection_filter_mode: string (optional) - Mode for HTTPS connection filtering (pass-through mode): 'all', 'match_only', or 'none'
-
-Example:
-{
-  "type": "set_filter_mode",
-  "request_filter_mode": "match_only",
-  "response_filter_mode": "all",
-  "https_connection_filter_mode": "match_only"
-}
-
-
-
-
-Available protocol stacks: tcp_raw, http, datalink, udp_raw, dns, dhcp, ntp, snmp, ssh, irc, telnet, smtp, mdns, mysql, ipp, postgresql, redis, proxy, webdav, nfs
 
 
 RESPONSE FORMAT:
