@@ -46,6 +46,14 @@ pub enum UserCommand {
     ChangeLogLevel {
         level: String,
     },
+    /// Generate test output lines (slash command: /test <count>)
+    TestOutput {
+        count: usize,
+    },
+    /// Set custom footer status message (slash command: /footer_status <message>)
+    SetFooterStatus {
+        message: Option<String>,
+    },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -101,6 +109,27 @@ impl UserCommand {
                 return UserCommand::ShowLogLevel;
             }
             return UserCommand::ChangeLogLevel { level: rest.to_string() };
+        }
+
+        // /test command - generate test output lines
+        if input_lower.starts_with("/test") {
+            let rest = trimmed[5..].trim();
+            if let Ok(count) = rest.parse::<usize>() {
+                return UserCommand::TestOutput { count };
+            }
+            // Invalid count - treat as unknown command
+        }
+
+        // /footer_status command - set custom footer status message
+        if input_lower.starts_with("/footer_status") {
+            let rest = trimmed[14..].trim();
+            let message = if rest.is_empty() {
+                None
+            } else {
+                // Replace literal \n with actual newlines
+                Some(rest.replace("\\n", "\n"))
+            };
+            return UserCommand::SetFooterStatus { message };
         }
 
         // Unknown slash command - return error, don't send to LLM

@@ -10,6 +10,11 @@ use netget::state::ServerId;
 use netget::protocol::BaseStack;
 use std::sync::Arc;
 
+#[path = "../snapshot_util.rs"]
+mod snapshot_util;
+
+const SNAPSHOT_DIR: &str = "tests/prompt/snapshots";
+
 /// Helper to create test app state with a proxy server
 async fn create_test_state_with_proxy() -> Arc<AppState> {
     let state = Arc::new(AppState::new());
@@ -28,11 +33,6 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
     state.update_server_status(server_id, ServerStatus::Running).await;
 
     state
-}
-
-/// Helper to create idle test state
-async fn create_idle_state() -> Arc<AppState> {
-    Arc::new(AppState::new())
 }
 
 #[tokio::test]
@@ -58,42 +58,19 @@ async fn test_user_input_prompt() {
         protocol_actions,
     ).await;
 
-    let expected_path = "tests/snapshots/user_input_prompt.txt";
-
-    if let Err(_) = std::fs::read_to_string(expected_path) {
-        std::fs::create_dir_all("tests/snapshots").ok();
-        std::fs::write(expected_path, &prompt).expect("Failed to write snapshot");
-        println!("Created initial snapshot at {}", expected_path);
-    } else {
-        let expected = std::fs::read_to_string(expected_path)
-            .expect("Failed to read expected snapshot");
-
-        if prompt != expected {
-            std::fs::write("tests/snapshots/user_input_prompt.actual.txt", &prompt)
-                .expect("Failed to write actual output");
-
-            panic!(
-                "Prompt has changed! Compare:\n\
-                 Expected: {}\n\
-                 Actual: tests/snapshots/user_input_prompt.actual.txt\n\
-                 \n\
-                 If this change is intentional, update the snapshot:\n\
-                 cp tests/snapshots/user_input_prompt.actual.txt {}",
-                expected_path, expected_path
-            );
-        }
-    }
+    // Assert snapshot
+    snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks
-    assert!(prompt.contains("Server #1") || prompt.contains("Server")); // Should show running server
-    assert!(prompt.contains("PROXY") || prompt.contains("Proxy")); // Server type
-    assert!(prompt.contains("8080")); // Port
-    assert!(prompt.contains("Running")); // Status
+    assert!(prompt.contains("Server #1") || prompt.contains("Server"));
+    assert!(prompt.contains("PROXY") || prompt.contains("Proxy"));
+    assert!(prompt.contains("8080"));
+    assert!(prompt.contains("Running"));
     assert!(prompt.contains(user_input));
 
     #[cfg(feature = "proxy")]
     {
-        assert!(prompt.contains("configure_certificate")); // Proxy async actions
+        assert!(prompt.contains("configure_certificate"));
         assert!(prompt.contains("configure_request_filters"));
     }
 }
@@ -130,45 +107,21 @@ async fn test_network_event_prompt_for_proxy() {
         all_actions,
     ).await;
 
-    let expected_path = "tests/snapshots/network_event_prompt_proxy.txt";
-
-    if let Err(_) = std::fs::read_to_string(expected_path) {
-        std::fs::create_dir_all("tests/snapshots").ok();
-        std::fs::write(expected_path, &prompt).expect("Failed to write snapshot");
-        println!("Created initial snapshot at {}", expected_path);
-    } else {
-        let expected = std::fs::read_to_string(expected_path)
-            .expect("Failed to read expected snapshot");
-
-        if prompt != expected {
-            std::fs::write("tests/snapshots/network_event_prompt_proxy.actual.txt", &prompt)
-                .expect("Failed to write actual output");
-
-            panic!(
-                "Prompt has changed! Compare:\n\
-                 Expected: {}\n\
-                 Actual: tests/snapshots/network_event_prompt_proxy.actual.txt\n\
-                 \n\
-                 If this change is intentional, update the snapshot:\n\
-                 cp tests/snapshots/network_event_prompt_proxy.actual.txt {}",
-                expected_path, expected_path
-            );
-        }
-    }
+    // Assert snapshot
+    snapshot_util::assert_snapshot("network_event_prompt_proxy", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks
     assert!(prompt.contains("NetGet"));
     assert!(prompt.contains("Server #1") || prompt.contains("Server ID: #1"));
     assert!(prompt.contains("PROXY") || prompt.contains("Proxy"));
     assert!(prompt.contains(event_description));
-    assert!(prompt.contains("Act as HTTP proxy")); // Instruction
-    assert!(prompt.contains("connections: 0")); // Memory
-    // Network event prompts should NOT include base stack docs (server already running)
+    assert!(prompt.contains("Act as HTTP proxy"));
+    assert!(prompt.contains("connections: 0"));
     assert!(!prompt.contains("Available Base Stacks"));
 
     #[cfg(feature = "proxy")]
     {
-        assert!(prompt.contains("handle_request_pass")); // Proxy sync actions
+        assert!(prompt.contains("handle_request_pass"));
         assert!(prompt.contains("handle_request_block"));
         assert!(prompt.contains("handle_request_modify"));
     }
@@ -201,29 +154,7 @@ fn test_base_stack_documentation_snapshot() {
     use netget::llm::actions::generate_base_stack_documentation;
 
     let docs = generate_base_stack_documentation();
-    let expected_path = "tests/snapshots/base_stack_documentation.txt";
 
-    if let Err(_) = std::fs::read_to_string(expected_path) {
-        std::fs::create_dir_all("tests/snapshots").ok();
-        std::fs::write(expected_path, &docs).expect("Failed to write snapshot");
-        println!("Created initial snapshot at {}", expected_path);
-    } else {
-        let expected = std::fs::read_to_string(expected_path)
-            .expect("Failed to read expected snapshot");
-
-        if docs != expected {
-            std::fs::write("tests/snapshots/base_stack_documentation.actual.txt", &docs)
-                .expect("Failed to write actual output");
-
-            panic!(
-                "Base stack documentation has changed! Compare:\n\
-                 Expected: {}\n\
-                 Actual: tests/snapshots/base_stack_documentation.actual.txt\n\
-                 \n\
-                 If this change is intentional, update the snapshot:\n\
-                 cp tests/snapshots/base_stack_documentation.actual.txt {}",
-                expected_path, expected_path
-            );
-        }
-    }
+    // Assert snapshot
+    snapshot_util::assert_snapshot("base_stack_documentation", SNAPSHOT_DIR, &docs);
 }

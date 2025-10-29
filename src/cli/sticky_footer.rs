@@ -1,0 +1,688 @@
+//! Sticky footer rendering for rolling terminal
+//!
+//! Manages the fixed footer area at the bottom of the terminal that displays:
+//! - Servers and connections (normal mode)
+//! - Slash command suggestions (slash command mode)
+//! - Input field (always)
+//! - Status bar (always)
+
+use anyhow::Result;
+use crossterm::{
+    cursor, execute,
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    terminal::{Clear, ClearType},
+};
+use std::io::Write;
+
+use crate::ui::app::{ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo};
+
+use super::input_state::InputState;
+
+/// Content mode for the sticky footer
+#[derive(Debug, Clone)]
+pub enum FooterContent {
+    /// Normal mode: show servers and connections
+    Normal {
+        servers: Vec<ServerDisplayInfo>,
+        connections: Vec<ConnectionDisplayInfo>,
+        expand_all: bool,
+    },
+    /// Slash command mode: show command suggestions
+    SlashCommands { suggestions: Vec<String> },
+}
+
+/// Connection info for the status bar
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionInfo {
+    pub mode: String,
+    pub protocol: String,
+    pub local_addr: Option<String>,
+    pub model: String,
+}
+
+/// Sticky footer state and renderer
+pub struct StickyFooter {
+    /// Terminal width
+    terminal_width: u16,
+    /// Terminal height
+    terminal_height: u16,
+    /// Height of the scroll region (where output goes)
+    scroll_region_height: u16,
+    /// Current footer content mode
+    content: FooterContent,
+    /// Input state
+    input: InputState,
+    /// Connection info for status bar
+    connection_info: ConnectionInfo,
+    /// Packet statistics for status bar
+    packet_stats: PacketStats,
+    /// Current log level
+    log_level: LogLevel,
+    /// Custom status message (for testing footer height changes)
+    custom_status: Option<String>,
+    /// Number of blank lines at the top of scroll region (created by footer expansions)
+    blank_lines_buffer: u16,
+}
+
+impl StickyFooter {
+    /// Create a new sticky footer
+    pub fn new(width: u16, height: u16) -> Result<Self> {
+        let mut footer = Self {
+            terminal_width: width,
+            terminal_height: height,
+            scroll_region_height: height.saturating_sub(10), // Initial guess
+            content: FooterContent::Normal {
+                servers: Vec::new(),
+                connections: Vec::new(),
+                expand_all: false,
+            },
+            input: InputState::new(),
+            connection_info: ConnectionInfo::default(),
+            packet_stats: PacketStats::default(),
+            log_level: LogLevel::Info,
+            custom_status: None,
+            blank_lines_buffer: 0,
+        };
+
+        // Calculate actual footer height
+        footer.recalculate_scroll_region();
+        Ok(footer)
+    }
+
+    /// Set footer content mode
+    pub fn set_content(&mut self, content: FooterContent) {
+        self.content = content;
+        self.recalculate_scroll_region();
+    }
+
+    /// Get mutable reference to input state
+    pub fn input_mut(&mut self) -> &mut InputState {
+        &mut self.input
+    }
+
+    /// Get reference to input state
+    pub fn input(&self) -> &InputState {
+        &self.input
+    }
+
+    /// Set connection info
+    pub fn set_connection_info(&mut self, info: ConnectionInfo) {
+        self.connection_info = info;
+    }
+
+    /// Set packet stats
+    pub fn set_packet_stats(&mut self, stats: PacketStats) {
+        self.packet_stats = stats;
+    }
+
+    /// Set log level
+    pub fn set_log_level(&mut self, level: LogLevel) {
+        self.log_level = level;
+    }
+
+    /// Set custom status message (for testing footer height changes)
+    pub fn set_custom_status(&mut self, status: Option<String>) {
+        self.custom_status = status;
+        self.recalculate_scroll_region();
+    }
+
+    /// Get scroll region height
+    pub fn scroll_region_height(&self) -> u16 {
+        self.scroll_region_height
+    }
+
+    pub fn terminal_height(&self) -> u16 {
+        self.terminal_height
+    }
+
+    pub fn terminal_width(&self) -> u16 {
+        self.terminal_width
+    }
+
+    pub fn blank_lines_buffer(&self) -> u16 {
+        self.blank_lines_buffer
+    }
+
+    pub fn decrement_blank_lines_buffer(&mut self) {
+        if self.blank_lines_buffer > 0 {
+            self.blank_lines_buffer -= 1;
+        }
+    }
+
+    pub fn add_to_blank_lines_buffer(&mut self, lines: u16) {
+        self.blank_lines_buffer += lines;
+    }
+
+    pub fn consume_blank_lines_buffer(&mut self, lines: u16) -> u16 {
+        let consumed = self.blank_lines_buffer.min(lines);
+        self.blank_lines_buffer -= consumed;
+        consumed
+    }
+
+    /// Handle terminal resize
+    pub fn handle_resize(&mut self, width: u16, height: u16) {
+        self.terminal_width = width;
+        self.terminal_height = height;
+        self.recalculate_scroll_region();
+    }
+
+    /// Calculate the height needed for the footer (private implementation)
+    fn _calculate_footer_height_impl(&self) -> u16 {
+        let content_lines = match &self.content {
+            FooterContent::Normal {
+                servers,
+                connections,
+                expand_all,
+            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
+            FooterContent::SlashCommands { suggestions } => {
+                suggestions.len().min(10) as u16 // Cap at 10 suggestions
+            }
+        };
+
+        let input_lines = self.calculate_input_lines();
+        let status_lines = 1;
+
+        // Add separator lines (2: one above content, one above input)
+        content_lines + 2 + input_lines + status_lines
+    }
+
+    /// Calculate lines needed for normal content (servers/connections)
+    fn calculate_normal_content_lines(
+        &self,
+        servers: &[ServerDisplayInfo],
+        connections: &[ConnectionDisplayInfo],
+        expand_all: bool,
+    ) -> u16 {
+        // If custom status is set, use its line count
+        if let Some(ref custom) = self.custom_status {
+            return custom.lines().count() as u16;
+        }
+
+        if servers.is_empty() {
+            return 1; // "No servers running" message
+        }
+
+        let mut total_lines = 0;
+
+        for (_idx, server) in servers.iter().enumerate() {
+            // Server line
+            let server_text = format!(
+                "#{} {} :{} - {}",
+                server.id, server.protocol, server.port, server.status
+            );
+            total_lines += self.wrapped_line_count(&server_text);
+
+            // Connection lines
+            let server_connections: Vec<_> = connections
+                .iter()
+                .filter(|c| c.server_id == server.id)
+                .collect();
+
+            if !server_connections.is_empty() {
+                let max_to_show = if expand_all {
+                    server_connections.len()
+                } else {
+                    3
+                };
+
+                for conn in server_connections.iter().take(max_to_show) {
+                    let conn_text = format!("  #{} {} {}", conn.id, conn.address, conn.state);
+                    total_lines += self.wrapped_line_count(&conn_text);
+                }
+
+                // "... N more" line if truncated
+                if !expand_all && server_connections.len() > 3 {
+                    total_lines += 1;
+                }
+            }
+        }
+
+        // Cap at 15 lines
+        total_lines.min(15)
+    }
+
+    /// Calculate lines needed for input
+    fn calculate_input_lines(&self) -> u16 {
+        let lines = self.input.lines();
+        let mut total = 0;
+
+        for line in lines {
+            total += self.wrapped_line_count(line);
+        }
+
+        // Ensure at least 1 line, cap at 12
+        total.max(1).min(12)
+    }
+
+    /// Calculate how many visual lines a text string will take after wrapping
+    fn wrapped_line_count(&self, text: &str) -> u16 {
+        if text.is_empty() {
+            return 1;
+        }
+
+        let width = self.terminal_width.saturating_sub(2) as usize; // -2 for padding
+        if width == 0 {
+            return 1;
+        }
+
+        // Use textwrap to calculate wrapped lines
+        let wrapped = textwrap::wrap(text, width);
+        wrapped.len().max(1) as u16
+    }
+
+    /// Recalculate scroll region height
+    fn recalculate_scroll_region(&mut self) {
+        let footer_height = self.calculate_footer_height();
+
+        // Ensure scroll region is at least 5 lines
+        self.scroll_region_height = self
+            .terminal_height
+            .saturating_sub(footer_height)
+            .max(5);
+    }
+
+    /// Render the sticky footer (overlay at bottom of terminal)
+    pub fn render(&mut self, stdout: &mut impl Write) -> Result<()> {
+        self.recalculate_scroll_region();
+
+        let footer_height = self.calculate_footer_height();
+        let footer_start = self.terminal_height.saturating_sub(footer_height);
+
+        // Clear footer area
+        for line_offset in 0..footer_height {
+            execute!(
+                stdout,
+                cursor::MoveTo(0, footer_start + line_offset),
+                Clear(ClearType::CurrentLine),
+            )?;
+        }
+
+        // Render content based on mode
+        let mut current_line = footer_start;
+        current_line = match &self.content {
+            FooterContent::Normal {
+                servers,
+                connections,
+                expand_all,
+            } => self.render_normal_content(stdout, current_line, servers, connections, *expand_all)?,
+            FooterContent::SlashCommands { suggestions } => {
+                self.render_slash_commands(stdout, current_line, suggestions)?
+            }
+        };
+
+        // Render separator
+        current_line = self.render_separator(stdout, current_line)?;
+
+        // Render input
+        current_line = self.render_input(stdout, current_line)?;
+
+        // Render status bar
+        self.render_status_bar(stdout, current_line)?;
+
+        // Position cursor in input field and show it
+        self.position_cursor(stdout)?;
+        execute!(stdout, cursor::Show)?;
+
+        stdout.flush()?;
+        Ok(())
+    }
+
+    /// Render only the input portion of the footer (for efficient keystroke handling)
+    pub fn render_input_only(&mut self, stdout: &mut impl Write) -> Result<()> {
+        let footer_height = self.calculate_footer_height();
+        let footer_start = self.terminal_height.saturating_sub(footer_height);
+
+        // Calculate where input starts (content + 2 separators, then input)
+        let content_lines = match &self.content {
+            FooterContent::Normal {
+                servers,
+                connections,
+                expand_all,
+            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
+            FooterContent::SlashCommands { suggestions } => {
+                suggestions.len().min(10) as u16
+            }
+        };
+
+        let input_start = footer_start + content_lines + 2; // +1 for separator before content, +1 for separator after content
+        let input_lines = self.calculate_input_lines();
+
+        // Clear input area
+        for line_offset in 0..input_lines {
+            execute!(
+                stdout,
+                cursor::MoveTo(0, input_start + line_offset),
+                Clear(ClearType::CurrentLine),
+            )?;
+        }
+
+        // Render input and get the next line number
+        let next_line = self.render_input(stdout, input_start)?;
+
+        // Clear and render status bar at the line AFTER the input
+        execute!(
+            stdout,
+            cursor::MoveTo(0, next_line),
+            Clear(ClearType::CurrentLine),
+        )?;
+        self.render_status_bar(stdout, next_line)?;
+
+        // Position cursor
+        self.position_cursor(stdout)?;
+        execute!(stdout, cursor::Show)?;
+        stdout.flush()?;
+        Ok(())
+    }
+
+    /// Get the calculated footer height (public for clearing)
+    pub fn calculate_footer_height(&self) -> u16 {
+        let content_lines = match &self.content {
+            FooterContent::Normal {
+                servers,
+                connections,
+                expand_all,
+            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
+            FooterContent::SlashCommands { suggestions } => {
+                suggestions.len().min(10) as u16
+            }
+        };
+
+        let input_lines = self.calculate_input_lines();
+        let status_lines = 1;
+
+        content_lines + 2 + input_lines + status_lines
+    }
+
+    /// Render normal content (servers and connections)
+    fn render_normal_content(
+        &self,
+        stdout: &mut impl Write,
+        start_line: u16,
+        servers: &[ServerDisplayInfo],
+        connections: &[ConnectionDisplayInfo],
+        expand_all: bool,
+    ) -> Result<u16> {
+        let mut current_line = start_line;
+
+        // Render separator at top
+        current_line = self.render_separator(stdout, current_line)?;
+
+        // If custom status is set, render it instead
+        if let Some(ref custom) = self.custom_status {
+            for line in custom.lines() {
+                execute!(
+                    stdout,
+                    cursor::MoveTo(0, current_line),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(line),
+                    ResetColor,
+                )?;
+                current_line += 1;
+            }
+            return Ok(current_line);
+        }
+
+        if servers.is_empty() {
+            execute!(
+                stdout,
+                cursor::MoveTo(0, current_line),
+                SetForegroundColor(Color::DarkGrey),
+                Print("No servers running"),
+                ResetColor,
+            )?;
+            return Ok(current_line + 1);
+        }
+
+        let max_content_lines = self.calculate_normal_content_lines(servers, connections, expand_all);
+
+        for server in servers.iter() {
+            if current_line >= start_line + max_content_lines {
+                break; // Hit the cap
+            }
+
+            // Server line
+            let server_text = format!(
+                "#{} {} :{} - {}",
+                server.id, server.protocol, server.port, server.status
+            );
+
+            // Render wrapped server line
+            let wrapped = self.wrap_text(&server_text);
+            for line in wrapped {
+                if current_line >= start_line + max_content_lines {
+                    break;
+                }
+                execute!(stdout, cursor::MoveTo(0, current_line), Print(&line))?;
+                current_line += 1;
+            }
+
+            // Connection lines
+            let server_connections: Vec<_> = connections
+                .iter()
+                .filter(|c| c.server_id == server.id)
+                .collect();
+
+            if !server_connections.is_empty() {
+                let max_to_show = if expand_all {
+                    server_connections.len()
+                } else {
+                    3
+                };
+
+                for conn in server_connections.iter().take(max_to_show) {
+                    if current_line >= start_line + max_content_lines {
+                        break;
+                    }
+
+                    let conn_text = format!("  #{} {} {}", conn.id, conn.address, conn.state);
+                    let wrapped = self.wrap_text(&conn_text);
+                    for line in wrapped {
+                        if current_line >= start_line + max_content_lines {
+                            break;
+                        }
+                        execute!(stdout, cursor::MoveTo(0, current_line), Print(&line))?;
+                        current_line += 1;
+                    }
+                }
+
+                // "... N more" line
+                if !expand_all && server_connections.len() > 3 {
+                    if current_line < start_line + max_content_lines {
+                        execute!(
+                            stdout,
+                            cursor::MoveTo(0, current_line),
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(format!("  ... ({} more)", server_connections.len() - 3)),
+                            ResetColor,
+                        )?;
+                        current_line += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(current_line)
+    }
+
+    /// Render slash command suggestions
+    fn render_slash_commands(
+        &self,
+        stdout: &mut impl Write,
+        start_line: u16,
+        suggestions: &[String],
+    ) -> Result<u16> {
+        let mut current_line = start_line;
+
+        // Render separator at top
+        current_line = self.render_separator(stdout, current_line)?;
+
+        let max_lines = suggestions.len().min(10);
+        for suggestion in suggestions.iter().take(max_lines) {
+            let wrapped = self.wrap_text(suggestion);
+            for line in wrapped {
+                execute!(
+                    stdout,
+                    cursor::MoveTo(0, current_line),
+                    SetForegroundColor(Color::Yellow),
+                    Print(&line),
+                    ResetColor,
+                )?;
+                current_line += 1;
+            }
+        }
+
+        Ok(current_line)
+    }
+
+    /// Render a separator line
+    fn render_separator(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
+        let separator = "─".repeat(self.terminal_width as usize);
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line),
+            SetForegroundColor(Color::Cyan),
+            Print(&separator),
+            ResetColor,
+        )?;
+        Ok(line + 1)
+    }
+
+    /// Render input field
+    fn render_input(&self, stdout: &mut impl Write, start_line: u16) -> Result<u16> {
+        let mut current_line = start_line;
+
+        let input_lines = self.input.lines();
+        let max_input_lines = self.calculate_input_lines() as usize;
+
+        for (idx, line) in input_lines.iter().enumerate() {
+            if idx >= max_input_lines {
+                break;
+            }
+
+            let prefix = if idx == 0 { "Input: " } else { "       " };
+            let text_with_prefix = format!("{}{}", prefix, line);
+
+            let wrapped = self.wrap_text(&text_with_prefix);
+            for wrapped_line in wrapped {
+                execute!(stdout, cursor::MoveTo(0, current_line), Print(&wrapped_line))?;
+                current_line += 1;
+            }
+        }
+
+        Ok(current_line)
+    }
+
+    /// Render status bar
+    fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
+        let status_text = format!(
+            " {} | {} | {} | {} | ↑{} ↓{} ",
+            if self.connection_info.mode.is_empty() {
+                "Idle"
+            } else {
+                &self.connection_info.mode
+            },
+            if self.connection_info.protocol.is_empty() {
+                "-"
+            } else {
+                &self.connection_info.protocol
+            },
+            if let Some(addr) = &self.connection_info.local_addr {
+                addr
+            } else {
+                "no connection"
+            },
+            &self.connection_info.model,
+            self.packet_stats.bytes_received,
+            self.packet_stats.bytes_sent,
+        );
+
+        // Truncate if too long
+        let status_text = if status_text.len() > self.terminal_width as usize {
+            format!(
+                "{}...",
+                &status_text[..self.terminal_width.saturating_sub(3) as usize]
+            )
+        } else {
+            status_text
+        };
+
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line),
+            SetBackgroundColor(Color::Cyan),
+            SetForegroundColor(Color::Black),
+            Print(&status_text),
+            // Fill rest of line
+            Print(" ".repeat(self.terminal_width.saturating_sub(status_text.len() as u16) as usize)),
+            ResetColor,
+        )?;
+
+        Ok(line + 1)
+    }
+
+    /// Position the cursor in the input field
+    fn position_cursor(&self, stdout: &mut impl Write) -> Result<()> {
+        let (cursor_row, cursor_col) = self.input.cursor_position();
+
+        // Calculate visual position considering wrapping and "Input: " prefix
+        let input_start_line = self.terminal_height
+            - self.calculate_input_lines()
+            - 1; // -1 for status bar
+
+        let mut visual_row = input_start_line;
+        let mut visual_col = 0;
+
+        let input_lines = self.input.lines();
+
+        for (idx, line) in input_lines.iter().enumerate() {
+            let prefix = if idx == 0 { "Input: " } else { "       " };
+            let text_with_prefix = format!("{}{}", prefix, line);
+
+            if idx < cursor_row {
+                // Count wrapped lines for previous rows
+                let wrapped = self.wrap_text(&text_with_prefix);
+                visual_row += wrapped.len() as u16;
+            } else if idx == cursor_row {
+                // Calculate position on current row
+                // cursor_col is position within the actual text (not including prefix)
+                // We need to add prefix length to get the visual column
+                let cursor_in_line = prefix.len() + cursor_col;
+                let wrapped = self.wrap_text(&text_with_prefix);
+
+                // Handle case where input is empty - cursor should be after "Input: "
+                if wrapped.is_empty() || (wrapped.len() == 1 && wrapped[0].is_empty()) {
+                    visual_col = prefix.len() as u16;
+                } else {
+                    let mut char_count = 0;
+                    for (wrap_idx, wrapped_line) in wrapped.iter().enumerate() {
+                        let line_end = char_count + wrapped_line.len();
+                        if cursor_in_line <= line_end {
+                            visual_row += wrap_idx as u16;
+                            visual_col = (cursor_in_line - char_count) as u16;
+                            break;
+                        }
+                        char_count = line_end;
+                        visual_row += 1;
+                    }
+                }
+                break;
+            }
+        }
+
+        execute!(stdout, cursor::MoveTo(visual_col as u16, visual_row))?;
+        Ok(())
+    }
+
+    /// Word-wrap text to terminal width
+    fn wrap_text(&self, text: &str) -> Vec<String> {
+        let width = self.terminal_width.saturating_sub(2) as usize; // -2 for safety
+        if width == 0 || text.is_empty() {
+            return vec![String::new()];
+        }
+
+        textwrap::wrap(text, width)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+}
