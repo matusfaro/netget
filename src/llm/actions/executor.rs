@@ -147,6 +147,45 @@ async fn execute_common_action(
                 debug!("Server #{} memory appended", server_id.as_u32());
             }
         }
+
+        CommonAction::AppendToLog {
+            output_name,
+            content,
+        } => {
+            if let Some(server_id) = state.get_first_server_id().await {
+                // Get or create the log file path
+                let log_path = state
+                    .with_server_mut(server_id, |server| {
+                        server.get_or_create_log_path(&output_name)
+                    })
+                    .await;
+
+                if let Some(log_path) = log_path {
+                    // Append content to the log file
+                    match tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                        .await
+                    {
+                        Ok(mut file) => {
+                            use tokio::io::AsyncWriteExt;
+                            let log_line = format!("{}\n", content);
+                            if let Err(e) = file.write_all(log_line.as_bytes()).await {
+                                warn!("Failed to write to log file {:?}: {}", log_path, e);
+                            } else {
+                                debug!("Appended to log file {:?}", log_path);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to open log file {:?}: {}", log_path, e);
+                        }
+                    }
+                } else {
+                    warn!("No server found to append log for");
+                }
+            }
+        }
     }
 
     Ok(())
