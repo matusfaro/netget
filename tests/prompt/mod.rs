@@ -19,6 +19,13 @@ const SNAPSHOT_DIR: &str = "tests/prompt/snapshots";
 async fn create_test_state_with_proxy() -> Arc<AppState> {
     let state = Arc::new(AppState::new());
 
+    // Set up mock scripting environment so we can see the scripting section in prompts
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
     // Create a proxy server instance
     let mut server = ServerInstance::new(
         ServerId::new(1),
@@ -72,6 +79,34 @@ async fn test_user_input_prompt() {
         assert!(prompt.contains("configure_certificate"));
         assert!(prompt.contains("configure_request_filters"));
     }
+}
+
+#[tokio::test]
+async fn test_user_input_prompt_with_scripting() {
+    // Create state WITHOUT any servers to trigger base_stack documentation
+    let state = Arc::new(AppState::new());
+
+    // Set up mock scripting environment so we can see the scripting section
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    let user_input = "start a DNS server on port 53";
+
+    let prompt =
+        PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("user_input_prompt_with_scripting", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks - should include scripting info
+    assert!(prompt.contains("SCRIPT-BASED RESPONSES") || prompt.contains("Available environments"));
+    assert!(prompt.contains("Python") && prompt.contains("Node.js"));
+    assert!(prompt.contains("IMPORTANT: Only use scripts when"));
+    assert!(prompt.contains("Available Base Stacks"));
+    assert!(prompt.contains("For simple protocol responses"));
 }
 
 #[tokio::test]
