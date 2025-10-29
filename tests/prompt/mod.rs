@@ -110,6 +110,42 @@ async fn test_user_input_prompt_with_scripting() {
 }
 
 #[tokio::test]
+async fn test_user_input_prompt_without_scripting() {
+    // Create state WITHOUT any servers to trigger base_stack documentation
+    let state = Arc::new(AppState::new());
+
+    // Set up environment with NO scripting available
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: None,
+        javascript: None,
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    let user_input = "start a DNS server on port 53";
+
+    let prompt =
+        PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("user_input_prompt_without_scripting", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks - should NOT include scripting info
+    assert!(!prompt.contains("SCRIPT-BASED RESPONSES"));
+    assert!(!prompt.contains("python"));
+    assert!(!prompt.contains("Python"));
+    assert!(!prompt.contains("javascript"));
+    assert!(!prompt.contains("JavaScript"));
+    assert!(!prompt.contains("Node.js"));
+    assert!(!prompt.contains("script_language"));
+    assert!(!prompt.contains("script_inline"));
+    assert!(!prompt.contains("script_path"));
+    assert!(!prompt.contains("script_handles"));
+
+    // Should still have base stacks
+    assert!(prompt.contains("Available Base Stacks"));
+}
+
+#[tokio::test]
 async fn test_network_event_prompt_for_proxy() {
     let state = create_test_state_with_proxy().await;
     let server_id = ServerId::new(1);

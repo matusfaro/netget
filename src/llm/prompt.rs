@@ -191,15 +191,17 @@ Response (JSON only):"#,
             "No servers currently running.".to_string()
         };
 
-        // Build actions section
-        let actions_text = if available_actions.is_empty() {
-            "No actions available.".to_string()
-        } else {
-            let mut text = String::from("Available actions:\n\n");
-            for (i, action) in available_actions.iter().enumerate() {
-                text.push_str(&format!("{}. {}\n\n", i + 1, action.to_prompt_text()));
+        // Build actions section (will be filtered later based on scripting availability)
+        let actions_text_fn = |actions: &[ActionDefinition]| {
+            if actions.is_empty() {
+                "No actions available.".to_string()
+            } else {
+                let mut text = String::from("Available actions:\n\n");
+                for (i, action) in actions.iter().enumerate() {
+                    text.push_str(&format!("{}. {}\n\n", i + 1, action.to_prompt_text()));
+                }
+                text
             }
-            text
         };
 
         // Conditionally generate base stack documentation
@@ -217,19 +219,48 @@ Response (JSON only):"#,
 
         // Get scripting environment information
         let scripting_env = state.get_scripting_env().await;
+        let has_scripting = scripting_env.format_available() != "None";
+
+        // Filter actions based on scripting availability
+        let filtered_actions = if has_scripting {
+            available_actions
+        } else {
+            // Remove script-related actions and parameters when no scripting environments available
+            available_actions
+                .into_iter()
+                .filter_map(|mut action| {
+                    if action.name == "update_script" {
+                        // Remove update_script action entirely when no scripting available
+                        None
+                    } else if action.name == "open_server" {
+                        // Remove script parameters from open_server
+                        action.parameters.retain(|p| {
+                            !matches!(
+                                p.name.as_str(),
+                                "script_language" | "script_path" | "script_inline" | "script_handles"
+                            )
+                        });
+                        Some(action)
+                    } else {
+                        Some(action)
+                    }
+                })
+                .collect()
+        };
 
         // Note: Event types are no longer included in general prompts.
         // When using call_llm_with_event_type(), the EventType's to_prompt_description()
         // is used directly as the event description, which includes all event-specific actions.
         let event_types_info = String::new();
 
-        let scripting_info = if include_base_stacks {
-            // Only show detailed scripting info when starting servers
+        // Build final actions text after filtering
+        let actions_text = actions_text_fn(&filtered_actions);
+
+        let scripting_info = if include_base_stacks && has_scripting {
             let available = scripting_env.format_available();
-            if available != "None" {
-                // Script template will be shown in protocol-specific contexts
-                // when call_llm_with_event_type() is used
-                let script_template = String::new();
+            // Script template will be shown in protocol-specific contexts
+            // when call_llm_with_event_type() is used
+            let script_template = String::new();
 
                 format!(
                     r#"
@@ -285,13 +316,10 @@ Scripts can return {{"fallback_to_llm": true}} to delegate complex cases to LLM.
 You can update scripts on running servers using the update_script action.
 {}
 "#,
-                    crate::scripting::SCRIPT_TIMEOUT_SECS,
-                    available,
-                    script_template
-                )
-            } else {
-                String::new()
-            }
+                available,
+                crate::scripting::SCRIPT_TIMEOUT_SECS,
+                script_template
+            )
         } else {
             String::new()
         };
