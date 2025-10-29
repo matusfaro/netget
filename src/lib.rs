@@ -4,10 +4,10 @@
 //! and act as a server or client for various protocols (TCP, FTP, etc.).
 
 pub mod cli;
-pub mod ui;
+pub mod events;
+pub mod llm;
 pub mod network;
 pub mod protocol;
-pub mod state;
-pub mod llm;
-pub mod events;
 pub mod settings;
+pub mod state;
+pub mod ui;

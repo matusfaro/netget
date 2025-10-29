@@ -7,7 +7,7 @@ use tracing::info;
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
 use crate::llm::OllamaClient;
-use crate::llm::{ActionResponse, CommonAction, execute_actions, ProtocolActions};
+use crate::llm::{execute_actions, CommonAction, ProtocolActions};
 use crate::protocol::BaseStack;
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
@@ -24,19 +24,14 @@ pub struct EventHandler {
 impl EventHandler {
     /// Create a new event handler
     pub fn new(state: AppState, llm: OllamaClient) -> Self {
-        Self {
-            state,
-            llm,
-        }
+        Self { state, llm }
     }
 
     /// Handle an application event
     /// Returns Ok(true) if the application should quit
     pub async fn handle_event(&mut self, event: AppEvent, ui: &mut App) -> Result<bool> {
         match event {
-            AppEvent::UserCommand(cmd) => {
-                self.handle_user_command(cmd, ui).await
-            }
+            AppEvent::UserCommand(cmd) => self.handle_user_command(cmd, ui).await,
             AppEvent::Tick => {
                 // Periodic updates can go here
                 Ok(false)
@@ -73,7 +68,9 @@ impl EventHandler {
                 if let Some(log_level) = LogLevel::from_str(&level) {
                     ui.set_log_level(log_level);
                 } else {
-                    ui.add_llm_message(format!("Invalid log level: {level}. Use: error, warn, info, debug, or trace"));
+                    ui.add_llm_message(format!(
+                        "Invalid log level: {level}. Use: error, warn, info, debug, or trace"
+                    ));
                 }
                 Ok(false)
             }
@@ -83,18 +80,21 @@ impl EventHandler {
             }
             UserCommand::UnknownSlashCommand { command } => {
                 ui.add_llm_message(format!("Unknown command: {command}"));
-                ui.add_llm_message("Available commands: /status, /model [name], /log [level], /quit".to_string());
+                ui.add_llm_message(
+                    "Available commands: /status, /model [name], /log [level], /quit".to_string(),
+                );
                 Ok(false)
             }
             UserCommand::Interpret { input: _ } => {
-                ui.add_llm_message("Internal error: Interpret command should use async path".to_string());
+                ui.add_llm_message(
+                    "Internal error: Interpret command should use async path".to_string(),
+                );
                 Ok(false)
             }
         }
     }
 
-
-    /// Handle interpret command using NEW action-based system
+    /// Handle interpret command using NEW action-based system with multi-turn tool support
     /// This method can be spawned in a task without blocking the UI
     pub async fn handle_interpret_with_actions(
         &mut self,
@@ -113,56 +113,65 @@ impl EventHandler {
             Vec::new()
         };
 
-        // Build prompt with new action system
-        let prompt = PromptBuilder::build_user_input_action_prompt(
-            &self.state,
-            &input,
-            protocol_async_actions,
-        ).await;
         let model = self.state.get_ollama_model().await;
 
         // Create LLM client with status channel for trace logs
         let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());
 
-        // Call LLM
-        match llm_with_status.generate(&model, &prompt).await {
-            Ok(llm_output) => {
-                // Parse action response
-                match ActionResponse::from_str(&llm_output) {
-                    Ok(action_response) => {
-                        // Execute actions
-                        // Convert protocol reference properly
-                        let protocol_ref: Option<&dyn ProtocolActions> = protocol.as_ref()
-                            .map(|p| p.as_ref() as &dyn ProtocolActions);
+        // Use multi-turn loop with tools
+        let state_clone = self.state.clone();
+        let input_clone = input.clone();
+        let actions_clone = protocol_async_actions.clone();
 
-                        match execute_actions(
-                            action_response.actions.clone(),
-                            &self.state,
-                            protocol_ref,
-                        ).await {
-                            Ok(result) => {
-                                // Display messages
-                                for msg in result.messages {
-                                    let _ = status_tx.send(msg);
-                                }
+        let actions = llm_with_status
+            .generate_with_tools(
+                &model,
+                || {
+                    let state = state_clone.clone();
+                    let input = input_clone.clone();
+                    let protocol_actions = actions_clone.clone();
+                    async move {
+                        PromptBuilder::build_user_input_action_prompt(
+                            &state,
+                            &input,
+                            protocol_actions,
+                        )
+                        .await
+                    }
+                },
+                5, // max 5 iterations
+            )
+            .await;
 
-                                // Handle server management actions separately
-                                for action_value in &action_response.actions {
-                                    if let Ok(common_action) = CommonAction::from_json(action_value) {
-                                        if let Err(e) = self.execute_server_management_action(common_action, &status_tx).await {
-                                            let _ = status_tx.send(format!("[ERROR] Error executing action: {e}"));
-                                        }
-                                    }
+        match actions {
+            Ok(action_values) => {
+                // Execute all collected actions
+                let protocol_ref: Option<&dyn ProtocolActions> = protocol
+                    .as_ref()
+                    .map(|p| p.as_ref() as &dyn ProtocolActions);
+
+                match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
+                    Ok(result) => {
+                        // Display messages
+                        for msg in result.messages {
+                            let _ = status_tx.send(msg);
+                        }
+
+                        // Handle server management actions separately
+                        for action_value in &action_values {
+                            if let Ok(common_action) = CommonAction::from_json(action_value) {
+                                if let Err(e) = self
+                                    .execute_server_management_action(common_action, &status_tx)
+                                    .await
+                                {
+                                    let _ = status_tx
+                                        .send(format!("[ERROR] Error executing action: {e}"));
                                 }
-                            }
-                            Err(e) => {
-                                let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response as action array: {e}"));
-                        let _ = status_tx.send("[ERROR] The LLM must respond with {{\"actions\": [...]}}".to_string());
+                        let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
                     }
                 }
             }
@@ -181,12 +190,18 @@ impl EventHandler {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match action {
-            CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction, startup_params } => {
+            CommonAction::OpenServer {
+                port,
+                base_stack,
+                send_first: _,
+                initial_memory,
+                instruction,
+                startup_params,
+            } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
                 // Parse base stack
-                let stack = BaseStack::from_str(&base_stack)
-                    .unwrap_or(BaseStack::Tcp);
+                let stack = BaseStack::from_str(&base_stack).unwrap_or(BaseStack::Tcp);
 
                 // Create a new server instance
                 let mut server = ServerInstance::new(
@@ -209,11 +224,23 @@ impl EventHandler {
                 // Add server to state (this assigns the real ID)
                 let server_id = self.state.add_server(server).await;
 
-                let _ = status_tx.send(format!("[SERVER] Opening server #{} on port {} with stack {}", server_id.as_u32(), port, stack));
+                let _ = status_tx.send(format!(
+                    "[SERVER] Opening server #{} on port {} with stack {}",
+                    server_id.as_u32(),
+                    port,
+                    stack
+                ));
 
                 // Spawn the server directly (no more message passing!)
-                if let Err(e) = server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx).await {
-                    let _ = status_tx.send(format!("[ERROR] Failed to start server #{}: {}", server_id.as_u32(), e));
+                if let Err(e) =
+                    server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx)
+                        .await
+                {
+                    let _ = status_tx.send(format!(
+                        "[ERROR] Failed to start server #{}: {}",
+                        server_id.as_u32(),
+                        e
+                    ));
                 }
             }
             CommonAction::CloseServer { server_id } => {
@@ -229,13 +256,18 @@ impl EventHandler {
 
                 for server_id in server_ids {
                     // Mark server as Stopped instead of removing it (reaper will clean up after 10s)
-                    self.state.update_server_status(server_id, ServerStatus::Stopped).await;
-                    let _ = status_tx.send(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
+                    self.state
+                        .update_server_status(server_id, ServerStatus::Stopped)
+                        .await;
+                    let _ =
+                        status_tx.send(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
                 }
 
                 // Check if all servers are stopped/error
-                let all_stopped = self.state.get_all_servers().await.iter()
-                    .all(|s| matches!(s.status, ServerStatus::Stopped | ServerStatus::Error(_)));
+                let all_stopped =
+                    self.state.get_all_servers().await.iter().all(|s| {
+                        matches!(s.status, ServerStatus::Stopped | ServerStatus::Error(_))
+                    });
 
                 if all_stopped {
                     self.state.set_mode(Mode::Idle).await;
@@ -246,10 +278,17 @@ impl EventHandler {
             CommonAction::UpdateInstruction { instruction } => {
                 // Update instruction for first server (TODO: support targeting specific server ID)
                 if let Some(server_id) = self.state.get_first_server_id().await {
-                    self.state.set_instruction(server_id, instruction.clone()).await;
-                    let _ = status_tx.send(format!("[INFO] Server #{} instruction: {}", server_id.as_u32(), instruction));
+                    self.state
+                        .set_instruction(server_id, instruction.clone())
+                        .await;
+                    let _ = status_tx.send(format!(
+                        "[INFO] Server #{} instruction: {}",
+                        server_id.as_u32(),
+                        instruction
+                    ));
                 } else {
-                    let _ = status_tx.send("[WARN] No server to update instruction for".to_string());
+                    let _ =
+                        status_tx.send("[WARN] No server to update instruction for".to_string());
                 }
             }
             CommonAction::ChangeModel { model } => {
@@ -278,8 +317,6 @@ impl EventHandler {
         Ok(())
     }
 
-
-
     async fn handle_quit(&mut self, ui: &mut App) -> Result<()> {
         ui.add_llm_message("Quitting...".to_string());
         // The main event loop will handle the actual quit
@@ -294,7 +331,11 @@ impl EventHandler {
         if let Some(server_id) = self.state.get_first_server_id().await {
             if let Some(instruction) = self.state.get_instruction(server_id).await {
                 if !instruction.is_empty() {
-                    ui.add_llm_message(format!("Server #{} instruction: {}", server_id.as_u32(), instruction));
+                    ui.add_llm_message(format!(
+                        "Server #{} instruction: {}",
+                        server_id.as_u32(),
+                        instruction
+                    ));
                 }
             }
         } else {

@@ -9,9 +9,7 @@ use tracing::{debug, error, info};
 #[cfg(feature = "smtp")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "smtp")]
-use crate::llm::prompt::PromptBuilder;
-#[cfg(feature = "smtp")]
-use crate::llm::{ActionResponse, execute_actions, ProtocolActions, ActionResult};
+use crate::llm::ActionResult;
 #[cfg(feature = "smtp")]
 use crate::network::SmtpProtocol;
 #[cfg(feature = "smtp")]
@@ -28,9 +26,10 @@ impl SmtpServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::network::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("SMTP server (action-based) listening on {}", local_addr);
 
@@ -41,7 +40,8 @@ impl SmtpServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         debug!("SMTP connection from {}", remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] SMTP connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[DEBUG] SMTP connection from {}", remote_addr));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -51,13 +51,6 @@ impl SmtpServer {
                         tokio::spawn(async move {
                             let model = state_clone.get_ollama_model().await;
 
-                            // Send greeting
-                            let greeting_prompt = PromptBuilder::build_network_event_action_prompt(
-                                &state_clone,
-                                "SMTP connection established. Send greeting banner.",
-                                protocol_clone.get_sync_actions()
-                            ).await;
-
                             let mut session = SmtpSession {
                                 stream,
                                 llm_client: llm_clone.clone(),
@@ -65,23 +58,27 @@ impl SmtpServer {
                                 status_tx: status_clone.clone(),
                                 protocol: protocol_clone.clone(),
                                 model: model.clone(),
+                                server_id,
                             };
 
-                            // Send initial greeting
-                            if let Ok(llm_output) = llm_clone.generate(&model, &greeting_prompt).await {
-                                if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                                    if let Ok(result) = execute_actions(
-                                        action_response.actions,
-                                        &state_clone,
-                                        Some(protocol_clone.as_ref())
-                                    ).await {
-                                        for protocol_result in result.protocol_results {
-                                            if let ActionResult::Output(data) = protocol_result {
-                                                use tokio::io::AsyncWriteExt;
-                                                let _ = session.stream.write_all(&data).await;
-                                                let _ = session.stream.flush().await;
-                                            }
-                                        }
+                            // Send initial greeting using unified action helper
+                            let greeting_result = crate::llm::call_llm_with_actions(
+                                &llm_clone,
+                                &state_clone,
+                                server_id,
+                                "SMTP connection established. Send greeting banner.",
+                                serde_json::json!({}),
+                                Some(protocol_clone.as_ref()),
+                                vec![],
+                            )
+                            .await;
+
+                            if let Ok(result) = greeting_result {
+                                for protocol_result in result.protocol_results {
+                                    if let ActionResult::Output(data) = protocol_result {
+                                        use tokio::io::AsyncWriteExt;
+                                        let _ = session.stream.write_all(&data).await;
+                                        let _ = session.stream.flush().await;
                                     }
                                 }
                             }
@@ -89,7 +86,8 @@ impl SmtpServer {
                             // Handle SMTP session
                             if let Err(e) = session.handle().await {
                                 error!("SMTP session error: {}", e);
-                                let _ = status_clone.send(format!("[ERROR] SMTP session error: {}", e));
+                                let _ =
+                                    status_clone.send(format!("[ERROR] SMTP session error: {}", e));
                             }
                         });
                     }
@@ -113,6 +111,7 @@ struct SmtpSession {
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<SmtpProtocol>,
     model: String,
+    server_id: crate::state::ServerId,
 }
 
 #[cfg(feature = "smtp")]
@@ -133,40 +132,44 @@ impl SmtpSession {
 
             let command = line.trim();
             debug!("SMTP received: {}", command);
-            let _ = self.status_tx.send(format!("[DEBUG] SMTP received: {}", command));
+            let _ = self
+                .status_tx
+                .send(format!("[DEBUG] SMTP received: {}", command));
 
-            // Build prompt with command context
+            // Call LLM using unified action helper
             let event_description = format!("SMTP command: {}", command);
-            let prompt = PromptBuilder::build_network_event_action_prompt(
+            let context = serde_json::json!({
+                "command": command,
+            });
+
+            let result = crate::llm::call_llm_with_actions(
+                &self.llm_client,
                 &self.app_state,
+                self.server_id,
                 &event_description,
-                self.protocol.get_sync_actions()
-            ).await;
+                context,
+                Some(self.protocol.as_ref()),
+                vec![],
+            )
+            .await;
 
-            // Get LLM response
-            if let Ok(llm_output) = self.llm_client.generate(&self.model, &prompt).await {
-                if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                    if let Ok(result) = execute_actions(
-                        action_response.actions,
-                        &self.app_state,
-                        Some(self.protocol.as_ref())
-                    ).await {
-                        for protocol_result in result.protocol_results {
-                            match protocol_result {
-                                ActionResult::Output(data) => {
-                                    write_half.write_all(&data).await?;
-                                    write_half.flush().await?;
+            if let Ok(result) = result {
+                for protocol_result in result.protocol_results {
+                    match protocol_result {
+                        ActionResult::Output(data) => {
+                            write_half.write_all(&data).await?;
+                            write_half.flush().await?;
 
-                                    let response = String::from_utf8_lossy(&data);
-                                    debug!("SMTP sent: {}", response.trim());
-                                    let _ = self.status_tx.send(format!("[DEBUG] SMTP sent: {}", response.trim()));
-                                }
-                                ActionResult::CloseConnection => {
-                                    return Ok(());
-                                }
-                                _ => {}
-                            }
+                            let response = String::from_utf8_lossy(&data);
+                            debug!("SMTP sent: {}", response.trim());
+                            let _ = self
+                                .status_tx
+                                .send(format!("[DEBUG] SMTP sent: {}", response.trim()));
                         }
+                        ActionResult::CloseConnection => {
+                            return Ok(());
+                        }
+                        _ => {}
                     }
                 }
             }

@@ -156,9 +156,7 @@ async fn execute_common_action(
 ///
 /// These actions cannot be executed directly by the executor and must
 /// be handled by the caller (usually the user command handler in main.rs)
-pub fn extract_server_management_actions(
-    actions: &[serde_json::Value],
-) -> Vec<CommonAction> {
+pub fn extract_server_management_actions(actions: &[serde_json::Value]) -> Vec<CommonAction> {
     actions
         .iter()
         .filter_map(|action| {

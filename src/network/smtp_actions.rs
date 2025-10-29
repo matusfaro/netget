@@ -55,11 +55,7 @@ impl SmtpProtocol {
         let extensions = action
             .get("extensions")
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
             .unwrap_or_else(|| vec!["8BITMIME", "SIZE 10240000"]);
 
         let mut response = format!("250-{}\r\n", hostname);
@@ -83,10 +79,7 @@ impl SmtpProtocol {
     }
 
     fn execute_send_smtp_error(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let code = action
-            .get("code")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(500);
+        let code = action.get("code").and_then(|v| v.as_u64()).unwrap_or(500);
 
         let message = action
             .get("message")

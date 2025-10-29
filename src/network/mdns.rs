@@ -11,7 +11,7 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "mdns")]
 use crate::llm::prompt::PromptBuilder;
 #[cfg(feature = "mdns")]
-use crate::llm::{ActionResponse, ProtocolActions};
+use crate::llm::ProtocolActions;
 #[cfg(feature = "mdns")]
 use crate::network::MdnsProtocol;
 #[cfg(feature = "mdns")]
@@ -37,86 +37,107 @@ impl MdnsServer {
 
         let protocol = Arc::new(MdnsProtocol::new());
 
-        // Get LLM to decide what services to advertise
-        let model = app_state.get_ollama_model().await;
-        let prompt = PromptBuilder::build_user_input_action_prompt(
-            &app_state,
-            "mDNS server starting. Register services to advertise on the network.",
-            protocol.get_async_actions(&app_state)
-        ).await;
-
         // Create mDNS daemon
-        let mdns = ServiceDaemon::new().map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
+        let mdns = ServiceDaemon::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
         info!("mDNS daemon created");
 
-        // Get LLM's service registration instructions
-        if let Ok(llm_output) = llm_client.generate(&model, &prompt).await {
-            if let Ok(action_response) = ActionResponse::from_str(&llm_output) {
-                // Execute actions to register services
-                for action in action_response.actions {
-                    if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
-                        if action_type == "register_mdns_service" {
-                            // Extract service parameters
-                            let service_type = action.get("service_type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("_http._tcp.local.");
-                            let instance_name = action.get("instance_name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("MyService");
-                            let port = action.get("port")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(8080) as u16;
+        // Get LLM to decide what services to advertise using multi-turn system
+        let model = app_state.get_ollama_model().await;
+        let app_state_clone = app_state.clone();
+        let protocol_clone = protocol.clone();
 
-                            let properties = action.get("properties")
-                                .and_then(|v| v.as_object())
-                                .map(|obj| {
-                                    obj.iter()
-                                        .filter_map(|(k, v)| {
-                                            v.as_str().map(|s| (k.as_str(), s))
-                                        })
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
+        let actions = llm_client
+            .generate_with_tools(
+                &model,
+                || {
+                    let state = app_state_clone.clone();
+                    let proto = protocol_clone.clone();
+                    async move {
+                        PromptBuilder::build_user_input_action_prompt(
+                            &state,
+                            "mDNS server starting. Register services to advertise on the network.",
+                            proto.get_async_actions(&state),
+                        )
+                        .await
+                    }
+                },
+                5, // max 5 iterations for tool calls
+            )
+            .await;
 
-                            // Get local IP (simplified - use first non-loopback interface)
-                            let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-                            let host_name = format!("{}.local.", instance_name.replace(" ", "-"));
+        // Process actions to register services
+        if let Ok(action_values) = actions {
+            for action in action_values {
+                if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
+                    if action_type == "register_mdns_service" {
+                        // Extract service parameters
+                        let service_type = action
+                            .get("service_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("_http._tcp.local.");
+                        let instance_name = action
+                            .get("instance_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("MyService");
+                        let port =
+                            action.get("port").and_then(|v| v.as_u64()).unwrap_or(8080) as u16;
 
-                            // Create ServiceInfo
-                            match ServiceInfo::new(
-                                service_type,
-                                instance_name,
-                                &host_name,
-                                &local_ip,
-                                port,
-                                &properties[..]
-                            ) {
-                                Ok(service_info) => {
-                                    // Register service
-                                    match mdns.register(service_info) {
-                                        Ok(_) => {
-                                            info!("mDNS registered service: {} ({}:{})", instance_name, local_ip, port);
-                                            let _ = status_tx.send(format!(
-                                                "[INFO] → mDNS registered service: {} ({}:{})",
-                                                instance_name, local_ip, port
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to register mDNS service: {}", e);
-                                            let _ = status_tx.send(format!("[ERROR] ✗ Failed to register mDNS service: {}", e));
-                                        }
+                        let properties = action
+                            .get("properties")
+                            .and_then(|v| v.as_object())
+                            .map(|obj| {
+                                obj.iter()
+                                    .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+
+                        // Get local IP (simplified - use first non-loopback interface)
+                        let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+                        let host_name = format!("{}.local.", instance_name.replace(" ", "-"));
+
+                        // Create ServiceInfo
+                        match ServiceInfo::new(
+                            service_type,
+                            instance_name,
+                            &host_name,
+                            &local_ip,
+                            port,
+                            &properties[..],
+                        ) {
+                            Ok(service_info) => {
+                                // Register service
+                                match mdns.register(service_info) {
+                                    Ok(_) => {
+                                        info!(
+                                            "mDNS registered service: {} ({}:{})",
+                                            instance_name, local_ip, port
+                                        );
+                                        let _ = status_tx.send(format!(
+                                            "[INFO] → mDNS registered service: {} ({}:{})",
+                                            instance_name, local_ip, port
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to register mDNS service: {}", e);
+                                        let _ = status_tx.send(format!(
+                                            "[ERROR] ✗ Failed to register mDNS service: {}",
+                                            e
+                                        ));
                                     }
                                 }
-                                Err(e) => {
-                                    error!("Failed to create ServiceInfo: {}", e);
-                                    let _ = status_tx.send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
-                                }
                             }
-                        } else if action_type == "show_message" {
-                            if let Some(message) = action.get("message").and_then(|v| v.as_str()) {
-                                info!("{}", message);
-                                let _ = status_tx.send(format!("[INFO] {}", message));
+                            Err(e) => {
+                                error!("Failed to create ServiceInfo: {}", e);
+                                let _ = status_tx
+                                    .send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
                             }
+                        }
+                    } else if action_type == "show_message" {
+                        if let Some(message) = action.get("message").and_then(|v| v.as_str()) {
+                            info!("{}", message);
+                            let _ = status_tx.send(format!("[INFO] {}", message));
                         }
                     }
                 }

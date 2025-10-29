@@ -4,8 +4,8 @@
 //! LLM responses, connection information, and status updates.
 
 pub mod app;
-pub mod layout;
 pub mod events;
+pub mod layout;
 
 pub use app::{App, Focus};
 pub use events::UiEvent;

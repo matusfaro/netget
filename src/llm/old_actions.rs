@@ -22,25 +22,23 @@ pub struct CommandInterpretation {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     /// Update the current instruction
-    UpdateInstruction {
-        instruction: String,
-    },
+    UpdateInstruction { instruction: String },
 
     /// Open a server connection
     OpenServer {
         port: u16,
-        base_stack: String,  // Will be parsed to BaseStack
+        base_stack: String, // Will be parsed to BaseStack
         #[serde(default)]
-        protocol: Option<String>,  // For TcpRaw stack
+        protocol: Option<String>, // For TcpRaw stack
         #[serde(default)]
-        send_first: bool,  // True if server sends data first on connect (e.g., FTP, SMTP), false if server waits for client request (e.g., HTTP)
+        send_first: bool, // True if server sends data first on connect (e.g., FTP, SMTP), false if server waits for client request (e.g., HTTP)
         #[serde(default)]
-        initial_memory: Option<String>,  // Initial memory to store for this server
+        initial_memory: Option<String>, // Initial memory to store for this server
     },
 
     /// Open a client connection
     OpenClient {
-        address: String,  // Will be parsed to SocketAddr
+        address: String, // Will be parsed to SocketAddr
         base_stack: String,
         #[serde(default)]
         protocol: Option<String>,
@@ -49,24 +47,21 @@ pub enum Action {
     /// Close a specific connection
     CloseConnection {
         #[serde(default)]
-        connection_id: Option<String>,  // If None, close all
+        connection_id: Option<String>, // If None, close all
     },
 
     /// Display a message to the user
-    ShowMessage {
-        message: String,
-    },
+    ShowMessage { message: String },
 
     /// Change the Ollama model
-    ChangeModel {
-        model: String,
-    },
+    ChangeModel { model: String },
 }
 
 impl CommandInterpretation {
     /// Parse from LLM JSON response
     pub fn from_str(s: &str) -> anyhow::Result<Self> {
-        serde_json::from_str(s).map_err(|e| anyhow::anyhow!("Failed to parse command interpretation: {}", e))
+        serde_json::from_str(s)
+            .map_err(|e| anyhow::anyhow!("Failed to parse command interpretation: {}", e))
     }
 }
 

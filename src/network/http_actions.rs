@@ -28,10 +28,7 @@ impl ProtocolActions for HttpProtocol {
         vec![send_http_response_action()]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -50,10 +47,7 @@ impl ProtocolActions for HttpProtocol {
 
 impl HttpProtocol {
     /// Execute send_http_response sync action
-    fn execute_send_http_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_http_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let status = action
             .get("status")
             .and_then(|v| v.as_u64())

@@ -5,7 +5,7 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::net::Ipv4Addr;
 
@@ -20,10 +20,10 @@ pub struct DhcpProtocol {
 #[cfg(feature = "dhcp")]
 #[derive(Clone)]
 pub struct DhcpRequestContext {
-    pub xid: u32,              // Transaction ID
-    pub chaddr: Vec<u8>,       // Client MAC address
+    pub xid: u32,        // Transaction ID
+    pub chaddr: Vec<u8>, // Client MAC address
     pub message_type: v4::MessageType,
-    pub ciaddr: Ipv4Addr,      // Client IP address (if set)
+    pub ciaddr: Ipv4Addr,               // Client IP address (if set)
     pub requested_ip: Option<Ipv4Addr>, // Requested IP from options
 }
 
@@ -56,10 +56,7 @@ impl ProtocolActions for DhcpProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -83,31 +80,40 @@ impl ProtocolActions for DhcpProtocol {
 impl DhcpProtocol {
     #[cfg(feature = "dhcp")]
     fn execute_send_dhcp_offer(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let context = self.request_context.lock().unwrap().clone()
+        let context = self
+            .request_context
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or_else(|| anyhow!("No DHCP request context available"))?;
 
         // Extract parameters from action
-        let offered_ip = action.get("offered_ip")
+        let offered_ip = action
+            .get("offered_ip")
             .and_then(|v| v.as_str())
             .context("Missing 'offered_ip' parameter")?
             .parse::<Ipv4Addr>()?;
 
-        let server_ip = action.get("server_ip")
+        let server_ip = action
+            .get("server_ip")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0")
             .parse::<Ipv4Addr>()?;
 
-        let subnet_mask = action.get("subnet_mask")
+        let subnet_mask = action
+            .get("subnet_mask")
             .and_then(|v| v.as_str())
             .map(|s| s.parse::<Ipv4Addr>())
             .transpose()?;
 
-        let router = action.get("router")
+        let router = action
+            .get("router")
             .and_then(|v| v.as_str())
             .map(|s| s.parse::<Ipv4Addr>())
             .transpose()?;
 
-        let dns_servers = action.get("dns_servers")
+        let dns_servers = action
+            .get("dns_servers")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -116,7 +122,8 @@ impl DhcpProtocol {
                     .collect::<Vec<_>>()
             });
 
-        let lease_time = action.get("lease_time")
+        let lease_time = action
+            .get("lease_time")
             .and_then(|v| v.as_u64())
             .unwrap_or(86400) as u32;
 
@@ -130,9 +137,12 @@ impl DhcpProtocol {
             .set_chaddr(&context.chaddr);
 
         // Add DHCP options
-        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Offer));
-        msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server_ip));
-        msg.opts_mut().insert(v4::DhcpOption::AddressLeaseTime(lease_time));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::MessageType(v4::MessageType::Offer));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::ServerIdentifier(server_ip));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::AddressLeaseTime(lease_time));
 
         if let Some(mask) = subnet_mask {
             msg.opts_mut().insert(v4::DhcpOption::SubnetMask(mask));
@@ -158,31 +168,40 @@ impl DhcpProtocol {
 
     #[cfg(feature = "dhcp")]
     fn execute_send_dhcp_ack(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let context = self.request_context.lock().unwrap().clone()
+        let context = self
+            .request_context
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or_else(|| anyhow!("No DHCP request context available"))?;
 
         // Extract parameters
-        let assigned_ip = action.get("assigned_ip")
+        let assigned_ip = action
+            .get("assigned_ip")
             .and_then(|v| v.as_str())
             .context("Missing 'assigned_ip' parameter")?
             .parse::<Ipv4Addr>()?;
 
-        let server_ip = action.get("server_ip")
+        let server_ip = action
+            .get("server_ip")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0")
             .parse::<Ipv4Addr>()?;
 
-        let subnet_mask = action.get("subnet_mask")
+        let subnet_mask = action
+            .get("subnet_mask")
             .and_then(|v| v.as_str())
             .map(|s| s.parse::<Ipv4Addr>())
             .transpose()?;
 
-        let router = action.get("router")
+        let router = action
+            .get("router")
             .and_then(|v| v.as_str())
             .map(|s| s.parse::<Ipv4Addr>())
             .transpose()?;
 
-        let dns_servers = action.get("dns_servers")
+        let dns_servers = action
+            .get("dns_servers")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -191,7 +210,8 @@ impl DhcpProtocol {
                     .collect::<Vec<_>>()
             });
 
-        let lease_time = action.get("lease_time")
+        let lease_time = action
+            .get("lease_time")
             .and_then(|v| v.as_u64())
             .unwrap_or(86400) as u32;
 
@@ -205,9 +225,12 @@ impl DhcpProtocol {
             .set_chaddr(&context.chaddr);
 
         // Add DHCP options
-        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Ack));
-        msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server_ip));
-        msg.opts_mut().insert(v4::DhcpOption::AddressLeaseTime(lease_time));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::MessageType(v4::MessageType::Ack));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::ServerIdentifier(server_ip));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::AddressLeaseTime(lease_time));
 
         if let Some(mask) = subnet_mask {
             msg.opts_mut().insert(v4::DhcpOption::SubnetMask(mask));
@@ -233,10 +256,15 @@ impl DhcpProtocol {
 
     #[cfg(feature = "dhcp")]
     fn execute_send_dhcp_nak(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let context = self.request_context.lock().unwrap().clone()
+        let context = self
+            .request_context
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or_else(|| anyhow!("No DHCP request context available"))?;
 
-        let server_ip = action.get("server_ip")
+        let server_ip = action
+            .get("server_ip")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0")
             .parse::<Ipv4Addr>()?;
@@ -250,12 +278,15 @@ impl DhcpProtocol {
             .set_chaddr(&context.chaddr);
 
         // Add DHCP options
-        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Nak));
-        msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server_ip));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::MessageType(v4::MessageType::Nak));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::ServerIdentifier(server_ip));
 
         // Optional message
         if let Some(message) = action.get("message").and_then(|v| v.as_str()) {
-            msg.opts_mut().insert(v4::DhcpOption::Message(message.to_string()));
+            msg.opts_mut()
+                .insert(v4::DhcpOption::Message(message.to_string()));
         }
 
         // Encode to bytes
@@ -281,10 +312,7 @@ impl DhcpProtocol {
         Err(anyhow!("DHCP feature not enabled"))
     }
 
-    fn execute_send_dhcp_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_dhcp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
@@ -305,12 +333,15 @@ impl DhcpProtocol {
 fn send_dhcp_offer_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dhcp_offer".to_string(),
-        description: "Send DHCP OFFER message in response to DISCOVER. Proposes IP configuration to client.".to_string(),
+        description:
+            "Send DHCP OFFER message in response to DISCOVER. Proposes IP configuration to client."
+                .to_string(),
         parameters: vec![
             Parameter {
                 name: "offered_ip".to_string(),
                 type_hint: "string".to_string(),
-                description: "IP address to offer to the client (e.g., '192.168.1.100')".to_string(),
+                description: "IP address to offer to the client (e.g., '192.168.1.100')"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -358,12 +389,15 @@ fn send_dhcp_offer_action() -> ActionDefinition {
 fn send_dhcp_ack_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dhcp_ack".to_string(),
-        description: "Send DHCP ACK message in response to REQUEST. Confirms IP assignment to client.".to_string(),
+        description:
+            "Send DHCP ACK message in response to REQUEST. Confirms IP assignment to client."
+                .to_string(),
         parameters: vec![
             Parameter {
                 name: "assigned_ip".to_string(),
                 type_hint: "string".to_string(),
-                description: "IP address to assign to the client (e.g., '192.168.1.100')".to_string(),
+                description: "IP address to assign to the client (e.g., '192.168.1.100')"
+                    .to_string(),
                 required: true,
             },
             Parameter {

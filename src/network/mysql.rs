@@ -115,7 +115,9 @@ impl MysqlServer {
                         tokio::spawn(async move {
                             // MySQL requires split read/write streams
                             let (reader, writer) = tokio::io::split(stream);
-                            if let Err(e) = AsyncMysqlIntermediary::run_on(handler, reader, writer).await {
+                            if let Err(e) =
+                                AsyncMysqlIntermediary::run_on(handler, reader, writer).await
+                            {
                                 error!("MySQL connection error: {:?}", e);
                             }
                         });
@@ -294,7 +296,9 @@ impl MysqlHandler {
         });
 
         // Call LLM with actions
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(0));
         let event_description = format!("SQL Query: {}", query);
 
         let llm_result = crate::llm::call_llm_with_actions(
@@ -302,6 +306,7 @@ impl MysqlHandler {
             &self.app_state,
             server_id,
             &event_description,
+            serde_json::json!({}), // No structured context for now
             Some(self.protocol.as_ref()),
             vec![],
         )
@@ -316,12 +321,14 @@ impl MysqlHandler {
                             // Send result set
                             return send_result_set(results, columns, rows).await;
                         }
-                        ActionResult::MysqlError { error_code, message } => {
+                        ActionResult::MysqlError {
+                            error_code,
+                            message,
+                        } => {
                             // Send error - opensrv uses completed for errors too
-                            let _ = self.status_tx.send(format!(
-                                "[ERROR] MySQL error {}: {}",
-                                error_code, message
-                            ));
+                            let _ = self
+                                .status_tx
+                                .send(format!("[ERROR] MySQL error {}: {}", error_code, message));
                             return results
                                 .completed(OkResponse {
                                     header: 0,
@@ -438,10 +445,7 @@ async fn send_result_set<'a, W: tokio::io::AsyncWrite + Send + Unpin>(
     for row_data in &rows {
         if let Some(row_values) = row_data.as_array() {
             // Convert JSON values to Strings (simplified - ToMysqlValue is implemented for String)
-            let values: Vec<String> = row_values
-                .iter()
-                .map(|v| json_to_mysql_string(v))
-                .collect();
+            let values: Vec<String> = row_values.iter().map(|v| json_to_mysql_string(v)).collect();
 
             row_writer.write_row(values).await?;
         }
