@@ -62,6 +62,8 @@ pub struct StickyFooter {
     custom_status: Option<String>,
     /// Number of blank lines at the top of scroll region (created by footer expansions)
     blank_lines_buffer: u16,
+    /// Track last footer height to clear properly when shrinking
+    last_footer_height: u16,
 }
 
 impl StickyFooter {
@@ -82,6 +84,7 @@ impl StickyFooter {
             log_level: LogLevel::Info,
             custom_status: None,
             blank_lines_buffer: 0,
+            last_footer_height: 0,
         };
 
         // Calculate actual footer height
@@ -288,14 +291,34 @@ impl StickyFooter {
         let footer_height = self.calculate_footer_height();
         let footer_start = self.terminal_height.saturating_sub(footer_height);
 
-        // Clear footer area
-        for line_offset in 0..footer_height {
+        // If footer is expanding, push content up by printing newlines
+        if footer_height > self.last_footer_height {
+            let expansion = footer_height - self.last_footer_height;
+
+            // Move to last line of scroll region and print newlines to push content up
+            let scroll_height = self.scroll_region_height;
+            let last_scroll_line = scroll_height.saturating_sub(1);
+
+            execute!(stdout, cursor::MoveTo(0, last_scroll_line))?;
+            for _ in 0..expansion {
+                execute!(stdout, Print("\n"))?;
+            }
+        }
+
+        // Clear footer area - use max of old and new height to clear remnants when shrinking
+        let height_to_clear = footer_height.max(self.last_footer_height);
+        let clear_start = self.terminal_height.saturating_sub(height_to_clear);
+
+        for line_offset in 0..height_to_clear {
             execute!(
                 stdout,
-                cursor::MoveTo(0, footer_start + line_offset),
+                cursor::MoveTo(0, clear_start + line_offset),
                 Clear(ClearType::CurrentLine),
             )?;
         }
+
+        // Update tracked height for next render
+        self.last_footer_height = footer_height;
 
         // Render content based on mode
         let mut current_line = footer_start;
@@ -523,7 +546,7 @@ impl StickyFooter {
                 execute!(
                     stdout,
                     cursor::MoveTo(0, current_line),
-                    SetForegroundColor(Color::Yellow),
+                    SetForegroundColor(Color::Cyan),
                     Print(&line),
                     ResetColor,
                 )?;
@@ -636,33 +659,47 @@ impl StickyFooter {
 
         for (idx, line) in input_lines.iter().enumerate() {
             let prefix = if idx == 0 { "Input: " } else { "       " };
-            let text_with_prefix = format!("{}{}", prefix, line);
 
             if idx < cursor_row {
                 // Count wrapped lines for previous rows
+                let text_with_prefix = format!("{}{}", prefix, line);
                 let wrapped = self.wrap_text(&text_with_prefix);
                 visual_row += wrapped.len() as u16;
             } else if idx == cursor_row {
+                // Handle empty input as a special case - cursor goes right after prefix
+                if line.is_empty() && cursor_col == 0 {
+                    visual_col = prefix.len() as u16;
+                    break;
+                }
+
                 // Calculate position on current row
                 // cursor_col is position within the actual text (not including prefix)
                 // We need to add prefix length to get the visual column
                 let cursor_in_line = prefix.len() + cursor_col;
+                let text_with_prefix = format!("{}{}", prefix, line);
                 let wrapped = self.wrap_text(&text_with_prefix);
 
-                // Handle case where input is empty - cursor should be after "Input: "
-                if wrapped.is_empty() || (wrapped.len() == 1 && wrapped[0].is_empty()) {
+                // Handle case where wrapped is empty
+                if wrapped.is_empty() {
                     visual_col = prefix.len() as u16;
                 } else {
                     let mut char_count = 0;
+                    let mut found = false;
                     for (wrap_idx, wrapped_line) in wrapped.iter().enumerate() {
                         let line_end = char_count + wrapped_line.len();
                         if cursor_in_line <= line_end {
                             visual_row += wrap_idx as u16;
                             visual_col = (cursor_in_line - char_count) as u16;
+                            found = true;
                             break;
                         }
                         char_count = line_end;
                         visual_row += 1;
+                    }
+                    // Fallback: if cursor position wasn't found in wrapped lines,
+                    // place it at the end of the last line or after prefix
+                    if !found {
+                        visual_col = prefix.len() as u16;
                     }
                 }
                 break;

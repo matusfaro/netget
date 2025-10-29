@@ -27,6 +27,11 @@ impl EventHandler {
         Self { state, llm }
     }
 
+    /// List available models from Ollama
+    pub async fn list_models(&self) -> Result<Vec<String>> {
+        self.llm.list_models().await
+    }
+
     /// Handle an application event
     /// Returns Ok(true) if the application should quit
     pub async fn handle_event(&mut self, event: AppEvent, ui: &mut App) -> Result<bool> {
