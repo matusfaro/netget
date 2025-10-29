@@ -15,14 +15,15 @@ mod snapshot_util;
 
 const SNAPSHOT_DIR: &str = "tests/prompt/snapshots";
 
-/// Helper to create test app state with a proxy server
+/// Helper to create test app state with a proxy server (no scripting)
 async fn create_test_state_with_proxy() -> Arc<AppState> {
     let state = Arc::new(AppState::new());
 
-    // Set up mock scripting environment so we can see the scripting section in prompts
+    // Set up environment with NO scripting for proxy test
+    // (proxy test is about server management, not about starting new servers)
     let scripting_env = netget::scripting::ScriptingEnvironment {
-        python: Some("Python 3.11.0".to_string()),
-        javascript: Some("v20.0.0".to_string()),
+        python: None,
+        javascript: None,
     };
     state.set_scripting_env(scripting_env).await;
 
@@ -65,7 +66,7 @@ async fn test_user_input_prompt_proxy_server() {
         PromptBuilder::build_user_input_action_prompt(&state, user_input, protocol_actions).await;
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
+    snapshot_util::assert_snapshot("user_input_prompt_proxy_server", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks
     assert!(prompt.contains("Server #1") || prompt.contains("Server"));
@@ -73,6 +74,18 @@ async fn test_user_input_prompt_proxy_server() {
     assert!(prompt.contains("8080"));
     assert!(prompt.contains("Running"));
     assert!(prompt.contains(user_input));
+
+    // Should NOT have script references (no scripting environment)
+    assert!(!prompt.contains("python"), "Prompt should not contain 'python'");
+    assert!(!prompt.contains("Python"), "Prompt should not contain 'Python'");
+    assert!(!prompt.contains("javascript"), "Prompt should not contain 'javascript'");
+    assert!(!prompt.contains("JavaScript"), "Prompt should not contain 'JavaScript'");
+    assert!(!prompt.contains("Node.js"), "Prompt should not contain 'Node.js'");
+    assert!(!prompt.contains("script_language"), "Prompt should not contain 'script_language'");
+    assert!(!prompt.contains("script_inline"), "Prompt should not contain 'script_inline'");
+    assert!(!prompt.contains("script_path"), "Prompt should not contain 'script_path'");
+    assert!(!prompt.contains("script_handles"), "Prompt should not contain 'script_handles'");
+    assert!(!prompt.contains("update_script"), "Prompt should not contain 'update_script'");
 
     #[cfg(feature = "proxy")]
     {
@@ -98,8 +111,8 @@ async fn test_user_input_prompt() {
     let prompt =
         PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
 
-    // Assert snapshot (reuse the with_scripting snapshot as the main one)
-    snapshot_util::assert_snapshot("user_input_prompt_with_scripting", SNAPSHOT_DIR, &prompt);
+    // Assert snapshot
+    snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks - should include scripting info
     assert!(prompt.contains("SCRIPT-BASED RESPONSES") || prompt.contains("Available environments"));
@@ -130,16 +143,17 @@ async fn test_user_input_prompt_no_scripting() {
     snapshot_util::assert_snapshot("user_input_prompt_without_scripting", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks - should NOT include scripting info
-    assert!(!prompt.contains("SCRIPT-BASED RESPONSES"));
-    assert!(!prompt.contains("python"));
-    assert!(!prompt.contains("Python"));
-    assert!(!prompt.contains("javascript"));
-    assert!(!prompt.contains("JavaScript"));
-    assert!(!prompt.contains("Node.js"));
-    assert!(!prompt.contains("script_language"));
-    assert!(!prompt.contains("script_inline"));
-    assert!(!prompt.contains("script_path"));
-    assert!(!prompt.contains("script_handles"));
+    assert!(!prompt.contains("SCRIPT-BASED RESPONSES"), "Prompt should not contain 'SCRIPT-BASED RESPONSES'");
+    assert!(!prompt.contains("python"), "Prompt should not contain 'python'");
+    assert!(!prompt.contains("Python"), "Prompt should not contain 'Python'");
+    assert!(!prompt.contains("javascript"), "Prompt should not contain 'javascript'");
+    assert!(!prompt.contains("JavaScript"), "Prompt should not contain 'JavaScript'");
+    assert!(!prompt.contains("Node.js"), "Prompt should not contain 'Node.js'");
+    assert!(!prompt.contains("script_language"), "Prompt should not contain 'script_language'");
+    assert!(!prompt.contains("script_inline"), "Prompt should not contain 'script_inline'");
+    assert!(!prompt.contains("script_path"), "Prompt should not contain 'script_path'");
+    assert!(!prompt.contains("script_handles"), "Prompt should not contain 'script_handles'");
+    assert!(!prompt.contains("update_script"), "Prompt should not contain 'update_script'");
 
     // Should still have base stacks
     assert!(prompt.contains("Available Base Stacks"));
