@@ -202,7 +202,7 @@ impl StickyFooter {
         }
 
         if servers.is_empty() {
-            return 1; // "No servers running" message
+            return 0; // No message when no servers
         }
 
         let mut total_lines = 0;
@@ -446,14 +446,8 @@ impl StickyFooter {
         }
 
         if servers.is_empty() {
-            execute!(
-                stdout,
-                cursor::MoveTo(0, current_line),
-                SetForegroundColor(Color::DarkGrey),
-                Print("No servers running"),
-                ResetColor,
-            )?;
-            return Ok(current_line + 1);
+            // Don't show anything when no servers - just return current line
+            return Ok(current_line);
         }
 
         let max_content_lines = self.calculate_normal_content_lines(servers, connections, expand_all);
@@ -546,7 +540,7 @@ impl StickyFooter {
                 execute!(
                     stdout,
                     cursor::MoveTo(0, current_line),
-                    SetForegroundColor(Color::Cyan),
+                    SetForegroundColor(Color::DarkGrey),
                     Print(&line),
                     ResetColor,
                 )?;
