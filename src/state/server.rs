@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::WriteHalf;
@@ -238,6 +239,8 @@ pub struct ServerInstance {
     /// Proxy filter configuration (only for proxy servers)
     #[cfg(feature = "proxy")]
     pub proxy_filter_config: Option<crate::network::proxy_filter::ProxyFilterConfig>,
+    /// Log file paths (output_name -> log_file_path)
+    pub log_files: HashMap<String, PathBuf>,
 }
 
 impl ServerInstance {
@@ -260,7 +263,33 @@ impl ServerInstance {
             script_config: None,
             #[cfg(feature = "proxy")]
             proxy_filter_config: None,
+            log_files: HashMap::new(),
         }
+    }
+
+    /// Get or create a log file path for the given output name
+    /// Returns the path to the log file with format: netget_<output_name>_<timestamp>.log
+    /// The timestamp is based on when the server was created
+    pub fn get_or_create_log_path(&mut self, output_name: &str) -> PathBuf {
+        if let Some(path) = self.log_files.get(output_name) {
+            return path.clone();
+        }
+
+        // Calculate the absolute time when the server was created
+        // by subtracting the elapsed time from now
+        let now = std::time::SystemTime::now();
+        let elapsed = self.created_at.elapsed();
+        let created_system_time = now - elapsed;
+
+        // Convert to DateTime for formatting
+        let timestamp: chrono::DateTime<chrono::Local> = created_system_time.into();
+        let timestamp_str = timestamp.format("%Y_%m_%d_%H_%M_%S").to_string();
+
+        let log_filename = format!("netget_{}_{}.log", output_name, timestamp_str);
+        let log_path = PathBuf::from(log_filename);
+
+        self.log_files.insert(output_name.to_string(), log_path.clone());
+        log_path
     }
 
     /// Get a summary for display
