@@ -9,7 +9,7 @@
 use anyhow::Result;
 use crossterm::{
     cursor, execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
@@ -186,9 +186,9 @@ impl StickyFooter {
         let status_lines = 1;
 
         // Add separator lines:
-        // - If we have content: 2 separators (one above content, one above input)
-        // - If no content: 1 separator (only above input)
-        let separator_lines = if content_lines > 0 { 2 } else { 1 };
+        // - If we have content: 3 separators (one above content, one above input, one above status)
+        // - If no content: 2 separators (one above input, one above status)
+        let separator_lines = if content_lines > 0 { 3 } else { 2 };
         content_lines + separator_lines + input_lines + status_lines
     }
 
@@ -342,6 +342,9 @@ impl StickyFooter {
         // Render input
         current_line = self.render_input(stdout, current_line)?;
 
+        // Render separator before status bar
+        current_line = self.render_separator(stdout, current_line)?;
+
         // Render status bar
         self.render_status_bar(stdout, current_line)?;
 
@@ -358,7 +361,7 @@ impl StickyFooter {
         let footer_height = self.calculate_footer_height();
         let footer_start = self.terminal_height.saturating_sub(footer_height);
 
-        // Calculate where input starts (content + 2 separators, then input)
+        // Calculate where input starts
         let content_lines = match &self.content {
             FooterContent::Normal {
                 servers,
@@ -370,7 +373,9 @@ impl StickyFooter {
             }
         };
 
-        let input_start = footer_start + content_lines + 2; // +1 for separator before content, +1 for separator after content
+        // Separators before input: 1 if content exists, otherwise just 1 for the input separator
+        let separators_before_input = if content_lines > 0 { 2 } else { 1 };
+        let input_start = footer_start + content_lines + separators_before_input;
         let input_lines = self.calculate_input_lines();
 
         // Clear input area
@@ -385,13 +390,21 @@ impl StickyFooter {
         // Render input and get the next line number
         let next_line = self.render_input(stdout, input_start)?;
 
-        // Clear and render status bar at the line AFTER the input
+        // Clear and render separator before status bar
         execute!(
             stdout,
             cursor::MoveTo(0, next_line),
             Clear(ClearType::CurrentLine),
         )?;
-        self.render_status_bar(stdout, next_line)?;
+        let separator_line = self.render_separator(stdout, next_line)?;
+
+        // Clear and render status bar
+        execute!(
+            stdout,
+            cursor::MoveTo(0, separator_line),
+            Clear(ClearType::CurrentLine),
+        )?;
+        self.render_status_bar(stdout, separator_line)?;
 
         // Position cursor
         self.position_cursor(stdout)?;
@@ -632,12 +645,7 @@ impl StickyFooter {
         execute!(
             stdout,
             cursor::MoveTo(0, line),
-            SetBackgroundColor(Color::Cyan),
-            SetForegroundColor(Color::Black),
             Print(&status_text),
-            // Fill rest of line
-            Print(" ".repeat(self.terminal_width.saturating_sub(status_text.len() as u16) as usize)),
-            ResetColor,
         )?;
 
         Ok(line + 1)
