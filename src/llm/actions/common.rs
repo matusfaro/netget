@@ -3,8 +3,8 @@
 //! This module defines actions that are available in both user input
 //! and network event prompts (show_message, memory operations, etc.).
 
-use super::{ActionDefinition, Parameter};
 use super::protocol_trait::ProtocolActions;
+use super::{ActionDefinition, Parameter};
 use crate::protocol::BaseStack;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -15,9 +15,7 @@ use serde_json::json;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommonAction {
     /// Display a message to the user
-    ShowMessage {
-        message: String,
-    },
+    ShowMessage { message: String },
 
     /// Open a new server
     OpenServer {
@@ -39,31 +37,22 @@ pub enum CommonAction {
     },
 
     /// Update the server instruction (combines with existing)
-    UpdateInstruction {
-        instruction: String,
-    },
+    UpdateInstruction { instruction: String },
 
     /// Change the LLM model
-    ChangeModel {
-        model: String,
-    },
+    ChangeModel { model: String },
 
     /// Replace global memory completely
-    SetMemory {
-        value: String,
-    },
+    SetMemory { value: String },
 
     /// Append to global memory
-    AppendMemory {
-        value: String,
-    },
+    AppendMemory { value: String },
 }
 
 impl CommonAction {
     /// Parse from JSON value
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
-        serde_json::from_value(value.clone())
-            .context("Failed to parse common action")
+        serde_json::from_value(value.clone()).context("Failed to parse common action")
     }
 }
 
@@ -72,14 +61,12 @@ pub fn show_message_action() -> ActionDefinition {
     ActionDefinition {
         name: "show_message".to_string(),
         description: "Display a message to the user controlling NetGet".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "message".to_string(),
-                type_hint: "string".to_string(),
-                description: "Message to display".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "message".to_string(),
+            type_hint: "string".to_string(),
+            description: "Message to display".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "show_message",
             "message": "Server started successfully on port 8080"
@@ -157,15 +144,14 @@ pub fn close_server_action() -> ActionDefinition {
 pub fn update_instruction_action() -> ActionDefinition {
     ActionDefinition {
         name: "update_instruction".to_string(),
-        description: "Update the current server instruction (combines with existing instruction)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "instruction".to_string(),
-                type_hint: "string".to_string(),
-                description: "New instruction to add/combine".to_string(),
-                required: true,
-            },
-        ],
+        description: "Update the current server instruction (combines with existing instruction)"
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "instruction".to_string(),
+            type_hint: "string".to_string(),
+            description: "New instruction to add/combine".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "update_instruction",
             "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
@@ -178,14 +164,12 @@ pub fn change_model_action() -> ActionDefinition {
     ActionDefinition {
         name: "change_model".to_string(),
         description: "Switch to a different LLM model".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "model".to_string(),
-                type_hint: "string".to_string(),
-                description: "Model name (e.g., 'llama3.2:latest')".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "model".to_string(),
+            type_hint: "string".to_string(),
+            description: "Model name (e.g., 'llama3.2:latest')".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "change_model",
             "model": "llama3.2:latest"
@@ -244,12 +228,10 @@ pub fn get_all_common_actions() -> Vec<ActionDefinition> {
         // === Server Management ===
         get_open_server_action_with_params(),
         close_server_action(),
-
         // === Server Configuration ===
         update_instruction_action(),
         set_memory_action(),
         append_memory_action(),
-
         // === System/Utility ===
         change_model_action(),
         show_message_action(),
@@ -270,7 +252,6 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         // === Server Configuration ===
         set_memory_action(),
         append_memory_action(),
-
         // === System/Utility ===
         show_message_action(),
     ]
@@ -426,12 +407,18 @@ pub fn generate_base_stack_documentation() -> String {
             if !params.is_empty() {
                 doc.push_str("Startup parameters:\n");
                 for param in params {
-                    doc.push_str(&format!("  • {} ({}) - {}\n",
+                    doc.push_str(&format!(
+                        "  • {} ({}) - {}\n",
                         param.name,
-                        if param.required { "required" } else { "optional" },
+                        if param.required {
+                            "required"
+                        } else {
+                            "optional"
+                        },
                         param.description
                     ));
-                    doc.push_str(&format!("    Example: {}\n",
+                    doc.push_str(&format!(
+                        "    Example: {}\n",
                         serde_json::to_string(&param.example).unwrap_or_default()
                     ));
                 }

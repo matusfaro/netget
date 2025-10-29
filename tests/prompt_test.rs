@@ -4,10 +4,10 @@
 //! When prompts change, review the diff to ensure it's intentional.
 
 use netget::llm::PromptBuilder;
+use netget::protocol::BaseStack;
 use netget::state::app_state::AppState;
 use netget::state::server::{ServerInstance, ServerStatus};
 use netget::state::ServerId;
-use netget::protocol::BaseStack;
 use std::sync::Arc;
 
 /// Helper to create test app state with a proxy server
@@ -25,7 +25,9 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
     server.memory = "connections: 0\nrequests_intercepted: 5".to_string();
 
     let server_id = state.add_server(server).await;
-    state.update_server_status(server_id, ServerStatus::Running).await;
+    state
+        .update_server_status(server_id, ServerStatus::Running)
+        .await;
 
     state
 }
@@ -43,8 +45,8 @@ async fn test_user_input_prompt() {
     // Get proxy async actions
     #[cfg(feature = "proxy")]
     let protocol_actions = {
-        use netget::network::ProxyProtocol;
         use netget::llm::actions::protocol_trait::ProtocolActions;
+        use netget::network::ProxyProtocol;
         let protocol = ProxyProtocol::new();
         protocol.get_async_actions(&state)
     };
@@ -52,11 +54,8 @@ async fn test_user_input_prompt() {
     #[cfg(not(feature = "proxy"))]
     let protocol_actions = vec![];
 
-    let prompt = PromptBuilder::build_user_input_action_prompt(
-        &state,
-        user_input,
-        protocol_actions,
-    ).await;
+    let prompt =
+        PromptBuilder::build_user_input_action_prompt(&state, user_input, protocol_actions).await;
 
     let expected_path = "tests/snapshots/user_input_prompt.txt";
 
@@ -65,8 +64,8 @@ async fn test_user_input_prompt() {
         std::fs::write(expected_path, &prompt).expect("Failed to write snapshot");
         println!("Created initial snapshot at {}", expected_path);
     } else {
-        let expected = std::fs::read_to_string(expected_path)
-            .expect("Failed to read expected snapshot");
+        let expected =
+            std::fs::read_to_string(expected_path).expect("Failed to read expected snapshot");
 
         if prompt != expected {
             std::fs::write("tests/snapshots/user_input_prompt.actual.txt", &prompt)
@@ -107,9 +106,9 @@ async fn test_network_event_prompt_for_proxy() {
     // Get proxy sync actions (with context)
     #[cfg(feature = "proxy")]
     let all_actions = {
-        use netget::network::ProxyProtocol;
-        use netget::llm::actions::protocol_trait::ProtocolActions;
         use netget::llm::actions::get_network_event_common_actions;
+        use netget::llm::actions::protocol_trait::ProtocolActions;
+        use netget::network::ProxyProtocol;
 
         let protocol = ProxyProtocol::new();
         let mut actions = get_network_event_common_actions();
@@ -127,8 +126,10 @@ async fn test_network_event_prompt_for_proxy() {
         &state,
         server_id,
         event_description,
+        serde_json::json!({}), // No structured context for this test
         all_actions,
-    ).await;
+    )
+    .await;
 
     let expected_path = "tests/snapshots/network_event_prompt_proxy.txt";
 
@@ -137,12 +138,15 @@ async fn test_network_event_prompt_for_proxy() {
         std::fs::write(expected_path, &prompt).expect("Failed to write snapshot");
         println!("Created initial snapshot at {}", expected_path);
     } else {
-        let expected = std::fs::read_to_string(expected_path)
-            .expect("Failed to read expected snapshot");
+        let expected =
+            std::fs::read_to_string(expected_path).expect("Failed to read expected snapshot");
 
         if prompt != expected {
-            std::fs::write("tests/snapshots/network_event_prompt_proxy.actual.txt", &prompt)
-                .expect("Failed to write actual output");
+            std::fs::write(
+                "tests/snapshots/network_event_prompt_proxy.actual.txt",
+                &prompt,
+            )
+            .expect("Failed to write actual output");
 
             panic!(
                 "Prompt has changed! Compare:\n\
@@ -163,7 +167,7 @@ async fn test_network_event_prompt_for_proxy() {
     assert!(prompt.contains(event_description));
     assert!(prompt.contains("Act as HTTP proxy")); // Instruction
     assert!(prompt.contains("connections: 0")); // Memory
-    // Network event prompts should NOT include base stack docs (server already running)
+                                                // Network event prompts should NOT include base stack docs (server already running)
     assert!(!prompt.contains("Available Base Stacks"));
 
     #[cfg(feature = "proxy")]
@@ -208,8 +212,8 @@ fn test_base_stack_documentation_snapshot() {
         std::fs::write(expected_path, &docs).expect("Failed to write snapshot");
         println!("Created initial snapshot at {}", expected_path);
     } else {
-        let expected = std::fs::read_to_string(expected_path)
-            .expect("Failed to read expected snapshot");
+        let expected =
+            std::fs::read_to_string(expected_path).expect("Failed to read expected snapshot");
 
         if docs != expected {
             std::fs::write("tests/snapshots/base_stack_documentation.actual.txt", &docs)

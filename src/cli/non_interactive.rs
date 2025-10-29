@@ -44,17 +44,23 @@ pub async fn run_non_interactive(
 
     // Call handler directly - no need for separate task!
     // The handler will spawn servers directly now
-    event_handler.handle_interpret_with_actions(prompt, status_tx.clone(), None).await?;
+    event_handler
+        .handle_interpret_with_actions(prompt, status_tx.clone(), None)
+        .await?;
 
     // Print any status messages that were sent
     while let Ok(msg) = status_rx.try_recv() {
         // Skip internal control messages (shouldn't have any now, but just in case)
         if !msg.starts_with("__") {
             let clean_msg = msg
-                .strip_prefix("[INFO] ").unwrap_or(&msg)
-                .strip_prefix("[ERROR] ").unwrap_or(&msg)
-                .strip_prefix("[WARN] ").unwrap_or(&msg)
-                .strip_prefix("[DEBUG] ").unwrap_or(&msg);
+                .strip_prefix("[INFO] ")
+                .unwrap_or(&msg)
+                .strip_prefix("[ERROR] ")
+                .unwrap_or(&msg)
+                .strip_prefix("[WARN] ")
+                .unwrap_or(&msg)
+                .strip_prefix("[DEBUG] ")
+                .unwrap_or(&msg);
             println!("{clean_msg}");
         }
     }
@@ -80,10 +86,15 @@ async fn run_server(
     // Server should already be started by the interpret loop above
     // Just verify it exists and print status
     if let Some(server_id) = state.get_first_server_id().await {
-        println!("Server #{} is running. Press Ctrl+C to stop.", server_id.as_u32());
+        println!(
+            "Server #{} is running. Press Ctrl+C to stop.",
+            server_id.as_u32()
+        );
         println!("Waiting for connections...\n");
     } else {
-        return Err(anyhow::anyhow!("No server configured. Use a command like 'listen on port 8080 via http'"));
+        return Err(anyhow::anyhow!(
+            "No server configured. Use a command like 'listen on port 8080 via http'"
+        ));
     }
 
     // Set up Ctrl+C handler

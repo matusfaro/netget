@@ -28,10 +28,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(input_height),     // Input area (dynamic, 3-12 lines)
-            Constraint::Length(info_height),      // Server/Connections info (dynamic 5-15 lines)
-            Constraint::Min(10),                  // Output (takes remaining space)
-            Constraint::Length(1),                // Status bar
+            Constraint::Length(input_height), // Input area (dynamic, 3-12 lines)
+            Constraint::Length(info_height),  // Server/Connections info (dynamic 5-15 lines)
+            Constraint::Min(10),              // Output (takes remaining space)
+            Constraint::Length(1),            // Status bar
         ])
         .split(size);
 
@@ -54,12 +54,20 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     for msg in &app.output_messages {
         let line = if msg.starts_with("[ERROR]") {
             Line::from(vec![
-                Span::styled("✗ ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "✗ ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(msg.strip_prefix("[ERROR]").unwrap()),
             ])
         } else if msg.starts_with("[WARN]") {
             Line::from(vec![
-                Span::styled("⚠ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "⚠ ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(msg.strip_prefix("[WARN]").unwrap()),
             ])
         } else if msg.starts_with("[INFO]") {
@@ -75,16 +83,34 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
         } else if msg.starts_with("[TRACE]") {
             Line::from(vec![
                 Span::styled("· ", Style::default().fg(Color::DarkGray)),
-                Span::styled(msg.strip_prefix("[TRACE]").unwrap(), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    msg.strip_prefix("[TRACE]").unwrap(),
+                    Style::default().fg(Color::DarkGray),
+                ),
             ])
         } else if msg.starts_with("[USER]") {
             Line::from(vec![
-                Span::styled("▶ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled(msg.strip_prefix("[USER]").unwrap(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "▶ ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    msg.strip_prefix("[USER]").unwrap(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ])
         } else if msg.starts_with("[SERVER]") {
             Line::from(vec![
-                Span::styled("◆ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "◆ ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(msg.strip_prefix("[SERVER]").unwrap()),
             ])
         } else if msg.starts_with("[CONN]") {
@@ -105,12 +131,15 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     let (title, title_style) = if app.is_output_focused() {
         (
             format!("Output | Log: {} | ↑↓: scroll", app.log_level.as_str()),
-            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         (
             format!("Output | Log: {} | [Tab to focus]", app.log_level.as_str()),
-            Style::default().bg(Color::Blue).fg(Color::Cyan)
+            Style::default().bg(Color::Blue).fg(Color::Cyan),
         )
     };
 
@@ -125,14 +154,17 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
     let total_lines = if inner_width == 0 {
         lines.len()
     } else {
-        lines.iter().map(|line| {
-            let line_len = line.width();
-            if line_len == 0 {
-                1
-            } else {
-                (line_len + inner_width - 1) / inner_width
-            }
-        }).sum::<usize>()
+        lines
+            .iter()
+            .map(|line| {
+                let line_len = line.width();
+                if line_len == 0 {
+                    1
+                } else {
+                    (line_len + inner_width - 1) / inner_width
+                }
+            })
+            .sum::<usize>()
     };
 
     // Convert to Text AFTER calculating total_lines
@@ -150,7 +182,7 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .title(Span::styled(title, title_style))
                 .border_style(border_style)
-                .style(Style::default().bg(Color::Blue).fg(Color::White))
+                .style(Style::default().bg(Color::Blue).fg(Color::White)),
         )
         .style(Style::default().bg(Color::Blue).fg(Color::White))
         .wrap(Wrap { trim: false })
@@ -162,7 +194,11 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
 /// Render the fixed input area
 fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
     let title = if let Some(pos) = app.history_position {
-        format!("Input [History {}/{}] | ↑↓: history | Enter: submit", pos + 1, app.command_history.len())
+        format!(
+            "Input [History {}/{}] | ↑↓: history | Enter: submit",
+            pos + 1,
+            app.command_history.len()
+        )
     } else {
         "Input | ↑↓: history | Enter: submit | Ctrl+N: newline".to_string()
     };
@@ -172,7 +208,10 @@ fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Highlight the title for focused panel
     let title_style = if app.is_input_focused() {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().bg(Color::Blue).fg(Color::Cyan)
     };
@@ -184,7 +223,7 @@ fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
             .borders(Borders::ALL)
             .title(Span::styled(title, title_style))
             .border_style(border_style)
-            .style(Style::default().bg(Color::Blue).fg(Color::White))
+            .style(Style::default().bg(Color::Blue).fg(Color::White)),
     );
     textarea.set_style(Style::default().bg(Color::Blue).fg(Color::White));
 
@@ -202,8 +241,16 @@ fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
     let status_text = format!(
         " {} | {} | {} | {} | ↑{} ↓{} ",
-        if app.connection_info.mode.is_empty() { "Idle" } else { &app.connection_info.mode },
-        if app.connection_info.protocol.is_empty() { "-" } else { &app.connection_info.protocol },
+        if app.connection_info.mode.is_empty() {
+            "Idle"
+        } else {
+            &app.connection_info.mode
+        },
+        if app.connection_info.protocol.is_empty() {
+            "-"
+        } else {
+            &app.connection_info.protocol
+        },
         if app.connection_info.local_addr.is_some() {
             app.connection_info.local_addr.as_ref().unwrap()
         } else {
@@ -214,13 +261,12 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         app.packet_stats.bytes_sent,
     );
 
-    let status = Paragraph::new(status_text)
-        .style(
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        );
+    let status = Paragraph::new(status_text).style(
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+    );
 
     f.render_widget(status, area);
 }
@@ -238,7 +284,9 @@ fn calculate_servers_height(app: &App) -> u16 {
         total_lines += 1;
 
         // Count connections for this server
-        let server_connections: Vec<_> = app.connections.iter()
+        let server_connections: Vec<_> = app
+            .connections
+            .iter()
             .filter(|c| c.server_id == server.id)
             .collect();
 
@@ -268,15 +316,22 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
 
     // Update title based on focus
     let (title, title_style) = if app.is_servers_focused() {
-        let expand_hint = if app.expand_all_connections { "[E: collapse]" } else { "[E: expand]" };
+        let expand_hint = if app.expand_all_connections {
+            "[E: collapse]"
+        } else {
+            "[E: expand]"
+        };
         (
             format!("Servers & Connections {expand_hint} | ↑↓: scroll"),
-            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         (
             "Servers & Connections [Tab to focus]".to_string(),
-            Style::default().bg(Color::Blue).fg(Color::Cyan)
+            Style::default().bg(Color::Blue).fg(Color::Cyan),
         )
     };
 
@@ -286,7 +341,7 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
     if app.servers.is_empty() {
         lines.push(Line::from(Span::styled(
             "No servers running",
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::DarkGray),
         )));
     } else {
         for server in &app.servers {
@@ -302,26 +357,26 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("#{} ", server.id),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    &server.protocol,
-                    Style::default().fg(Color::White)
-                ),
+                Span::styled(&server.protocol, Style::default().fg(Color::White)),
                 Span::raw(" :"),
                 Span::styled(
                     server.port.to_string(),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" - "),
-                Span::styled(
-                    server.status.as_str(),
-                    Style::default().fg(status_color)
-                ),
+                Span::styled(server.status.as_str(), Style::default().fg(status_color)),
             ]));
 
             // Connection lines (indented under server)
-            let server_connections: Vec<_> = app.connections.iter()
+            let server_connections: Vec<_> = app
+                .connections
+                .iter()
                 .filter(|c| c.server_id == server.id)
                 .collect();
 
@@ -334,21 +389,15 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
 
                 for conn in server_connections.iter().take(max_to_show) {
                     lines.push(Line::from(vec![
-                        Span::raw("  "),  // Indentation
+                        Span::raw("  "), // Indentation
                         Span::styled(
                             format!("#{}", conn.id),
-                            Style::default().fg(Color::LightCyan)
+                            Style::default().fg(Color::LightCyan),
                         ),
                         Span::raw(" "),
-                        Span::styled(
-                            &conn.address,
-                            Style::default().fg(Color::White)
-                        ),
+                        Span::styled(&conn.address, Style::default().fg(Color::White)),
                         Span::raw(" "),
-                        Span::styled(
-                            &conn.state,
-                            Style::default().fg(Color::DarkGray)
-                        ),
+                        Span::styled(&conn.state, Style::default().fg(Color::DarkGray)),
                     ]));
                 }
 
@@ -358,7 +407,7 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
                         Span::raw("  "),
                         Span::styled(
                             format!("... ({} more)", server_connections.len() - 3),
-                            Style::default().fg(Color::DarkGray)
+                            Style::default().fg(Color::DarkGray),
                         ),
                     ]));
                 }
@@ -379,7 +428,7 @@ fn render_servers_and_connections(f: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .title(Span::styled(title, title_style))
                 .border_style(border_style)
-                .style(Style::default().bg(Color::Blue).fg(Color::White))
+                .style(Style::default().bg(Color::Blue).fg(Color::White)),
         )
         .style(Style::default().bg(Color::Blue).fg(Color::White))
         .wrap(Wrap { trim: false })
@@ -418,10 +467,13 @@ fn render_slash_suggestions(f: &mut Frame, app: &App, input_area: Rect) {
                 .borders(Borders::ALL)
                 .title(Span::styled(
                     "Slash Commands",
-                    Style::default().bg(Color::Blue).fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .bg(Color::Blue)
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ))
                 .border_style(Style::default().bg(Color::Blue).fg(Color::Yellow))
-                .style(Style::default().bg(Color::Blue).fg(Color::White))
+                .style(Style::default().bg(Color::Blue).fg(Color::White)),
         )
         .style(Style::default().bg(Color::Blue).fg(Color::White));
 

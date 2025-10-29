@@ -42,7 +42,8 @@ impl<S: Clone> StateMachine<S> {
 
     /// Reset a connection to the default state
     pub fn reset_state(&mut self, connection_id: ConnectionId) {
-        self.states.insert(connection_id, self.default_state.clone());
+        self.states
+            .insert(connection_id, self.default_state.clone());
     }
 
     /// Get the number of active states

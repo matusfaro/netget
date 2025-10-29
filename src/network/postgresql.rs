@@ -10,7 +10,10 @@ use pgwire::api::auth::noop::NoopStartupHandler;
 use pgwire::api::copy::NoopCopyHandler;
 use pgwire::api::portal::Portal;
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
-use pgwire::api::results::{DataRowEncoder, DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo, QueryResponse, Response, Tag};
+use pgwire::api::results::{
+    DataRowEncoder, DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo,
+    QueryResponse, Response, Tag,
+};
 use pgwire::api::stmt::StoredStatement;
 use pgwire::api::{ClientInfo, PgWireHandlerFactory, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
@@ -59,7 +62,10 @@ impl PostgresqlServer {
         let actual_addr = listener.local_addr()?;
 
         info!("PostgreSQL server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] PostgreSQL server listening on {}", actual_addr));
+        let _ = status_tx.send(format!(
+            "[INFO] PostgreSQL server listening on {}",
+            actual_addr
+        ));
 
         let server = Arc::new(PostgresqlServer::new(
             llm_client,
@@ -76,7 +82,8 @@ impl PostgresqlServer {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
                         debug!("PostgreSQL connection from {}", addr);
-                        let _ = status_tx.send(format!("[DEBUG] PostgreSQL connection from {}", addr));
+                        let _ =
+                            status_tx.send(format!("[DEBUG] PostgreSQL connection from {}", addr));
 
                         let connection_id = ConnectionId::new();
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
@@ -117,13 +124,7 @@ impl PostgresqlServer {
                         }
 
                         tokio::spawn(async move {
-                            if let Err(e) = process_socket(
-                                stream,
-                                None,
-                                handler_factory,
-                            )
-                            .await
-                            {
+                            if let Err(e) = process_socket(stream, None, handler_factory).await {
                                 error!("PostgreSQL connection error: {:?}", e);
                             }
                         });
@@ -237,7 +238,9 @@ impl SimpleQueryHandler for PostgresqlHandler {
         });
 
         // Call LLM with actions
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(0));
         let event_description = format!("SQL Query: {}", query);
 
         let llm_result = crate::llm::call_llm_with_actions(
@@ -245,6 +248,7 @@ impl SimpleQueryHandler for PostgresqlHandler {
             &self.app_state,
             server_id,
             &event_description,
+            serde_json::json!({}), // No structured context for now
             Some(self.protocol.as_ref()),
             vec![],
         )
@@ -261,7 +265,8 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                 .iter()
                                 .filter_map(|col| {
                                     let name = col.get("name")?.as_str()?;
-                                    let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                                    let type_name =
+                                        col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
 
                                     let pg_type = match type_name.to_lowercase().as_str() {
                                         "int2" | "smallint" => Type::INT2,
@@ -290,17 +295,25 @@ impl SimpleQueryHandler for PostgresqlHandler {
                             let mut data_rows = Vec::new();
                             for row_data in &rows {
                                 if let Some(row_values) = row_data.as_array() {
-                                    let mut encoder = DataRowEncoder::new(Arc::new(field_infos.clone()));
+                                    let mut encoder =
+                                        DataRowEncoder::new(Arc::new(field_infos.clone()));
 
                                     for (idx, value) in row_values.iter().enumerate() {
                                         if idx < field_infos.len() {
                                             let value_str = json_value_to_string(value);
-                                            encoder.encode_field(&value_str.as_str()).map_err(|e| {
-                                                PgWireError::ApiError(Box::new(std::io::Error::new(
-                                                    std::io::ErrorKind::InvalidData,
-                                                    format!("Failed to encode field: {}", e),
-                                                )))
-                                            })?;
+                                            encoder.encode_field(&value_str.as_str()).map_err(
+                                                |e| {
+                                                    PgWireError::ApiError(Box::new(
+                                                        std::io::Error::new(
+                                                            std::io::ErrorKind::InvalidData,
+                                                            format!(
+                                                                "Failed to encode field: {}",
+                                                                e
+                                                            ),
+                                                        ),
+                                                    ))
+                                                },
+                                            )?;
                                         }
                                     }
                                     data_rows.push(encoder.finish());
@@ -325,9 +338,7 @@ impl SimpleQueryHandler for PostgresqlHandler {
                             ));
 
                             return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                                severity,
-                                code,
-                                message,
+                                severity, code, message,
                             ))));
                         }
                         ActionResult::PostgresqlOk { tag } => {
@@ -381,12 +392,15 @@ impl ExtendedQueryHandler for PostgresqlHandler {
             .send(format!("[DEBUG] PostgreSQL QUERY (extended): {}", sql));
 
         debug!("Extended query handler calling LLM for: {}", sql);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] Extended query handler calling LLM for: {}", sql));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] Extended query handler calling LLM for: {}",
+            sql
+        ));
 
         // Call LLM with actions
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(0));
         let event_description = format!("SQL Query: {}", sql);
 
         let llm_result = crate::llm::call_llm_with_actions(
@@ -394,6 +408,7 @@ impl ExtendedQueryHandler for PostgresqlHandler {
             &self.app_state,
             server_id,
             &event_description,
+            serde_json::json!({}), // No structured context for now
             Some(self.protocol.as_ref()),
             vec![],
         )
@@ -407,24 +422,40 @@ impl ExtendedQueryHandler for PostgresqlHandler {
         match llm_result {
             Ok(execution_result) => {
                 let num_results = execution_result.protocol_results.len();
-                debug!("Extended query handler received {} protocol results", num_results);
-                let _ = self.status_tx.send(format!("[DEBUG] Extended query handler received {num_results} protocol results"));
+                debug!(
+                    "Extended query handler received {} protocol results",
+                    num_results
+                );
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] Extended query handler received {num_results} protocol results"
+                ));
 
                 // Process action results to find PostgreSQL responses
                 for (idx, result) in execution_result.protocol_results.into_iter().enumerate() {
                     debug!("Processing protocol result {}: {:?}", idx, result);
-                    let _ = self.status_tx.send(format!("[DEBUG] Processing protocol result {idx}: {result:?}"));
+                    let _ = self.status_tx.send(format!(
+                        "[DEBUG] Processing protocol result {idx}: {result:?}"
+                    ));
 
                     match result {
                         ActionResult::PostgresqlQueryResponse { columns, rows } => {
-                            debug!("Found PostgresqlQueryResponse with {} columns and {} rows", columns.len(), rows.len());
-                            let _ = self.status_tx.send(format!("[DEBUG] Found PostgresqlQueryResponse with {} columns and {} rows", columns.len(), rows.len()));
+                            debug!(
+                                "Found PostgresqlQueryResponse with {} columns and {} rows",
+                                columns.len(),
+                                rows.len()
+                            );
+                            let _ = self.status_tx.send(format!(
+                                "[DEBUG] Found PostgresqlQueryResponse with {} columns and {} rows",
+                                columns.len(),
+                                rows.len()
+                            ));
                             // Convert columns to FieldInfo
                             let field_infos: Vec<FieldInfo> = columns
                                 .iter()
                                 .filter_map(|col| {
                                     let name = col.get("name")?.as_str()?;
-                                    let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                                    let type_name =
+                                        col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
 
                                     let pg_type = match type_name.to_lowercase().as_str() {
                                         "int2" | "smallint" => Type::INT2,
@@ -453,17 +484,25 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                             let mut data_rows = Vec::new();
                             for row_data in &rows {
                                 if let Some(row_values) = row_data.as_array() {
-                                    let mut encoder = DataRowEncoder::new(Arc::new(field_infos.clone()));
+                                    let mut encoder =
+                                        DataRowEncoder::new(Arc::new(field_infos.clone()));
 
                                     for (idx, value) in row_values.iter().enumerate() {
                                         if idx < field_infos.len() {
                                             let value_str = json_value_to_string(value);
-                                            encoder.encode_field(&value_str.as_str()).map_err(|e| {
-                                                PgWireError::ApiError(Box::new(std::io::Error::new(
-                                                    std::io::ErrorKind::InvalidData,
-                                                    format!("Failed to encode field: {}", e),
-                                                )))
-                                            })?;
+                                            encoder.encode_field(&value_str.as_str()).map_err(
+                                                |e| {
+                                                    PgWireError::ApiError(Box::new(
+                                                        std::io::Error::new(
+                                                            std::io::ErrorKind::InvalidData,
+                                                            format!(
+                                                                "Failed to encode field: {}",
+                                                                e
+                                                            ),
+                                                        ),
+                                                    ))
+                                                },
+                                            )?;
                                         }
                                     }
                                     data_rows.push(encoder.finish());
@@ -488,9 +527,7 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                             ));
 
                             return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                                severity,
-                                code,
-                                message,
+                                severity, code, message,
                             ))));
                         }
                         ActionResult::PostgresqlOk { tag } => {
@@ -509,7 +546,9 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                 // For SELECT queries, return an empty result set instead of OK
                 if sql.trim_start().to_uppercase().starts_with("SELECT") {
                     debug!("Returning empty result set for SELECT query");
-                    let _ = self.status_tx.send("[DEBUG] Returning empty result set for SELECT query".to_string());
+                    let _ = self
+                        .status_tx
+                        .send("[DEBUG] Returning empty result set for SELECT query".to_string());
                     let empty_fields = vec![];
                     let empty_stream = futures::stream::empty();
                     Ok(Response::Query(QueryResponse::new(
@@ -522,13 +561,17 @@ impl ExtendedQueryHandler for PostgresqlHandler {
             }
             Err(e) => {
                 error!("LLM error for PostgreSQL query (extended): {}", e);
-                let _ = self.status_tx.send(format!("[ERROR] LLM error (extended): {}", e));
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] LLM error (extended): {}", e));
 
                 // For SELECT queries, try to return an empty result set instead of error
                 // This prevents the client from seeing "invalid column" errors
                 if sql.trim_start().to_uppercase().starts_with("SELECT") {
                     warn!("Returning empty result set for SELECT after LLM error");
-                    let _ = self.status_tx.send("[WARN] Returning empty result set after LLM error".to_string());
+                    let _ = self
+                        .status_tx
+                        .send("[WARN] Returning empty result set after LLM error".to_string());
                     let empty_fields = vec![];
                     let empty_stream = futures::stream::empty();
                     Ok(Response::Query(QueryResponse::new(

@@ -39,10 +39,7 @@ impl ProtocolActions for UdpProtocol {
         vec![send_udp_response_action(), ignore_datagram_action()]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -74,9 +71,7 @@ impl UdpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        let _addr: SocketAddr = address
-            .parse()
-            .context("Invalid socket address format")?;
+        let _addr: SocketAddr = address.parse().context("Invalid socket address format")?;
 
         // For async actions, we need to return the data and let the caller handle sending
         // This is because we need the socket reference from the network handler
@@ -85,10 +80,7 @@ impl UdpProtocol {
     }
 
     /// Execute send_udp_response sync action
-    fn execute_send_udp_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_udp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
@@ -107,7 +99,8 @@ fn send_to_address_action() -> ActionDefinition {
             Parameter {
                 name: "address".to_string(),
                 type_hint: "string".to_string(),
-                description: "Target address in format 'IP:port' (e.g., '127.0.0.1:8080')".to_string(),
+                description: "Target address in format 'IP:port' (e.g., '127.0.0.1:8080')"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -129,7 +122,8 @@ fn send_to_address_action() -> ActionDefinition {
 fn send_udp_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_udp_response".to_string(),
-        description: "Send UDP response back to the peer that sent the current datagram".to_string(),
+        description: "Send UDP response back to the peer that sent the current datagram"
+            .to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),

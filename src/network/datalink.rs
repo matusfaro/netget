@@ -101,7 +101,8 @@ impl DataLinkServer {
 
                         // DEBUG: Log summary
                         debug!("Datalink received {} bytes", data.len());
-                        let _ = status_tx.send(format!("[DEBUG] Datalink received {} bytes", data.len()));
+                        let _ = status_tx
+                            .send(format!("[DEBUG] Datalink received {} bytes", data.len()));
 
                         // TRACE: Log full payload (always hex for datalink)
                         let hex_str = hex::encode(&data);
@@ -118,30 +119,40 @@ impl DataLinkServer {
                             let prompt_config = get_llm_protocol_prompt();
 
                             // Build event description
-                            let event_description = format!(
-                                "Datalink packet captured ({} bytes)",
-                                data.len()
-                            );
+                            let event_description =
+                                format!("Datalink packet captured ({} bytes)", data.len());
 
                             let prompt = PromptBuilder::build_network_event_prompt(
                                 &state_clone,
                                 connection_id,
                                 &event_description,
                                 prompt_config,
-                            ).await;
+                            )
+                            .await;
 
                             match llm_clone.generate(&model, &prompt).await {
                                 Ok(llm_output) => {
                                     let output_data = llm_output.as_bytes();
 
                                     // DEBUG: Log summary (no actual send for datalink capture)
-                                    debug!("Datalink processed {} bytes → {} bytes response", data.len(), output_data.len());
-                                    let _ = status_clone.send(format!("[DEBUG] Datalink processed {} bytes → {} bytes response", data.len(), output_data.len()));
+                                    debug!(
+                                        "Datalink processed {} bytes → {} bytes response",
+                                        data.len(),
+                                        output_data.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] Datalink processed {} bytes → {} bytes response",
+                                        data.len(),
+                                        output_data.len()
+                                    ));
 
                                     // TRACE: Log full payload (always hex for datalink)
                                     let hex_str = hex::encode(output_data);
                                     trace!("Datalink response (hex): {}", hex_str);
-                                    let _ = status_clone.send(format!("[TRACE] Datalink response (hex): {}", hex_str));
+                                    let _ = status_clone.send(format!(
+                                        "[TRACE] Datalink response (hex): {}",
+                                        hex_str
+                                    ));
 
                                     let _ = status_clone.send(format!(
                                         "→ Datalink packet processed: {} bytes → {} bytes response",
@@ -152,7 +163,8 @@ impl DataLinkServer {
                                 }
                                 Err(e) => {
                                     error!("LLM error for datalink: {}", e);
-                                    let _ = status_clone.send(format!("✗ LLM error for datalink: {}", e));
+                                    let _ = status_clone
+                                        .send(format!("✗ LLM error for datalink: {}", e));
                                 }
                             }
                         });

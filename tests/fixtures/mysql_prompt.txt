@@ -1,0 +1,8 @@
+Start a MySQL server.
+
+When clients connect and query the database, always respond with a single row containing:
+- id: 42
+- message: "Hello from file prompt"
+- status: "active"
+
+This is a test to verify that you can read and follow instructions from a file.

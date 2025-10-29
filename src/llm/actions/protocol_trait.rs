@@ -42,10 +42,7 @@ pub enum ActionResult {
     },
 
     /// MySQL error response
-    MysqlError {
-        error_code: u16,
-        message: String,
-    },
+    MysqlError { error_code: u16, message: String },
 
     /// MySQL OK response
     MysqlOk {
@@ -54,10 +51,7 @@ pub enum ActionResult {
     },
 
     /// IPP response
-    IppResponse {
-        status: u16,
-        body: Vec<u8>,
-    },
+    IppResponse { status: u16, body: Vec<u8> },
 
     /// PostgreSQL query response with result set
     PostgresqlQueryResponse {
@@ -73,34 +67,22 @@ pub enum ActionResult {
     },
 
     /// PostgreSQL command complete response
-    PostgresqlOk {
-        tag: String,
-    },
+    PostgresqlOk { tag: String },
 
     /// Redis simple string response ("+OK\r\n")
-    RedisSimpleString {
-        value: String,
-    },
+    RedisSimpleString { value: String },
 
     /// Redis bulk string response ("$5\r\nhello\r\n")
-    RedisBulkString {
-        value: Option<Vec<u8>>,
-    },
+    RedisBulkString { value: Option<Vec<u8>> },
 
     /// Redis array response
-    RedisArray {
-        values: Vec<serde_json::Value>,
-    },
+    RedisArray { values: Vec<serde_json::Value> },
 
     /// Redis integer response (":42\r\n")
-    RedisInteger {
-        value: i64,
-    },
+    RedisInteger { value: i64 },
 
     /// Redis error response ("-ERR message\r\n")
-    RedisError {
-        message: String,
-    },
+    RedisError { message: String },
 
     /// Redis null response ("$-1\r\n")
     RedisNull,
@@ -191,10 +173,7 @@ pub trait ProtocolActions: Send + Sync {
     /// # Returns
     /// * `Ok(ActionResult)` - Result of execution (data to send, close connection, etc.)
     /// * `Err(_)` - If action execution failed
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult>;
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult>;
 
     /// Get protocol name for debugging
     fn protocol_name(&self) -> &'static str;

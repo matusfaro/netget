@@ -30,10 +30,7 @@ impl ProtocolActions for NtpProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -53,15 +50,9 @@ impl ProtocolActions for NtpProtocol {
 }
 
 impl NtpProtocol {
-    fn execute_send_ntp_time_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_ntp_time_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         // Extract all NTP fields from the action
-        let stratum = action
-            .get("stratum")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(2) as u8;
+        let stratum = action.get("stratum").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
 
         let reference_id = action
             .get("reference_id")
@@ -73,10 +64,7 @@ impl NtpProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u8;
 
-        let poll = action
-            .get("poll")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(6) as u8;
+        let poll = action.get("poll").and_then(|v| v.as_u64()).unwrap_or(6) as u8;
 
         let precision = action
             .get("precision")
@@ -132,7 +120,7 @@ impl NtpProtocol {
                         // Unix timestamp (seconds since 1970) - convert to NTP timestamp (seconds part only)
                         // Note: This loses fractional precision, but LLM typically provides whole seconds
                         let ntp_seconds = timestamp + 2_208_988_800;
-                        ntp_seconds << 32  // Shift to upper 32 bits, fraction = 0
+                        ntp_seconds << 32 // Shift to upper 32 bits, fraction = 0
                     }
                 })
             }
@@ -150,10 +138,7 @@ impl NtpProtocol {
         ntp_seconds << 32 // Return 64-bit timestamp: seconds in upper 32 bits, fraction=0 in lower 32 bits
     }
 
-    fn execute_send_ntp_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_send_ntp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
@@ -187,9 +172,9 @@ impl NtpProtocol {
         let mut packet = vec![0u8; 48];
 
         // Byte 0: LI (2 bits), Version=4 (3 bits), Mode=4 (3 bits, server)
-        let li = (leap_indicator & 0x03) << 6;  // LI in bits 7-6
-        let version = 0x04 << 3;                 // Version 4 in bits 5-3
-        let mode = 0x04;                         // Mode 4 (server) in bits 2-0
+        let li = (leap_indicator & 0x03) << 6; // LI in bits 7-6
+        let version = 0x04 << 3; // Version 4 in bits 5-3
+        let mode = 0x04; // Mode 4 (server) in bits 2-0
         packet[0] = li | version | mode;
 
         // Byte 1: Stratum
@@ -211,7 +196,7 @@ impl NtpProtocol {
 
         // Bytes 12-15: Reference ID (4-byte ASCII identifier)
         let ref_id_bytes = if reference_id.is_empty() {
-            [0u8; 4]  // Zeros if not specified
+            [0u8; 4] // Zeros if not specified
         } else {
             let mut bytes = [0u8; 4];
             for (i, b) in reference_id.bytes().take(4).enumerate() {
@@ -224,26 +209,42 @@ impl NtpProtocol {
         // Helper to write timestamp (64-bit: upper 32 bits = seconds, lower 32 bits = fraction)
         let write_timestamp = |packet: &mut [u8], offset: usize, timestamp: Option<u64>| {
             if let Some(ntp_time) = timestamp {
-                let seconds = ((ntp_time >> 32) & 0xFFFFFFFF) as u32;  // Upper 32 bits
-                let fraction = (ntp_time & 0xFFFFFFFF) as u32;          // Lower 32 bits
-                packet[offset..offset+4].copy_from_slice(&seconds.to_be_bytes());
-                packet[offset+4..offset+8].copy_from_slice(&fraction.to_be_bytes());
+                let seconds = ((ntp_time >> 32) & 0xFFFFFFFF) as u32; // Upper 32 bits
+                let fraction = (ntp_time & 0xFFFFFFFF) as u32; // Lower 32 bits
+                packet[offset..offset + 4].copy_from_slice(&seconds.to_be_bytes());
+                packet[offset + 4..offset + 8].copy_from_slice(&fraction.to_be_bytes());
             }
             // else: leave as zeros
         };
 
         // Reference timestamp (bytes 16-23) - when the clock was last set
-        write_timestamp(&mut packet, 16, reference_timestamp.or_else(|| Some(Self::get_current_ntp_time())));
+        write_timestamp(
+            &mut packet,
+            16,
+            reference_timestamp.or_else(|| Some(Self::get_current_ntp_time())),
+        );
 
         // Origin timestamp (bytes 24-31) - client's transmit time (should be copied from request)
         // Default to current_time if not provided (not ideal but better than zeros)
-        write_timestamp(&mut packet, 24, origin_timestamp.or_else(|| Some(Self::get_current_ntp_time())));
+        write_timestamp(
+            &mut packet,
+            24,
+            origin_timestamp.or_else(|| Some(Self::get_current_ntp_time())),
+        );
 
         // Receive timestamp (bytes 32-39) - when we received the request
-        write_timestamp(&mut packet, 32, receive_timestamp.or_else(|| Some(Self::get_current_ntp_time())));
+        write_timestamp(
+            &mut packet,
+            32,
+            receive_timestamp.or_else(|| Some(Self::get_current_ntp_time())),
+        );
 
         // Transmit timestamp (bytes 40-47) - when we send the response
-        write_timestamp(&mut packet, 40, transmit_timestamp.or_else(|| Some(Self::get_current_ntp_time())));
+        write_timestamp(
+            &mut packet,
+            40,
+            transmit_timestamp.or_else(|| Some(Self::get_current_ntp_time())),
+        );
 
         packet
     }
@@ -335,7 +336,8 @@ fn send_ntp_response_action() -> ActionDefinition {
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "NTP response packet as hex-encoded string (48 bytes = 96 hex chars)".to_string(),
+            description: "NTP response packet as hex-encoded string (48 bytes = 96 hex chars)"
+                .to_string(),
             required: true,
         }],
         example: json!({

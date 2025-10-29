@@ -34,10 +34,7 @@ impl ProtocolActions for WebDavProtocol {
         ]
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -61,10 +58,7 @@ impl ProtocolActions for WebDavProtocol {
 
 impl WebDavProtocol {
     /// Read file contents
-    fn execute_read_file(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_read_file(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -75,28 +69,19 @@ impl WebDavProtocol {
     }
 
     /// Create a new file
-    fn execute_create_file(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_create_file(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
 
-        let _content = action
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let _content = action.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
         Ok(ActionResult::NoAction)
     }
 
     /// Create a new directory
-    fn execute_create_directory(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_create_directory(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -106,10 +91,7 @@ impl WebDavProtocol {
     }
 
     /// Delete a resource (file or directory)
-    fn execute_delete_resource(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_delete_resource(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -119,10 +101,7 @@ impl WebDavProtocol {
     }
 
     /// List directory contents
-    fn execute_list_directory(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_list_directory(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -132,10 +111,7 @@ impl WebDavProtocol {
     }
 
     /// Get resource properties
-    fn execute_get_properties(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_get_properties(&self, action: serde_json::Value) -> Result<ActionResult> {
         let _path = action
             .get("path")
             .and_then(|v| v.as_str())
@@ -150,14 +126,12 @@ fn read_file_action() -> ActionDefinition {
     ActionDefinition {
         name: "read_file".to_string(),
         description: "Read the contents of a file".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to the file to read".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path to the file to read".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "read_file",
             "path": "/documents/readme.txt"
@@ -195,14 +169,12 @@ fn create_directory_action() -> ActionDefinition {
     ActionDefinition {
         name: "create_directory".to_string(),
         description: "Create a new directory".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path of the directory to create".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path of the directory to create".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "create_directory",
             "path": "/documents/new_folder"
@@ -214,14 +186,12 @@ fn delete_resource_action() -> ActionDefinition {
     ActionDefinition {
         name: "delete_resource".to_string(),
         description: "Delete a file or directory".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path of the resource to delete".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path of the resource to delete".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "delete_resource",
             "path": "/documents/old_file.txt"
@@ -233,14 +203,12 @@ fn list_directory_action() -> ActionDefinition {
     ActionDefinition {
         name: "list_directory".to_string(),
         description: "List contents of a directory".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path of the directory to list".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path of the directory to list".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "list_directory",
             "path": "/documents"
@@ -252,14 +220,12 @@ fn get_properties_action() -> ActionDefinition {
     ActionDefinition {
         name: "get_properties".to_string(),
         description: "Get properties (metadata) of a file or directory".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path of the resource".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path of the resource".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "get_properties",
             "path": "/documents/readme.txt"
