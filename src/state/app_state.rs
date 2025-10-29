@@ -234,6 +234,14 @@ impl AppState {
         self.inner.read().await.scripting_env.clone()
     }
 
+    /// Set scripting environment
+    ///
+    /// This is primarily used for testing to inject a mock environment.
+    /// In production, the environment is auto-detected at startup.
+    pub async fn set_scripting_env(&self, env: crate::scripting::ScriptingEnvironment) {
+        self.inner.write().await.scripting_env = env;
+    }
+
     /// Update script configuration for a server
     pub async fn set_script_config(
         &self,
