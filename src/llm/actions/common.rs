@@ -47,6 +47,12 @@ pub enum CommonAction {
 
     /// Append to global memory
     AppendMemory { value: String },
+
+    /// Append content to a log file
+    AppendToLog {
+        output_name: String,
+        content: String,
+    },
 }
 
 impl CommonAction {
@@ -217,12 +223,39 @@ pub fn append_memory_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for append_to_log
+pub fn append_to_log_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "append_to_log".to_string(),
+        description: "Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "output_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Name of the log output (e.g., 'access_logs'). Used to construct the log filename.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "content".to_string(),
+                type_hint: "string".to_string(),
+                description: "Content to append to the log file.".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "append_to_log",
+            "output_name": "access_logs",
+            "content": "127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"
+        }),
+    }
+}
+
 /// Get all common action definitions
 ///
 /// Actions are organized logically:
 /// 1. Server Management - Create/destroy servers
 /// 2. Server Configuration - Configure running servers
-/// 3. System/Utility - Model changes, messages
+/// 3. System/Utility - Model changes, messages, logging
 pub fn get_all_common_actions() -> Vec<ActionDefinition> {
     vec![
         // === Server Management ===
@@ -235,6 +268,7 @@ pub fn get_all_common_actions() -> Vec<ActionDefinition> {
         // === System/Utility ===
         change_model_action(),
         show_message_action(),
+        append_to_log_action(),
     ]
 }
 
@@ -254,6 +288,7 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         append_memory_action(),
         // === System/Utility ===
         show_message_action(),
+        append_to_log_action(),
     ]
 }
 
