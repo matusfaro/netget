@@ -16,10 +16,6 @@ Parameters:
   • initial_memory: string (optional) - Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
   • instruction: string (required) - Detailed instructions for handling network events
   • startup_params: object (optional) - Optional protocol-specific startup parameters. See protocol documentation for available parameters.
-  • script_language: string (optional) - Optional: Use 'python' or 'javascript' to handle deterministic responses via script instead of LLM.
-  • script_path: string (optional) - Optional: Path to script file (alternative to script_inline).
-  • script_inline: string (optional) - Optional: Inline script code (alternative to script_path).
-  • script_handles: array (optional) - Optional: Context types the script handles, e.g. ["ssh_auth", "ssh_banner"] or ["all"]. Defaults to ["all"].
 
 Example:
 {
@@ -49,28 +45,7 @@ Example:
   "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
 }
 
-4. update_script. Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.
-Parameters:
-  • server_id: number (optional) - Optional: Server ID to update (defaults to first/current server)
-  • operation: string (required) - Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)
-  • script_language: string (optional) - Script language: 'python' or 'javascript' (required for 'set' operation)
-  • script_path: string (optional) - Path to script file (alternative to script_inline, required for 'set')
-  • script_inline: string (optional) - Inline script code (alternative to script_path, required for 'set')
-  • script_handles: array (optional) - Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')
-
-Example:
-{
-  "type": "update_script",
-  "server_id": 1,
-  "operation": "set",
-  "script_language": "python",
-  "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
-  "script_handles": [
-    "ssh_auth"
-  ]
-}
-
-5. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
+4. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
 Parameters:
   • value: string (required) - New memory value as a string. Replaces all existing memory.
 
@@ -80,7 +55,7 @@ Example:
   "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
 }
 
-6. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
+5. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
 Parameters:
   • value: string (required) - Text to append as a string. Will be added after existing memory with newline separator.
 
@@ -90,7 +65,7 @@ Example:
   "value": "connection_count: 5\nlast_file_requested: readme.md"
 }
 
-7. change_model. Switch to a different LLM model
+6. change_model. Switch to a different LLM model
 Parameters:
   • model: string (required) - Model name (e.g., 'llama3.2:latest')
 
@@ -100,7 +75,7 @@ Example:
   "model": "llama3.2:latest"
 }
 
-8. show_message. Display a message to the user controlling NetGet
+7. show_message. Display a message to the user controlling NetGet
 Parameters:
   • message: string (required) - Message to display
 
@@ -110,7 +85,7 @@ Example:
   "message": "Server started successfully on port 8080"
 }
 
-9. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
+8. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
 Parameters:
   • path: string (required) - Path to the file (relative to current directory or absolute)
   • mode: string (optional) - Read mode: 'full' (default), 'head', 'tail', or 'grep'
@@ -126,7 +101,7 @@ Example:
   "mode": "full"
 }
 
-10. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
+9. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 Parameters:
   • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
 
@@ -233,58 +208,6 @@ No startup parameters.
 ### ETH>IP>TCP>NFS
 Stack name: "ETH>IP>TCP>NFS"
 No startup parameters.
-
-
-
-SCRIPT-BASED RESPONSES (Advanced feature - use only when explicitly requested):
-Available environments: Python (Python 3.11.0), Node.js (v20.0.0)
-
-IMPORTANT: Only use scripts when the user explicitly requests scripted/programmatic behavior, or for complex authentication/state logic.
-For simple protocol responses (DNS records, HTTP responses, etc.), use the ACTIONS DIRECTLY via the LLM - do NOT create scripts.
-
-Scripts are appropriate for:
-- Complex SSH authentication logic (checking multiple conditions)
-- Multi-step protocols requiring state machines
-- When user explicitly asks for "scripted" or "programmatic" behavior
-
-To use scripts in open_server, include:
-- script_language: "python" or "javascript"
-- script_inline: "your script code" (or script_path: "/path/to/script.py")
-- script_handles: ["ssh_auth", "ssh_banner"] or ["all"] (optional, defaults to ["all"])
-
-CRITICAL: Scripts must return ACTIONS in JSON format, NOT raw protocol responses.
-The script receives context via stdin and must print actions to stdout.
-
-Scripts receive JSON input via stdin with this structure:
-{
-  "context_type": "ssh_auth",
-  "server": {"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."},
-  "connection": {"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0},
-  "event": {"username": "alice", "auth_type": "password"}
-}
-
-Scripts MUST output JSON with an "actions" array containing action objects.
-Use the SAME action types that are available to you (e.g., send_http_response, ssh_auth_decision).
-DO NOT write raw protocol code (like res.writeHead() or socket operations).
-
-Example 1 - SSH authentication (Python):
-import json, sys
-data = json.load(sys.stdin)
-username = data['event']['username']
-allowed = (username == 'alice')
-print(json.dumps({"actions": [{"type": "ssh_auth_decision", "allowed": allowed}]}))
-
-Example 2 - HTTP response (JavaScript):
-const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
-const pathname = data.event.path;
-const response = pathname.endsWith('.html')
-  ? {"status": 200, "headers": {"Content-Type": "text/html"}, "body": "<h1>Hello</h1>"}
-  : {"status": 404, "body": "Not Found"};
-console.log(JSON.stringify({"actions": [{"type": "send_http_response", ...response}]}));
-
-Scripts must complete within 30 seconds or they will be terminated.
-Scripts can return {"fallback_to_llm": true} to delegate complex cases to LLM.
-You can update scripts on running servers using the update_script action.
 
 
 
