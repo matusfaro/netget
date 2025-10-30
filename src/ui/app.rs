@@ -286,12 +286,10 @@ impl App {
         // Define all available slash commands
         let all_commands = vec![
             "/exit - Exit the application",
-            "/model - List available models",
-            "/model <name> - Select a model",
-            "/log - Show current log level",
-            "/log <level> - Set log level (error, warn, info, debug, trace)",
-            "/script - Show current scripting environment",
-            "/script <env> - Set scripting environment (llm, python, javascript, go)",
+            "/model [<name>] - List/select a model",
+            "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
+            "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
+            "/web [toggle] - Show/toggle web search",
         ];
 
         // Filter commands based on current input
@@ -357,13 +355,14 @@ mod tests {
     fn test_slash_suggestions_all_commands() {
         let mut app = App::default();
 
-        // Single "/" should show all 7 commands
+        // Single "/" should show all 5 commands
         app.update_slash_suggestions("/");
-        assert_eq!(app.slash_suggestions.len(), 7);
+        assert_eq!(app.slash_suggestions.len(), 5);
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/exit")));
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/model")));
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/log")));
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/script")));
+        assert!(app.slash_suggestions.iter().any(|s| s.contains("/web")));
     }
 
     #[test]
@@ -372,17 +371,17 @@ mod tests {
 
         // "/mo" should filter to only /model commands
         app.update_slash_suggestions("/mo");
-        assert_eq!(app.slash_suggestions.len(), 2);
+        assert_eq!(app.slash_suggestions.len(), 1);
         assert!(app.slash_suggestions.iter().all(|s| s.contains("/model")));
 
         // "/mod" should have same result as "/mo"
         app.update_slash_suggestions("/mod");
-        assert_eq!(app.slash_suggestions.len(), 2);
+        assert_eq!(app.slash_suggestions.len(), 1);
         assert!(app.slash_suggestions.iter().all(|s| s.contains("/model")));
 
         // "/model" should match exactly /model commands
         app.update_slash_suggestions("/model");
-        assert_eq!(app.slash_suggestions.len(), 2);
+        assert_eq!(app.slash_suggestions.len(), 1);
     }
 
     #[test]
@@ -391,7 +390,7 @@ mod tests {
 
         // "/l" should filter to only /log commands
         app.update_slash_suggestions("/l");
-        assert_eq!(app.slash_suggestions.len(), 2);
+        assert_eq!(app.slash_suggestions.len(), 1);
         assert!(app.slash_suggestions.iter().all(|s| s.contains("/log")));
     }
 
@@ -438,12 +437,12 @@ mod tests {
 
         // Upper case "/MO" should still match /model
         app.update_slash_suggestions("/MO");
-        assert_eq!(app.slash_suggestions.len(), 2);
+        assert_eq!(app.slash_suggestions.len(), 1);
         assert!(app.slash_suggestions.iter().all(|s| s.contains("/model")));
 
         // Mixed case "/Log" should match /log
         app.update_slash_suggestions("/Log");
-        assert_eq!(app.slash_suggestions.len(), 2);
+        assert_eq!(app.slash_suggestions.len(), 1);
         assert!(app.slash_suggestions.iter().all(|s| s.contains("/log")));
     }
 }

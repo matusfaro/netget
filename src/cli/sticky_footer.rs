@@ -168,29 +168,6 @@ impl StickyFooter {
         self.recalculate_scroll_region();
     }
 
-    /// Calculate the height needed for the footer (private implementation)
-    fn _calculate_footer_height_impl(&self) -> u16 {
-        let content_lines = match &self.content {
-            FooterContent::Normal {
-                servers,
-                connections,
-                expand_all,
-            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
-            FooterContent::SlashCommands { suggestions } => {
-                suggestions.len().min(10) as u16 // Cap at 10 suggestions
-            }
-        };
-
-        let input_lines = self.calculate_input_lines();
-        let status_lines = 1;
-
-        // Add separator lines:
-        // - If we have content: 3 separators (one above content, one above input, one above status)
-        // - If no content: 2 separators (one above input, one above status)
-        let separator_lines = if content_lines > 0 { 3 } else { 2 };
-        content_lines + separator_lines + input_lines + status_lines
-    }
-
     /// Calculate lines needed for normal content (servers/connections)
     fn calculate_normal_content_lines(
         &self,
@@ -455,7 +432,11 @@ impl StickyFooter {
         let input_lines = self.calculate_input_lines();
         let status_lines = 1;
 
-        content_lines + 2 + input_lines + status_lines
+        // Add separator lines:
+        // - If we have content: 3 separators (one above content, one above input, one above status)
+        // - If no content: 2 separators (one above input, one above status)
+        let separator_lines = if content_lines > 0 { 3 } else { 2 };
+        content_lines + separator_lines + input_lines + status_lines
     }
 
     /// Render normal content (servers and connections)

@@ -495,9 +495,9 @@ async fn handle_key_event(
         KeyCode::Char('w') | KeyCode::Char('W') if modifiers.contains(KeyModifiers::CONTROL) => {
             let new_state = state.toggle_web_search().await;
             let message = if new_state {
-                "Web search enabled"
+                "LLM may perform web searches to assist with requests"
             } else {
-                "Web search disabled"
+                "LLM will not be able to perform web searches"
             };
             print_output_line(message, footer)?;
 
@@ -559,7 +559,7 @@ async fn handle_key_event(
 
                 // Handle command
                 match command {
-                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv => {
+                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv | UserCommand::ShowWebSearch => {
                         // Handle status/info commands
                         handle_status_command(&command, app, state, event_handler, footer).await?;
                     }
@@ -768,6 +768,23 @@ async fn handle_key_event(
                         } else {
                             print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go", env), footer)?;
                         }
+                    }
+                    UserCommand::ToggleWebSearch => {
+                        let new_state = state.toggle_web_search().await;
+                        let message = if new_state {
+                            "Web search enabled"
+                        } else {
+                            "Web search disabled"
+                        };
+                        print_output_line(message, footer)?;
+
+                        // Save the new web search state to settings
+                        if let Err(e) = settings.lock().await.set_web_search_enabled(new_state) {
+                            error!("Failed to save web search setting: {}", e);
+                        }
+
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
                     }
                 }
             }
@@ -1155,6 +1172,13 @@ async fn handle_status_command(
                 &format!("Current log level: {}", app.log_level.as_str()),
                 footer,
             )?;
+        }
+        UserCommand::ShowWebSearch => {
+            let enabled = state.get_web_search_enabled().await;
+            let status = if enabled { "enabled" } else { "disabled" };
+            print_output_line(&format!("Web search is {}", status), footer)?;
+            print_output_line("", footer)?;
+            print_output_line("To toggle web search, use: /web toggle", footer)?;
         }
         _ => {}
     }
