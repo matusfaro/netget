@@ -536,9 +536,15 @@ fn all_base_stacks() -> Vec<BaseStack> {
     ];
 
     // Filter out abandoned protocols
+    let registry = crate::protocol::registry::registry();
     all_protocols
         .into_iter()
-        .filter(|stack| stack.metadata().is_available_to_llm())
+        .filter(|stack| {
+            registry
+                .metadata(stack)
+                .map(|m| m.is_available_to_llm())
+                .unwrap_or(true)
+        })
         .collect()
 }
 
@@ -548,11 +554,13 @@ pub fn generate_base_stack_documentation() -> String {
     let mut doc = String::from("## Available Base Stacks\n\n");
     doc.push_str("Each protocol stack has a specific name to use in the 'base_stack' field:\n\n");
 
+    let registry = crate::protocol::registry::registry();
     for stack in all_base_stacks() {
         // Get the stack name/identifier
         let stack_str = stack.to_string();
         doc.push_str(&format!("### {}\n", stack_str));
-        doc.push_str(&format!("Stack name: \"{}\"\n", stack.name()));
+        let stack_name = registry.stack_name(&stack).unwrap_or("UNKNOWN");
+        doc.push_str(&format!("Stack name: \"{}\"\n", stack_name));
 
         // Add startup parameters if available
         if let Some(protocol) = get_protocol_for_stack(stack) {

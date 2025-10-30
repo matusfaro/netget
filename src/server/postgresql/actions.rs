@@ -76,6 +76,20 @@ impl ProtocolActions for PostgresqlProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_postgresql_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>PostgreSQL"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["postgres", "psql"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl PostgresqlProtocol {
@@ -103,9 +117,12 @@ impl PostgresqlProtocol {
             rows.len()
         ));
 
-        Ok(ActionResult::PostgresqlQueryResponse {
-            columns: columns.clone(),
-            rows: rows.clone(),
+        Ok(ActionResult::Custom {
+            name: "postgresql_query_response".to_string(),
+            data: json!({
+                "columns": columns,
+                "rows": rows
+            }),
         })
     }
 
@@ -135,10 +152,13 @@ impl PostgresqlProtocol {
             severity, code, message
         ));
 
-        Ok(ActionResult::PostgresqlError {
-            severity: severity.to_string(),
-            code: code.to_string(),
-            message: message.to_string(),
+        Ok(ActionResult::Custom {
+            name: "postgresql_error".to_string(),
+            data: json!({
+                "severity": severity,
+                "code": code,
+                "message": message
+            }),
         })
     }
 
@@ -151,8 +171,11 @@ impl PostgresqlProtocol {
             .status_tx
             .send(format!("[DEBUG] PostgreSQL → OK: {}", tag));
 
-        Ok(ActionResult::PostgresqlOk {
-            tag: tag.to_string(),
+        Ok(ActionResult::Custom {
+            name: "postgresql_ok".to_string(),
+            data: json!({
+                "tag": tag
+            }),
         })
     }
 

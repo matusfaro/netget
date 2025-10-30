@@ -173,6 +173,20 @@ impl ProtocolActions for SmtpProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_smtp_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>SMTP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["smtp", "mail", "email"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 // Action definitions

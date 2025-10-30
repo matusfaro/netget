@@ -81,6 +81,20 @@ impl ProtocolActions for DhcpProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_dhcp_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>DHCP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["dhcp"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Beta
+        )
+    }
 }
 
 impl DhcpProtocol {

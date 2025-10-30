@@ -54,6 +54,20 @@ impl ProtocolActions for WebDavProtocol {
     fn protocol_name(&self) -> &'static str {
         "WebDAV"
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>WEBDAV"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["webdav", "dav"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl WebDavProtocol {

@@ -315,44 +315,74 @@ impl MysqlHandler {
                 // Process action results to find MySQL responses
                 for result in execution_result.protocol_results {
                     match result {
-                        ActionResult::MysqlQueryResponse { columns, rows } => {
-                            // Send result set
-                            return send_result_set(results, columns, rows).await;
-                        }
-                        ActionResult::MysqlError { error_code, message } => {
-                            // Send error - opensrv uses completed for errors too
-                            let _ = self.status_tx.send(format!(
-                                "[ERROR] MySQL error {}: {}",
-                                error_code, message
-                            ));
-                            return results
-                                .completed(OkResponse {
-                                    header: 0,
-                                    affected_rows: 0,
-                                    last_insert_id: 0,
-                                    status_flags: StatusFlags::empty(),
-                                    warnings: 0,
-                                    info: String::new(),
-                                    session_state_info: String::new(),
-                                })
-                                .await;
-                        }
-                        ActionResult::MysqlOk {
-                            affected_rows,
-                            last_insert_id,
-                        } => {
-                            // Send OK response
-                            return results
-                                .completed(OkResponse {
-                                    header: 0,
-                                    affected_rows,
-                                    last_insert_id,
-                                    status_flags: StatusFlags::empty(),
-                                    warnings: 0,
-                                    info: String::new(),
-                                    session_state_info: String::new(),
-                                })
-                                .await;
+                        ActionResult::Custom { name, data } => {
+                            match name.as_str() {
+                                "mysql_query_response" => {
+                                    // Extract columns and rows from JSON data
+                                    let columns = data.get("columns")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let rows = data.get("rows")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
+
+                                    // Send result set
+                                    return send_result_set(results, columns, rows).await;
+                                }
+                                "mysql_error" => {
+                                    // Extract error info from JSON data
+                                    let error_code = data.get("error_code")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(1064) as u16;
+                                    let message = data.get("message")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Unknown error");
+
+                                    // Send error - opensrv uses completed for errors too
+                                    let _ = self.status_tx.send(format!(
+                                        "[ERROR] MySQL error {}: {}",
+                                        error_code, message
+                                    ));
+                                    return results
+                                        .completed(OkResponse {
+                                            header: 0,
+                                            affected_rows: 0,
+                                            last_insert_id: 0,
+                                            status_flags: StatusFlags::empty(),
+                                            warnings: 0,
+                                            info: String::new(),
+                                            session_state_info: String::new(),
+                                        })
+                                        .await;
+                                }
+                                "mysql_ok" => {
+                                    // Extract OK response info from JSON data
+                                    let affected_rows = data.get("affected_rows")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let last_insert_id = data.get("last_insert_id")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+
+                                    // Send OK response
+                                    return results
+                                        .completed(OkResponse {
+                                            header: 0,
+                                            affected_rows,
+                                            last_insert_id,
+                                            status_flags: StatusFlags::empty(),
+                                            warnings: 0,
+                                            info: String::new(),
+                                            session_state_info: String::new(),
+                                        })
+                                        .await;
+                                }
+                                _ => {
+                                    // Unknown custom response, ignore
+                                }
+                            }
                         }
                         _ => {
                             // Other action results are informational, continue processing

@@ -49,6 +49,20 @@ impl ProtocolActions for HttpProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_http_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["http", "http server", "http stack", "via http", "hyper"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Beta
+        )
+    }
 }
 
 impl HttpProtocol {

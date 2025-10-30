@@ -247,8 +247,10 @@ impl EventHandler {
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
-                // Parse base stack
-                let stack = BaseStack::from_str(&base_stack).unwrap_or(BaseStack::Tcp);
+                // Parse base stack using registry
+                let stack = crate::protocol::registry::registry()
+                    .parse_from_str(&base_stack)
+                    .unwrap_or(BaseStack::Tcp);
 
                 // Create a new server instance
                 let mut server = ServerInstance::new(

@@ -67,6 +67,20 @@ impl ProtocolActions for DnsProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_dns_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>DNS"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["dns"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Beta
+        )
+    }
 }
 
 impl DnsProtocol {

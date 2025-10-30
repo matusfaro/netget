@@ -121,7 +121,7 @@ This document summarizes the comprehensive IMAP (Internet Message Access Protoco
 - **Alternative**: Manually edit `src/protocol/base_stack.rs` with changes from patch file
 
 #### 2. E2E Test Suite
-- **File to Create**: `tests/e2e/server/imap/test.rs` and `tests/e2e/server/imap/mod.rs`
+- **File to Create**: `tests/server/imap/test.rs` and `tests/server/imap/mod.rs`
 - **Required Tests**:
   1. `test_imap_greeting()` - Server greeting validation
   2. `test_imap_login()` - Authentication flow
@@ -138,7 +138,7 @@ This document summarizes the comprehensive IMAP (Internet Message Access Protoco
 - **Run Command**: `cargo test --features e2e-tests --test e2e_imap_test -- --test-threads=3`
 
 #### 3. Test Helper Updates
-- **File**: `tests/e2e/helpers.rs`
+- **File**: `tests/server/helpers.rs`
 - **Changes Needed**:
   - Update `extract_stack_from_prompt()` to recognize "imap"/"imaps" keywords
   - Update `wait_for_server_startup()` to detect IMAP server startup messages
@@ -285,9 +285,9 @@ Mailboxes and messages are stored in LLM memory as JSON:
    git apply imap_base_stack.patch
    ```
 
-2. **Create E2E test suite**: Implement comprehensive tests in `tests/e2e/server/imap/`
+2. **Create E2E test suite**: Implement comprehensive tests in `tests/server/imap/`
 
-3. **Update test helpers**: Modify `tests/e2e/helpers.rs` for IMAP detection
+3. **Update test helpers**: Modify `tests/server/helpers.rs` for IMAP detection
 
 4. **Build and test**:
    ```bash

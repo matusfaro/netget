@@ -54,6 +54,20 @@ impl ProtocolActions for OpenAiProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_openai_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>OPENAI"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["openai"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl OpenAiProtocol {
@@ -97,10 +111,13 @@ impl OpenAiProtocol {
             }
         });
 
-        Ok(ActionResult::OpenAiResponse {
-            status: 200,
-            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-            body: response.to_string().into_bytes(),
+        Ok(ActionResult::Custom {
+            name: "openai_response".to_string(),
+            data: json!({
+                "status": 200,
+                "headers": vec![("Content-Type".to_string(), "application/json".to_string())],
+                "body": response.to_string()
+            }),
         })
     }
 
@@ -131,10 +148,13 @@ impl OpenAiProtocol {
             "data": openai_models
         });
 
-        Ok(ActionResult::OpenAiResponse {
-            status: 200,
-            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-            body: response.to_string().into_bytes(),
+        Ok(ActionResult::Custom {
+            name: "openai_response".to_string(),
+            data: json!({
+                "status": 200,
+                "headers": vec![("Content-Type".to_string(), "application/json".to_string())],
+                "body": response.to_string()
+            }),
         })
     }
 
@@ -161,10 +181,13 @@ impl OpenAiProtocol {
             }
         });
 
-        Ok(ActionResult::OpenAiResponse {
-            status,
-            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-            body: response.to_string().into_bytes(),
+        Ok(ActionResult::Custom {
+            name: "openai_response".to_string(),
+            data: json!({
+                "status": status,
+                "headers": vec![("Content-Type".to_string(), "application/json".to_string())],
+                "body": response.to_string()
+            }),
         })
     }
 

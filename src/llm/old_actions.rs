@@ -68,7 +68,7 @@ impl CommandInterpretation {
 impl Action {
     /// Parse base stack string to BaseStack enum
     pub fn parse_base_stack(s: &str) -> Option<BaseStack> {
-        BaseStack::from_str(s)
+        crate::protocol::registry::registry().parse_from_str(s)
     }
 
     /// Parse address string to SocketAddr

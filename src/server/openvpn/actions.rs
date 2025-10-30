@@ -86,6 +86,21 @@ impl ProtocolActions for OpenvpnProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_openvpn_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP/UDP>OPENVPN"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["openvpn"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::with_notes(
+            crate::protocol::base_stack::ProtocolState::Disabled,
+            "No actual VPN tunnels. Full OpenVPN implementation is infeasible: no viable Rust library exists, protocol is extremely complex (500K+ lines in C++). Use WireGuard for production VPN. OpenVPN honeypot sufficient for detection/logging reconnaissance attempts."
+        )
+    }
 }
 
 impl OpenvpnProtocol {

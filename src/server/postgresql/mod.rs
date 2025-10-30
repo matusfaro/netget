@@ -258,83 +258,115 @@ impl SimpleQueryHandler for PostgresqlHandler {
                 // Process action results to find PostgreSQL responses
                 for result in execution_result.protocol_results {
                     match result {
-                        ActionResult::PostgresqlQueryResponse { columns, rows } => {
-                            // Convert columns to FieldInfo
-                            let field_infos: Vec<FieldInfo> = columns
-                                .iter()
-                                .filter_map(|col| {
-                                    let name = col.get("name")?.as_str()?;
-                                    let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                        ActionResult::Custom { name, data } => {
+                            match name.as_str() {
+                                "postgresql_query_response" => {
+                                    // Extract columns and rows from JSON data
+                                    let columns = data.get("columns")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let rows = data.get("rows")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
 
-                                    let pg_type = match type_name.to_lowercase().as_str() {
-                                        "int2" | "smallint" => Type::INT2,
-                                        "int4" | "int" | "integer" => Type::INT4,
-                                        "int8" | "bigint" => Type::INT8,
-                                        "float4" | "real" => Type::FLOAT4,
-                                        "float8" | "double" | "double precision" => Type::FLOAT8,
-                                        "bool" | "boolean" => Type::BOOL,
-                                        "date" => Type::DATE,
-                                        "time" => Type::TIME,
-                                        "timestamp" => Type::TIMESTAMP,
-                                        "varchar" | "text" | _ => Type::VARCHAR,
-                                    };
+                                    // Convert columns to FieldInfo
+                                    let field_infos: Vec<FieldInfo> = columns
+                                        .iter()
+                                        .filter_map(|col| {
+                                            let name = col.get("name")?.as_str()?;
+                                            let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
 
-                                    Some(FieldInfo::new(
-                                        name.to_string(),
-                                        None,
-                                        None,
-                                        pg_type,
-                                        FieldFormat::Text,
-                                    ))
-                                })
-                                .collect();
+                                            let pg_type = match type_name.to_lowercase().as_str() {
+                                                "int2" | "smallint" => Type::INT2,
+                                                "int4" | "int" | "integer" => Type::INT4,
+                                                "int8" | "bigint" => Type::INT8,
+                                                "float4" | "real" => Type::FLOAT4,
+                                                "float8" | "double" | "double precision" => Type::FLOAT8,
+                                                "bool" | "boolean" => Type::BOOL,
+                                                "date" => Type::DATE,
+                                                "time" => Type::TIME,
+                                                "timestamp" => Type::TIMESTAMP,
+                                                "varchar" | "text" | _ => Type::VARCHAR,
+                                            };
 
-                            // Create data rows as a stream
-                            let mut data_rows = Vec::new();
-                            for row_data in &rows {
-                                if let Some(row_values) = row_data.as_array() {
-                                    let mut encoder = DataRowEncoder::new(Arc::new(field_infos.clone()));
+                                            Some(FieldInfo::new(
+                                                name.to_string(),
+                                                None,
+                                                None,
+                                                pg_type,
+                                                FieldFormat::Text,
+                                            ))
+                                        })
+                                        .collect();
 
-                                    for (idx, value) in row_values.iter().enumerate() {
-                                        if idx < field_infos.len() {
-                                            let value_str = json_value_to_string(value);
-                                            encoder.encode_field(&value_str.as_str()).map_err(|e| {
-                                                PgWireError::ApiError(Box::new(std::io::Error::new(
-                                                    std::io::ErrorKind::InvalidData,
-                                                    format!("Failed to encode field: {}", e),
-                                                )))
-                                            })?;
+                                    // Create data rows as a stream
+                                    let mut data_rows = Vec::new();
+                                    for row_data in &rows {
+                                        if let Some(row_values) = row_data.as_array() {
+                                            let mut encoder = DataRowEncoder::new(Arc::new(field_infos.clone()));
+
+                                            for (idx, value) in row_values.iter().enumerate() {
+                                                if idx < field_infos.len() {
+                                                    let value_str = json_value_to_string(value);
+                                                    encoder.encode_field(&value_str.as_str()).map_err(|e| {
+                                                        PgWireError::ApiError(Box::new(std::io::Error::new(
+                                                            std::io::ErrorKind::InvalidData,
+                                                            format!("Failed to encode field: {}", e),
+                                                        )))
+                                                    })?;
+                                                }
+                                            }
+                                            data_rows.push(encoder.finish());
                                         }
                                     }
-                                    data_rows.push(encoder.finish());
+
+                                    // Convert Vec to Stream
+                                    let row_stream = futures::stream::iter(data_rows);
+                                    return Ok(vec![Response::Query(QueryResponse::new(
+                                        Arc::new(field_infos),
+                                        row_stream,
+                                    ))]);
+                                }
+                                "postgresql_error" => {
+                                    // Extract error info from JSON data
+                                    let severity = data.get("severity")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("ERROR")
+                                        .to_string();
+                                    let code = data.get("code")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("XX000")
+                                        .to_string();
+                                    let message = data.get("message")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Unknown error")
+                                        .to_string();
+
+                                    let _ = self.status_tx.send(format!(
+                                        "[ERROR] PostgreSQL error {} {}: {}",
+                                        severity, code, message
+                                    ));
+
+                                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                                        severity,
+                                        code,
+                                        message,
+                                    ))));
+                                }
+                                "postgresql_ok" => {
+                                    // Extract tag from JSON data
+                                    let tag = data.get("tag")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("OK");
+
+                                    return Ok(vec![Response::Execution(Tag::new(tag))]);
+                                }
+                                _ => {
+                                    // Unknown custom response, ignore
                                 }
                             }
-
-                            // Convert Vec to Stream
-                            let row_stream = futures::stream::iter(data_rows);
-                            return Ok(vec![Response::Query(QueryResponse::new(
-                                Arc::new(field_infos),
-                                row_stream,
-                            ))]);
-                        }
-                        ActionResult::PostgresqlError {
-                            severity,
-                            code,
-                            message,
-                        } => {
-                            let _ = self.status_tx.send(format!(
-                                "[ERROR] PostgreSQL error {} {}: {}",
-                                severity, code, message
-                            ));
-
-                            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                                severity,
-                                code,
-                                message,
-                            ))));
-                        }
-                        ActionResult::PostgresqlOk { tag } => {
-                            return Ok(vec![Response::Execution(Tag::new(&tag))]);
                         }
                         _ => {
                             // Other action results are informational, continue processing
@@ -425,85 +457,118 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                     let _ = self.status_tx.send(format!("[DEBUG] Processing protocol result {idx}: {result:?}"));
 
                     match result {
-                        ActionResult::PostgresqlQueryResponse { columns, rows } => {
-                            debug!("Found PostgresqlQueryResponse with {} columns and {} rows", columns.len(), rows.len());
-                            let _ = self.status_tx.send(format!("[DEBUG] Found PostgresqlQueryResponse with {} columns and {} rows", columns.len(), rows.len()));
-                            // Convert columns to FieldInfo
-                            let field_infos: Vec<FieldInfo> = columns
-                                .iter()
-                                .filter_map(|col| {
-                                    let name = col.get("name")?.as_str()?;
-                                    let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                        ActionResult::Custom { name, data } => {
+                            match name.as_str() {
+                                "postgresql_query_response" => {
+                                    // Extract columns and rows from JSON data
+                                    let columns = data.get("columns")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let rows = data.get("rows")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
 
-                                    let pg_type = match type_name.to_lowercase().as_str() {
-                                        "int2" | "smallint" => Type::INT2,
-                                        "int4" | "int" | "integer" => Type::INT4,
-                                        "int8" | "bigint" => Type::INT8,
-                                        "float4" | "real" => Type::FLOAT4,
-                                        "float8" | "double" | "double precision" => Type::FLOAT8,
-                                        "bool" | "boolean" => Type::BOOL,
-                                        "date" => Type::DATE,
-                                        "time" => Type::TIME,
-                                        "timestamp" => Type::TIMESTAMP,
-                                        "varchar" | "text" | _ => Type::VARCHAR,
-                                    };
+                                    debug!("Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len());
+                                    let _ = self.status_tx.send(format!("[DEBUG] Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len()));
 
-                                    Some(FieldInfo::new(
-                                        name.to_string(),
-                                        None,
-                                        None,
-                                        pg_type,
-                                        FieldFormat::Text,
-                                    ))
-                                })
-                                .collect();
+                                    // Convert columns to FieldInfo
+                                    let field_infos: Vec<FieldInfo> = columns
+                                        .iter()
+                                        .filter_map(|col| {
+                                            let name = col.get("name")?.as_str()?;
+                                            let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
 
-                            // Create data rows as a stream
-                            let mut data_rows = Vec::new();
-                            for row_data in &rows {
-                                if let Some(row_values) = row_data.as_array() {
-                                    let mut encoder = DataRowEncoder::new(Arc::new(field_infos.clone()));
+                                            let pg_type = match type_name.to_lowercase().as_str() {
+                                                "int2" | "smallint" => Type::INT2,
+                                                "int4" | "int" | "integer" => Type::INT4,
+                                                "int8" | "bigint" => Type::INT8,
+                                                "float4" | "real" => Type::FLOAT4,
+                                                "float8" | "double" | "double precision" => Type::FLOAT8,
+                                                "bool" | "boolean" => Type::BOOL,
+                                                "date" => Type::DATE,
+                                                "time" => Type::TIME,
+                                                "timestamp" => Type::TIMESTAMP,
+                                                "varchar" | "text" | _ => Type::VARCHAR,
+                                            };
 
-                                    for (idx, value) in row_values.iter().enumerate() {
-                                        if idx < field_infos.len() {
-                                            let value_str = json_value_to_string(value);
-                                            encoder.encode_field(&value_str.as_str()).map_err(|e| {
-                                                PgWireError::ApiError(Box::new(std::io::Error::new(
-                                                    std::io::ErrorKind::InvalidData,
-                                                    format!("Failed to encode field: {}", e),
-                                                )))
-                                            })?;
+                                            Some(FieldInfo::new(
+                                                name.to_string(),
+                                                None,
+                                                None,
+                                                pg_type,
+                                                FieldFormat::Text,
+                                            ))
+                                        })
+                                        .collect();
+
+                                    // Create data rows as a stream
+                                    let mut data_rows = Vec::new();
+                                    for row_data in &rows {
+                                        if let Some(row_values) = row_data.as_array() {
+                                            let mut encoder = DataRowEncoder::new(Arc::new(field_infos.clone()));
+
+                                            for (idx, value) in row_values.iter().enumerate() {
+                                                if idx < field_infos.len() {
+                                                    let value_str = json_value_to_string(value);
+                                                    encoder.encode_field(&value_str.as_str()).map_err(|e| {
+                                                        PgWireError::ApiError(Box::new(std::io::Error::new(
+                                                            std::io::ErrorKind::InvalidData,
+                                                            format!("Failed to encode field: {}", e),
+                                                        )))
+                                                    })?;
+                                                }
+                                            }
+                                            data_rows.push(encoder.finish());
                                         }
                                     }
-                                    data_rows.push(encoder.finish());
+
+                                    // Convert Vec to Stream
+                                    let row_stream = futures::stream::iter(data_rows);
+                                    return Ok(Response::Query(QueryResponse::new(
+                                        Arc::new(field_infos),
+                                        row_stream,
+                                    )));
+                                }
+                                "postgresql_error" => {
+                                    // Extract error info from JSON data
+                                    let severity = data.get("severity")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("ERROR")
+                                        .to_string();
+                                    let code = data.get("code")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("XX000")
+                                        .to_string();
+                                    let message = data.get("message")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Unknown error")
+                                        .to_string();
+
+                                    let _ = self.status_tx.send(format!(
+                                        "[ERROR] PostgreSQL error {} {}: {}",
+                                        severity, code, message
+                                    ));
+
+                                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                                        severity,
+                                        code,
+                                        message,
+                                    ))));
+                                }
+                                "postgresql_ok" => {
+                                    // Extract tag from JSON data
+                                    let tag = data.get("tag")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("OK");
+
+                                    return Ok(Response::Execution(Tag::new(tag)));
+                                }
+                                _ => {
+                                    // Unknown custom response, ignore
                                 }
                             }
-
-                            // Convert Vec to Stream
-                            let row_stream = futures::stream::iter(data_rows);
-                            return Ok(Response::Query(QueryResponse::new(
-                                Arc::new(field_infos),
-                                row_stream,
-                            )));
-                        }
-                        ActionResult::PostgresqlError {
-                            severity,
-                            code,
-                            message,
-                        } => {
-                            let _ = self.status_tx.send(format!(
-                                "[ERROR] PostgreSQL error {} {}: {}",
-                                severity, code, message
-                            ));
-
-                            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                                severity,
-                                code,
-                                message,
-                            ))));
-                        }
-                        ActionResult::PostgresqlOk { tag } => {
-                            return Ok(Response::Execution(Tag::new(&tag)));
                         }
                         _ => {
                             // Other action results are informational, continue processing

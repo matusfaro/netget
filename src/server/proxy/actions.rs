@@ -146,6 +146,20 @@ impl ProtocolActions for ProxyProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_proxy_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>PROXY"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["proxy", "mitm"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl ProxyProtocol {

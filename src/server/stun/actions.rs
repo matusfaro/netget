@@ -52,6 +52,20 @@ impl ProtocolActions for StunProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_stun_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>STUN"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["stun"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl StunProtocol {

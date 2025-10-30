@@ -28,104 +28,17 @@ pub enum ActionResult {
     /// Custom protocol-specific result with structured data
     ///
     /// This is used when a protocol needs to return structured information
-    /// that isn't just "send these bytes". For example, SSH auth decisions
-    /// return {"allowed": true/false} which the protocol handler interprets.
+    /// that isn't just "send these bytes". Protocols encode their responses
+    /// as JSON in the 'data' field, and the protocol handler decodes and
+    /// processes them.
+    ///
+    /// Examples:
+    /// - SSH auth: {"name": "ssh_auth", "data": {"allowed": true}}
+    /// - MySQL: {"name": "mysql_query", "data": {"columns": [...], "rows": [...]}}
+    /// - Redis: {"name": "redis_string", "data": {"value": "OK"}}
     Custom {
         name: String,
         data: serde_json::Value,
-    },
-
-    /// MySQL query response with result set
-    MysqlQueryResponse {
-        columns: Vec<serde_json::Value>,
-        rows: Vec<serde_json::Value>,
-    },
-
-    /// MySQL error response
-    MysqlError { error_code: u16, message: String },
-
-    /// MySQL OK response
-    MysqlOk {
-        affected_rows: u64,
-        last_insert_id: u64,
-    },
-
-    /// IPP response
-    IppResponse { status: u16, body: Vec<u8> },
-
-    /// DynamoDB HTTP/JSON response
-    DynamoResponse { status: u16, body: String },
-
-    /// Elasticsearch HTTP/JSON response
-    ElasticsearchResponse { status: u16, body: String },
-
-    /// OpenAI API HTTP/JSON response
-    OpenAiResponse {
-        status: u16,
-        headers: Vec<(String, String)>,
-        body: Vec<u8>,
-    },
-
-    /// PostgreSQL query response with result set
-    PostgresqlQueryResponse {
-        columns: Vec<serde_json::Value>,
-        rows: Vec<serde_json::Value>,
-    },
-
-    /// PostgreSQL error response
-    PostgresqlError {
-        severity: String,
-        code: String,
-        message: String,
-    },
-
-    /// PostgreSQL command complete response
-    PostgresqlOk { tag: String },
-
-    /// Redis simple string response ("+OK\r\n")
-    RedisSimpleString { value: String },
-
-    /// Redis bulk string response ("$5\r\nhello\r\n")
-    RedisBulkString { value: Option<Vec<u8>> },
-
-    /// Redis array response
-    RedisArray { values: Vec<serde_json::Value> },
-
-    /// Redis integer response (":42\r\n")
-    RedisInteger { value: i64 },
-
-    /// Redis error response ("-ERR message\r\n")
-    RedisError { message: String },
-
-    /// Redis null response ("$-1\r\n")
-    RedisNull,
-
-    /// Cassandra READY response (after STARTUP)
-    CassandraReady,
-
-    /// Cassandra SUPPORTED response (server capabilities)
-    CassandraSupported {
-        options: serde_json::Map<String, serde_json::Value>,
-    },
-
-    /// Cassandra result rows response
-    CassandraResultRows {
-        columns: Vec<serde_json::Value>,
-        rows: Vec<serde_json::Value>,
-    },
-
-    /// Cassandra prepared statement response
-    CassandraPrepared {
-        columns: Vec<serde_json::Value>,
-    },
-
-    /// Cassandra authentication success
-    CassandraAuthSuccess,
-
-    /// Cassandra error response
-    CassandraError {
-        error_code: u32,
-        message: String,
     },
 }
 
@@ -176,6 +89,7 @@ impl ActionResult {
 /// 2. Async actions - executable anytime from user input
 /// 3. Sync actions - executable during network events
 /// 4. Action executor - parses and executes protocol actions
+/// 5. Protocol metadata - stack name, keywords, and implementation state
 pub trait ProtocolActions: Send + Sync {
     /// Get startup parameters that can be provided when opening a server
     ///
@@ -233,4 +147,27 @@ pub trait ProtocolActions: Send + Sync {
     fn get_event_types(&self) -> Vec<crate::protocol::EventType> {
         Vec::new()
     }
+
+    /// Get the stack name (e.g., "ETH>IP>TCP>HTTP")
+    ///
+    /// This represents the network stack layers used by this protocol.
+    /// Used for display in UI and logging.
+    fn stack_name(&self) -> &'static str;
+
+    /// Get parsing keywords for protocol detection
+    ///
+    /// Returns a list of keywords that can be used to identify this protocol
+    /// from user input. Examples:
+    /// - HTTP: ["http", "http server", "via http", "hyper"]
+    /// - SSH: ["ssh"]
+    /// - mDNS: ["mdns", "bonjour", "dns-sd", "zeroconf"]
+    ///
+    /// Keywords are matched case-insensitively as substrings.
+    fn keywords(&self) -> Vec<&'static str>;
+
+    /// Get protocol metadata (state and notes)
+    ///
+    /// Returns the current implementation state (Beta, Alpha, Implemented, Abandoned)
+    /// and optional notes explaining limitations or status.
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata;
 }

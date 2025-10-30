@@ -54,6 +54,20 @@ impl ProtocolActions for MdnsProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_mdns_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>mDNS"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["mdns", "bonjour", "dns-sd", "zeroconf"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 // Action definitions

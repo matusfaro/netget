@@ -55,6 +55,20 @@ impl ProtocolActions for IppProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_ipp_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>IPP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ipp", "printer", "print"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl IppProtocol {
@@ -65,9 +79,12 @@ impl IppProtocol {
 
         debug!("IPP response: status={}", status);
 
-        Ok(ActionResult::IppResponse {
-            status,
-            body: body.as_bytes().to_vec(),
+        Ok(ActionResult::Custom {
+            name: "ipp_response".to_string(),
+            data: json!({
+                "status": status,
+                "body": hex::encode(body.as_bytes())
+            }),
         })
     }
 
@@ -82,7 +99,13 @@ impl IppProtocol {
         // Build IPP response with printer attributes
         let body = build_ipp_printer_attributes_response(attributes);
 
-        Ok(ActionResult::IppResponse { status: 200, body })
+        Ok(ActionResult::Custom {
+            name: "ipp_response".to_string(),
+            data: json!({
+                "status": 200,
+                "body": hex::encode(&body)
+            }),
+        })
     }
 
     fn execute_ipp_job_attributes(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -96,7 +119,13 @@ impl IppProtocol {
         // Build IPP response with job attributes
         let body = build_ipp_job_attributes_response(attributes);
 
-        Ok(ActionResult::IppResponse { status: 200, body })
+        Ok(ActionResult::Custom {
+            name: "ipp_response".to_string(),
+            data: json!({
+                "status": 200,
+                "body": hex::encode(&body)
+            }),
+        })
     }
 
     fn execute_list_print_jobs(&self, _action: serde_json::Value) -> Result<ActionResult> {
