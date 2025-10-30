@@ -44,6 +44,12 @@ pub enum UserCommand {
     ChangeLogLevel {
         level: String,
     },
+    /// Show current scripting environment (slash command: /script)
+    ShowScriptingEnv,
+    /// Change scripting environment (slash command: /script <env>)
+    ChangeScriptingEnv {
+        env: String,
+    },
     /// Generate test output lines (slash command: /test <count>)
     TestOutput {
         count: usize,
@@ -106,6 +112,18 @@ impl UserCommand {
             }
             return UserCommand::ChangeLogLevel {
                 level: rest.to_string(),
+            };
+        }
+
+        // /script command
+        if input_lower.starts_with("/script") {
+            let rest = trimmed[7..].trim();
+            if rest.is_empty() {
+                // Show current scripting environment
+                return UserCommand::ShowScriptingEnv;
+            }
+            return UserCommand::ChangeScriptingEnv {
+                env: rest.to_string(),
             };
         }
 

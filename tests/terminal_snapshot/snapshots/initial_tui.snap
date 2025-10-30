@@ -1,8 +1,3 @@
-ecipes"
-  SSH/SFTP (Beta): "Pretent to be a shell via SSH on port 2222"
-  DNS (Beta): "DNS server on port 5252 and resolve everything to 1.2.3.4"
-  NTP (Beta; root-only): "pretend to be a ntp server on port 123"
-  SNMP (Alpha): "SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'N
 etGet SNMP Server v0.1'"
   IRC (Alpha): "Start an IRC server"
   Telnet (Alpha): "Start a telnet server on port 23 that echoes commands"
@@ -13,6 +8,11 @@ etGet SNMP Server v0.1'"
   DHCP (Alpha)
 
 Other prompts:
+
+
+
+
+
 
 
 ●  TUI initialized, event loop starting

@@ -28,6 +28,11 @@ use tracing::Level;
                       netget -m llama3.2:latest -- listen on port 80\n\
                       netget --model deepseek-coder:latest show version\n\
                   \n\
+                  Specify scripting environment:\n\
+                      netget -e python listen on port 80\n\
+                      netget --env javascript -- start http server\n\
+                      netget --env llm show version\n\
+                  \n\
                   Server configuration:\n\
                       netget --listen-addr 0.0.0.0 listen on port 8080",
     trailing_var_arg = true,
@@ -46,6 +51,15 @@ pub struct Args {
         default_value = "info"
     )]
     pub log_level: String,
+
+    /// Scripting environment to use (llm, python, javascript, go)
+    #[clap(
+        short = 'e',
+        long = "env",
+        value_name = "ENVIRONMENT",
+        help = "Scripting environment: llm (LLM handles all requests), python (LLM produces Python code), javascript (LLM produces JavaScript code), go (LLM produces Go code)"
+    )]
+    pub scripting_env: Option<String>,
 
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
@@ -134,5 +148,28 @@ impl Args {
             }
         }
         Ok(())
+    }
+
+    /// Parse the scripting environment argument into a ScriptingMode
+    pub fn parse_scripting_mode(&self) -> Result<Option<crate::state::app_state::ScriptingMode>> {
+        match &self.scripting_env {
+            None => Ok(None),
+            Some(env) => {
+                let mode = match env.to_lowercase().as_str() {
+                    "llm" => crate::state::app_state::ScriptingMode::Llm,
+                    "python" | "py" => crate::state::app_state::ScriptingMode::Python,
+                    "javascript" | "js" | "node" => crate::state::app_state::ScriptingMode::JavaScript,
+                    "go" | "golang" => crate::state::app_state::ScriptingMode::Go,
+                    _ => {
+                        anyhow::bail!(
+                            "Invalid scripting environment: '{}'\n\
+                             Valid options: llm, python (py), javascript (js, node), go (golang)",
+                            env
+                        );
+                    }
+                };
+                Ok(Some(mode))
+            }
+        }
     }
 }

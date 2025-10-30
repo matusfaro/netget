@@ -47,14 +47,14 @@ pub fn execute_script(config: &ScriptConfig, input: &ScriptInput) -> Result<Scri
     debug!(
         "Executing {} script for context '{}' (timeout: {}s)",
         config.language.as_str(),
-        input.context_type,
+        input.event_type_id,
         SCRIPT_TIMEOUT_SECS
     );
 
     trace!("─────────────────────────────────────────────");
     trace!("SCRIPT EXECUTION START");
     trace!("Language: {}", config.language.as_str());
-    trace!("Context: {}", input.context_type);
+    trace!("Context: {}", input.event_type_id);
     trace!("Handles: {:?}", config.handles_contexts);
     trace!("");
     trace!("Script code:");
@@ -68,6 +68,7 @@ pub fn execute_script(config: &ScriptConfig, input: &ScriptInput) -> Result<Scri
     let (output, stderr) = match config.language {
         ScriptLanguage::Python => execute_python(&code, &input_json)?,
         ScriptLanguage::JavaScript => execute_javascript(&code, &input_json)?,
+        ScriptLanguage::Go => execute_go(&code, &input_json)?,
     };
 
     trace!("─────────────────────────────────────────────");
@@ -127,6 +128,110 @@ const input = JSON.parse(inputJson);
     );
 
     execute_with_command("node", &wrapped_code, input_json, &["-e"])
+}
+
+/// Execute Go script with stdin/stdout
+///
+/// Go requires a file, so we create a temporary .go file and use `go run`
+/// Returns (stdout, stderr) tuple
+fn execute_go(code: &str, input_json: &str) -> Result<(String, String)> {
+    use std::fs;
+
+    // Create a temporary directory
+    let temp_dir = std::env::temp_dir();
+    let script_name = format!("netget_script_{}.go", std::process::id());
+    let script_path = temp_dir.join(script_name);
+
+    // Wrap the user's code in a complete Go program
+    let wrapped_code = format!(
+        r#"package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "io"
+    "os"
+)
+
+func main() {{
+    // Read JSON input from stdin
+    inputBytes, err := io.ReadAll(os.Stdin)
+    if err != nil {{
+        fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
+        os.Exit(1)
+    }}
+
+    var input map[string]interface{{}}
+    if err := json.Unmarshal(inputBytes, &input); err != nil {{
+        fmt.Fprintf(os.Stderr, "Error parsing JSON: %v\n", err)
+        os.Exit(1)
+    }}
+
+    // User's script begins here
+    _ = input // Make input available to user code
+    {{
+{}
+    }}
+}}
+"#,
+        code
+    );
+
+    // Write the script to the temp file
+    fs::write(&script_path, wrapped_code.as_bytes())
+        .with_context(|| format!("Failed to write Go script to {:?}", script_path))?;
+
+    // Execute with go run
+    let result = execute_go_file(&script_path, input_json);
+
+    // Clean up the temp file
+    let _ = fs::remove_file(&script_path);
+
+    result
+}
+
+/// Execute a Go file with `go run`
+fn execute_go_file(script_path: &std::path::PathBuf, input_json: &str) -> Result<(String, String)> {
+    // Spawn the process
+    let mut child = Command::new("go")
+        .arg("run")
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to spawn go run process")?;
+
+    // Write input to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input_json.as_bytes())
+            .context("Failed to write to script stdin")?;
+    }
+
+    // Wait for completion with timeout
+    let output = wait_with_timeout(child, DEFAULT_SCRIPT_TIMEOUT)
+        .context("Go script execution timed out or failed")?;
+
+    // Parse stdout and stderr
+    let stdout = String::from_utf8(output.stdout.clone())
+        .context("Go script stdout is not valid UTF-8")?;
+    let stderr = String::from_utf8(output.stderr.clone())
+        .unwrap_or_else(|_| String::from_utf8_lossy(&output.stderr).to_string());
+
+    // Check exit status
+    if !output.status.success() {
+        error!("Go script execution failed with exit code {:?}", output.status.code());
+        error!("Go script stderr: {}", stderr);
+        anyhow::bail!("Go script exited with non-zero status. stderr: {}", stderr);
+    }
+
+    // Log warnings if stderr is present
+    if !stderr.is_empty() {
+        warn!("Go script produced stderr output (but succeeded): {}", stderr);
+    }
+
+    Ok((stdout.trim().to_string(), stderr))
 }
 
 /// Generic command executor with timeout
@@ -250,7 +355,7 @@ print(json.dumps(response))
         };
 
         let input = ScriptInput {
-            context_type: "test".to_string(),
+            event_type_id: "test".to_string(),
             server: ServerContext {
                 id: 1,
                 port: 8080,
@@ -289,7 +394,7 @@ print(json.dumps(response))
         };
 
         let input = ScriptInput {
-            context_type: "test".to_string(),
+            event_type_id: "test".to_string(),
             server: ServerContext {
                 id: 1,
                 port: 8080,
@@ -338,7 +443,7 @@ print(json.dumps(response))
         };
 
         let input = ScriptInput {
-            context_type: "ssh_auth".to_string(),
+            event_type_id: "ssh_auth".to_string(),
             server: ServerContext {
                 id: 1,
                 port: 22,
@@ -380,7 +485,7 @@ console.log(JSON.stringify(response));
         };
 
         let input = ScriptInput {
-            context_type: "test".to_string(),
+            event_type_id: "test".to_string(),
             server: ServerContext {
                 id: 1,
                 port: 8080,
@@ -397,5 +502,51 @@ console.log(JSON.stringify(response));
 
         let response = result.unwrap();
         assert_eq!(response.actions.len(), 1);
+    }
+
+    #[test]
+    #[ignore] // Only run if Go is available
+    fn test_execute_go_simple() {
+        let code = r#"
+response := map[string]interface{}{
+    "actions": []interface{}{
+        map[string]interface{}{
+            "type":    "show_message",
+            "message": "Hello from Go",
+        },
+    },
+}
+jsonBytes, _ := json.Marshal(response)
+fmt.Println(string(jsonBytes))
+"#;
+
+        let config = ScriptConfig {
+            language: ScriptLanguage::Go,
+            source: ScriptSource::Inline(code.to_string()),
+            handles_contexts: vec!["test".to_string()],
+        };
+
+        let input = ScriptInput {
+            event_type_id: "test".to_string(),
+            server: ServerContext {
+                id: 1,
+                port: 8080,
+                stack: "HTTP".to_string(),
+                memory: String::new(),
+                instruction: "Test".to_string(),
+            },
+            connection: None,
+            event: serde_json::json!({}),
+        };
+
+        let result = execute_script(&config, &input);
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.actions.len(), 1);
+
+        let action = &response.actions[0];
+        assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
+        assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Go"));
     }
 }

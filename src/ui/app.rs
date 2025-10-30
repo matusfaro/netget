@@ -50,6 +50,17 @@ impl LogLevel {
             LogLevel::Trace => "TRACE",
         }
     }
+
+    /// Cycle to the next log level
+    pub fn cycle(&self) -> Self {
+        match self {
+            LogLevel::Error => LogLevel::Warn,
+            LogLevel::Warn => LogLevel::Info,
+            LogLevel::Info => LogLevel::Debug,
+            LogLevel::Debug => LogLevel::Trace,
+            LogLevel::Trace => LogLevel::Error,
+        }
+    }
 }
 
 /// Server information for display
@@ -127,7 +138,7 @@ impl Default for App {
             history_temp_input: None,
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
-            log_level: LogLevel::Trace, // Interactive mode defaults to TRACE
+            log_level: LogLevel::Info, // Interactive mode defaults to INFO
             slash_suggestions: Vec::new(),
             servers: Vec::new(),
             connections: Vec::new(),
@@ -281,6 +292,8 @@ impl App {
             "/model <name> - Select a model",
             "/log - Show current log level",
             "/log <level> - Set log level (error, warn, info, debug, trace)",
+            "/script - Show current scripting environment",
+            "/script <env> - Set scripting environment (llm, python, javascript, go)",
         ];
 
         // Filter commands based on current input
@@ -346,12 +359,13 @@ mod tests {
     fn test_slash_suggestions_all_commands() {
         let mut app = App::default();
 
-        // Single "/" should show all 5 commands
+        // Single "/" should show all 7 commands
         app.update_slash_suggestions("/");
-        assert_eq!(app.slash_suggestions.len(), 5);
+        assert_eq!(app.slash_suggestions.len(), 7);
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/exit")));
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/model")));
         assert!(app.slash_suggestions.iter().any(|s| s.contains("/log")));
+        assert!(app.slash_suggestions.iter().any(|s| s.contains("/script")));
     }
 
     #[test]

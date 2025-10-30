@@ -34,10 +34,8 @@ pub enum FooterContent {
 /// Connection info for the status bar
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionInfo {
-    pub mode: String,
-    pub protocol: String,
-    pub local_addr: Option<String>,
     pub model: String,
+    pub scripting_env: String,
 }
 
 /// Sticky footer state and renderer
@@ -629,23 +627,10 @@ impl StickyFooter {
     /// Render status bar
     fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
         let status_text = format!(
-            " {} | {} | {} | {} | ↑{} ↓{} ",
-            if self.connection_info.mode.is_empty() {
-                "Idle"
-            } else {
-                &self.connection_info.mode
-            },
-            if self.connection_info.protocol.is_empty() {
-                "-"
-            } else {
-                &self.connection_info.protocol
-            },
-            if let Some(addr) = &self.connection_info.local_addr {
-                addr
-            } else {
-                "no connection"
-            },
+            " {} | {} | {} (Ctrl+E) (Ctrl+L) | ↑{} ↓{} ",
             &self.connection_info.model,
+            self.log_level.as_str(),
+            &self.connection_info.scripting_env,
             self.packet_stats.bytes_received,
             self.packet_stats.bytes_sent,
         );

@@ -30,6 +30,12 @@ use crate::ui::{app::LogLevel, App};
 use super::input_state::InputState;
 use super::sticky_footer::{ConnectionInfo, FooterContent, StickyFooter};
 
+/// Format scripting mode for display in status bar
+/// Returns "LLM", "Python", or "JavaScript" based on selected mode
+fn format_scripting_mode(mode: crate::state::app_state::ScriptingMode) -> String {
+    mode.as_str().to_string()
+}
+
 /// Run the interactive rolling TUI mode
 pub async fn run_rolling_tui(
     state: AppState,
@@ -41,11 +47,14 @@ pub async fn run_rolling_tui(
 ) -> Result<()> {
     info!("Starting rolling TUI mode");
 
+    // Wrap settings in Arc<Mutex> for sharing with event handlers
+    let settings = Arc::new(Mutex::new(settings));
+
     // Override model if specified in args, otherwise use settings
     let effective_model = if let Some(model) = &args.model {
         model.clone()
     } else {
-        settings.model.clone()
+        settings.lock().await.model.clone()
     };
 
     state.set_ollama_model(effective_model.clone()).await;
@@ -85,11 +94,12 @@ pub async fn run_rolling_tui(
     print!("\x1b[1;{}r", scroll_height);
     stdout().flush()?;
 
+    let scripting_mode = state.get_selected_scripting_mode().await;
+    let scripting_status = format_scripting_mode(scripting_mode);
+
     footer.set_connection_info(ConnectionInfo {
-        mode: app.connection_info.mode.clone(),
-        protocol: app.connection_info.protocol.clone(),
         model: app.connection_info.model.clone(),
-        local_addr: app.connection_info.local_addr.clone(),
+        scripting_env: scripting_status,
     });
     footer.set_packet_stats(app.packet_stats.clone());
     footer.set_log_level(app.log_level);
@@ -103,9 +113,6 @@ pub async fn run_rolling_tui(
 
     // Create status channel for server messages
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
-
-    // Wrap settings for sharing
-    let _settings = Arc::new(Mutex::new(settings));
 
     // Create keyboard event stream
     let mut event_stream = EventStream::new();
@@ -190,7 +197,7 @@ pub async fn run_rolling_tui(
             maybe_event = event_stream.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer).await? {
+                        if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer, settings.clone()).await? {
                             info!("Quit requested by user");
                             break; // Quit requested
                         }
@@ -407,10 +414,11 @@ async fn handle_event(
     event_handler: &mut EventHandler,
     status_tx: &mpsc::UnboundedSender<String>,
     footer: &mut StickyFooter,
+    settings: Arc<Mutex<Settings>>,
 ) -> Result<bool> {
     match event {
         Event::Key(key) => {
-            handle_key_event(key.code, key.modifiers, app, state, event_handler, status_tx, footer).await
+            handle_key_event(key.code, key.modifiers, app, state, event_handler, status_tx, footer, settings).await
         }
         Event::Resize(width, height) => {
             footer.handle_resize(width, height);
@@ -430,12 +438,59 @@ async fn handle_key_event(
     event_handler: &mut EventHandler,
     status_tx: &mpsc::UnboundedSender<String>,
     footer: &mut StickyFooter,
+    settings: Arc<Mutex<Settings>>,
 ) -> Result<bool> {
     // Handle special keys first
     match key_code {
         // Ctrl+C to quit
         KeyCode::Char('c') | KeyCode::Char('C') if modifiers.contains(KeyModifiers::CONTROL) => {
             return Ok(true);
+        }
+
+        // Ctrl+E to cycle scripting environment
+        KeyCode::Char('e') | KeyCode::Char('E') if modifiers.contains(KeyModifiers::CONTROL) => {
+            let (new_mode, switched) = state.cycle_scripting_mode().await;
+
+            if switched {
+                let message = match new_mode {
+                    crate::state::app_state::ScriptingMode::Llm => {
+                        "LLM will handle all requests directly"
+                    }
+                    crate::state::app_state::ScriptingMode::Python => {
+                        "LLM will produce Python code to handle simple requests"
+                    }
+                    crate::state::app_state::ScriptingMode::JavaScript => {
+                        "LLM will produce JavaScript code to handle simple requests"
+                    }
+                    crate::state::app_state::ScriptingMode::Go => {
+                        "LLM will produce Go code to handle simple requests"
+                    }
+                };
+                print_output_line(message, footer)?;
+
+                // Save the new scripting mode to settings
+                let mode_str = new_mode.as_str().to_lowercase();
+                if let Err(e) = settings.lock().await.set_scripting_mode(mode_str) {
+                    error!("Failed to save scripting mode setting: {}", e);
+                }
+
+                update_ui_from_state(app, state, footer).await;
+                footer.render(&mut stdout())?;
+            } else {
+                print_output_line("No other scripting environments available (only LLM)", footer)?;
+            }
+
+            return Ok(false);
+        }
+
+        // Ctrl+L to cycle log level
+        KeyCode::Char('l') | KeyCode::Char('L') if modifiers.contains(KeyModifiers::CONTROL) => {
+            let new_level = app.log_level.cycle();
+            app.set_log_level(new_level);
+            footer.set_log_level(new_level);
+            print_output_line(&format!("Log level set to: {}", new_level.as_str()), footer)?;
+            footer.render(&mut stdout())?;
+            return Ok(false);
         }
 
         // Ctrl+N or Alt+N to insert newline
@@ -486,7 +541,7 @@ async fn handle_key_event(
 
                 // Handle command
                 match command {
-                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel => {
+                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv => {
                         // Handle status/info commands
                         handle_status_command(&command, app, state, event_handler, footer).await?;
                     }
@@ -642,6 +697,59 @@ async fn handle_key_event(
                         tokio::spawn(async move {
                             let _ = handler_clone.handle_interpret_with_actions(llm_input, status_tx_clone, None).await;
                         });
+                    }
+                    UserCommand::ChangeScriptingEnv { env } => {
+                        // Parse the scripting environment
+                        let mode = match env.to_lowercase().as_str() {
+                            "llm" => Some(crate::state::app_state::ScriptingMode::Llm),
+                            "python" | "py" => Some(crate::state::app_state::ScriptingMode::Python),
+                            "javascript" | "js" | "node" => Some(crate::state::app_state::ScriptingMode::JavaScript),
+                            "go" | "golang" => Some(crate::state::app_state::ScriptingMode::Go),
+                            _ => None,
+                        };
+
+                        if let Some(new_mode) = mode {
+                            // Check if the environment is available
+                            let scripting_env = state.get_scripting_env().await;
+                            let available = match new_mode {
+                                crate::state::app_state::ScriptingMode::Llm => true,
+                                crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
+                                crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
+                                crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
+                            };
+
+                            if available {
+                                state.set_selected_scripting_mode(new_mode).await;
+                                let message = match new_mode {
+                                    crate::state::app_state::ScriptingMode::Llm => {
+                                        "Scripting environment set to: LLM (LLM will handle all requests directly)"
+                                    }
+                                    crate::state::app_state::ScriptingMode::Python => {
+                                        "Scripting environment set to: Python (LLM will produce Python code)"
+                                    }
+                                    crate::state::app_state::ScriptingMode::JavaScript => {
+                                        "Scripting environment set to: JavaScript (LLM will produce JavaScript code)"
+                                    }
+                                    crate::state::app_state::ScriptingMode::Go => {
+                                        "Scripting environment set to: Go (LLM will produce Go code)"
+                                    }
+                                };
+                                print_output_line(message, footer)?;
+
+                                // Save to settings
+                                let mode_str = new_mode.as_str().to_lowercase();
+                                if let Err(e) = settings.lock().await.set_scripting_mode(mode_str) {
+                                    error!("Failed to save scripting mode setting: {}", e);
+                                }
+
+                                update_ui_from_state(app, state, footer).await;
+                                footer.render(&mut stdout())?;
+                            } else {
+                                print_output_line(&format!("{} environment is not available on this system", new_mode), footer)?;
+                            }
+                        } else {
+                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go", env), footer)?;
+                        }
                     }
                 }
             }
@@ -894,11 +1002,12 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
         }
     }
 
+    let scripting_mode = state.get_selected_scripting_mode().await;
+    let scripting_status = format_scripting_mode(scripting_mode);
+
     footer.set_connection_info(ConnectionInfo {
-        mode: app.connection_info.mode.clone(),
-        protocol: app.connection_info.protocol.clone(),
         model: app.connection_info.model.clone(),
-        local_addr: app.connection_info.local_addr.clone(),
+        scripting_env: scripting_status,
     });
 
     // CRITICAL: Handle footer size changes (expansion/shrinking)

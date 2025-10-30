@@ -80,11 +80,11 @@ pub async fn call_llm_with_actions(
     // TRY SCRIPT FIRST if configured
     let script_config = state.get_script_config(server_id).await;
     if let Some(ref config) = script_config {
-        // Extract context type from event description
-        let context_type = crate::scripting::ScriptManager::extract_context_type(event_description);
+        // Extract event type ID from event description
+        let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
 
-        // Check if script handles this context
-        if config.handles_context(&context_type) {
+        // Check if script handles this event type
+        if config.handles_context(&event_type_id) {
             // Get server info to build script input
             let server_info = state.get_server(server_id).await;
 
@@ -110,7 +110,7 @@ pub async fn call_llm_with_actions(
                 });
 
                 let script_input = crate::scripting::types::ScriptInput {
-                    context_type: context_type.clone(),
+                    event_type_id: event_type_id.clone(),
                     server: crate::scripting::types::ServerContext {
                         id: server.id.as_u32(),
                         port: server.port,
@@ -128,7 +128,7 @@ pub async fn call_llm_with_actions(
                         // Script handled it successfully!
                         debug!(
                             "Script handled event (context: {}, {} actions)",
-                            context_type,
+                            event_type_id,
                             script_response.actions.len()
                         );
 
@@ -156,7 +156,7 @@ pub async fn call_llm_with_actions(
         } else {
             debug!(
                 "Script does not handle context '{}', using LLM",
-                context_type
+                event_type_id
             );
         }
     }
@@ -336,11 +336,11 @@ pub async fn call_llm(
     // TRY SCRIPT FIRST if configured
     let script_config = state.get_script_config(server_id).await;
     if let Some(ref config) = script_config {
-        // Use the event ID as context_type for script routing
-        let context_type = event.id().to_string();
+        // Use the event ID as event_type_id for script routing
+        let event_type_id = event.id().to_string();
 
-        // Check if script handles this context
-        if config.handles_context(&context_type) {
+        // Check if script handles this event type
+        if config.handles_context(&event_type_id) {
             // Get server info to build script input
             let server_info = state.get_server(server_id).await;
 
@@ -362,7 +362,7 @@ pub async fn call_llm(
 
                 // Build structured input for script
                 let script_input = crate::scripting::types::ScriptInput {
-                    context_type: context_type.clone(),
+                    event_type_id: event_type_id.clone(),
                     server: crate::scripting::types::ServerContext {
                         id: server.id.as_u32(),
                         port: server.port,
@@ -380,7 +380,7 @@ pub async fn call_llm(
                         // Script handled it successfully!
                         debug!(
                             "Script handled event (context: {}, {} actions)",
-                            context_type,
+                            event_type_id,
                             script_response.actions.len()
                         );
 
@@ -408,7 +408,7 @@ pub async fn call_llm(
         } else {
             debug!(
                 "Script does not handle context '{}', using LLM",
-                context_type
+                event_type_id
             );
         }
     }

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub enum ScriptLanguage {
     Python,
     JavaScript,
+    Go,
 }
 
 impl ScriptLanguage {
@@ -16,6 +17,7 @@ impl ScriptLanguage {
         match self {
             ScriptLanguage::Python => "python3",
             ScriptLanguage::JavaScript => "node",
+            ScriptLanguage::Go => "go",
         }
     }
 
@@ -24,6 +26,7 @@ impl ScriptLanguage {
         match s.to_lowercase().as_str() {
             "python" | "python3" => Some(ScriptLanguage::Python),
             "javascript" | "js" | "node" => Some(ScriptLanguage::JavaScript),
+            "go" | "golang" => Some(ScriptLanguage::Go),
             _ => None,
         }
     }
@@ -33,7 +36,47 @@ impl ScriptLanguage {
         match self {
             ScriptLanguage::Python => "python",
             ScriptLanguage::JavaScript => "javascript",
+            ScriptLanguage::Go => "go",
         }
+    }
+
+    /// Get all available scripting languages
+    pub fn all_languages() -> Vec<Self> {
+        vec![
+            ScriptLanguage::Python,
+            ScriptLanguage::JavaScript,
+            ScriptLanguage::Go,
+        ]
+    }
+
+    /// Format all available languages as a quoted, comma-separated list
+    /// Example: "'python', 'javascript', or 'go'"
+    pub fn all_languages_formatted() -> String {
+        let all = Self::all_languages();
+        let count = all.len();
+
+        if count == 0 {
+            return String::new();
+        }
+
+        if count == 1 {
+            return format!("'{}'", all[0].as_str());
+        }
+
+        let mut result = String::new();
+        for (i, lang) in all.iter().enumerate() {
+            if i == count - 1 {
+                // Last item
+                result.push_str(&format!("or '{}'", lang.as_str()));
+            } else if i == count - 2 {
+                // Second to last
+                result.push_str(&format!("'{}', ", lang.as_str()));
+            } else {
+                // All others
+                result.push_str(&format!("'{}', ", lang.as_str()));
+            }
+        }
+        result
     }
 }
 
@@ -70,10 +113,10 @@ pub struct ScriptConfig {
 }
 
 impl ScriptConfig {
-    /// Check if this script handles a given context type
-    pub fn handles_context(&self, context_type: &str) -> bool {
+    /// Check if this script handles a given event type
+    pub fn handles_context(&self, event_type_id: &str) -> bool {
         self.handles_contexts.contains(&"all".to_string())
-            || self.handles_contexts.contains(&context_type.to_string())
+            || self.handles_contexts.contains(&event_type_id.to_string())
     }
 
     /// Add context types to the handles list
@@ -99,7 +142,7 @@ impl ScriptConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptInput {
     /// Type of event/context (e.g., "ssh_auth", "ssh_banner", "http_request")
-    pub context_type: String,
+    pub event_type_id: String,
 
     /// Server information
     pub server: ServerContext,

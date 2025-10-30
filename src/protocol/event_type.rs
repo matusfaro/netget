@@ -203,7 +203,7 @@ When creating a script, structure it with a switch/case on the event type:
 Python example:
 import json, sys
 data = json.load(sys.stdin)
-event_type = data['context_type']
+event_type = data['event_type_id']
 
 if event_type == "event_id_1":
     # Handle this event type
@@ -219,7 +219,7 @@ print(json.dumps(result))
 
 JavaScript example:
 const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
-const eventType = data.context_type;
+const eventType = data.event_type_id;
 let result;
 
 switch (eventType) {{
