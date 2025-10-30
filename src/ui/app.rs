@@ -289,7 +289,7 @@ impl App {
             "/model [<name>] - List/select a model",
             "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
-            "/web [toggle] - Show/toggle web search",
+            "/web [on/off] - Show/toggle web search",
         ];
 
         // Filter commands based on current input
