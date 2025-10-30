@@ -54,48 +54,73 @@ Network ─────┘
 
 ## Component Details
 
-### UI Module (`src/ui/`)
+### CLI Module (`src/cli/`)
 
-**Purpose**: Full-screen terminal interface
+**Purpose**: Rolling terminal interface with sticky footer
 
-**Structure:**
+**Architecture:**
 ```
 ┌─────────────────────────────────────────────────┐
-│  LLM Responses  │  Connection Info & Stats      │
-│  (60%)          │  (40%)                        │
-│                 │                               │
-├─────────────────────────────────────────────────┤
-│  Status / Activity Log (30%)                    │
-├─────────────────────────────────────────────────┤
-│  User Input (30%)                               │
+│                                                 │
+│         Scrolling Output Region                 │
+│   (LLM responses, logs, server events)          │
+│   Scrolls naturally into terminal's scrollback  │
+│                                                 │
+│                                                 │
+├─────────────────────────────────────────────────┤ Sticky Footer
+│ Status Bar: Model | Scripting | Web Search     │
+│ Input Field: User commands (multi-line)         │
 └─────────────────────────────────────────────────┘
 ```
 
 **Key Files:**
-- `app.rs`: Manages UI state, renders all panels
-- `layout.rs`: Defines 4-panel layout structure
-- `events.rs`: Handles keyboard input, converts to UiEvents
+- `rolling_tui.rs`: Main TUI event loop and rendering
+- `sticky_footer.rs`: Footer component (status bar + input)
+- `input_state.rs`: Multi-line input with history
+- `server_startup.rs`: Protocol server spawning logic
 
 **Rendering Flow:**
 ```
-Terminal Input ─> UiEvent ─> App::handle_input ─> EventHandler
-                                    │
-                                    ▼
-                              App::render() ─> Terminal Output
+Terminal Input ─> Event ─> handle_event() ─> EventHandler
+                                  │
+                                  ▼
+Status Channel ─> print_output_line() ─> Scrolling Region
+                                  │
+                                  ▼
+                           footer.render() ─> Sticky Footer
 ```
 
-### Network Module (`src/network/`)
+### Server Module (`src/server/`)
 
-**Purpose**: Cross-platform TCP/IP stack
+**Purpose**: Protocol server implementations
 
-**Components:**
+**Structure:**
+- New protocols: `src/server/<protocol>/mod.rs` and `actions.rs`
+- Legacy protocols: `src/server/tcp.rs`, `http.rs`, `udp.rs`, `datalink.rs`
 
-#### TcpServer (`tcp.rs`)
+**Protocol Organization:**
+```
+src/server/
+├── imap/
+│   ├── mod.rs        # Server implementation
+│   └── actions.rs    # LLM action handlers
+├── ssh/
+│   ├── mod.rs
+│   └── actions.rs
+├── ldap/
+│   ├── mod.rs
+│   └── actions.rs
+├── tcp.rs           # Legacy TCP protocol
+├── http.rs          # Legacy HTTP protocol
+└── mod.rs           # Module exports
+```
+
+#### Example Server Structure
 ```rust
-pub struct TcpServer {
-    listener: Option<TcpListener>,
-    local_addr: Option<SocketAddr>,
-    event_tx: mpsc::UnboundedSender<NetworkEvent>,
+pub struct ImapServer {
+    listener: TcpListener,
+    state: Arc<AppState>,
+    status_tx: UnboundedSender<String>,
 }
 ```
 

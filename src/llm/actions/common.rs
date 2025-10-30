@@ -495,9 +495,10 @@ fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> 
     }
 }
 
-/// Get all BaseStack enum values (useful for iteration)
+/// Get all BaseStack enum values that should be available to the LLM
+/// Filters out protocols with ProtocolState::Abandoned
 fn all_base_stacks() -> Vec<BaseStack> {
-    vec![
+    let all_protocols = vec![
         BaseStack::Tcp,
         BaseStack::Http,
         BaseStack::DataLink,
@@ -510,6 +511,7 @@ fn all_base_stacks() -> Vec<BaseStack> {
         BaseStack::Irc,
         BaseStack::Telnet,
         BaseStack::Smtp,
+        BaseStack::Imap,
         BaseStack::Mdns,
         BaseStack::Mysql,
         BaseStack::Ipp,
@@ -518,7 +520,26 @@ fn all_base_stacks() -> Vec<BaseStack> {
         BaseStack::Proxy,
         BaseStack::WebDav,
         BaseStack::Nfs,
-    ]
+        BaseStack::Socks5,
+        BaseStack::Smb,
+        BaseStack::Cassandra,
+        BaseStack::Stun,
+        BaseStack::Turn,
+        BaseStack::Elasticsearch,
+        BaseStack::Wireguard,
+        BaseStack::Openvpn,
+        BaseStack::Ipsec,
+        BaseStack::Dynamo,
+        BaseStack::OpenAi,
+        BaseStack::Ldap,
+        BaseStack::Bgp,
+    ];
+
+    // Filter out abandoned protocols
+    all_protocols
+        .into_iter()
+        .filter(|stack| stack.metadata().is_available_to_llm())
+        .collect()
 }
 
 /// Generate comprehensive base stack documentation with startup parameters

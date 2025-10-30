@@ -88,6 +88,36 @@ pub enum ProtocolState {
     Accumulating,
 }
 
+/// IMAP session state (RFC 3501)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImapSessionState {
+    /// Not authenticated - initial state, only LOGIN/AUTHENTICATE allowed
+    NotAuthenticated,
+    /// Authenticated - user logged in, can access mailboxes
+    Authenticated,
+    /// Selected - mailbox selected for operations (FETCH, STORE, etc.)
+    Selected,
+    /// Logout - client issued LOGOUT, connection closing
+    Logout,
+}
+
+/// BGP session state (RFC 4271 FSM)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BgpSessionState {
+    /// Idle - initial state, waiting for connection
+    Idle,
+    /// Connect - TCP connection established, waiting to send OPEN
+    Connect,
+    /// Active - failed to connect, will retry
+    Active,
+    /// OpenSent - OPEN message sent, waiting for peer's OPEN
+    OpenSent,
+    /// OpenConfirm - OPEN received and validated, waiting for KEEPALIVE
+    OpenConfirm,
+    /// Established - full BGP session established, exchanging routes
+    Established,
+}
+
 /// Protocol-specific connection information
 #[derive(Debug, Clone)]
 pub enum ProtocolConnectionInfo {
@@ -159,6 +189,11 @@ pub enum ProtocolConnectionInfo {
     Postgresql,
     /// Redis connection (managed by RESP protocol)
     Redis,
+    /// Cassandra connection (CQL native protocol)
+    Cassandra {
+        ready: bool,
+        protocol_version: u8,
+    },
     /// HTTP Proxy connection (recent requests)
     Proxy {
         recent_requests: Vec<(String, String, Instant)>, // method, URL, time
@@ -169,6 +204,96 @@ pub enum ProtocolConnectionInfo {
     },
     /// NFS connection (mounted paths)
     Nfs { mounted_paths: Vec<String> },
+    /// SMB connection with session and file state
+    Smb {
+        authenticated: bool,
+        username: Option<String>,
+        session_id: Option<u64>,
+        open_files: Vec<String>, // Paths of currently open files
+    },
+    /// STUN connection (transaction)
+    Stun {
+        transaction_id: Option<String>,
+    },
+    /// TURN connection (allocations and relay)
+    Turn {
+        allocation_ids: Vec<String>,
+        relay_addresses: Vec<String>,
+    },
+    /// LDAP connection with write half
+    Ldap {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        authenticated: bool,
+        bind_dn: Option<String>,
+    },
+    /// IMAP connection (write_half stored in ImapSession)
+    Imap {
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        session_state: ImapSessionState,
+        authenticated_user: Option<String>,
+        selected_mailbox: Option<String>,
+        mailbox_read_only: bool,
+    },
+    /// SOCKS5 proxy connection
+    Socks5 {
+        target_addr: Option<String>,       // Target address being proxied to
+        username: Option<String>,          // Authenticated username (if any)
+        mitm_enabled: bool,               // Whether MITM inspection is active
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
+    /// Elasticsearch connection (recent queries)
+    Elasticsearch {
+        recent_requests: Vec<(String, String, Instant)>, // method, path, time
+    },
+    /// DynamoDB connection (recent operations)
+    Dynamo {
+        recent_operations: Vec<(String, String, Instant)>, // operation, table, time
+    },
+    /// OpenAI API connection (recent requests)
+    OpenAi {
+        recent_requests: Vec<String>, // Recent endpoints accessed
+    },
+    /// WireGuard VPN connection
+    Wireguard {
+        public_key: String,                      // Peer's public key (base64)
+        endpoint: Option<String>,                // Peer's endpoint address (may be unknown initially)
+        allowed_ips: Vec<String>,                // Allowed IPs for this peer
+        last_handshake: Option<std::time::SystemTime>, // Last successful handshake time
+    },
+    /// OpenVPN connection
+    Openvpn {
+        endpoint: SocketAddr,              // Client endpoint address
+        session_id: Option<String>,        // Session ID from handshake (hex)
+        protocol_version: u8,              // Protocol version (1 or 2)
+        last_packet: Option<Instant>,      // Last packet received time
+        tx_bytes: u64,                     // Bytes transmitted
+        rx_bytes: u64,                     // Bytes received
+    },
+    /// IPSec/IKEv2 connection
+    Ipsec {
+        endpoint: SocketAddr,              // Peer endpoint address
+        initiator_spi: String,             // Initiator SPI (hex)
+        responder_spi: String,             // Responder SPI (hex)
+        ike_version: String,               // IKEv1 or IKEv2
+        last_packet: Option<Instant>,      // Last packet received time
+        tx_bytes: u64,                     // Bytes transmitted
+        rx_bytes: u64,                     // Bytes received
+    },
+    /// BGP connection with write half and FSM state
+    Bgp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        session_state: BgpSessionState,
+        peer_as: Option<u32>,              // Peer AS number
+        hold_time: u16,                    // Negotiated hold time (seconds)
+        keepalive_time: u16,               // Keepalive interval (seconds)
+        announced_prefixes: Vec<String>,   // Announced route prefixes
+    },
 }
 
 /// Connection status
@@ -239,6 +364,9 @@ pub struct ServerInstance {
     /// Proxy filter configuration (only for proxy servers)
     #[cfg(feature = "proxy")]
     pub proxy_filter_config: Option<crate::server::proxy::filter::ProxyFilterConfig>,
+    /// SOCKS5 filter configuration (feature-gated)
+    #[cfg(feature = "socks5")]
+    pub socks5_filter_config: Option<crate::server::socks5::filter::Socks5FilterConfig>,
     /// Log file paths (output_name -> log_file_path)
     pub log_files: HashMap<String, PathBuf>,
 }
@@ -263,6 +391,8 @@ impl ServerInstance {
             script_config: None,
             #[cfg(feature = "proxy")]
             proxy_filter_config: None,
+            #[cfg(feature = "socks5")]
+            socks5_filter_config: None,
             log_files: HashMap::new(),
         }
     }

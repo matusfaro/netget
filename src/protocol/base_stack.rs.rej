@@ -1,0 +1,8 @@
+@@ -126,6 +130,7 @@
+             Self::WebDav => "ETH>IP>TCP>HTTP>WEBDAV",
+             Self::Nfs => "ETH>IP>TCP>NFS",
+             Self::Imap => "ETH>IP>TCP>IMAP",
++            Self::Elasticsearch => "ETH>IP>TCP>HTTP>ELASTICSEARCH",
+         }
+     }
+ 

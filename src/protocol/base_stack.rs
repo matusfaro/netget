@@ -3,6 +3,60 @@
 //! Defines the underlying network stack used by the application.
 //! Each stack determines how network data is processed and what the LLM controls.
 
+/// Protocol implementation state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolState {
+    /// Fully implemented, production-ready
+    Implemented,
+    /// Stable, feature-complete, recommended for use
+    Beta,
+    /// Experimental, may have limitations or bugs
+    Alpha,
+    /// Implementation abandoned, not functional (not shown in LLM prompts)
+    Abandoned,
+}
+
+impl ProtocolState {
+    /// Get the string representation for display
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Implemented => "Implemented",
+            Self::Beta => "Beta",
+            Self::Alpha => "Alpha",
+            Self::Abandoned => "Abandoned",
+        }
+    }
+}
+
+/// Protocol metadata including state and notes
+#[derive(Debug, Clone)]
+pub struct ProtocolMetadata {
+    /// Current implementation state
+    pub state: ProtocolState,
+    /// Optional notes explaining the state or limitations
+    pub notes: Option<&'static str>,
+}
+
+impl ProtocolMetadata {
+    /// Create new metadata with just a state
+    pub const fn new(state: ProtocolState) -> Self {
+        Self { state, notes: None }
+    }
+
+    /// Create new metadata with state and notes
+    pub const fn with_notes(state: ProtocolState, notes: &'static str) -> Self {
+        Self {
+            state,
+            notes: Some(notes),
+        }
+    }
+
+    /// Check if this protocol should be shown to the LLM
+    pub fn is_available_to_llm(&self) -> bool {
+        self.state != ProtocolState::Abandoned
+    }
+}
+
 /// Base protocol stack types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaseStack {
@@ -86,9 +140,128 @@ pub enum BaseStack {
     /// NFS stack - NFSv3 server using nfsserve
     /// The LLM handles NFS file system operations (port 2049)
     Nfs,
+
+    /// IMAP stack - IMAP mail retrieval server using imap-codec
+    /// The LLM handles IMAP mailbox operations and email retrieval (port 143/993)
+    Imap,
+
+    /// Elasticsearch stack - Elasticsearch/OpenSearch server using hyper
+    /// The LLM handles search queries and generates JSON responses (port 9200)
+    Elasticsearch,
+
+    /// WireGuard stack - WireGuard VPN honeypot
+    /// The LLM detects WireGuard handshake attempts and logs reconnaissance (port 51820)
+    Wireguard,
+
+    /// OpenVPN stack - OpenVPN honeypot
+    /// The LLM detects OpenVPN connections and logs reconnaissance (port 1194)
+    Openvpn,
+
+    /// IPSec/IKEv2 stack - IPSec VPN honeypot
+    /// The LLM detects IKEv2 handshake attempts and logs reconnaissance (port 500/4500)
+    Ipsec,
+
+    /// SOCKS5 stack - SOCKS5 proxy server
+    /// The LLM controls proxy decisions, authentication, and optional traffic inspection (port 1080)
+    Socks5,
+
+    /// SMB stack - SMB/CIFS file server using smb-msg
+    /// The LLM handles SMB file operations (port 445)
+    Smb,
+
+    /// Cassandra stack - Cassandra/CQL database server
+    /// The LLM handles CQL queries (port 9042)
+    Cassandra,
+
+    /// STUN stack - STUN server for NAT traversal
+    /// The LLM handles STUN binding requests (port 3478)
+    Stun,
+
+    /// TURN stack - TURN relay server for NAT traversal
+    /// The LLM handles TURN allocations and relaying (port 3478)
+    Turn,
+
+
+    /// DynamoDB stack - DynamoDB-compatible database server
+    /// The LLM handles DynamoDB API operations over HTTP (port 8000)
+    Dynamo,
+
+    /// OpenAI stack - OpenAI-compatible API server
+    /// The LLM handles chat completions and model listings (port 11435/8000)
+    OpenAi,
+
+    /// LDAP stack - LDAP directory server
+    /// The LLM handles LDAP operations and directory queries (port 389)
+    Ldap,
+
+    /// BGP stack - BGP routing protocol
+    /// The LLM handles BGP peering, route announcements, and withdrawals (port 179)
+    Bgp,
 }
 
 impl BaseStack {
+    /// Get protocol metadata (state, notes)
+    pub fn metadata(&self) -> ProtocolMetadata {
+        match self {
+            // Core Protocols (Beta)
+            Self::Tcp => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Http => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Udp => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::DataLink => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Dns => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Dhcp => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Ntp => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Snmp => ProtocolMetadata::new(ProtocolState::Beta),
+            Self::Ssh => ProtocolMetadata::new(ProtocolState::Beta),
+
+            // Application Protocols (Alpha)
+            Self::Irc => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Telnet => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Smtp => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Imap => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Mdns => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Ldap => ProtocolMetadata::new(ProtocolState::Alpha),
+
+            // Database Protocols (Alpha)
+            Self::Mysql => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Postgresql => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Redis => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Cassandra => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Dynamo => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Elasticsearch => ProtocolMetadata::new(ProtocolState::Alpha),
+
+            // Web & File Protocols (Alpha)
+            Self::Ipp => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::WebDav => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Nfs => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Smb => ProtocolMetadata::new(ProtocolState::Alpha),
+
+            // Proxy & Network Protocols (Alpha/Implemented)
+            Self::Proxy => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Socks5 => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Wireguard => ProtocolMetadata::with_notes(
+                ProtocolState::Implemented,
+                "Full VPN server with actual tunnel support using defguard_wireguard_rs. Creates TUN interface and supports peer connections."
+            ),
+            Self::Stun => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Turn => ProtocolMetadata::new(ProtocolState::Alpha),
+            Self::Bgp => ProtocolMetadata::new(ProtocolState::Alpha),
+
+            // VPN Protocols - Abandoned
+            Self::Openvpn => ProtocolMetadata::with_notes(
+                ProtocolState::Abandoned,
+                "Honeypot only - no actual VPN tunnels. Full OpenVPN implementation is infeasible: no viable Rust library exists, protocol is extremely complex (500K+ lines in C++). Use WireGuard for production VPN. OpenVPN honeypot sufficient for detection/logging reconnaissance attempts."
+            ),
+            Self::Ipsec => ProtocolMetadata::with_notes(
+                ProtocolState::Abandoned,
+                "Honeypot only - no actual VPN tunnels. Full IPSec/IKEv2 implementation is infeasible: no viable Rust library (ipsec-parser is parse-only), protocol requires deep OS integration (XFRM policy), extremely complex (hundreds of thousands of lines in strongSwan). Use WireGuard for production VPN."
+            ),
+
+            // AI & API Protocols (Alpha)
+            Self::OpenAi => ProtocolMetadata::new(ProtocolState::Alpha),
+        }
+    }
+
     /// Get the stack name as a string
     pub fn name(&self) -> &'static str {
         match self {
@@ -112,6 +285,20 @@ impl BaseStack {
             Self::Proxy => "ETH>IP>TCP>HTTP>PROXY",
             Self::WebDav => "ETH>IP>TCP>HTTP>WEBDAV",
             Self::Nfs => "ETH>IP>TCP>NFS",
+            Self::Imap => "ETH>IP>TCP>IMAP",
+            Self::Wireguard => "ETH>IP>UDP>WG",
+            Self::Openvpn => "ETH>IP>TCP/UDP>OPENVPN",
+            Self::Socks5 => "ETH>IP>TCP>SOCKS5",
+            Self::Ipsec => "ETH>IP>UDP>IPSEC",
+            Self::Smb => "ETH>IP>TCP>SMB",
+            Self::Cassandra => "ETH>IP>TCP>Cassandra",
+            Self::Stun => "ETH>IP>UDP>STUN",
+            Self::Turn => "ETH>IP>UDP>TURN",
+            Self::Elasticsearch => "ETH>IP>TCP>HTTP>ELASTICSEARCH",
+            Self::Dynamo => "ETH>IP>TCP>HTTP>DYNAMODB",
+            Self::OpenAi => "ETH>IP>TCP>HTTP>OPENAI",
+            Self::Ldap => "ETH>IP>TCP>LDAP",
+            Self::Bgp => "ETH>IP>TCP>BGP",
         }
     }
 
@@ -193,6 +380,58 @@ impl BaseStack {
                 #[cfg(feature = "nfs")]
                 return Some(Self::Nfs);
             }
+            "eth>ip>tcp>imap" => {
+                #[cfg(feature = "imap")]
+                return Some(Self::Imap);
+            }
+            "eth>ip>tcp>socks5" => {
+                #[cfg(feature = "socks5")]
+                return Some(Self::Socks5);
+            }
+            "eth>ip>tcp>smb" => {
+                #[cfg(feature = "smb")]
+                return Some(Self::Smb);
+            }
+            "eth>ip>tcp>cassandra" => {
+                #[cfg(feature = "cassandra")]
+                return Some(Self::Cassandra);
+            }
+            "eth>ip>udp>stun" => {
+                #[cfg(feature = "stun")]
+                return Some(Self::Stun);
+            }
+            "eth>ip>udp>turn" => {
+                #[cfg(feature = "turn")]
+                return Some(Self::Turn);
+            }
+            "eth>ip>tcp>http>elasticsearch" => {
+                #[cfg(feature = "elasticsearch")]
+                return Some(Self::Elasticsearch);
+            }
+            "eth>ip>tcp>http>dynamodb" => {
+                #[cfg(feature = "dynamo")]
+                return Some(Self::Dynamo);
+            }
+            "eth>ip>tcp>http>openai" => {
+                #[cfg(feature = "openai")]
+                return Some(Self::OpenAi);
+            }
+            "eth>ip>tcp>ldap" => {
+                #[cfg(feature = "ldap")]
+                return Some(Self::Ldap);
+            }
+            "eth>ip>udp>wg" => {
+                #[cfg(feature = "wireguard")]
+                return Some(Self::Wireguard);
+            }
+            "eth>ip>tcp/udp>openvpn" => {
+                #[cfg(feature = "openvpn")]
+                return Some(Self::Openvpn);
+            }
+            "eth>ip>tcp>bgp" => {
+                #[cfg(feature = "bgp")]
+                return Some(Self::Bgp);
+            }
             _ => {} // Fall through to keyword matching
         }
 
@@ -250,6 +489,12 @@ impl BaseStack {
             return Some(Self::Telnet);
         }
 
+        // IMAP stack (check before SMTP to be more specific for mail/email keywords)
+        #[cfg(feature = "imap")]
+        if s_lower.contains("imap") {
+            return Some(Self::Imap);
+        }
+
         // SMTP stack
         #[cfg(feature = "smtp")]
         if s_lower.contains("smtp") || s_lower.contains("mail") || s_lower.contains("email") {
@@ -292,10 +537,106 @@ impl BaseStack {
             return Some(Self::WebDav);
         }
 
+        // SOCKS5 stack
+        #[cfg(feature = "socks5")]
+        if s_lower.contains("socks") {
+            return Some(Self::Socks5);
+        }
+
         // NFS stack
         #[cfg(feature = "nfs")]
         if s_lower.contains("nfs") || s_lower.contains("file server") {
             return Some(Self::Nfs);
+        }
+
+        // SMB stack
+        #[cfg(feature = "smb")]
+        if s_lower.contains("smb") || s_lower.contains("cifs") {
+            return Some(Self::Smb);
+        }
+
+        // Cassandra stack
+        #[cfg(feature = "cassandra")]
+        if s_lower.contains("cassandra") || s_lower.contains("cql") {
+            return Some(Self::Cassandra);
+        }
+
+        // STUN stack
+        #[cfg(feature = "stun")]
+        if s_lower.contains("stun") {
+            return Some(Self::Stun);
+        }
+
+        // TURN stack
+        #[cfg(feature = "turn")]
+        if s_lower.contains("turn") {
+            return Some(Self::Turn);
+        }
+
+        // Elasticsearch stack
+        #[cfg(feature = "elasticsearch")]
+        if s_lower.contains("elasticsearch") || s_lower.contains("opensearch") {
+            return Some(Self::Elasticsearch);
+        }
+
+        // DynamoDB stack
+        #[cfg(feature = "dynamo")]
+        if s_lower.contains("dynamo") {
+            return Some(Self::Dynamo);
+        }
+
+        // OpenAI stack
+        #[cfg(feature = "openai")]
+        if s_lower.contains("openai") {
+            return Some(Self::OpenAi);
+        }
+
+        // LDAP stack
+        #[cfg(feature = "ldap")]
+        if s_lower.contains("ldap") || s_lower.contains("directory server") {
+            return Some(Self::Ldap);
+        }
+
+        // WireGuard stack
+        #[cfg(feature = "wireguard")]
+        if s_lower.contains("wireguard") || s_lower.contains("wg") {
+            return Some(Self::Wireguard);
+        }
+
+        // OpenVPN stack
+        #[cfg(feature = "openvpn")]
+        if s_lower.contains("openvpn") {
+            return Some(Self::Openvpn);
+        }
+
+        // BGP stack
+        #[cfg(feature = "bgp")]
+        if s_lower.contains("bgp") || s_lower.contains("border gateway") {
+            return Some(Self::Bgp);
+        }
+
+        // WireGuard VPN stack
+        #[cfg(feature = "wireguard")]
+        if s_lower.contains("wireguard") || s_lower.contains("wg") {
+            return Some(Self::Wireguard);
+        }
+
+        // OpenVPN stack
+        #[cfg(feature = "openvpn")]
+        if s_lower.contains("openvpn") {
+            return Some(Self::Openvpn);
+        }
+
+        // Elasticsearch stack
+        #[cfg(feature = "elasticsearch")]
+        if s_lower.contains("elasticsearch") || s_lower.contains("opensearch") {
+            return Some(Self::Elasticsearch);
+        }
+
+        // IPSec/IKEv2 VPN stack
+        #[cfg(feature = "ipsec")]
+        if s_lower.contains("ipsec") || s_lower.contains("ikev2") || s_lower.contains("ike") {
+            return Some(Self::Ipsec);
         }
 
         // UDP raw stack
@@ -415,6 +756,48 @@ impl BaseStack {
 
         #[cfg(feature = "nfs")]
         stacks.push("nfs");
+
+        #[cfg(feature = "imap")]
+        stacks.push("imap");
+
+        #[cfg(feature = "socks5")]
+        stacks.push("socks5");
+
+        #[cfg(feature = "smb")]
+        stacks.push("smb");
+
+        #[cfg(feature = "cassandra")]
+        stacks.push("cassandra");
+
+        #[cfg(feature = "stun")]
+        stacks.push("stun");
+
+        #[cfg(feature = "turn")]
+        stacks.push("turn");
+
+        #[cfg(feature = "elasticsearch")]
+        stacks.push("elasticsearch");
+
+        #[cfg(feature = "dynamo")]
+        stacks.push("dynamo");
+
+        #[cfg(feature = "openai")]
+        stacks.push("openai");
+
+        #[cfg(feature = "ldap")]
+        stacks.push("ldap");
+
+        #[cfg(feature = "wireguard")]
+        stacks.push("wireguard");
+
+        #[cfg(feature = "openvpn")]
+        stacks.push("openvpn");
+
+        #[cfg(feature = "bgp")]
+        stacks.push("bgp");
+
+        #[cfg(feature = "elasticsearch")]
+        stacks.push("elasticsearch");
 
         stacks
     }
@@ -536,5 +919,97 @@ mod tests {
         assert_eq!(BaseStack::from_str("nfs"), Some(BaseStack::Nfs));
         assert_eq!(BaseStack::from_str("file server"), Some(BaseStack::Nfs));
         assert_eq!(BaseStack::from_str("nfs server"), Some(BaseStack::Nfs));
+    }
+
+    #[test]
+    fn test_parse_imap_stack() {
+        assert_eq!(BaseStack::from_str("imap"), Some(BaseStack::Imap));
+        assert_eq!(BaseStack::from_str("imap server"), Some(BaseStack::Imap));
+        assert_eq!(BaseStack::from_str("via imap"), Some(BaseStack::Imap));
+    }
+
+    #[test]
+    fn test_parse_socks5_stack() {
+        assert_eq!(BaseStack::from_str("socks5"), Some(BaseStack::Socks5));
+        assert_eq!(BaseStack::from_str("socks proxy"), Some(BaseStack::Socks5));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>socks5"), Some(BaseStack::Socks5));
+    }
+
+    #[test]
+    fn test_parse_smb_stack() {
+        assert_eq!(BaseStack::from_str("smb"), Some(BaseStack::Smb));
+        assert_eq!(BaseStack::from_str("cifs"), Some(BaseStack::Smb));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>smb"), Some(BaseStack::Smb));
+    }
+
+    #[test]
+    fn test_parse_cassandra_stack() {
+        assert_eq!(BaseStack::from_str("cassandra"), Some(BaseStack::Cassandra));
+        assert_eq!(BaseStack::from_str("cql"), Some(BaseStack::Cassandra));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>cassandra"), Some(BaseStack::Cassandra));
+    }
+
+    #[test]
+    fn test_parse_stun_stack() {
+        assert_eq!(BaseStack::from_str("stun"), Some(BaseStack::Stun));
+        assert_eq!(BaseStack::from_str("eth>ip>udp>stun"), Some(BaseStack::Stun));
+    }
+
+    #[test]
+    fn test_parse_turn_stack() {
+        assert_eq!(BaseStack::from_str("turn"), Some(BaseStack::Turn));
+        assert_eq!(BaseStack::from_str("eth>ip>udp>turn"), Some(BaseStack::Turn));
+    }
+
+    #[test]
+    fn test_parse_elasticsearch_stack() {
+        assert_eq!(BaseStack::from_str("elasticsearch"), Some(BaseStack::Elasticsearch));
+        assert_eq!(BaseStack::from_str("opensearch"), Some(BaseStack::Elasticsearch));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>http>elasticsearch"), Some(BaseStack::Elasticsearch));
+    }
+
+    #[test]
+    fn test_parse_dynamo_stack() {
+        assert_eq!(BaseStack::from_str("dynamo"), Some(BaseStack::Dynamo));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>http>dynamodb"), Some(BaseStack::Dynamo));
+    }
+
+    #[test]
+    fn test_parse_openai_stack() {
+        assert_eq!(BaseStack::from_str("openai"), Some(BaseStack::OpenAi));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>http>openai"), Some(BaseStack::OpenAi));
+    }
+
+    #[test]
+    fn test_parse_ldap_stack() {
+        assert_eq!(BaseStack::from_str("ldap"), Some(BaseStack::Ldap));
+        assert_eq!(BaseStack::from_str("directory server"), Some(BaseStack::Ldap));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>ldap"), Some(BaseStack::Ldap));
+    }
+
+    #[test]
+    fn test_parse_wireguard_stack() {
+        assert_eq!(BaseStack::from_str("wireguard"), Some(BaseStack::Wireguard));
+        assert_eq!(BaseStack::from_str("wg"), Some(BaseStack::Wireguard));
+        assert_eq!(BaseStack::from_str("eth>ip>udp>wg"), Some(BaseStack::Wireguard));
+    }
+
+    #[test]
+    fn test_parse_openvpn_stack() {
+        assert_eq!(BaseStack::from_str("openvpn"), Some(BaseStack::Openvpn));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp/udp>openvpn"), Some(BaseStack::Openvpn));
+    }
+
+    #[test]
+    fn test_parse_bgp_stack() {
+        assert_eq!(BaseStack::from_str("bgp"), Some(BaseStack::Bgp));
+        assert_eq!(BaseStack::from_str("border gateway"), Some(BaseStack::Bgp));
+        assert_eq!(BaseStack::from_str("eth>ip>tcp>bgp"), Some(BaseStack::Bgp));
+    }
+
+    #[test]
+    fn test_parse_ipsec_stack() {
+        assert_eq!(BaseStack::from_str("ipsec"), Some(BaseStack::Ipsec));
+        assert_eq!(BaseStack::from_str("ikev2"), Some(BaseStack::Ipsec));
     }
 }

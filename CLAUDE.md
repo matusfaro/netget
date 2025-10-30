@@ -6,6 +6,7 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
 
 ## Base Protocol Stacks
 
+### Core Protocols (Beta)
 - **TCP** (`BaseStack::Tcp`) - LLM controls raw TCP data, constructs entire protocols (FTP, HTTP, custom)
 - **HTTP** (`BaseStack::Http`) - LLM controls HTTP responses (status, headers, body); hyper handles parsing
 - **UDP** (`BaseStack::Udp`) - LLM controls raw UDP datagrams
@@ -15,16 +16,62 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
 - **NTP** (`BaseStack::Ntp`) - LLM handles time sync using ntpd-rs
 - **SNMP** (`BaseStack::Snmp`) - LLM handles SNMP get/set using rasn-snmp
 - **SSH** (`BaseStack::Ssh`) - LLM handles SSH auth and shell using russh
-- **IRC** (`BaseStack::Irc`) - LLM handles IRC chat protocol
+
+### Application Protocols (Alpha)
+- **IRC** (`BaseStack::Irc`) - IRC chat server
+- **Telnet** (`BaseStack::Telnet`) - Telnet terminal server using nectar
+- **SMTP** (`BaseStack::Smtp`) - SMTP mail server (port 25)
+- **IMAP** (`BaseStack::Imap`) - IMAP mail server (port 143/993 for TLS)
+- **mDNS** (`BaseStack::Mdns`) - Multicast DNS service discovery (port 5353)
+- **LDAP** (`BaseStack::Ldap`) - LDAP directory server (port 389)
+
+### Database Protocols (Alpha)
+- **MySQL** (`BaseStack::Mysql`) - MySQL server using opensrv-mysql (port 3306)
+- **PostgreSQL** (`BaseStack::Postgresql`) - PostgreSQL server using pgwire (port 5432)
+- **Redis** (`BaseStack::Redis`) - Redis server with RESP protocol (port 6379)
+- **Cassandra** (`BaseStack::Cassandra`) - Cassandra/CQL database server (port 9042)
+- **DynamoDB** (`BaseStack::Dynamo`) - DynamoDB-compatible server (port 8000)
+- **Elasticsearch** (`BaseStack::Elasticsearch`) - Elasticsearch search engine (port 9200)
+
+### Web & File Protocols (Alpha)
+- **IPP** (`BaseStack::Ipp`) - Internet Printing Protocol server (port 631)
+- **WebDAV** (`BaseStack::WebDav`) - WebDAV file server using dav-server
+- **NFS** (`BaseStack::Nfs`) - NFSv3 file server using nfsserve (port 2049)
+- **SMB** (`BaseStack::Smb`) - SMB/CIFS file server using smb-msg (port 445)
+
+### Proxy & Network Protocols (Alpha)
+- **HTTP Proxy** (`BaseStack::Proxy`) - HTTP/HTTPS proxy using http-mitm-proxy (port 8080/3128)
+- **SOCKS5** (`BaseStack::Socks5`) - SOCKS5 proxy server (port 1080)
+- **STUN** (`BaseStack::Stun`) - STUN server for NAT traversal (port 3478)
+- **TURN** (`BaseStack::Turn`) - TURN relay server for NAT traversal (port 3478)
+
+### VPN Protocols
+- **WireGuard** (`BaseStack::Wireguard`) - ✅ **Full VPN Server** with tunnel support using defguard_wireguard_rs (port 51820)
+- **OpenVPN** (`BaseStack::Openvpn`) - ⚠️ **Honeypot Only** - Detection and logging (port 1194)
+- **IPSec/IKEv2** (`BaseStack::Ipsec`) - ⚠️ **Honeypot Only** - Detection and logging (port 500/4500)
+- **BGP** (`BaseStack::Bgp`) - Border Gateway Protocol routing server (port 179)
+
+**VPN Implementation Status**: See `VPN_IMPLEMENTATION_STATUS.md` for detailed information about why WireGuard is the only fully-functional VPN server.
+
+### AI & API Protocols (Alpha)
+- **OpenAI** (`BaseStack::OpenAi`) - OpenAI-compatible API server (port 11435)
 
 ## Architecture
 
 ### Key Modules
 
-- **`ui/`** - Ratatui TUI with 4 panels (input, LLM responses, connections, status). Midnight Commander blue theme.
-- **`network/`** - Protocol implementations (`tcp.rs`, `http.rs`, `udp.rs`, etc.) with `*_actions.rs` for action handlers
+- **`cli/`** - Rolling terminal TUI (like `tail -f`) with sticky footer showing input, model, scripting mode, and packet stats
+  - `rolling_tui.rs` - Main TUI implementation with scrolling output region
+  - `sticky_footer.rs` - Sticky footer UI component
+  - `input_state.rs` - Multi-line input handling with history
+  - `server_startup.rs` - Server spawning logic for all protocols
+- **`server/`** - Protocol implementations organized by protocol (e.g., `server/imap/`, `server/ssh/`)
+  - Each protocol has `mod.rs` (server implementation) and optionally `actions.rs` (action handlers)
+  - Older protocols in root: `tcp.rs`, `http.rs`, `udp.rs`, `datalink.rs`
 - **`protocol/`** - Base stack definitions (`base_stack.rs`)
 - **`state/`** - App state (mode, stack, connections, user instructions, memory)
+  - `app_state.rs` - Global state with RwLock for thread-safe access
+  - `server.rs` - Server state and protocol-specific connection info
 - **`llm/`** - Ollama integration (`client.rs`, `prompt.rs`)
 - **`events/`** - Event coordination (`types.rs`, `handler.rs`)
 - **`llm/actions/`** - Action system (definitions, execution, protocol traits)
@@ -77,7 +124,9 @@ LLM returns `{actions: [...]}` instead of nested structures. Each action is self
 - `build_user_input_action_prompt()` - Common + protocol async actions
 - `build_network_event_action_prompt()` - Common subset + protocol sync actions
 
-**Protocol action files**: `src/network/*_actions.rs`
+**Protocol action files**:
+- New protocols: `src/server/<protocol>/actions.rs`
+- Legacy protocols: `src/network/*_actions.rs` (older implementation pattern)
 
 ## Testing
 
@@ -110,18 +159,17 @@ cargo test --test e2e_proxy_test --features e2e-tests,proxy  # Proxy tests
 
 **Critical**: E2E tests are slow because each test spawns a NetGet process and makes LLM API calls.
 
-**Expected runtimes** (with qwen3-coder:30b and `--test-threads=3`):
-- Fast protocols (IPP, MySQL): 15-25 seconds per suite
-- Medium protocols (Telnet, HTTP, IRC): 35-50 seconds per suite
-- Slow protocols (SMTP, mDNS): 55-85 seconds per suite
+**Expected runtimes** (with qwen3-coder:30b, sequential execution):
+- Fast protocols (IPP, MySQL): 30-60 seconds per suite
+- Medium protocols (Telnet, HTTP, IRC): 60-120 seconds per suite
+- Slow protocols (SMTP, mDNS, SMB): 120-300 seconds per suite
 - Very slow protocols (TCP/FTP): >5 minutes per suite (complex multi-round-trip protocols)
 
-**Parallelization**:
-- **ALWAYS run with `--test-threads=3`** for e2e tests
-- Provides significant speedup by utilizing multiple CPU cores
-- Each test is isolated (dynamic ports, separate processes)
-- Ollama handles concurrent LLM requests internally
-- Example: `cargo test --features e2e-tests --test e2e_telnet_test -- --test-threads=3`
+**Test Execution**:
+- **Run tests sequentially** (do NOT use `--test-threads` > 1)
+- LLM processing becomes overloaded with concurrent tests
+- Each test runs in isolation with dynamic port allocation
+- Example: `cargo test --features e2e-tests --test e2e_<protocol>_test`
 
 **Critical setup requirement**:
 - **MUST build release binary with all features before running tests**:
@@ -132,10 +180,11 @@ cargo test --test e2e_proxy_test --features e2e-tests,proxy  # Proxy tests
 - If the binary wasn't built with all features, protocol tests will fail
 - Symptom: Server starts as TCP stack instead of protocol-specific stack
 
-**Known issues**:
-- TCP/FTP tests: May show occasional flakiness (1-2 failures) when running with --test-threads=3 due to LLM overload
-  - All tests pass reliably when run individually
-  - Reduced from >5 minutes to ~20 seconds (15x improvement)
+**Script Control**:
+- Use `--no-scripts` flag to disable script generation in tests
+- Forces LLM to use action-based responses only
+- Example: `ServerConfig::new_no_scripts(prompt)` in test code
+- Prevents event_type_id mismatches between scripts and protocols
 
 ### Privacy and Network Isolation Policy
 
@@ -205,10 +254,25 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id))
 
 ## UI Features
 
+### Rolling Terminal TUI
+- **Natural scrolling**: Output scrolls into terminal's scrollback buffer like `tail -f`
+- **Sticky footer**: Input field and status bar remain fixed at bottom
+- **Log level control**: Cycle through ERROR/WARN/INFO/DEBUG/TRACE with Ctrl+L
+- **Web search toggle**: Ctrl+W toggles web search on/off (also `/web on|off` command)
+- **Status bar**: Shows model, scripting mode (LLM/Python/JavaScript), web search status, packet stats
+
+### Input & Navigation
 - **Command history**: Up/Down arrows, saved to `~/.netget_history`, auto-deduplicated
 - **Multi-line input**: Shift+Enter inserts newline, Enter submits
-- **Keybindings**: Ctrl+A (start), Ctrl+E (end), Ctrl+K (delete to end), Ctrl+W (delete word), Ctrl+U (clear), Ctrl+C (quit)
-- **CLI arguments**: `netget "listen on port 21 via ftp"` executes before TUI
+- **Keybindings**:
+  - Ctrl+A (start), Ctrl+E (end), Ctrl+K (delete to end), Ctrl+W (delete word), Ctrl+U (clear)
+  - Ctrl+C (quit), Ctrl+L (cycle log level)
+- **CLI arguments**: `netget "listen on port 21 via ftp"` executes before TUI starts
+
+### Scripting Modes
+- **LLM mode** (default): All decisions made by LLM
+- **Python mode**: LLM generates Python scripts for protocol logic
+- **JavaScript mode**: LLM generates JavaScript scripts for protocol logic
 
 ## Key Technical Details
 
@@ -233,13 +297,13 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Update `available_stacks()` to include new protocol
 - Add unit tests for parsing the new protocol
 
-### 2. TUI Description (`src/cli/tui.rs`)
-- Add protocol description to welcome message list
+### 2. TUI Description (`src/cli/rolling_tui.rs`)
+- Add protocol description to welcome message in `print_welcome_messages()`
 - Include example usage (e.g., "Start an SMTP mail server on port 25")
-- Mark as "(Alpha)" if new/experimental
+- Mark as "(Alpha)" if new/experimental, "(Beta)" if stable
 
-### 3. Protocol Implementation (`src/network/<protocol>.rs`)
-- Create server implementation file
+### 3. Protocol Implementation (`src/server/<protocol>/mod.rs`)
+- Create server implementation file (new protocols go in `src/server/<protocol>/`)
 - Implement spawn function with LLM integration
 - Add **structured logging to Output tab**:
   - **TRACE** - Packet-level details, full payloads, pretty-printed JSON
@@ -254,16 +318,17 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   - Track bytes sent/received, packets sent/received
   - Update last_activity timestamp
 
-### 4. Protocol Actions (`src/network/<protocol>_actions.rs`)
+### 4. Protocol Actions (`src/server/<protocol>/actions.rs`)
 - Implement `ProtocolActions` trait
 - Define async actions (user-triggered, no network context)
 - Define sync actions (network event triggered, with context)
 - Create action definitions with parameters and examples
 - Implement action execution logic
 
-### 5. Module Registration (`src/network/mod.rs`)
+### 5. Module Registration (`src/server/mod.rs`)
 - Add module declarations with feature flags
 - Export server and protocol structs
+- Example: `#[cfg(feature = "imap")] pub mod imap;`
 
 ### 6. Server Startup (`src/cli/server_startup.rs`)
 - Add match arm for new `BaseStack` variant
@@ -293,9 +358,9 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   ```bash
   cargo build --release --all-features
   ```
-- **Run tests with parallelization**:
+- **Run tests sequentially** (no parallel execution):
   ```bash
-  cargo test --features e2e-tests --test e2e_<protocol>_test -- --test-threads=3
+  cargo test --features e2e-tests --test e2e_<protocol>_test
   ```
 - **Fix any issues before considering protocol complete**
 
@@ -332,6 +397,125 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 **SFTP**: LLM-controlled virtual filesystem. Operations: opendir, readdir, open, read, close, lstat, fstat, realpath. Handle tracking prevents re-reads.
 
 **Connection Tracking**: SSH connections tracked with `ProtocolConnectionInfo::Ssh {authenticated, username, channels}`.
+
+## VPN Protocol Implementations
+
+### WireGuard - Full VPN Server ✅
+
+**Status**: Production-ready, fully functional VPN server with actual tunnel support
+**Library**: defguard_wireguard_rs 0.7 (multi-platform WireGuard library)
+**Location**: `src/server/wireguard/mod.rs`, `src/server/wireguard/actions.rs`
+
+**Key Features**:
+- **Actual VPN Tunnels**: Clients can connect and route traffic through NetGet
+- **TUN Interface**: Creates `netget_wg0` (Linux/Windows) or `utun10` (macOS)
+- **Secure Keys**: Curve25519 keypair generation using `defguard_wireguard_rs::key::Key`
+- **VPN Subnet**: Configures 10.20.30.0/24 network by default
+- **Peer Monitoring**: Tracks connections every 5 seconds
+- **Stats Tracking**: Bytes sent/received, last handshake time, endpoints
+- **Cross-Platform**: Linux kernel, macOS userspace, Windows kernel, FreeBSD
+
+**LLM Control Points**:
+- `authorize_peer`: Allow peer to connect with specific allowed IPs (e.g., ["10.20.30.2/32"])
+- `reject_peer`: Deny peer connection request
+- `set_peer_traffic_limit`: Configure bandwidth/data limits
+- `disconnect_peer`: Immediately disconnect a peer
+- `list_peers`: View all connected peers
+- `remove_peer`: Permanently remove peer from configuration
+- `get_server_info`: View server public key and config
+
+**Connection Tracking**: WireGuard peers tracked with `ProtocolConnectionInfo::Wireguard {public_key, endpoint, allowed_ips, last_handshake}`.
+
+**Requirements**:
+- Linux/FreeBSD: root or CAP_NET_ADMIN
+- macOS: wireguard-go userspace
+- Windows: administrator privileges
+
+### OpenVPN - Honeypot Only ⚠️
+
+**Status**: Detection-only honeypot (no actual VPN tunnels)
+**Reason**: No viable Rust OpenVPN server library exists
+**Location**: `src/server/openvpn/mod.rs`, `src/server/openvpn/actions.rs`
+
+**Capabilities**:
+- Detects OpenVPN handshake packets (V1 and V2)
+- Recognizes opcodes: HARD_RESET, CONTROL, ACK
+- Logs reconnaissance attempts with packet details
+- LLM receives handshake detection events but cannot establish tunnels
+
+**Why Not Full Implementation**: OpenVPN protocol is extremely complex (500K+ lines of C++), no mature Rust server library, Rust ecosystem focused on WireGuard.
+
+**Recommendation**: Use WireGuard for production VPN. OpenVPN honeypot is sufficient for security research.
+
+### IPSec/IKEv2 - Honeypot Only ⚠️
+
+**Status**: Detection-only honeypot (no actual VPN tunnels)
+**Reason**: No viable Rust IPSec server library exists (ipsec-parser is parse-only)
+**Location**: `src/server/ipsec/mod.rs`, `src/server/ipsec/actions.rs`
+
+**Capabilities**:
+- Detects IKEv1 and IKEv2 handshakes
+- Recognizes exchange types: IKE_SA_INIT, IKE_AUTH, CREATE_CHILD_SA, INFORMATIONAL
+- Extracts SPIs (Security Parameter Indexes)
+- Logs reconnaissance attempts with packet details
+- LLM receives handshake detection events but cannot establish tunnels
+
+**Why Not Full Implementation**: IPSec/IKEv2 is extremely complex (hundreds of thousands of lines in strongSwan/libreswan), requires deep OS integration (XFRM policy), no mature Rust server library.
+
+**Recommendation**: Use WireGuard for production VPN. IPSec honeypot is sufficient for IKE protocol analysis.
+
+**VPN Implementation Details**: See `VPN_IMPLEMENTATION_STATUS.md` for comprehensive comparison and future roadmap.
+
+## SMB/CIFS Implementation
+
+**Protocol Version**: SMB2 (dialect 0x0210)
+**Library**: smb-msg 0.10 (for message structures, not used for parsing in current implementation)
+**Location**: `src/server/smb/mod.rs`, `src/server/smb/actions.rs`
+
+**Authentication**: LLM-controlled. Supports both guest and user authentication:
+- **Guest mode**: If no username detected or username is "guest", uses guest authentication
+- **User mode**: Extracts username from SESSION_SETUP request, consults LLM for approval
+- LLM responds with `smb_auth_success` to allow or `smb_auth_deny` to reject
+- Failed authentication returns SMB2 STATUS_ACCESS_DENIED (0xC0000016)
+
+**Protocol Flow**:
+1. **NEGOTIATE** - Server offers SMB 2.1 dialect, responds with server GUID and capabilities
+2. **SESSION_SETUP** - Consults LLM with username, creates session if LLM approves
+3. **TREE_CONNECT** - Grants access to virtual share (accepts all share names)
+4. **File Operations** - All operations consult LLM for virtual filesystem
+
+**SMB2 Operations** (all LLM-integrated):
+- **CREATE** - Opens/creates files, generates 16-byte file handles (GUIDs), stores path mappings
+- **CLOSE** - Releases file handles, cleans up state
+- **READ** - Reads file content from LLM, supports offset/length parameters
+- **WRITE** - Sends file content to LLM for storage (text files)
+- **QUERY_INFO** - Returns file metadata (size, attributes, timestamps) from LLM
+- **QUERY_DIRECTORY** - Lists directory contents from LLM, returns UTF-16LE encoded names
+
+**File Handle Management**: Per-connection HashMap tracks `file_id → {path, is_directory}`. Handles generated using timestamp-based GUIDs. Proper cleanup on CLOSE.
+
+**LLM Actions** (defined in `actions.rs`):
+- Sync: `smb_auth_success`, `smb_auth_deny`, `smb_list_directory`, `smb_read_file`, `smb_write_file`, `smb_get_file_info`, `smb_create_file`, `smb_delete_file`, `smb_create_directory`, `smb_delete_directory`
+- Async: `disconnect_client`
+
+**UTF-16LE Handling**: All file paths parsed from UTF-16LE (Windows encoding). Directory listings returned in UTF-16LE format for client compatibility.
+
+**Response Construction**: Manual SMB2 response building (not using smb-msg parsing). Each response includes:
+- 64-byte SMB2 header (signature `\xFESMB`, command code, message ID, tree/session IDs)
+- Variable-length body (operation-specific structures)
+- Proper Windows FILETIME timestamps and file attributes
+
+**Default Port**: 8445 (non-privileged alternative to standard 445)
+
+**Connection Tracking**: SMB connections tracked with `ProtocolConnectionInfo::Smb {authenticated, username, session_id, open_files}`.
+
+**Limitations**:
+- Simplified username extraction (no full NTLM/Kerberos parsing - uses heuristic ASCII extraction)
+- Text file support for WRITE operations (binary treated as UTF-8 lossy)
+- Simplified timestamps (zeros for creation/modification times)
+- Single share model (all tree connects succeed)
+
+**Compatible Clients**: Windows File Explorer, Linux smbclient, macOS Finder, any SMB2+ compatible client.
 
 ## Git Commit Instructions
 

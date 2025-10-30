@@ -170,18 +170,15 @@ cargo run -- "listen on port 21 via ftp"
 cargo run -- --debug "listen on port 21 via ftp"
 ```
 
-### UI Color Scheme
+### UI Architecture
 
-NetGet uses a **Midnight Commander inspired blue theme**:
+NetGet uses a **rolling terminal interface** (like `tail -f`):
 
-- **All Panels**: Blue background (like classic Midnight Commander)
-- **User Input Panel**: White text on blue background
-- **LLM Responses Panel**: White text on blue background
-- **Connection Info Panel**: Cyan labels (bold), white values on blue background
-- **Status Panel**: Light cyan text on blue background
-- **Borders**: Bold cyan on all panels
-
-**Classic blue theme inspired by Midnight Commander for nostalgic terminal users!**
+- **Output Scrolling**: Server logs and LLM responses scroll naturally into your terminal's scrollback buffer
+- **Sticky Footer**: Input field and status bar remain fixed at the bottom
+- **Status Bar**: Shows model name, scripting mode (LLM/Python/JavaScript), web search toggle, and packet statistics
+- **Log Levels**: ERROR, WARN, INFO, DEBUG, TRACE (toggle with Ctrl+L)
+- **Natural Navigation**: Use your terminal's native scrollback (scrollbar, page up/down)
 
 ### Shell-like Features
 
@@ -203,8 +200,9 @@ NetGet provides a rich command-line interface with familiar keybindings:
 - **Ctrl+A**: Move to start of line
 - **Ctrl+E**: Move to end of line
 - **Ctrl+K**: Delete from cursor to end of line
-- **Ctrl+W**: Delete word before cursor
+- **Ctrl+W**: Toggle web search on/off
 - **Ctrl+U**: Clear entire input
+- **Ctrl+L**: Cycle log level (ERROR → WARN → INFO → DEBUG → TRACE)
 - **Home/End**: Jump to line start/end
 - **Ctrl+C**: Quit application
 

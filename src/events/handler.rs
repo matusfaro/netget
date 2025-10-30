@@ -100,7 +100,7 @@ impl EventHandler {
             UserCommand::UnknownSlashCommand { command } => {
                 ui.add_llm_message(format!("Unknown command: {command}"));
                 ui.add_llm_message(
-                    "Available commands: /status, /model [name], /log [level], /quit".to_string(),
+                    "Available commands: /status, /model [name], /log [level], /docs [protocol], /quit".to_string(),
                 );
                 Ok(false)
             }
@@ -128,6 +128,10 @@ impl EventHandler {
             UserCommand::SetWebSearch { enabled: _ } => {
                 // This command is only supported in rolling TUI mode
                 ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
+            UserCommand::ShowDocs { protocol } => {
+                self.handle_show_docs(protocol, ui).await?;
                 Ok(false)
             }
         }
@@ -595,6 +599,33 @@ impl EventHandler {
             Err(e) => {
                 ui.add_llm_message(format!("Failed to validate model: {e}"));
                 ui.add_llm_message("Make sure Ollama is running.".to_string());
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_show_docs(&mut self, protocol: Option<String>, ui: &mut App) -> Result<()> {
+        use crate::docs;
+
+        if let Some(protocol_name) = protocol {
+            // Show detailed docs for specific protocol
+            match docs::show_protocol_docs(&protocol_name) {
+                Ok(docs_text) => {
+                    // Split into lines and add each line to the UI
+                    for line in docs_text.lines() {
+                        ui.add_llm_message(line.to_string());
+                    }
+                }
+                Err(err_msg) => {
+                    ui.add_llm_message(err_msg);
+                }
+            }
+        } else {
+            // List all protocols
+            let docs_text = docs::list_all_protocols();
+            for line in docs_text.lines() {
+                ui.add_llm_message(line.to_string());
             }
         }
 

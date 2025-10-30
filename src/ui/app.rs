@@ -290,6 +290,7 @@ impl App {
             "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
             "/web [on/off] - Show/toggle web search",
+            "/docs [<protocol>] - Show protocol documentation",
         ];
 
         // Filter commands based on current input

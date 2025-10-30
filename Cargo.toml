@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["all-protocols"]
-tcp = []
+tcp = ["async-trait"]
 http = []
 udp = []
 dns = ["hickory-server", "hickory-proto"]
@@ -24,7 +24,21 @@ redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "rcgen", "tokio-native-tls", "native-tls"]
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
-all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs"]
+cassandra = ["dep:cassandra-protocol", "tcp"]
+smb = ["smb-msg"]
+stun = ["dep:webrtc-stun"]
+turn = ["dep:webrtc-turn"]
+ldap = ["dep:ldap3_proto", "rasn"]
+imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
+socks5 = []  # SOCKS5 uses only TCP, no extra deps
+elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
+dynamo = []  # DynamoDB uses only HTTP, no extra deps
+openai = []  # OpenAI API uses only HTTP, no extra deps
+wireguard = ["defguard_wireguard_rs", "x25519-dalek"]  # Full WireGuard VPN server with LLM control
+openvpn = []  # OpenVPN honeypot (packet detection only, no full crypto)
+ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
+bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
+all-protocols = ["tcp", "http", "udp", "dns", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "ldap", "imap", "socks5", "elasticsearch", "dynamo", "openai", "wireguard", "openvpn", "ipsec", "bgp"]
 # E2E testing feature - marker to enable end-to-end black-box tests
 e2e-tests = []
 
@@ -136,6 +150,32 @@ dav-server = { version = "0.8", optional = true }
 # NFS server
 nfsserve = { version = "0.10", optional = true }
 
+# Cassandra/CQL server
+cassandra-protocol = { version = "3.3", optional = true }
+
+# SMB server (message parsing)
+smb-msg = { version = "0.10", optional = true }
+
+# STUN server (Session Traversal Utilities for NAT)
+webrtc-stun = { version = "0.1", optional = true }
+
+# TURN server (Traversal Using Relays around NAT)
+webrtc-turn = { version = "0.1", optional = true }
+
+# LDAP server (ASN.1 BER encoding for LDAP protocol)
+ldap3_proto = { version = "0.3", optional = true }
+# rasn is already included via snmp feature, but we explicitly depend on it for LDAP too
+
+# IMAP server (IMAP protocol parsing)
+imap-codec = { version = "2.0.0-alpha.6", optional = true }
+
+# BGP server (Border Gateway Protocol)
+netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
+
+# WireGuard VPN server (full implementation with LLM control)
+defguard_wireguard_rs = { version = "0.7", optional = true, features = ["serde"] }
+x25519-dalek = { version = "2.0", optional = true }  # For WireGuard key generation
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -173,7 +213,19 @@ redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest_dav = "0.2"
 # NFS client for e2e integration tests
 nfs3_client = "0.7"
+# Cassandra/CQL client for e2e integration tests
+scylla = "1.3"
+# LDAP client for e2e integration tests
+ldap3 = "0.11"
+# IMAP client for e2e integration tests
+async-imap = "0.11"
+async-native-tls = "0.5"
+# AWS SDK for DynamoDB e2e integration tests
+aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+aws-sdk-dynamodb = "1.52"
 # Axum for creating test HTTP servers in proxy e2e tests
 axum = "0.7"
 # Axum server with TLS support for HTTPS test servers
 axum-server = { version = "0.6", features = ["tls-rustls"] }
+# OpenAI client for e2e integration tests
+async-openai = "0.26"

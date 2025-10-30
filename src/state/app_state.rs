@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 use super::server::{ServerId, ServerInstance};
 use crate::protocol::BaseStack;
+use crate::server::connection::ConnectionId;
 
 /// Operating mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +180,8 @@ impl AppState {
                 script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
+                #[cfg(feature = "socks5")]
+                socks5_filter_config: s.socks5_filter_config.clone(),
                 log_files: s.log_files.clone(),
             }
         })
@@ -212,6 +215,8 @@ impl AppState {
                 script_config: s.script_config.clone(),
                 #[cfg(feature = "proxy")]
                 proxy_filter_config: s.proxy_filter_config.clone(),
+                #[cfg(feature = "socks5")]
+                socks5_filter_config: s.socks5_filter_config.clone(),
                 log_files: s.log_files.clone(),
             })
             .collect()
@@ -556,6 +561,214 @@ impl AppState {
                 let mut config = crate::server::proxy::filter::ProxyFilterConfig::default();
                 update_fn(&mut config);
                 server.proxy_filter_config = Some(config);
+            }
+        }
+    }
+
+    /// Get SOCKS5 filter configuration for a server
+    #[cfg(feature = "socks5")]
+    pub async fn get_socks5_filter_config(
+        &self,
+        server_id: ServerId,
+    ) -> Option<crate::server::socks5::filter::Socks5FilterConfig> {
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
+            .and_then(|s| s.socks5_filter_config.clone())
+    }
+
+    /// Set SOCKS5 filter configuration for a server
+    #[cfg(feature = "socks5")]
+    pub async fn set_socks5_filter_config(
+        &self,
+        server_id: ServerId,
+        config: crate::server::socks5::filter::Socks5FilterConfig,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            server.socks5_filter_config = Some(config);
+        }
+    }
+
+    /// Update SOCKS5 connection target address
+    #[cfg(feature = "socks5")]
+    pub async fn update_socks5_target(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        target_addr: Option<String>,
+        username: Option<String>,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Socks5 {
+                    target_addr: ref mut addr,
+                    username: ref mut user,
+                    ..
+                } = conn.protocol_info
+                {
+                    *addr = target_addr;
+                    *user = username;
+                }
+            }
+        }
+    }
+
+    // ========== IMAP Connection State Methods ==========
+
+    /// Update IMAP connection session state
+    #[cfg(feature = "imap")]
+    pub async fn update_imap_session_state(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        session_state: crate::state::server::ImapSessionState,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Imap {
+                    session_state: ref mut state,
+                    ..
+                } = conn.protocol_info
+                {
+                    *state = session_state;
+                }
+            }
+        }
+    }
+
+    /// Update IMAP connection full state (session, user, mailbox)
+    #[cfg(feature = "imap")]
+    pub async fn update_imap_connection_state(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        session_state: Option<crate::state::server::ImapSessionState>,
+        authenticated_user: Option<Option<String>>,
+        selected_mailbox: Option<Option<String>>,
+        mailbox_read_only: Option<bool>,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Imap {
+                    session_state: ref mut state,
+                    authenticated_user: ref mut user,
+                    selected_mailbox: ref mut mailbox,
+                    mailbox_read_only: ref mut readonly,
+                    ..
+                } = conn.protocol_info
+                {
+                    if let Some(s) = session_state {
+                        *state = s;
+                    }
+                    if let Some(u) = authenticated_user {
+                        *user = u;
+                    }
+                    if let Some(m) = selected_mailbox {
+                        *mailbox = m;
+                    }
+                    if let Some(r) = mailbox_read_only {
+                        *readonly = r;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get IMAP connection state
+    #[cfg(feature = "imap")]
+    pub async fn get_imap_connection_state(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+    ) -> Option<(
+        crate::state::server::ImapSessionState,
+        Option<String>,
+        Option<String>,
+    )> {
+        let inner = self.inner.read().await;
+        if let Some(server) = inner.servers.get(&server_id) {
+            if let Some(conn) = server.connections.get(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Imap {
+                    session_state,
+                    authenticated_user,
+                    selected_mailbox,
+                    ..
+                } = &conn.protocol_info
+                {
+                    return Some((
+                        session_state.clone(),
+                        authenticated_user.clone(),
+                        selected_mailbox.clone(),
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// Update IMAP protocol state (Idle/Processing/Accumulating)
+    #[cfg(feature = "imap")]
+    pub async fn update_imap_protocol_state(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        protocol_state: crate::state::server::ProtocolState,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Imap {
+                    state: ref mut pstate,
+                    ..
+                } = conn.protocol_info
+                {
+                    *pstate = protocol_state;
+                }
+            }
+        }
+    }
+
+    /// Update connection stats (bytes/packets)
+    pub async fn update_connection_stats(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        bytes_received: Option<u64>,
+        bytes_sent: Option<u64>,
+        packets_received: Option<u64>,
+        packets_sent: Option<u64>,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let Some(br) = bytes_received {
+                    conn.bytes_received += br;
+                }
+                if let Some(bs) = bytes_sent {
+                    conn.bytes_sent += bs;
+                }
+                if let Some(pr) = packets_received {
+                    conn.packets_received += pr;
+                }
+                if let Some(ps) = packets_sent {
+                    conn.packets_sent += ps;
+                }
+                conn.last_activity = std::time::Instant::now();
+            }
+        }
+    }
+
+    /// Update connection status
+    pub async fn update_connection_status(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        status: crate::state::server::ConnectionStatus,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                conn.status = status;
+                conn.status_changed_at = std::time::Instant::now();
             }
         }
     }
