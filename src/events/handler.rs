@@ -110,6 +110,16 @@ impl EventHandler {
                 );
                 Ok(false)
             }
+            UserCommand::ShowScriptingEnv => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message("Scripting environment command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
+            UserCommand::ChangeScriptingEnv { env: _ } => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message("Scripting environment command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
         }
     }
 
@@ -216,8 +226,8 @@ impl EventHandler {
                 initial_memory,
                 instruction,
                 startup_params,
-                script_language,
-                script_path,
+                script_language: _,
+                script_path: _,
                 script_inline,
                 script_handles,
             } => {
@@ -248,10 +258,10 @@ impl EventHandler {
                 let server_id = self.state.add_server(server).await;
 
                 // Set up script configuration if provided
-                if script_language.is_some() || script_path.is_some() || script_inline.is_some() {
+                if script_inline.is_some() {
+                    let selected_mode = self.state.get_selected_scripting_mode().await;
                     match crate::scripting::ScriptManager::build_config(
-                        script_language.as_deref(),
-                        script_path.as_deref(),
+                        selected_mode,
                         script_inline.as_deref(),
                         script_handles,
                     ) {
@@ -365,8 +375,8 @@ impl EventHandler {
             CommonAction::UpdateScript {
                 server_id,
                 operation,
-                script_language,
-                script_path,
+                script_language: _,
+                script_path: _,
                 script_inline,
                 script_handles,
             } => {
@@ -388,10 +398,10 @@ impl EventHandler {
 
                 match op {
                     ScriptUpdateOperation::Set => {
-                        // Build new script configuration
+                        // Build new script configuration using selected mode
+                        let selected_mode = self.state.get_selected_scripting_mode().await;
                         match crate::scripting::ScriptManager::build_config(
-                            script_language.as_deref(),
-                            script_path.as_deref(),
+                            selected_mode,
                             script_inline.as_deref(),
                             script_handles,
                         ) {

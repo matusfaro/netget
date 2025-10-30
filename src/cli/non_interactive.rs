@@ -35,6 +35,36 @@ pub async fn run_non_interactive(
         state.set_ollama_model(settings.model.clone()).await;
     }
 
+    // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
+    let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
+        Some(mode)
+    } else if let Some(mode) = settings.parse_scripting_mode() {
+        Some(mode)
+    } else {
+        None
+    };
+
+    if let Some(mode) = mode_to_set {
+        // Validate that the requested environment is available
+        let scripting_env = state.get_scripting_env().await;
+        let available = match mode {
+            crate::state::app_state::ScriptingMode::Llm => true, // Always available
+            crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
+            crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
+            crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
+        };
+
+        if !available {
+            anyhow::bail!(
+                "{} environment is not available on this system. Please install it or choose a different environment.",
+                mode
+            );
+        }
+
+        state.set_selected_scripting_mode(mode).await;
+        debug!("Using scripting mode: {}", mode);
+    }
+
     // Create event handler and LLM client
     let llm = OllamaClient::default();
     let mut event_handler = EventHandler::new(state.clone(), llm.clone());

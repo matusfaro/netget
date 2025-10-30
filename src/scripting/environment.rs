@@ -12,6 +12,9 @@ pub struct ScriptingEnvironment {
 
     /// JavaScript (Node.js) availability and version
     pub javascript: Option<String>,
+
+    /// Go availability and version
+    pub go: Option<String>,
 }
 
 impl ScriptingEnvironment {
@@ -19,6 +22,7 @@ impl ScriptingEnvironment {
     pub fn detect() -> Self {
         let python = Self::detect_python();
         let javascript = Self::detect_javascript();
+        let go = Self::detect_go();
 
         info!("Scripting environment detection:");
         if let Some(ref ver) = python {
@@ -31,10 +35,16 @@ impl ScriptingEnvironment {
         } else {
             info!("  Node.js: not available");
         }
+        if let Some(ref ver) = go {
+            info!("  Go: {} ✓", ver);
+        } else {
+            info!("  Go: not available");
+        }
 
         Self {
             python,
             javascript,
+            go,
         }
     }
 
@@ -76,11 +86,31 @@ impl ScriptingEnvironment {
         }
     }
 
+    /// Detect Go availability and version
+    fn detect_go() -> Option<String> {
+        match Command::new("go").arg("version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                debug!("Go detected: {}", version);
+                Some(version)
+            }
+            Ok(output) => {
+                debug!("Go command failed: {:?}", output.status);
+                None
+            }
+            Err(e) => {
+                debug!("Go not found: {}", e);
+                None
+            }
+        }
+    }
+
     /// Check if a specific language is available
     pub fn is_available(&self, language: ScriptLanguage) -> bool {
         match language {
             ScriptLanguage::Python => self.python.is_some(),
             ScriptLanguage::JavaScript => self.javascript.is_some(),
+            ScriptLanguage::Go => self.go.is_some(),
         }
     }
 
@@ -89,6 +119,7 @@ impl ScriptingEnvironment {
         match language {
             ScriptLanguage::Python => self.python.as_deref(),
             ScriptLanguage::JavaScript => self.javascript.as_deref(),
+            ScriptLanguage::Go => self.go.as_deref(),
         }
     }
 
@@ -101,6 +132,9 @@ impl ScriptingEnvironment {
         }
         if let Some(ref ver) = self.javascript {
             parts.push(format!("Node.js ({})", ver));
+        }
+        if let Some(ref ver) = self.go {
+            parts.push(format!("Go ({})", ver));
         }
 
         if parts.is_empty() {
@@ -139,10 +173,12 @@ mod tests {
         let env = ScriptingEnvironment {
             python: Some("Python 3.11.0".to_string()),
             javascript: Some("v20.0.0".to_string()),
+            go: Some("go version go1.21.0".to_string()),
         };
         let formatted = env.format_available();
         assert!(formatted.contains("Python"));
         assert!(formatted.contains("Node.js"));
+        assert!(formatted.contains("Go"));
     }
 
     #[test]
@@ -150,6 +186,7 @@ mod tests {
         let env = ScriptingEnvironment {
             python: None,
             javascript: None,
+            go: None,
         };
         assert_eq!(env.format_available(), "None");
     }
