@@ -34,6 +34,36 @@ impl std::fmt::Display for Mode {
     }
 }
 
+/// Selected scripting mode - which environment is active for the LLM
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptingMode {
+    /// LLM only - no scripting available
+    Llm,
+    /// Python scripting enabled
+    Python,
+    /// JavaScript scripting enabled
+    JavaScript,
+    /// Go scripting enabled
+    Go,
+}
+
+impl ScriptingMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Llm => "LLM",
+            Self::Python => "Python",
+            Self::JavaScript => "JavaScript",
+            Self::Go => "Go",
+        }
+    }
+}
+
+impl std::fmt::Display for ScriptingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Global application state
 #[derive(Clone)]
 pub struct AppState {
@@ -51,6 +81,8 @@ struct AppStateInner {
     ollama_model: String,
     /// Available scripting environments (Python, Node.js)
     scripting_env: crate::scripting::ScriptingEnvironment,
+    /// Currently selected scripting mode (LLM, Python, or JavaScript)
+    selected_scripting_mode: ScriptingMode,
 }
 
 impl AppState {
@@ -59,6 +91,18 @@ impl AppState {
         // Detect scripting environments at startup
         let scripting_env = crate::scripting::ScriptingEnvironment::detect();
 
+        // Select default scripting mode based on availability
+        // Priority: Python > JavaScript > Go > LLM
+        let selected_scripting_mode = if scripting_env.python.is_some() {
+            ScriptingMode::Python
+        } else if scripting_env.javascript.is_some() {
+            ScriptingMode::JavaScript
+        } else if scripting_env.go.is_some() {
+            ScriptingMode::Go
+        } else {
+            ScriptingMode::Llm
+        };
+
         Self {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
@@ -66,6 +110,7 @@ impl AppState {
                 next_server_id: 1,
                 ollama_model: "qwen3-coder:30b".to_string(),
                 scripting_env,
+                selected_scripting_mode,
             })),
         }
     }
@@ -242,6 +287,70 @@ impl AppState {
     /// In production, the environment is auto-detected at startup.
     pub async fn set_scripting_env(&self, env: crate::scripting::ScriptingEnvironment) {
         self.inner.write().await.scripting_env = env;
+    }
+
+    /// Get the currently selected scripting mode
+    pub async fn get_selected_scripting_mode(&self) -> ScriptingMode {
+        self.inner.read().await.selected_scripting_mode
+    }
+
+    /// Set the selected scripting mode
+    pub async fn set_selected_scripting_mode(&self, mode: ScriptingMode) {
+        self.inner.write().await.selected_scripting_mode = mode;
+    }
+
+    /// Cycle to the next available scripting mode
+    /// Returns the new mode and whether any switch occurred
+    pub async fn cycle_scripting_mode(&self) -> (ScriptingMode, bool) {
+        let inner = self.inner.read().await;
+        let current = inner.selected_scripting_mode;
+        let env = &inner.scripting_env;
+
+        // Determine available modes
+        let has_python = env.python.is_some();
+        let has_javascript = env.javascript.is_some();
+        let has_go = env.go.is_some();
+
+        // If no languages are available, we can't cycle
+        if !has_python && !has_javascript && !has_go {
+            return (current, false);
+        }
+
+        // Cycle through: LLM -> Python (if available) -> JavaScript (if available) -> Go (if available) -> LLM
+        let next = match current {
+            ScriptingMode::Llm => {
+                if has_python {
+                    ScriptingMode::Python
+                } else if has_javascript {
+                    ScriptingMode::JavaScript
+                } else if has_go {
+                    ScriptingMode::Go
+                } else {
+                    ScriptingMode::Llm
+                }
+            }
+            ScriptingMode::Python => {
+                if has_javascript {
+                    ScriptingMode::JavaScript
+                } else if has_go {
+                    ScriptingMode::Go
+                } else {
+                    ScriptingMode::Llm
+                }
+            }
+            ScriptingMode::JavaScript => {
+                if has_go {
+                    ScriptingMode::Go
+                } else {
+                    ScriptingMode::Llm
+                }
+            }
+            ScriptingMode::Go => ScriptingMode::Llm,
+        };
+
+        drop(inner); // Release read lock before acquiring write lock
+        self.inner.write().await.selected_scripting_mode = next;
+        (next, true)
     }
 
     /// Update script configuration for a server

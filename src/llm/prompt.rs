@@ -217,20 +217,20 @@ Response (JSON only):"#,
             format!("\nAvailable protocol stacks: {}\n", stacks.join(", "))
         };
 
-        // Get scripting environment information
-        let scripting_env = state.get_scripting_env().await;
-        let has_scripting = scripting_env.format_available() != "None";
+        // Get selected scripting mode
+        let selected_mode = state.get_selected_scripting_mode().await;
+        let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Llm;
 
-        // Filter actions based on scripting availability
+        // Filter actions based on selected scripting mode
         let filtered_actions = if has_scripting {
             available_actions
         } else {
-            // Remove script-related actions and parameters when no scripting environments available
+            // Remove script-related actions and parameters when LLM mode is selected
             available_actions
                 .into_iter()
                 .filter_map(|mut action| {
                     if action.name == "update_script" {
-                        // Remove update_script action entirely when no scripting available
+                        // Remove update_script action entirely when in LLM mode
                         None
                     } else if action.name == "open_server" {
                         // Remove script parameters from open_server
@@ -257,7 +257,7 @@ Response (JSON only):"#,
         let actions_text = actions_text_fn(&filtered_actions);
 
         let scripting_info = if include_base_stacks && has_scripting {
-            let available = scripting_env.format_available();
+            let selected_lang = selected_mode.as_str().to_lowercase();
             // Script template will be shown in protocol-specific contexts
             // when call_llm_with_event_type() is used
             let script_template = String::new();
@@ -265,11 +265,8 @@ Response (JSON only):"#,
                 format!(
                     r#"
 
-SCRIPT-BASED RESPONSES (Advanced feature - use only when explicitly requested):
-Available environments: {}
-
-IMPORTANT: Only use scripts when the user explicitly requests scripted/programmatic behavior, or for complex authentication/state logic.
-For simple protocol responses (DNS records, HTTP responses, etc.), use the ACTIONS DIRECTLY via the LLM - do NOT create scripts.
+SCRIPT-BASED RESPONSES:
+Selected environment: {}
 
 Scripts are appropriate for:
 - Complex SSH authentication logic (checking multiple conditions)
@@ -277,8 +274,7 @@ Scripts are appropriate for:
 - When user explicitly asks for "scripted" or "programmatic" behavior
 
 To use scripts in open_server, include:
-- script_language: "python" or "javascript"
-- script_inline: "your script code" (or script_path: "/path/to/script.py")
+- script_inline: "your {} script code here"
 - script_handles: ["ssh_auth", "ssh_banner"] or ["all"] (optional, defaults to ["all"])
 
 CRITICAL: Scripts must return ACTIONS in JSON format, NOT raw protocol responses.
@@ -286,7 +282,7 @@ The script receives context via stdin and must print actions to stdout.
 
 Scripts receive JSON input via stdin with this structure:
 {{
-  "context_type": "ssh_auth",
+  "event_type_id": "ssh_auth",
   "server": {{"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."}},
   "connection": {{"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0}},
   "event": {{"username": "alice", "auth_type": "password"}}
@@ -299,12 +295,23 @@ DO NOT write raw protocol code (like res.writeHead() or socket operations).
 Example 1 - SSH authentication (Python):
 import json, sys
 data = json.load(sys.stdin)
+# Check if this is an SSH auth event
+if data['event_type_id'] != 'ssh_auth':
+    # Not our event type, return fallback to LLM
+    print(json.dumps({{"fallback_to_llm": true, "fallback_reason": "Not an ssh_auth event"}}))
+    sys.exit(0)
 username = data['event']['username']
 allowed = (username == 'alice')
 print(json.dumps({{"actions": [{{"type": "ssh_auth_decision", "allowed": allowed}}]}}))
 
 Example 2 - HTTP response (JavaScript):
 const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+// Check if this is an HTTP request event
+if (data.event_type_id !== 'http_request') {{
+    // Not our event type, return fallback to LLM
+    console.log(JSON.stringify({{fallback_to_llm: true, fallback_reason: "Not an http_request event"}}));
+    process.exit(0);
+}}
 const pathname = data.event.path;
 const response = pathname.endsWith('.html')
   ? {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<h1>Hello</h1>"}}
@@ -316,7 +323,8 @@ Scripts can return {{"fallback_to_llm": true}} to delegate complex cases to LLM.
 You can update scripts on running servers using the update_script action.
 {}
 "#,
-                available,
+                selected_lang,
+                selected_lang,
                 crate::scripting::SCRIPT_TIMEOUT_SECS,
                 script_template
             )
@@ -377,7 +385,8 @@ Response (JSON only):"#,
         user_input: &str,
         protocol_async_actions: Vec<ActionDefinition>,
     ) -> String {
-        let mut actions = get_user_input_common_actions();
+        let selected_mode = state.get_selected_scripting_mode().await;
+        let mut actions = get_user_input_common_actions(selected_mode);
 
         // Add tool actions
         actions.extend(get_all_tool_actions());

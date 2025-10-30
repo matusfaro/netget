@@ -12,6 +12,10 @@ pub struct Settings {
     /// Ollama model name
     #[serde(default = "default_model")]
     pub model: String,
+
+    /// Scripting mode (llm, python, javascript, go)
+    #[serde(default)]
+    pub scripting_mode: Option<String>,
 }
 
 fn default_model() -> String {
@@ -22,6 +26,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             model: default_model(),
+            scripting_mode: None,
         }
     }
 }
@@ -84,5 +89,27 @@ impl Settings {
     pub fn set_model(&mut self, model: String) -> Result<()> {
         self.model = model;
         self.save()
+    }
+
+    /// Update scripting mode and save
+    pub fn set_scripting_mode(&mut self, mode: String) -> Result<()> {
+        self.scripting_mode = Some(mode);
+        self.save()
+    }
+
+    /// Parse saved scripting mode
+    pub fn parse_scripting_mode(&self) -> Option<crate::state::app_state::ScriptingMode> {
+        self.scripting_mode.as_ref().and_then(|mode_str| {
+            match mode_str.to_lowercase().as_str() {
+                "llm" => Some(crate::state::app_state::ScriptingMode::Llm),
+                "python" => Some(crate::state::app_state::ScriptingMode::Python),
+                "javascript" => Some(crate::state::app_state::ScriptingMode::JavaScript),
+                "go" => Some(crate::state::app_state::ScriptingMode::Go),
+                _ => {
+                    warn!("Invalid scripting mode in settings: '{}', ignoring", mode_str);
+                    None
+                }
+            }
+        })
     }
 }

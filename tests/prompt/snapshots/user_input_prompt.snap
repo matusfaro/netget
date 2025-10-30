@@ -16,9 +16,7 @@ Parameters:
   • initial_memory: string (optional) - Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
   • instruction: string (required) - Detailed instructions for handling network events
   • startup_params: object (optional) - Optional protocol-specific startup parameters. See protocol documentation for available parameters.
-  • script_language: string (optional) - Optional: Use 'python' or 'javascript' to handle deterministic responses via script instead of LLM.
-  • script_path: string (optional) - Optional: Path to script file (alternative to script_inline).
-  • script_inline: string (optional) - Optional: Inline script code (alternative to script_path).
+  • script_inline: string (optional) - Optional: Inline python script code to handle deterministic responses instead of LLM. If provided, the script will be executed for network events.
   • script_handles: array (optional) - Optional: Context types the script handles, e.g. ["ssh_auth", "ssh_banner"] or ["all"]. Defaults to ["all"].
 
 Example:
@@ -49,28 +47,7 @@ Example:
   "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
 }
 
-4. update_script. Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.
-Parameters:
-  • server_id: number (optional) - Optional: Server ID to update (defaults to first/current server)
-  • operation: string (required) - Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)
-  • script_language: string (optional) - Script language: 'python' or 'javascript' (required for 'set' operation)
-  • script_path: string (optional) - Path to script file (alternative to script_inline, required for 'set')
-  • script_inline: string (optional) - Inline script code (alternative to script_path, required for 'set')
-  • script_handles: array (optional) - Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')
-
-Example:
-{
-  "type": "update_script",
-  "server_id": 1,
-  "operation": "set",
-  "script_language": "python",
-  "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
-  "script_handles": [
-    "ssh_auth"
-  ]
-}
-
-5. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
+4. set_memory. Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
 Parameters:
   • value: string (required) - New memory value as a string. Replaces all existing memory.
 
@@ -78,6 +55,24 @@ Example:
 {
   "type": "set_memory",
   "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
+}
+
+5. update_script. Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.
+Parameters:
+  • server_id: number (optional) - Optional: Server ID to update (defaults to first/current server)
+  • operation: string (required) - Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)
+  • script_inline: string (optional) - Inline python script code (required for 'set' operation)
+  • script_handles: array (optional) - Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')
+
+Example:
+{
+  "type": "update_script",
+  "server_id": 1,
+  "operation": "set",
+  "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
+  "script_handles": [
+    "ssh_auth"
+  ]
 }
 
 6. append_memory. Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
@@ -248,11 +243,8 @@ No startup parameters.
 
 
 
-SCRIPT-BASED RESPONSES (Advanced feature - use only when explicitly requested):
-Available environments: Python (Python 3.11.0), Node.js (v20.0.0)
-
-IMPORTANT: Only use scripts when the user explicitly requests scripted/programmatic behavior, or for complex authentication/state logic.
-For simple protocol responses (DNS records, HTTP responses, etc.), use the ACTIONS DIRECTLY via the LLM - do NOT create scripts.
+SCRIPT-BASED RESPONSES:
+Selected environment: python
 
 Scripts are appropriate for:
 - Complex SSH authentication logic (checking multiple conditions)
@@ -260,8 +252,7 @@ Scripts are appropriate for:
 - When user explicitly asks for "scripted" or "programmatic" behavior
 
 To use scripts in open_server, include:
-- script_language: "python" or "javascript"
-- script_inline: "your script code" (or script_path: "/path/to/script.py")
+- script_inline: "your python script code here"
 - script_handles: ["ssh_auth", "ssh_banner"] or ["all"] (optional, defaults to ["all"])
 
 CRITICAL: Scripts must return ACTIONS in JSON format, NOT raw protocol responses.

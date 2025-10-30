@@ -38,11 +38,11 @@ impl ScriptManager {
             }
         };
 
-        // Check if script handles this context type
-        if !config.handles_context(&input.context_type) {
+        // Check if script handles this event type
+        if !config.handles_context(&input.event_type_id) {
             debug!(
                 "Script does not handle context '{}', using LLM",
-                input.context_type
+                input.event_type_id
             );
             return Ok(None);
         }
@@ -50,7 +50,7 @@ impl ScriptManager {
         info!(
             "Executing {} script for context '{}'",
             config.language.as_str(),
-            input.context_type
+            input.event_type_id
         );
 
         // Execute the script
@@ -92,29 +92,28 @@ impl ScriptManager {
     /// * `Ok(None)` - No script configuration provided
     /// * `Err(_)` - Invalid configuration
     pub fn build_config(
-        language: Option<&str>,
-        script_path: Option<&str>,
+        selected_mode: crate::state::app_state::ScriptingMode,
         script_inline: Option<&str>,
         handles: Option<Vec<String>>,
     ) -> Result<Option<ScriptConfig>> {
-        // If no language specified, no script
-        let lang_str = match language {
-            Some(s) => s,
+        // If no script_inline provided, no script
+        let code = match script_inline {
+            Some(c) => c,
             None => return Ok(None),
         };
 
-        // Parse language
-        let language = super::types::ScriptLanguage::from_str(lang_str)
-            .ok_or_else(|| anyhow::anyhow!("Unknown script language: {}", lang_str))?;
-
-        // Determine source (prefer file path, fall back to inline)
-        let source = if let Some(path) = script_path {
-            super::types::ScriptSource::FilePath(path.to_string())
-        } else if let Some(code) = script_inline {
-            super::types::ScriptSource::Inline(code.to_string())
-        } else {
-            anyhow::bail!("Script configuration requires either script_path or script_inline");
+        // Get language from selected mode
+        let language = match selected_mode {
+            crate::state::app_state::ScriptingMode::Llm => return Ok(None),
+            crate::state::app_state::ScriptingMode::Python => super::types::ScriptLanguage::Python,
+            crate::state::app_state::ScriptingMode::JavaScript => {
+                super::types::ScriptLanguage::JavaScript
+            }
+            crate::state::app_state::ScriptingMode::Go => super::types::ScriptLanguage::Go,
         };
+
+        // Use inline source
+        let source = super::types::ScriptSource::Inline(code.to_string());
 
         // Determine handles (default to ["all"] if not specified)
         let handles_contexts = handles.unwrap_or_else(|| vec!["all".to_string()]);
@@ -252,8 +251,7 @@ mod tests {
     #[test]
     fn test_build_config_python_inline() {
         let result = ScriptManager::build_config(
-            Some("python"),
-            None,
+            crate::state::app_state::ScriptingMode::Python,
             Some("print('hello')"),
             Some(vec!["ssh_auth".to_string()]),
         );
@@ -271,7 +269,7 @@ mod tests {
     #[test]
     fn test_build_config_no_language() {
         let result =
-            ScriptManager::build_config(None, None, Some("print('hello')"), None);
+            ScriptManager::build_config(crate::state::app_state::ScriptingMode::Llm, Some("print('hello')"), None);
 
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
@@ -280,15 +278,16 @@ mod tests {
     #[test]
     fn test_build_config_no_source() {
         let result =
-            ScriptManager::build_config(Some("python"), None, None, Some(vec!["ssh_auth".to_string()]));
+            ScriptManager::build_config(crate::state::app_state::ScriptingMode::Python, None, Some(vec!["ssh_auth".to_string()]));
 
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn test_try_execute_no_config() {
         let input = ScriptInput {
-            context_type: "test".to_string(),
+            event_type_id: "test".to_string(),
             server: ServerContext {
                 id: 1,
                 port: 8080,
@@ -314,7 +313,7 @@ mod tests {
         };
 
         let input = ScriptInput {
-            context_type: "http_request".to_string(),
+            event_type_id: "http_request".to_string(),
             server: ServerContext {
                 id: 1,
                 port: 8080,
