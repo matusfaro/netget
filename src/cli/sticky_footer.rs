@@ -576,7 +576,7 @@ impl StickyFooter {
         execute!(
             stdout,
             cursor::MoveTo(0, line),
-            SetForegroundColor(Color::Cyan),
+            SetForegroundColor(Color::DarkGreen),
             Print(&separator),
             ResetColor,
         )?;
@@ -658,7 +658,7 @@ impl StickyFooter {
         // Calculate visual position considering wrapping and "> " prefix
         let input_start_line = self.terminal_height
             - self.calculate_input_lines()
-            - 1; // -1 for status bar
+            - 2; // -2 for separator + status bar
 
         let mut visual_row = input_start_line;
         let mut visual_col = 0;
