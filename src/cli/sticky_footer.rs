@@ -292,7 +292,6 @@ impl StickyFooter {
         self.recalculate_scroll_region();
 
         let footer_height = self.calculate_footer_height();
-        let footer_start = self.terminal_height.saturating_sub(footer_height);
 
         // If footer is expanding, push content up by printing newlines
         if footer_height > self.last_footer_height {
@@ -323,30 +322,58 @@ impl StickyFooter {
         // Update tracked height for next render
         self.last_footer_height = footer_height;
 
-        // Render content based on mode
-        let mut current_line = footer_start;
-        current_line = match &self.content {
+        // Calculate fixed positions from bottom up
+        // Input, separators, and status bar stay in fixed positions
+        let status_line = self.terminal_height - 1;
+        let separator_before_status = status_line - 1;
+        let input_lines = self.calculate_input_lines();
+        let input_start = separator_before_status - input_lines;
+        let separator_before_input = input_start - 1;
+
+        // Content is positioned above the input separator
+        let content_lines = match &self.content {
             FooterContent::Normal {
                 servers,
                 connections,
                 expand_all,
-            } => self.render_normal_content(stdout, current_line, servers, connections, *expand_all)?,
+            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
             FooterContent::SlashCommands { suggestions } => {
-                self.render_slash_commands(stdout, current_line, suggestions)?
+                suggestions.len().min(10) as u16
             }
         };
 
-        // Render separator
-        current_line = self.render_separator(stdout, current_line)?;
+        // If we have content, position it with a separator above it
+        if content_lines > 0 {
+            let separator_before_content = separator_before_input - content_lines;
+            let content_start = separator_before_content + 1;
 
-        // Render input
-        current_line = self.render_input(stdout, current_line)?;
+            // Render separator above content
+            self.render_separator(stdout, separator_before_content)?;
 
-        // Render separator before status bar
-        current_line = self.render_separator(stdout, current_line)?;
+            // Render content
+            match &self.content {
+                FooterContent::Normal {
+                    servers,
+                    connections,
+                    expand_all,
+                } => self.render_normal_content(stdout, content_start, servers, connections, *expand_all)?,
+                FooterContent::SlashCommands { suggestions } => {
+                    self.render_slash_commands(stdout, content_start, suggestions)?
+                }
+            };
+        }
 
-        // Render status bar
-        self.render_status_bar(stdout, current_line)?;
+        // Render separator before input (always present)
+        self.render_separator(stdout, separator_before_input)?;
+
+        // Render input (fixed position)
+        self.render_input(stdout, input_start)?;
+
+        // Render separator before status bar (always present)
+        self.render_separator(stdout, separator_before_status)?;
+
+        // Render status bar (fixed position)
+        self.render_status_bar(stdout, status_line)?;
 
         // Position cursor in input field and show it
         self.position_cursor(stdout)?;
@@ -443,11 +470,8 @@ impl StickyFooter {
     ) -> Result<u16> {
         let mut current_line = start_line;
 
-        // If custom status is set, render it with separator
+        // If custom status is set, render it (separator handled by main render)
         if let Some(ref custom) = self.custom_status {
-            // Render separator at top
-            current_line = self.render_separator(stdout, current_line)?;
-
             for line in custom.lines() {
                 execute!(
                     stdout,
@@ -465,9 +489,6 @@ impl StickyFooter {
             // Don't show anything when no servers - no separator, no content
             return Ok(current_line);
         }
-
-        // Render separator at top (only when we have servers)
-        current_line = self.render_separator(stdout, current_line)?;
 
         let max_content_lines = self.calculate_normal_content_lines(servers, connections, expand_all);
 
@@ -548,9 +569,6 @@ impl StickyFooter {
         suggestions: &[String],
     ) -> Result<u16> {
         let mut current_line = start_line;
-
-        // Render separator at top
-        current_line = self.render_separator(stdout, current_line)?;
 
         let max_lines = suggestions.len().min(10);
         for suggestion in suggestions.iter().take(max_lines) {
