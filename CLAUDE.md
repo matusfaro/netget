@@ -134,9 +134,11 @@ LLM returns `{actions: [...]}` instead of nested structures. Each action is self
 
 **CRITICAL: Test Organization**:
 - **ALL tests MUST be in the `tests/` directory, NEVER in `src/`**
-- Unit tests use `#[cfg(test)]` modules in `tests/` files
-- Integration tests in `tests/` as separate files
-- No test modules under `src/` - only production code
+- **Tests in `tests/` can ONLY access public APIs** - they are compiled as separate crates
+- Unit tests in `tests/` should test public functions, types, and modules
+- Integration tests in `tests/` should test end-to-end behavior with real clients
+- **No `#[cfg(test)]` modules in `src/` files** - keep production code clean
+- Tests that need private API access should be refactored to test through public interfaces
 
 **Unit tests**: No Ollama required. Test parsing and detection logic.
 
