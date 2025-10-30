@@ -83,6 +83,8 @@ struct AppStateInner {
     scripting_env: crate::scripting::ScriptingEnvironment,
     /// Currently selected scripting mode (LLM, Python, or JavaScript)
     selected_scripting_mode: ScriptingMode,
+    /// Whether web search is enabled
+    web_search_enabled: bool,
 }
 
 impl AppState {
@@ -111,6 +113,7 @@ impl AppState {
                 ollama_model: "qwen3-coder:30b".to_string(),
                 scripting_env,
                 selected_scripting_mode,
+                web_search_enabled: true, // Default to enabled
             })),
         }
     }
@@ -351,6 +354,23 @@ impl AppState {
         drop(inner); // Release read lock before acquiring write lock
         self.inner.write().await.selected_scripting_mode = next;
         (next, true)
+    }
+
+    /// Get whether web search is enabled
+    pub async fn get_web_search_enabled(&self) -> bool {
+        self.inner.read().await.web_search_enabled
+    }
+
+    /// Set whether web search is enabled
+    pub async fn set_web_search_enabled(&self, enabled: bool) {
+        self.inner.write().await.web_search_enabled = enabled;
+    }
+
+    /// Toggle web search enabled state and return the new state
+    pub async fn toggle_web_search(&self) -> bool {
+        let mut inner = self.inner.write().await;
+        inner.web_search_enabled = !inner.web_search_enabled;
+        inner.web_search_enabled
     }
 
     /// Update script configuration for a server

@@ -36,6 +36,7 @@ pub enum FooterContent {
 pub struct ConnectionInfo {
     pub model: String,
     pub scripting_env: String,
+    pub web_search_enabled: bool,
 }
 
 /// Sticky footer state and renderer
@@ -626,13 +627,20 @@ impl StickyFooter {
 
     /// Render status bar
     fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
+        let web_status = if self.connection_info.web_search_enabled {
+            "Web"
+        } else {
+            "NoWeb"
+        };
+
         let status_text = format!(
-            " {} | {} | {} (Ctrl+E) (Ctrl+L) | ↑{} ↓{} ",
+            " ↓{} ↑{} | {} | {} (ctrl+l) | {} (ctrl+e) | {} (ctrl+w) ",
+            self.packet_stats.packets_received,
+            self.packet_stats.packets_sent,
             &self.connection_info.model,
             self.log_level.as_str(),
             &self.connection_info.scripting_env,
-            self.packet_stats.bytes_received,
-            self.packet_stats.bytes_sent,
+            web_status,
         );
 
         // Truncate if too long

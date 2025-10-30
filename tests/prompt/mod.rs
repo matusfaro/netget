@@ -172,6 +172,42 @@ async fn test_user_input_prompt_no_scripting() {
 }
 
 #[tokio::test]
+async fn test_user_input_prompt_without_web_search() {
+    // Create state WITHOUT any servers to trigger base_stack documentation
+    let state = Arc::new(AppState::new());
+
+    // Set up mock scripting environment
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+        go: Some("go version go1.21.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    // Disable web search
+    state.set_web_search_enabled(false).await;
+
+    let user_input = "start a DNS server on port 53";
+
+    let prompt =
+        PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("user_input_prompt_without_web_search", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks - should NOT include web_search references
+    assert!(!prompt.contains("web_search"), "Prompt should not contain 'web_search'");
+    assert!(!prompt.contains("web search"), "Prompt should not contain 'web search' in instructions");
+
+    // Should still have read_file
+    assert!(prompt.contains("read_file"), "Prompt should still contain 'read_file'");
+
+    // Should have base stacks and scripting info
+    assert!(prompt.contains("Available Base Stacks"));
+    assert!(prompt.contains("SCRIPT-BASED RESPONSES"));
+}
+
+#[tokio::test]
 async fn test_network_event_prompt_for_proxy() {
     let state = create_test_state_with_proxy().await;
     let server_id = ServerId::new(1);
