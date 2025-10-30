@@ -628,35 +628,44 @@ impl StickyFooter {
     /// Render status bar
     fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
         let web_status = if self.connection_info.web_search_enabled {
-            "Web"
+            "ON"
         } else {
-            "NoWeb"
+            "OFF"
         };
 
-        let status_text = format!(
-            " ↓{} ↑{} | {} | {} (ctrl+l) | {} (ctrl+e) | {} (ctrl+w) ",
-            self.packet_stats.packets_received,
-            self.packet_stats.packets_sent,
-            &self.connection_info.model,
-            self.log_level.as_str(),
-            &self.connection_info.scripting_env,
-            web_status,
-        );
+        execute!(stdout, cursor::MoveTo(0, line))?;
 
-        // Truncate if too long
-        let status_text = if status_text.len() > self.terminal_width as usize {
-            format!(
-                "{}...",
-                &status_text[..self.terminal_width.saturating_sub(3) as usize]
-            )
-        } else {
-            status_text
-        };
-
+        // Print each segment with appropriate coloring
         execute!(
             stdout,
-            cursor::MoveTo(0, line),
-            Print(&status_text),
+            Print(" "),
+            SetForegroundColor(Color::DarkGrey),
+            Print("↓"),
+            ResetColor,
+            Print(format!("{}", self.packet_stats.packets_received)),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" ↑"),
+            ResetColor,
+            Print(format!("{}", self.packet_stats.packets_sent)),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" | Model:"),
+            ResetColor,
+            Print(format!("{}", &self.connection_info.model)),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" | Log:"),
+            ResetColor,
+            Print(format!("{}", self.log_level.as_str())),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" ^l | Script:"),
+            ResetColor,
+            Print(format!("{}", &self.connection_info.scripting_env)),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" ^e | WebSearch:"),
+            ResetColor,
+            Print(format!("{}", web_status)),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" ^w "),
+            ResetColor,
         )?;
 
         Ok(line + 1)
