@@ -62,6 +62,10 @@ pub enum UserCommand {
     SetFooterStatus {
         message: Option<String>,
     },
+    /// Show protocol documentation (slash command: /docs [protocol])
+    ShowDocs {
+        protocol: Option<String>,
+    },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -170,6 +174,17 @@ impl UserCommand {
                 Some(rest.replace("\\n", "\n"))
             };
             return UserCommand::SetFooterStatus { message };
+        }
+
+        // /docs command - show protocol documentation
+        if input_lower.starts_with("/docs") {
+            let rest = trimmed[5..].trim();
+            let protocol = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            };
+            return UserCommand::ShowDocs { protocol };
         }
 
         // Unknown slash command - return error, don't send to LLM

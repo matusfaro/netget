@@ -1,0 +1,57 @@
+
+[1m[96mAvailable Protocols[0m
+
+[2mNetGet supports the following protocol stacks.[0m
+[2mUse[0m [36m[1m/docs <protocol>[0m [2mto see detailed information.[0m
+
+[92m━━━ Core Protocols (Beta) ━━━[0m
+
+[34m•[0m [1mtcp[0m [93mβ Beta[0m - [2mRaw TCP - LLM controls entire protocol (FTP, HTTP, custom)[0m [90m[Stack: [32mETH>IP>TCP[0m][0m
+[34m•[0m [1mhttp[0m [93mβ Beta[0m - [2mHTTP server - LLM controls responses (status, headers, body)[0m [90m[Stack: [32mETH>IP>TCP>HTTP[0m][0m
+[34m•[0m [1mudp[0m [93mβ Beta[0m - [2mRaw UDP - LLM controls datagrams[0m [90m[Stack: [32mETH>IP>UDP[0m][0m
+[34m•[0m [1mdatalink[0m [93mβ Beta[0m - [2mLayer 2 Ethernet - LLM controls frames (ARP, custom)[0m [90m[Stack: [32mETH[0m][0m
+[34m•[0m [1mdns[0m [93mβ Beta[0m - [2mDNS server - LLM generates DNS responses[0m [90m[Stack: [32mETH>IP>UDP>DNS[0m][0m
+[34m•[0m [1mdhcp[0m [93mβ Beta[0m - [2mDHCP server - LLM handles DHCP requests[0m [90m[Stack: [32mETH>IP>UDP>DHCP[0m][0m
+[34m•[0m [1mntp[0m [93mβ Beta[0m - [2mNTP server - LLM handles time sync[0m [90m[Stack: [32mETH>IP>UDP>NTP[0m][0m
+[34m•[0m [1msnmp[0m [93mβ Beta[0m - [2mSNMP agent - LLM handles get/set requests[0m [90m[Stack: [32mETH>IP>UDP>SNMP[0m][0m
+[34m•[0m [1mssh[0m [93mβ Beta[0m - [2mSSH server - LLM handles auth and shell[0m [90m[Stack: [32mETH>IP>TCP>SSH[0m][0m
+
+[93m━━━ Application Protocols (Alpha) ━━━[0m
+
+[34m•[0m [1mirc[0m [33mα Alpha[0m - [2mIRC chat server[0m [90m[Stack: [32mETH>IP>TCP>IRC[0m][0m
+[34m•[0m [1mtelnet[0m [33mα Alpha[0m - [2mTelnet terminal server[0m [90m[Stack: [32mETH>IP>TCP>Telnet[0m][0m
+[34m•[0m [1msmtp[0m [33mα Alpha[0m - [2mSMTP mail server (port 25)[0m [90m[Stack: [32mETH>IP>TCP>SMTP[0m][0m
+[34m•[0m [1mimap[0m [33mα Alpha[0m - [2mIMAP mail server (port 143/993)[0m [90m[Stack: [32mETH>IP>TCP>IMAP[0m][0m
+[34m•[0m [1mmdns[0m [33mα Alpha[0m - [2mmDNS service discovery (port 5353)[0m [90m[Stack: [32mETH>IP>UDP>mDNS[0m][0m
+[34m•[0m [1mldap[0m [33mα Alpha[0m - [2mLDAP directory server (port 389)[0m [90m[Stack: [32mETH>IP>TCP>LDAP[0m][0m
+
+[93m━━━ Database Protocols (Alpha) ━━━[0m
+
+[34m•[0m [1mmysql[0m [33mα Alpha[0m - [2mMySQL server (port 3306)[0m [90m[Stack: [32mETH>IP>TCP>MySQL[0m][0m
+[34m•[0m [1mpostgresql[0m [33mα Alpha[0m - [2mPostgreSQL server (port 5432)[0m [90m[Stack: [32mETH>IP>TCP>PostgreSQL[0m][0m
+[34m•[0m [1mredis[0m [33mα Alpha[0m - [2mRedis server (port 6379)[0m [90m[Stack: [32mETH>IP>TCP>Redis[0m][0m
+[34m•[0m [1mcassandra[0m [33mα Alpha[0m - [2mCassandra/CQL database (port 9042)[0m [90m[Stack: [32mETH>IP>TCP>Cassandra[0m][0m
+[34m•[0m [1mdynamo[0m [33mα Alpha[0m - [2mDynamoDB-compatible server (port 8000)[0m [90m[Stack: [32mETH>IP>TCP>HTTP>DYNAMODB[0m][0m
+[34m•[0m [1melasticsearch[0m [33mα Alpha[0m - [2mElasticsearch server (port 9200)[0m [90m[Stack: [32mETH>IP>TCP>HTTP>ELASTICSEARCH[0m][0m
+
+[93m━━━ Web & File Protocols (Alpha) ━━━[0m
+
+[34m•[0m [1mipp[0m [33mα Alpha[0m - [2mInternet Printing Protocol (port 631)[0m [90m[Stack: [32mETH>IP>TCP>HTTP>IPP[0m][0m
+[34m•[0m [1mwebdav[0m [33mα Alpha[0m - [2mWebDAV file server[0m [90m[Stack: [32mETH>IP>TCP>HTTP>WEBDAV[0m][0m
+[34m•[0m [1mnfs[0m [33mα Alpha[0m - [2mNFSv3 file server (port 2049)[0m [90m[Stack: [32mETH>IP>TCP>NFS[0m][0m
+[34m•[0m [1msmb[0m [33mα Alpha[0m - [2mSMB/CIFS file server (port 445)[0m [90m[Stack: [32mETH>IP>TCP>SMB[0m][0m
+
+[93m━━━ Proxy & Network Protocols (Alpha) ━━━[0m
+
+[34m•[0m [1mproxy[0m [33mα Alpha[0m - [2mHTTP/HTTPS proxy (port 8080/3128)[0m [90m[Stack: [32mETH>IP>TCP>HTTP>PROXY[0m][0m
+[34m•[0m [1msocks5[0m [33mα Alpha[0m - [2mSOCKS5 proxy (port 1080)[0m [90m[Stack: [32mETH>IP>TCP>SOCKS5[0m][0m
+[34m•[0m [1mwireguard[0m [92m✓ Implemented[0m - [2mWireGuard VPN (port 51820)[0m [90m[Stack: [32mETH>IP>UDP>WG[0m][0m
+[34m•[0m [1mstun[0m [33mα Alpha[0m - [2mSTUN NAT traversal (port 3478)[0m [90m[Stack: [32mETH>IP>UDP>STUN[0m][0m
+[34m•[0m [1mturn[0m [33mα Alpha[0m - [2mTURN relay server (port 3478)[0m [90m[Stack: [32mETH>IP>UDP>TURN[0m][0m
+[34m•[0m [1mopenvpn[0m [31m✗ Abandoned[0m - [2mOpenVPN server (port 1194)[0m [90m[Stack: [32mETH>IP>TCP/UDP>OPENVPN[0m][0m
+[34m•[0m [1mipsec[0m [31m✗ Abandoned[0m - [2mIPSec/IKEv2 VPN (port 500/4500)[0m [90m[Stack: [32mETH>IP>UDP>IPSEC[0m][0m
+[34m•[0m [1mbgp[0m [33mα Alpha[0m - [2mBGP routing protocol (port 179)[0m [90m[Stack: [32mETH>IP>TCP>BGP[0m][0m
+
+[93m━━━ AI & API Protocols (Alpha) ━━━[0m
+
+[34m•[0m [1mopenai[0m [33mα Alpha[0m - [2mOpenAI-compatible API (port 11435)[0m [90m[Stack: [32mETH>IP>TCP>HTTP>OPENAI[0m][0m

@@ -1,7 +1,7 @@
-//! E2E test helpers for NetGet binary testing
-//!
-//! This module provides utilities to test NetGet by spawning the actual binary
-//! and interacting with it as a black-box system.
+// E2E test helpers for NetGet binary testing
+//
+// This module provides utilities to test NetGet by spawning the actual binary
+// and interacting with it as a black-box system.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -118,6 +118,8 @@ pub struct ServerConfig {
     pub log_level: String,
     /// Listen address (default: "127.0.0.1")
     pub listen_addr: String,
+    /// Disable script generation (default: false)
+    pub no_scripts: bool,
 }
 
 impl ServerConfig {
@@ -128,6 +130,18 @@ impl ServerConfig {
             model: None,
             log_level: "off".to_string(),
             listen_addr: "127.0.0.1".to_string(),
+            no_scripts: false,
+        }
+    }
+
+    /// Create a new server config with scripts disabled
+    pub fn new_no_scripts(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+            model: None,
+            log_level: "off".to_string(),
+            listen_addr: "127.0.0.1".to_string(),
+            no_scripts: true,
         }
     }
 
@@ -146,6 +160,12 @@ impl ServerConfig {
     /// Set the listen address
     pub fn with_listen_addr(mut self, addr: impl Into<String>) -> Self {
         self.listen_addr = addr.into();
+        self
+    }
+
+    /// Disable script generation
+    pub fn with_no_scripts(mut self, no_scripts: bool) -> Self {
+        self.no_scripts = no_scripts;
         self
     }
 }
@@ -237,6 +257,11 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
 
     // Add listen address
     cmd.arg("--listen-addr").arg(&config.listen_addr);
+
+    // Add --no-scripts flag if enabled
+    if config.no_scripts {
+        cmd.arg("--no-scripts");
+    }
 
     // Add the prompt as trailing arguments
     // We'll pass it as separate words to match how a user would type it
@@ -378,10 +403,22 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
         Some("WebDAV".to_string())
     } else if prompt_lower.contains("nfs stack") || prompt_lower.contains("using nfs") || prompt_lower.contains("via nfs") {
         Some("NFS".to_string())
+    } else if prompt_lower.contains("dynamo") {
+        Some("DYNAMO".to_string())
+    } else if prompt_lower.contains("ldap stack") || prompt_lower.contains("using ldap") || prompt_lower.contains("via ldap") || prompt_lower.contains("ldap") || prompt_lower.contains("directory server") {
+        Some("LDAP".to_string())
+    } else if prompt_lower.contains("imap stack") || prompt_lower.contains("using imap") || prompt_lower.contains("via imap") || prompt_lower.contains("imap") || prompt_lower.contains("imaps") {
+        Some("IMAP".to_string())
+    } else if prompt_lower.contains("elasticsearch") || prompt_lower.contains("opensearch") {
+        Some("ELASTICSEARCH".to_string())
+    } else if prompt_lower.contains("cassandra") || prompt_lower.contains("cql") {
+        Some("Cassandra".to_string())
     } else if prompt_lower.contains("via ssh") || prompt_lower.contains("ssh.") || prompt_lower.contains("sftp") {
         Some("SSH".to_string())
     } else if prompt_lower.contains("via irc") || prompt_lower.contains("irc") {
         Some("IRC".to_string())
+    } else if prompt_lower.contains("via smb") || prompt_lower.contains("smb") || prompt_lower.contains("cifs") {
+        Some("SMB".to_string())
     } else if prompt_lower.contains("via ntp") || prompt_lower.contains("ntp") {
         Some("NTP".to_string())
     } else if prompt_lower.contains("via dhcp") {
@@ -402,6 +439,12 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
         // mDNS doesn't have a dedicated stack - LLM may choose any stack
         // Don't validate stack for mDNS
         None
+    } else if prompt_lower.contains("via stun") || prompt_lower.contains("stun") {
+        Some("STUN".to_string())
+    } else if prompt_lower.contains("via turn") || prompt_lower.contains("turn") || prompt_lower.contains("relay server") {
+        Some("TURN".to_string())
+    } else if prompt_lower.contains("via bgp") || prompt_lower.contains("bgp") || prompt_lower.contains("routing") {
+        Some("BGP".to_string())
     } else if prompt_lower.contains("tcp") || prompt_lower.contains("ftp") {
         Some("TCP".to_string())
     } else if prompt_lower.contains("udp") {
@@ -438,6 +481,16 @@ async fn wait_for_server_startup_with_capture(
                     stack = "WebDAV".to_string();
                 } else if line.contains("NFS") {
                     stack = "NFS".to_string();
+                } else if line.contains("ELASTICSEARCH") {
+                    stack = "Elasticsearch".to_string();
+                } else if line.contains("DYNAMO") {
+                    stack = "DYNAMO".to_string();
+                } else if line.contains("OPENAI") {
+                    stack = "OpenAI".to_string();
+                } else if line.contains("LDAP") {
+                    stack = "LDAP".to_string();
+                } else if line.contains("Cassandra") {
+                    stack = "Cassandra".to_string();
                 } else if line.contains("HTTP") {
                     stack = "HTTP".to_string();
                 } else if line.contains("SNMP") {
@@ -452,6 +505,10 @@ async fn wait_for_server_startup_with_capture(
                     stack = "SSH".to_string();
                 } else if line.contains("IRC") {
                     stack = "IRC".to_string();
+                } else if line.contains("IMAP") {
+                    stack = "IMAP".to_string();
+                } else if line.contains("SMB") {
+                    stack = "SMB".to_string();
                 } else if line.contains("Telnet") {
                     stack = "Telnet".to_string();
                 } else if line.contains("SMTP") {
@@ -462,6 +519,8 @@ async fn wait_for_server_startup_with_capture(
                     stack = "MySQL".to_string();
                 } else if line.contains("IPP") {
                     stack = "IPP".to_string();
+                } else if line.contains("BGP") {
+                    stack = "BGP".to_string();
                 } else if line.contains("TCP") || line.contains("TCP/IP") {
                     stack = "TCP".to_string();
                 } else if line.contains("UDP") {
@@ -484,18 +543,37 @@ async fn wait_for_server_startup_with_capture(
                     }
                 }
 
-                if port > 0 {
-                    println!("[DEBUG] Server started: {} stack on port {}", stack, port);
-                    found_starting_message = true;
-                    // Don't return yet - wait for "listening on" message
-                }
+                // Set found_starting_message even if port is 0 (dynamic allocation)
+                // The actual port will be extracted from the "listening on" message
+                println!("[DEBUG] Server starting: {} stack (requested port: {})", stack, port);
+                found_starting_message = true;
+                // Don't return yet - wait for "listening on" message
             }
 
             // Wait for the "listening on" message which means the server is ACTUALLY ready
             // This prevents issues where we connect before the server is fully initialized
-            if found_starting_message && line.contains("listening on") && line.contains(&port.to_string()) {
-                println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
-                return Ok((port, stack));
+            if found_starting_message && line.contains("listening on") {
+                // Extract the actual port from the "listening on" message
+                // Format: "[INFO] Elasticsearch server listening on 127.0.0.1:61146"
+                if let Some(addr_start) = line.find(" on ") {
+                    let addr_part = &line[addr_start + 4..];
+                    if let Some(colon_pos) = addr_part.rfind(':') {
+                        let port_str: String = addr_part[colon_pos + 1..]
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect();
+                        if let Ok(actual_port) = port_str.parse::<u16>() {
+                            port = actual_port;
+                            println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
+                            return Ok((port, stack));
+                        }
+                    }
+                }
+                // Fallback: if port extraction fails but message contains the port we expect
+                if line.contains(&port.to_string()) {
+                    println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
+                    return Ok((port, stack));
+                }
             }
 
             // For some protocols (mDNS, MySQL, IPP), the "listening on" message might differ
@@ -508,7 +586,7 @@ async fn wait_for_server_startup_with_capture(
         Err("Server did not output startup information".into())
     };
 
-    timeout(Duration::from_secs(30), wait_future)  // Increased timeout for LLM processing
+    timeout(Duration::from_secs(120), wait_future)  // Increased timeout for LLM processing under load
         .await
         .map_err(|_| "Timeout waiting for server startup")?
 }

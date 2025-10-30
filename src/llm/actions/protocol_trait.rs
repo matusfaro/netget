@@ -53,6 +53,19 @@ pub enum ActionResult {
     /// IPP response
     IppResponse { status: u16, body: Vec<u8> },
 
+    /// DynamoDB HTTP/JSON response
+    DynamoResponse { status: u16, body: String },
+
+    /// Elasticsearch HTTP/JSON response
+    ElasticsearchResponse { status: u16, body: String },
+
+    /// OpenAI API HTTP/JSON response
+    OpenAiResponse {
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    },
+
     /// PostgreSQL query response with result set
     PostgresqlQueryResponse {
         columns: Vec<serde_json::Value>,
@@ -86,6 +99,34 @@ pub enum ActionResult {
 
     /// Redis null response ("$-1\r\n")
     RedisNull,
+
+    /// Cassandra READY response (after STARTUP)
+    CassandraReady,
+
+    /// Cassandra SUPPORTED response (server capabilities)
+    CassandraSupported {
+        options: serde_json::Map<String, serde_json::Value>,
+    },
+
+    /// Cassandra result rows response
+    CassandraResultRows {
+        columns: Vec<serde_json::Value>,
+        rows: Vec<serde_json::Value>,
+    },
+
+    /// Cassandra prepared statement response
+    CassandraPrepared {
+        columns: Vec<serde_json::Value>,
+    },
+
+    /// Cassandra authentication success
+    CassandraAuthSuccess,
+
+    /// Cassandra error response
+    CassandraError {
+        error_code: u32,
+        message: String,
+    },
 }
 
 impl ActionResult {

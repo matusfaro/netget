@@ -274,6 +274,27 @@ fn print_welcome_messages(footer: &mut StickyFooter) -> Result<()> {
         "  Ethernet (Alpha; root-only)",
         "  UDP (Alpha)",
         "  DHCP (Alpha)",
+        "  NFS (Alpha)",
+        "  SMB (Alpha): \"Start an SMB/CIFS file server on port 8445\"",
+        "  LDAP (Alpha): \"Start an LDAP directory server on port 389\"",
+        "  IMAP (Alpha): \"Start an IMAP mail server on port 143\" (or port 993 for IMAPS/TLS)",
+        "  MySQL (Alpha)",
+        "  WebDAV (Alpha)",
+        "  IPP (Alpha)",
+        "  PostgreSQL (Alpha)",
+        "  Redis (Alpha)",
+        "  Cassandra (Alpha): \"Start a Cassandra/CQL database server on port 9042\"",
+        "  Elasticsearch (Alpha): \"Start an Elasticsearch server on port 9200\"",
+        "  DynamoDB (Alpha): \"Start a DynamoDB-compatible server on port 8000\"",
+        "  OpenAI API (Alpha): \"Start an OpenAI-compatible API server on port 11435\"",
+        "  HTTP Proxy (Alpha)",
+        "  SOCKS5 (Alpha): \"Start a SOCKS5 proxy on port 1080 that asks before connecting\"",
+        "  WireGuard VPN: \"Start a WireGuard VPN server on port 51820\"",
+        "  OpenVPN (Alpha): \"Start an OpenVPN honeypot on port 1194\"",
+        "  IPSec/IKEv2 (Alpha): \"Start an IPSec VPN honeypot on port 500\"",
+        "  BGP (Alpha): \"Start a BGP routing server on port 179\"",
+        "  STUN (Alpha): \"Start a STUN server for NAT traversal on port 3478\"",
+        "  TURN (Alpha): \"Start a TURN relay server on port 3478 with 10 minute allocations\"",
         "",
         "Features:",
         "  Scripting: LLM may produce on-the-fly code to reduce invoking LLM",
@@ -701,6 +722,31 @@ async fn handle_key_event(
                         footer.render(&mut stdout())?;
 
                         // Command echo is suppressed for SetFooterStatus (see print_echo_before logic above)
+                    }
+                    UserCommand::ShowDocs { protocol } => {
+                        use crate::docs;
+
+                        if let Some(protocol_name) = protocol {
+                            // Show detailed docs for specific protocol
+                            match docs::show_protocol_docs(&protocol_name) {
+                                Ok(docs_text) => {
+                                    for line in docs_text.lines() {
+                                        print_output_line(line, footer)?;
+                                    }
+                                }
+                                Err(err_msg) => {
+                                    print_output_line(&err_msg, footer)?;
+                                }
+                            }
+                        } else {
+                            // List all protocols
+                            let docs_text = docs::list_all_protocols();
+                            for line in docs_text.lines() {
+                                print_output_line(line, footer)?;
+                            }
+                        }
+
+                        footer.render(&mut stdout())?;
                     }
                     UserCommand::Quit => {
                         return Ok(true);

@@ -61,6 +61,21 @@ pub struct Args {
     )]
     pub scripting_env: Option<String>,
 
+    /// Disable script generation (force LLM to use actions only)
+    #[clap(
+        long = "no-scripts",
+        help = "Disable script generation, force LLM to respond with actions only"
+    )]
+    pub no_scripts: bool,
+
+    /// Listen address for servers (default: 127.0.0.1)
+    #[clap(
+        long = "listen-addr",
+        value_name = "ADDRESS",
+        help = "IP address to bind servers to (e.g., 127.0.0.1, 0.0.0.0)"
+    )]
+    pub listen_addr: Option<String>,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,
