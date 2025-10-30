@@ -480,4 +480,18 @@ impl ProtocolActions for BgpProtocol {
             BGP_NOTIFICATION_EVENT.clone(),
         ]
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>BGP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["bgp", "border gateway"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }

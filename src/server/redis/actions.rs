@@ -79,6 +79,20 @@ impl ProtocolActions for RedisProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_redis_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>Redis"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["redis"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl RedisProtocol {
@@ -93,8 +107,11 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis → Simple string: {}", value));
 
-        Ok(ActionResult::RedisSimpleString {
-            value: value.to_string(),
+        Ok(ActionResult::Custom {
+            name: "redis_simple_string".to_string(),
+            data: json!({
+                "value": value
+            }),
         })
     }
 
@@ -119,7 +136,14 @@ impl RedisProtocol {
             result.as_ref().map(|v| v.len()).unwrap_or(0)
         ));
 
-        Ok(ActionResult::RedisBulkString { value: result })
+        Ok(ActionResult::Custom {
+            name: "redis_bulk_string".to_string(),
+            data: json!({
+                "value": result.as_ref().map(|v| serde_json::Value::String(
+                    String::from_utf8_lossy(v).to_string()
+                ))
+            }),
+        })
     }
 
     fn execute_redis_array(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -133,8 +157,11 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis → Array: {} elements", values.len()));
 
-        Ok(ActionResult::RedisArray {
-            values: values.clone(),
+        Ok(ActionResult::Custom {
+            name: "redis_array".to_string(),
+            data: json!({
+                "values": values
+            }),
         })
     }
 
@@ -149,7 +176,12 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis → Integer: {}", value));
 
-        Ok(ActionResult::RedisInteger { value })
+        Ok(ActionResult::Custom {
+            name: "redis_integer".to_string(),
+            data: json!({
+                "value": value
+            }),
+        })
     }
 
     fn execute_redis_error(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -163,8 +195,11 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis ✗ Error: {}", message));
 
-        Ok(ActionResult::RedisError {
-            message: message.to_string(),
+        Ok(ActionResult::Custom {
+            name: "redis_error".to_string(),
+            data: json!({
+                "message": message
+            }),
         })
     }
 
@@ -172,7 +207,10 @@ impl RedisProtocol {
         debug!("Redis null response");
         let _ = self.status_tx.send("[DEBUG] Redis → Null".to_string());
 
-        Ok(ActionResult::RedisNull)
+        Ok(ActionResult::Custom {
+            name: "redis_null".to_string(),
+            data: json!(null),
+        })
     }
 
     fn execute_list_redis_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {

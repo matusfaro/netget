@@ -86,6 +86,21 @@ impl ProtocolActions for IpsecProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_ipsec_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>IPSEC"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ipsec", "ikev2", "ike"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::with_notes(
+            crate::protocol::base_stack::ProtocolState::Disabled,
+            "No actual VPN tunnels. Full IPSec/IKEv2 implementation is infeasible: no viable Rust library (ipsec-parser is parse-only), protocol requires deep OS integration (XFRM policy), extremely complex (hundreds of thousands of lines in strongSwan). Use WireGuard for production VPN."
+        )
+    }
 }
 
 impl IpsecProtocol {

@@ -4412,6 +4412,7 @@ dependencies = [
  "nfsserve",
  "nix 0.29.0",
  "ollama-rs",
+ "once_cell",
  "opensrv-mysql",
  "pcap",
  "pgwire",

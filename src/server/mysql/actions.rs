@@ -76,6 +76,20 @@ impl ProtocolActions for MysqlProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_mysql_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>MySQL"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["mysql"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl MysqlProtocol {
@@ -104,9 +118,12 @@ impl MysqlProtocol {
         ));
 
         // Return a custom action result with the query response data
-        Ok(ActionResult::MysqlQueryResponse {
-            columns: columns.clone(),
-            rows: rows.clone(),
+        Ok(ActionResult::Custom {
+            name: "mysql_query_response".to_string(),
+            data: json!({
+                "columns": columns,
+                "rows": rows
+            }),
         })
     }
 
@@ -127,9 +144,12 @@ impl MysqlProtocol {
             .status_tx
             .send(format!("[DEBUG] MySQL ✗ Error {}: {}", error_code, message));
 
-        Ok(ActionResult::MysqlError {
-            error_code,
-            message: message.to_string(),
+        Ok(ActionResult::Custom {
+            name: "mysql_error".to_string(),
+            data: json!({
+                "error_code": error_code,
+                "message": message
+            }),
         })
     }
 
@@ -154,9 +174,12 @@ impl MysqlProtocol {
             affected_rows
         ));
 
-        Ok(ActionResult::MysqlOk {
-            affected_rows,
-            last_insert_id,
+        Ok(ActionResult::Custom {
+            name: "mysql_ok".to_string(),
+            data: json!({
+                "affected_rows": affected_rows,
+                "last_insert_id": last_insert_id
+            }),
         })
     }
 

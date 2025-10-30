@@ -70,6 +70,20 @@ impl ProtocolActions for NfsProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_nfs_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>NFS"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["nfs", "file server"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl NfsProtocol {

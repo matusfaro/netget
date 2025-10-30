@@ -9,7 +9,7 @@ use crate::llm::actions::{
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::LazyLock;
 
 /// DynamoDB protocol handler
@@ -134,9 +134,12 @@ impl ProtocolActions for DynamoProtocol {
                     .ok_or_else(|| anyhow::anyhow!("Missing body"))?
                     .to_string();
 
-                Ok(ActionResult::DynamoResponse {
-                    status: status_code,
-                    body,
+                Ok(ActionResult::Custom {
+                    name: "dynamo_response".to_string(),
+                    data: json!({
+                        "status": status_code,
+                        "body": body
+                    }),
                 })
             }
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type))
@@ -149,5 +152,19 @@ impl ProtocolActions for DynamoProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         get_dynamo_event_types()
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>DYNAMODB"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["dynamo"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
     }
 }

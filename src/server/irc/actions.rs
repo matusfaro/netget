@@ -151,6 +151,20 @@ impl ProtocolActions for IrcProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_irc_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>IRC"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["irc", "chat"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl IrcProtocol {

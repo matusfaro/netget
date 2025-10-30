@@ -55,6 +55,20 @@ impl ProtocolActions for SnmpProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_snmp_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>SNMP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["snmp"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Beta
+        )
+    }
 }
 
 impl SnmpProtocol {

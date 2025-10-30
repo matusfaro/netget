@@ -77,6 +77,20 @@ impl ProtocolActions for CassandraProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_cassandra_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>Cassandra"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["cassandra", "cql"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl CassandraProtocol {
@@ -84,7 +98,10 @@ impl CassandraProtocol {
         debug!("Cassandra READY response");
         let _ = self.status_tx.send(format!("[DEBUG] Cassandra → READY"));
 
-        Ok(ActionResult::CassandraReady)
+        Ok(ActionResult::Custom {
+            name: "cassandra_ready".to_string(),
+            data: json!({}),
+        })
     }
 
     fn execute_cassandra_supported(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -96,8 +113,11 @@ impl CassandraProtocol {
         debug!("Cassandra SUPPORTED response with options");
         let _ = self.status_tx.send(format!("[DEBUG] Cassandra → SUPPORTED"));
 
-        Ok(ActionResult::CassandraSupported {
-            options: options.unwrap_or_default(),
+        Ok(ActionResult::Custom {
+            name: "cassandra_supported".to_string(),
+            data: json!({
+                "options": options.unwrap_or_default()
+            }),
         })
     }
 
@@ -124,9 +144,12 @@ impl CassandraProtocol {
             rows.len()
         ));
 
-        Ok(ActionResult::CassandraResultRows {
-            columns: columns.clone(),
-            rows: rows.clone(),
+        Ok(ActionResult::Custom {
+            name: "cassandra_result_rows".to_string(),
+            data: json!({
+                "columns": columns,
+                "rows": rows
+            }),
         })
     }
 
@@ -146,8 +169,11 @@ impl CassandraProtocol {
             columns.len()
         ));
 
-        Ok(ActionResult::CassandraPrepared {
-            columns: columns.clone(),
+        Ok(ActionResult::Custom {
+            name: "cassandra_prepared".to_string(),
+            data: json!({
+                "columns": columns
+            }),
         })
     }
 
@@ -158,7 +184,10 @@ impl CassandraProtocol {
             "[DEBUG] Cassandra → AUTH_SUCCESS"
         ));
 
-        Ok(ActionResult::CassandraAuthSuccess)
+        Ok(ActionResult::Custom {
+            name: "cassandra_auth_success".to_string(),
+            data: json!({}),
+        })
     }
 
     fn execute_cassandra_error(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -179,9 +208,12 @@ impl CassandraProtocol {
             error_code, message
         ));
 
-        Ok(ActionResult::CassandraError {
-            error_code,
-            message: message.to_string(),
+        Ok(ActionResult::Custom {
+            name: "cassandra_error".to_string(),
+            data: json!({
+                "error_code": error_code,
+                "message": message
+            }),
         })
     }
 

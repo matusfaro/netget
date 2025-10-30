@@ -7,7 +7,7 @@ use crate::llm::actions::protocol_trait::{ProtocolActions, ActionResult};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::LazyLock;
 
 /// Elasticsearch protocol handler
@@ -331,9 +331,12 @@ impl ProtocolActions for ElasticsearchProtocol {
                     .ok_or_else(|| anyhow::anyhow!("Missing body"))?
                     .to_string();
 
-                Ok(ActionResult::ElasticsearchResponse {
-                    status: status_code,
-                    body,
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": status_code,
+                        "body": body
+                    }),
                 })
             }
             "send_search_response" => {
@@ -369,9 +372,12 @@ impl ProtocolActions for ElasticsearchProtocol {
                     }
                 });
 
-                Ok(ActionResult::ElasticsearchResponse {
-                    status: 200,
-                    body: serde_json::to_string_pretty(&response).unwrap(),
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": 200,
+                        "body": serde_json::to_string_pretty(&response).unwrap()
+                    }),
                 })
             }
             "send_index_response" => {
@@ -401,9 +407,12 @@ impl ProtocolActions for ElasticsearchProtocol {
                     "_primary_term": 1
                 });
 
-                Ok(ActionResult::ElasticsearchResponse {
-                    status: if result == "created" { 201 } else { 200 },
-                    body: serde_json::to_string_pretty(&response).unwrap(),
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": if result == "created" { 201 } else { 200 },
+                        "body": serde_json::to_string_pretty(&response).unwrap()
+                    }),
                 })
             }
             "send_get_response" => {
@@ -441,9 +450,12 @@ impl ProtocolActions for ElasticsearchProtocol {
                     })
                 };
 
-                Ok(ActionResult::ElasticsearchResponse {
-                    status: if found { 200 } else { 404 },
-                    body: serde_json::to_string_pretty(&response).unwrap(),
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": if found { 200 } else { 404 },
+                        "body": serde_json::to_string_pretty(&response).unwrap()
+                    }),
                 })
             }
             "send_bulk_response" => {
@@ -460,9 +472,12 @@ impl ProtocolActions for ElasticsearchProtocol {
                     "items": items
                 });
 
-                Ok(ActionResult::ElasticsearchResponse {
-                    status: 200,
-                    body: serde_json::to_string_pretty(&response).unwrap(),
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": 200,
+                        "body": serde_json::to_string_pretty(&response).unwrap()
+                    }),
                 })
             }
             "send_cluster_info" => {
@@ -496,9 +511,12 @@ impl ProtocolActions for ElasticsearchProtocol {
                     "tagline": "You Know, for Search (powered by LLM)"
                 });
 
-                Ok(ActionResult::ElasticsearchResponse {
-                    status: 200,
-                    body: serde_json::to_string_pretty(&response).unwrap(),
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": 200,
+                        "body": serde_json::to_string_pretty(&response).unwrap()
+                    }),
                 })
             }
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type))
@@ -511,5 +529,19 @@ impl ProtocolActions for ElasticsearchProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         get_elasticsearch_event_types()
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>ELASTICSEARCH"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["elasticsearch", "opensearch"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
     }
 }

@@ -341,14 +341,25 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::CassandraReady => {
-                    conn_state.ready = true;
-                    self.send_ready(frame.stream_id, stream, status_tx).await?;
-                    return Ok(true);
-                }
-                ActionResult::CassandraError { error_code, message } => {
-                    self.send_error(frame.stream_id, error_code, &message, stream, status_tx).await?;
-                    return Ok(true);
+                ActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "cassandra_ready" => {
+                            conn_state.ready = true;
+                            self.send_ready(frame.stream_id, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        "cassandra_error" => {
+                            let error_code = data.get("error_code")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0x0000) as u32;
+                            let message = data.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error");
+                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {
                     warn!("Unexpected action result for STARTUP");
@@ -403,13 +414,28 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::CassandraSupported { options } => {
-                    self.send_supported(frame.stream_id, options, stream, status_tx).await?;
-                    return Ok(true);
-                }
-                ActionResult::CassandraError { error_code, message } => {
-                    self.send_error(frame.stream_id, error_code, &message, stream, status_tx).await?;
-                    return Ok(true);
+                ActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "cassandra_supported" => {
+                            let options = data.get("options")
+                                .and_then(|v| v.as_object())
+                                .cloned()
+                                .unwrap_or_default();
+                            self.send_supported(frame.stream_id, options, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        "cassandra_error" => {
+                            let error_code = data.get("error_code")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0x0000) as u32;
+                            let message = data.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error");
+                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {
                     warn!("Unexpected action result for OPTIONS");
@@ -471,13 +497,32 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::CassandraResultRows { columns, rows } => {
-                    self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx).await?;
-                    return Ok(true);
-                }
-                ActionResult::CassandraError { error_code, message } => {
-                    self.send_error(frame.stream_id, error_code, &message, stream, status_tx).await?;
-                    return Ok(true);
+                ActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "cassandra_result_rows" => {
+                            let columns = data.get("columns")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let rows = data.get("rows")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        "cassandra_error" => {
+                            let error_code = data.get("error_code")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0x0000) as u32;
+                            let message = data.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error");
+                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
                 }
                 ActionResult::CloseConnection => {
                     return Ok(false);
@@ -788,13 +833,28 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::CassandraPrepared { columns } => {
-                    self.send_prepared(frame.stream_id, statement_id, columns, param_count, stream, status_tx).await?;
-                    return Ok(true);
-                }
-                ActionResult::CassandraError { error_code, message } => {
-                    self.send_error(frame.stream_id, error_code, &message, stream, status_tx).await?;
-                    return Ok(true);
+                ActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "cassandra_prepared" => {
+                            let columns = data.get("columns")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            self.send_prepared(frame.stream_id, statement_id, columns, param_count, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        "cassandra_error" => {
+                            let error_code = data.get("error_code")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0x0000) as u32;
+                            let message = data.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error");
+                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
                 }
                 ActionResult::CloseConnection => {
                     return Ok(false);
@@ -881,13 +941,32 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::CassandraResultRows { columns, rows } => {
-                    self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx).await?;
-                    return Ok(true);
-                }
-                ActionResult::CassandraError { error_code, message } => {
-                    self.send_error(frame.stream_id, error_code, &message, stream, status_tx).await?;
-                    return Ok(true);
+                ActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "cassandra_result_rows" => {
+                            let columns = data.get("columns")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let rows = data.get("rows")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        "cassandra_error" => {
+                            let error_code = data.get("error_code")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0x0000) as u32;
+                            let message = data.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error");
+                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
                 }
                 ActionResult::CloseConnection => {
                     return Ok(false);
@@ -1179,15 +1258,26 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::CassandraAuthSuccess => {
-                    conn_state.authenticated = true;
-                    conn_state.username = Some(username);
-                    self.send_auth_success(frame.stream_id, stream, status_tx).await?;
-                    return Ok(true);
-                }
-                ActionResult::CassandraError { error_code, message } => {
-                    self.send_error(frame.stream_id, error_code, &message, stream, status_tx).await?;
-                    return Ok(false);  // Close connection on auth failure
+                ActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "cassandra_auth_success" => {
+                            conn_state.authenticated = true;
+                            conn_state.username = Some(username);
+                            self.send_auth_success(frame.stream_id, stream, status_tx).await?;
+                            return Ok(true);
+                        }
+                        "cassandra_error" => {
+                            let error_code = data.get("error_code")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0x0000) as u32;
+                            let message = data.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error");
+                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
+                            return Ok(false);  // Close connection on auth failure
+                        }
+                        _ => {}
+                    }
                 }
                 ActionResult::CloseConnection => {
                     return Ok(false);

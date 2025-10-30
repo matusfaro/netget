@@ -61,6 +61,20 @@ impl ProtocolActions for TurnProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_turn_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>TURN"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["turn"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 impl TurnProtocol {

@@ -209,15 +209,25 @@ async fn handle_ipp_request_with_llm(
             // Look for IPP-specific response actions
             for result in execution_result.protocol_results {
                 match result {
-                    ActionResult::IppResponse { status, body } => {
-                        debug!("IPP response: status={}", status);
-                        let _ = status_tx.send(format!("[DEBUG] IPP → {} response", status));
+                    ActionResult::Custom { name, data } => {
+                        if name == "ipp_response" {
+                            let status = data.get("status")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(200) as u16;
+                            let body_hex = data.get("body")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let body = hex::decode(body_hex).unwrap_or_default();
 
-                        return Ok(Response::builder()
-                            .status(status)
-                            .header("Content-Type", "application/ipp")
-                            .body(Full::new(Bytes::from(body)))
-                            .unwrap());
+                            debug!("IPP response: status={}", status);
+                            let _ = status_tx.send(format!("[DEBUG] IPP → {} response", status));
+
+                            return Ok(Response::builder()
+                                .status(status)
+                                .header("Content-Type", "application/ipp")
+                                .body(Full::new(Bytes::from(body)))
+                                .unwrap());
+                        }
                     }
                     _ => {
                         // Other actions don't affect HTTP response

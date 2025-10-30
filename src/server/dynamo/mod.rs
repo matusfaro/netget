@@ -215,24 +215,33 @@ async fn handle_dynamo_request_with_llm(
             // Look for DynamoDB-specific response actions
             for result in execution_result.protocol_results {
                 match result {
-                    ActionResult::DynamoResponse { status, body } => {
-                        debug!("DynamoDB response: status={}", status);
-                        let _ = status_tx.send(format!("[DEBUG] DynamoDB → {} response", status));
-                        trace!("DynamoDB response body: {}", body);
-                        let _ = status_tx.send(format!("[TRACE] DynamoDB response: {}", body));
+                    ActionResult::Custom { name, data } => {
+                        if name == "dynamo_response" {
+                            let status = data.get("status")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(200) as u16;
+                            let body = data.get("body")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("{}");
 
-                        // Generate a simple request ID using timestamp
-                        let request_id = format!("{:x}", std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_nanos());
+                            debug!("DynamoDB response: status={}", status);
+                            let _ = status_tx.send(format!("[DEBUG] DynamoDB → {} response", status));
+                            trace!("DynamoDB response body: {}", body);
+                            let _ = status_tx.send(format!("[TRACE] DynamoDB response: {}", body));
 
-                        return Ok(Response::builder()
-                            .status(status)
-                            .header("Content-Type", "application/x-amz-json-1.0")
-                            .header("x-amzn-RequestId", request_id)
-                            .body(Full::new(Bytes::from(body)))
-                            .unwrap());
+                            // Generate a simple request ID using timestamp
+                            let request_id = format!("{:x}", std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_nanos());
+
+                            return Ok(Response::builder()
+                                .status(status)
+                                .header("Content-Type", "application/x-amz-json-1.0")
+                                .header("x-amzn-RequestId", request_id)
+                                .body(Full::new(Bytes::from(body.to_string())))
+                                .unwrap());
+                        }
                     }
                     _ => {
                         // Other actions don't affect HTTP response

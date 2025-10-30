@@ -58,6 +58,20 @@ impl ProtocolActions for DataLinkProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_datalink_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["datalink", "data link", "layer 2", "layer2", "l2", "ethernet", "arp", "pcap"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Beta
+        )
+    }
 }
 
 /// Action definition for show_message

@@ -209,33 +209,60 @@ impl RedisHandler {
                                 // Process action results and encode RESP responses
                                 for result in execution_result.protocol_results {
                                     match result {
-                                        ActionResult::RedisSimpleString { value } => {
-                                            let resp = encode_simple_string(&value);
-                                            stream.write_all(&resp).await?;
-                                        }
-                                        ActionResult::RedisBulkString { value } => {
-                                            let resp = if let Some(bytes) = value {
-                                                encode_bulk_string(&bytes)
-                                            } else {
-                                                encode_null()
-                                            };
-                                            stream.write_all(&resp).await?;
-                                        }
-                                        ActionResult::RedisArray { values } => {
-                                            let resp = encode_array(&values)?;
-                                            stream.write_all(&resp).await?;
-                                        }
-                                        ActionResult::RedisInteger { value } => {
-                                            let resp = encode_integer(value);
-                                            stream.write_all(&resp).await?;
-                                        }
-                                        ActionResult::RedisError { message } => {
-                                            let resp = encode_error(&message);
-                                            stream.write_all(&resp).await?;
-                                        }
-                                        ActionResult::RedisNull => {
-                                            let resp = encode_null();
-                                            stream.write_all(&resp).await?;
+                                        ActionResult::Custom { name, data } => {
+                                            match name.as_str() {
+                                                "redis_simple_string" => {
+                                                    let value = data.get("value")
+                                                        .and_then(|v| v.as_str())
+                                                        .unwrap_or("");
+                                                    let resp = encode_simple_string(value);
+                                                    stream.write_all(&resp).await?;
+                                                }
+                                                "redis_bulk_string" => {
+                                                    let value = data.get("value");
+                                                    let resp = if let Some(v) = value {
+                                                        if v.is_null() {
+                                                            encode_null()
+                                                        } else if let Some(s) = v.as_str() {
+                                                            encode_bulk_string(s.as_bytes())
+                                                        } else {
+                                                            encode_bulk_string(v.to_string().as_bytes())
+                                                        }
+                                                    } else {
+                                                        encode_null()
+                                                    };
+                                                    stream.write_all(&resp).await?;
+                                                }
+                                                "redis_array" => {
+                                                    let values = data.get("values")
+                                                        .and_then(|v| v.as_array())
+                                                        .cloned()
+                                                        .unwrap_or_default();
+                                                    let resp = encode_array(&values)?;
+                                                    stream.write_all(&resp).await?;
+                                                }
+                                                "redis_integer" => {
+                                                    let value = data.get("value")
+                                                        .and_then(|v| v.as_i64())
+                                                        .unwrap_or(0);
+                                                    let resp = encode_integer(value);
+                                                    stream.write_all(&resp).await?;
+                                                }
+                                                "redis_error" => {
+                                                    let message = data.get("message")
+                                                        .and_then(|v| v.as_str())
+                                                        .unwrap_or("Unknown error");
+                                                    let resp = encode_error(message);
+                                                    stream.write_all(&resp).await?;
+                                                }
+                                                "redis_null" => {
+                                                    let resp = encode_null();
+                                                    stream.write_all(&resp).await?;
+                                                }
+                                                _ => {
+                                                    // Unknown custom response, ignore
+                                                }
+                                            }
                                         }
                                         ActionResult::CloseConnection => {
                                             debug!("Redis closing connection");

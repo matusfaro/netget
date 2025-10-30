@@ -135,14 +135,36 @@ LLM returns `{actions: [...]}` instead of nested structures. Each action is self
 **CRITICAL: Test Organization**:
 - **ALL tests MUST be in the `tests/` directory, NEVER in `src/`**
 - **Tests in `tests/` can ONLY access public APIs** - they are compiled as separate crates
-- Unit tests in `tests/` should test public functions, types, and modules
-- Integration tests in `tests/` should test end-to-end behavior with real clients
+- **Protocol E2E tests belong in `tests/server/<protocol>/`** - Each protocol gets its own directory
+- **Shared helpers live in `tests/server/helpers.rs`** - Common test utilities
+- Unit tests at `tests/` root test public functions, types, and modules (e.g., `base_stack_test.rs`, `logging_unit_test.rs`)
 - **No `#[cfg(test)]` modules in `src/` files** - keep production code clean
 - Tests that need private API access should be refactored to test through public interfaces
 
+**Test Directory Structure**:
+```
+tests/
+├── server/                           # Protocol E2E tests
+│   ├── helpers.rs                    # Shared test helpers
+│   ├── mod.rs                        # Module declarations
+│   ├── <protocol>/                   # One directory per protocol
+│   │   ├── mod.rs                    # Protocol test module
+│   │   ├── e2e_test.rs               # Main E2E test
+│   │   └── e2e_<variant>_test.rs     # Additional test variants
+│   ├── tcp/
+│   ├── http/
+│   ├── ssh/
+│   ├── smb/
+│   └── ...
+├── base_stack_test.rs                # Unit tests
+├── logging_unit_test.rs              # Unit tests
+├── e2e_footer_test.rs                # UI tests
+└── ...
+```
+
 **Unit tests**: No Ollama required. Test parsing and detection logic.
 
-**Integration tests** (`tests/`): Require Ollama + model. Use real clients (suppaftp, reqwest, ssh2, raw sockets).
+**E2E tests** (`tests/server/<protocol>/`): Require Ollama + model. Use real clients (suppaftp, reqwest, ssh2, raw sockets).
 
 **Test helper**: `start_server_with_prompt(prompt)` infers configuration and returns (state, port, handle).
 
@@ -150,11 +172,11 @@ LLM returns `{actions: [...]}` instead of nested structures. Each action is self
 
 **Running tests**:
 ```bash
-cargo test --lib  # Unit tests
-cargo test --test tcp_integration_test  # TCP/FTP tests
-cargo test --test http_integration_test  # HTTP tests
-cargo test --test e2e_ssh_test --features e2e-tests  # SSH/SFTP tests
-cargo test --test e2e_proxy_test --features e2e-tests,proxy  # Proxy tests
+cargo test --lib                                              # Unit tests
+cargo test --features e2e-tests --test server::tcp::e2e_test  # TCP E2E tests
+cargo test --features e2e-tests --test server::http::e2e_test # HTTP E2E tests
+cargo test --features e2e-tests --test server::ssh::e2e_test  # SSH E2E tests
+cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2E tests
 ```
 
 ### E2E Test Performance
@@ -347,7 +369,10 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Add protocol-specific dependencies
 - Include in `all-protocols` feature
 
-### 9. E2E Test (`tests/e2e_<protocol>_test.rs`)
+### 9. E2E Test (`tests/server/<protocol>/e2e_test.rs`)
+- **Must create protocol directory** `tests/server/<protocol>/`
+- **Must create mod.rs** with `pub mod e2e_test;` (add feature flag `#[cfg(feature = "e2e-tests")]`)
+- **Must add to `tests/server/mod.rs`** with `pub mod <protocol>;`
 - **Must start NetGet in non-interactive mode** with a prompt
 - **Must assert server started with correct stack** using helpers
 - **Must use real client** or emulated client (only if no library available)
@@ -362,11 +387,11 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   ```
 - **Run tests sequentially** (no parallel execution):
   ```bash
-  cargo test --features e2e-tests --test e2e_<protocol>_test
+  cargo test --features e2e-tests --test server::<protocol>::e2e_test
   ```
 - **Fix any issues before considering protocol complete**
 
-### 10. Test Helpers (`tests/e2e/helpers.rs`)
+### 10. Test Helpers (`tests/server/helpers.rs`)
 - Update `extract_stack_from_prompt()` if needed
 - Update `wait_for_server_startup()` to detect new protocol
 - Handle protocol-specific stack validation
@@ -388,6 +413,8 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - E2E tests using interactive mode instead of prompt mode
 - Not validating server stack in tests
 - Forgetting to update base_stack.rs parsing
+- Not creating tests/server/<protocol>/ directory structure
+- Not adding protocol to tests/server/mod.rs
 
 ## SSH/SFTP Implementation
 

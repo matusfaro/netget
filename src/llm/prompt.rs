@@ -213,7 +213,7 @@ Response (JSON only):"#,
             String::new()
         } else {
             // For user input with running servers, show abbreviated list
-            let stacks = crate::protocol::BaseStack::available_stacks();
+            let stacks = crate::protocol::registry::registry().available_protocols();
             format!("\nAvailable protocol stacks: {}\n", stacks.join(", "))
         };
 

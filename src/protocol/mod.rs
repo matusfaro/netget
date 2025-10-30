@@ -5,6 +5,8 @@
 
 pub mod base_stack;
 pub mod event_type;
+pub mod registry;
 
 pub use base_stack::{BaseStack, ProtocolMetadata, ProtocolState};
 pub use event_type::{Event, EventType};
+pub use registry::registry;

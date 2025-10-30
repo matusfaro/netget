@@ -202,18 +202,27 @@ async fn handle_elasticsearch_request_with_llm(
             // Look for Elasticsearch-specific response actions
             for result in execution_result.protocol_results {
                 match result {
-                    ActionResult::ElasticsearchResponse { status, body } => {
-                        debug!("Elasticsearch response: status={}", status);
-                        let _ = status_tx.send(format!("[DEBUG] Elasticsearch → {} response", status));
-                        trace!("Elasticsearch response body: {}", body);
-                        let _ = status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
+                    ActionResult::Custom { name, data } => {
+                        if name == "elasticsearch_response" {
+                            let status = data.get("status")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(200) as u16;
+                            let body = data.get("body")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("{}");
 
-                        return Ok(Response::builder()
-                            .status(status)
-                            .header("Content-Type", "application/json; charset=UTF-8")
-                            .header("X-elastic-product", "Elasticsearch")
-                            .body(Full::new(Bytes::from(body)))
-                            .unwrap());
+                            debug!("Elasticsearch response: status={}", status);
+                            let _ = status_tx.send(format!("[DEBUG] Elasticsearch → {} response", status));
+                            trace!("Elasticsearch response body: {}", body);
+                            let _ = status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
+
+                            return Ok(Response::builder()
+                                .status(status)
+                                .header("Content-Type", "application/json; charset=UTF-8")
+                                .header("X-elastic-product", "Elasticsearch")
+                                .body(Full::new(Bytes::from(body.to_string())))
+                                .unwrap());
+                        }
                     }
                     _ => {
                         // Other actions don't affect HTTP response

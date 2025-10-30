@@ -393,6 +393,20 @@ impl ProtocolActions for ImapProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         get_imap_event_types()
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>IMAP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["imap"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 // ============================================================================

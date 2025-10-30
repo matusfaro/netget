@@ -55,6 +55,20 @@ impl ProtocolActions for SmbProtocol {
     fn protocol_name(&self) -> &'static str {
         "SMB"
     }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>SMB"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["smb", "cifs"]
+    }
+
+    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
+        crate::protocol::base_stack::ProtocolMetadata::new(
+            crate::protocol::base_stack::ProtocolState::Alpha
+        )
+    }
 }
 
 // Event type for SMB operations

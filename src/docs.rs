@@ -4,7 +4,7 @@
 //! including their event types, actions, and parameters.
 
 use crate::llm::ProtocolActions;
-use crate::protocol::{BaseStack, ProtocolState};
+use crate::protocol::{BaseStack, ProtocolMetadata, ProtocolState};
 
 /// ANSI color codes for terminal output
 mod colors {
@@ -98,12 +98,15 @@ pub fn list_all_protocols() -> String {
 
 /// Add a single protocol entry to the list
 fn add_protocol_entry(output: &mut String, stack: BaseStack, description: &str) {
-    let metadata = stack.metadata();
+    let registry = crate::protocol::registry::registry();
+    let metadata = registry.metadata(&stack).unwrap_or(ProtocolMetadata::new(ProtocolState::Alpha));
+    let stack_name = registry.stack_name(&stack).unwrap_or("UNKNOWN");
+
     let (state_color, state_symbol, state_text) = match metadata.state {
         ProtocolState::Implemented => (colors::BRIGHT_GREEN, "✓", "Implemented"),
         ProtocolState::Beta => (colors::BRIGHT_YELLOW, "β", "Beta"),
         ProtocolState::Alpha => (colors::YELLOW, "α", "Alpha"),
-        ProtocolState::Abandoned => (colors::RED, "✗", "Abandoned"),
+        ProtocolState::Disabled => (colors::RED, "✗", "Disabled"),
     };
 
     output.push_str(&format!("{}•{} {}{}{} {}{} {}{} - {}{}{} {}[Stack: {}{}{}]{}\n",
@@ -112,19 +115,22 @@ fn add_protocol_entry(output: &mut String, stack: BaseStack, description: &str) 
         state_color, state_symbol, state_text, colors::RESET,
         colors::DIM, description, colors::RESET,
         colors::GREY,
-        colors::GREEN, stack.name(), colors::RESET,
+        colors::GREEN, stack_name, colors::RESET,
         colors::RESET
     ));
 }
 
 /// Generate detailed documentation for a specific protocol
 pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
-    // Try to parse the protocol name as a BaseStack
-    let stack = BaseStack::from_str(protocol_name)
+    let registry = crate::protocol::registry::registry();
+
+    // Try to parse the protocol name as a BaseStack using registry
+    let stack = registry.parse_from_str(protocol_name)
         .ok_or_else(|| format!("{}Unknown protocol: {}{}. Use /docs to see all protocols.",
             colors::RED, protocol_name, colors::RESET))?;
 
-    let metadata = stack.metadata();
+    let metadata = registry.metadata(&stack).unwrap_or(ProtocolMetadata::new(ProtocolState::Alpha));
+    let stack_name = registry.stack_name(&stack).unwrap_or("UNKNOWN");
 
     let mut output = String::new();
 
@@ -141,14 +147,14 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
     // Stack name
     output.push_str(&format!("{}▸ Stack:{} {}{}{}\n",
         colors::BRIGHT_CYAN, colors::RESET,
-        colors::GREEN, stack.name(), colors::RESET));
+        colors::GREEN, stack_name, colors::RESET));
 
     // Status badge with color
     let (status_color, status_symbol) = match metadata.state {
         ProtocolState::Implemented => (colors::BRIGHT_GREEN, "✓"),
         ProtocolState::Beta => (colors::BRIGHT_YELLOW, "β"),
         ProtocolState::Alpha => (colors::YELLOW, "α"),
-        ProtocolState::Abandoned => (colors::RED, "✗"),
+        ProtocolState::Disabled => (colors::RED, "✗"),
     };
     output.push_str(&format!("{}▸ Status:{} {}{} {}{}\n",
         colors::BRIGHT_CYAN, colors::RESET,
