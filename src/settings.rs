@@ -16,10 +16,18 @@ pub struct Settings {
     /// Scripting mode (llm, python, javascript, go)
     #[serde(default)]
     pub scripting_mode: Option<String>,
+
+    /// Whether web search is enabled
+    #[serde(default = "default_web_search_enabled")]
+    pub web_search_enabled: bool,
 }
 
 fn default_model() -> String {
     "qwen3-coder:30b".to_string()
+}
+
+fn default_web_search_enabled() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -27,6 +35,7 @@ impl Default for Settings {
         Self {
             model: default_model(),
             scripting_mode: None,
+            web_search_enabled: default_web_search_enabled(),
         }
     }
 }
@@ -94,6 +103,12 @@ impl Settings {
     /// Update scripting mode and save
     pub fn set_scripting_mode(&mut self, mode: String) -> Result<()> {
         self.scripting_mode = Some(mode);
+        self.save()
+    }
+
+    /// Update web search enabled and save
+    pub fn set_web_search_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.web_search_enabled = enabled;
         self.save()
     }
 

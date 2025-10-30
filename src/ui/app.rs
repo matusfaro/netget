@@ -98,8 +98,6 @@ pub struct ConnectionInfo {
 pub struct PacketStats {
     pub packets_received: u64,
     pub packets_sent: u64,
-    pub bytes_received: u64,
-    pub bytes_sent: u64,
 }
 
 /// Simplified application state for rolling terminal

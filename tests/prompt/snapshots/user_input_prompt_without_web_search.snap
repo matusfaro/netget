@@ -4,7 +4,7 @@ No servers currently running.
 
 Trigger: User input: "start a DNS server on port 53"
 
-Instructions: Interpret what the user wants and respond with appropriate actions. You can use tools like read_file and web_search to gather information before responding.
+Instructions: Interpret what the user wants and respond with appropriate actions. You can use tools like read_file to gather information before responding.
 
 IMPORTANT: If the user requests changes to an existing server (e.g., 'add a new endpoint', 'update the response', 'change the behavior'), DO NOT open another server on the same port. Instead, update the existing server's instruction using the update_instruction action. Only use open_server when explicitly asked to create a NEW server on a DIFFERENT port.
 
@@ -133,16 +133,6 @@ Example:
   "type": "read_file",
   "path": "schema.json",
   "mode": "full"
-}
-
-11. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
-Parameters:
-  • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
-
-Example:
-{
-  "type": "web_search",
-  "query": "https://datatracker.ietf.org/doc/html/rfc7168"
 }
 
 

@@ -8,6 +8,8 @@ Trigger: User input: "enable request filtering"
 
 Instructions: Interpret what the user wants and respond with appropriate actions. You can use tools like read_file and web_search to gather information before responding.
 
+IMPORTANT: If the user requests changes to an existing server (e.g., 'add a new endpoint', 'update the response', 'change the behavior'), DO NOT open another server on the same port. Instead, update the existing server's instruction using the update_instruction action. Only use open_server when explicitly asked to create a NEW server on a DIFFERENT port.
+
 Available actions:
 
 1. open_server. Start a new server

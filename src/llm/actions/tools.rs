@@ -664,8 +664,12 @@ pub fn web_search_action() -> ActionDefinition {
 }
 
 /// Get all tool action definitions
-pub fn get_all_tool_actions() -> Vec<ActionDefinition> {
-    vec![read_file_action(), web_search_action()]
+pub fn get_all_tool_actions(web_search_enabled: bool) -> Vec<ActionDefinition> {
+    let mut actions = vec![read_file_action()];
+    if web_search_enabled {
+        actions.push(web_search_action());
+    }
+    actions
 }
 
 /// Execute a tool action
