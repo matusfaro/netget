@@ -196,9 +196,9 @@ impl IpsecServer {
         exchange_type: &str,
         initiator_spi: u64,
         responder_spi: u64,
-        socket: &UdpSocket,
-        llm_client: &OllamaClient,
-        app_state: &AppState,
+        _socket: &UdpSocket,
+        _llm_client: &OllamaClient,
+        _app_state: &AppState,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
         info!(
@@ -211,7 +211,7 @@ impl IpsecServer {
         ));
 
         // Build event for LLM
-        let event = Event::new(
+        let _event = Event::new(
             &IPSEC_HANDSHAKE_EVENT,
             serde_json::json!({
                 "peer_addr": peer_addr.to_string(),

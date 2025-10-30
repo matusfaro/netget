@@ -169,9 +169,9 @@ impl OpenvpnServer {
         packet: &[u8],
         opcode: u8,
         key_id: u8,
-        socket: &UdpSocket,
-        llm_client: &OllamaClient,
-        app_state: &AppState,
+        _socket: &UdpSocket,
+        _llm_client: &OllamaClient,
+        _app_state: &AppState,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
         info!(
@@ -195,7 +195,7 @@ impl OpenvpnServer {
         };
 
         // Build event for LLM
-        let event = Event::new(
+        let _event = Event::new(
             &OPENVPN_HANDSHAKE_EVENT,
             serde_json::json!({
                 "peer_addr": peer_addr.to_string(),

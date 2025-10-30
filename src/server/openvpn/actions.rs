@@ -36,13 +36,13 @@ pub fn get_openvpn_event_types() -> Vec<EventType> {
 
 /// OpenVPN protocol implementation
 pub struct OpenvpnProtocol {
-    socket: UdpSocket,
-    peer_addr: SocketAddr,
+    _socket: UdpSocket,
+    _peer_addr: SocketAddr,
 }
 
 impl OpenvpnProtocol {
     pub fn new(socket: UdpSocket, peer_addr: SocketAddr) -> Self {
-        Self { socket, peer_addr }
+        Self { _socket: socket, _peer_addr: peer_addr }
     }
 }
 
