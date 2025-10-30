@@ -52,8 +52,8 @@ pub enum UserCommand {
     },
     /// Show current web search status (slash command: /web)
     ShowWebSearch,
-    /// Toggle web search on/off (slash command: /web toggle)
-    ToggleWebSearch,
+    /// Set web search on/off (slash command: /web on|off)
+    SetWebSearch { enabled: bool },
     /// Generate test output lines (slash command: /test <count>)
     TestOutput {
         count: usize,
@@ -138,8 +138,17 @@ impl UserCommand {
                 // Show current web search status
                 return UserCommand::ShowWebSearch;
             }
-            // Any argument toggles web search
-            return UserCommand::ToggleWebSearch;
+            // Parse on/off argument
+            let rest_lower = rest.to_lowercase();
+            if rest_lower == "on" || rest_lower == "enable" || rest_lower == "enabled" || rest_lower == "true" {
+                return UserCommand::SetWebSearch { enabled: true };
+            } else if rest_lower == "off" || rest_lower == "disable" || rest_lower == "disabled" || rest_lower == "false" {
+                return UserCommand::SetWebSearch { enabled: false };
+            }
+            // Unknown argument - treat as unknown command
+            return UserCommand::UnknownSlashCommand {
+                command: trimmed.to_string(),
+            };
         }
 
         // /test command - generate test output lines

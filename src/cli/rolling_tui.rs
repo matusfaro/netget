@@ -769,9 +769,9 @@ async fn handle_key_event(
                             print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go", env), footer)?;
                         }
                     }
-                    UserCommand::ToggleWebSearch => {
-                        let new_state = state.toggle_web_search().await;
-                        let message = if new_state {
+                    UserCommand::SetWebSearch { enabled } => {
+                        state.set_web_search_enabled(enabled).await;
+                        let message = if enabled {
                             "Web search enabled"
                         } else {
                             "Web search disabled"
@@ -779,7 +779,7 @@ async fn handle_key_event(
                         print_output_line(message, footer)?;
 
                         // Save the new web search state to settings
-                        if let Err(e) = settings.lock().await.set_web_search_enabled(new_state) {
+                        if let Err(e) = settings.lock().await.set_web_search_enabled(enabled) {
                             error!("Failed to save web search setting: {}", e);
                         }
 
@@ -1178,7 +1178,7 @@ async fn handle_status_command(
             let status = if enabled { "enabled" } else { "disabled" };
             print_output_line(&format!("Web search is {}", status), footer)?;
             print_output_line("", footer)?;
-            print_output_line("To toggle web search, use: /web toggle", footer)?;
+            print_output_line("To change, use: /web on or /web off", footer)?;
         }
         _ => {}
     }

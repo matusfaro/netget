@@ -320,7 +320,7 @@ impl StickyFooter {
 
         // If we have content, position it with a separator above it
         if content_lines > 0 {
-            let separator_before_content = separator_before_input - content_lines;
+            let separator_before_content = separator_before_input - content_lines - 1;
             let content_start = separator_before_content + 1;
 
             // Render separator above content
