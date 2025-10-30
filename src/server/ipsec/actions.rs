@@ -36,13 +36,13 @@ pub fn get_ipsec_event_types() -> Vec<EventType> {
 
 /// IPSec protocol implementation
 pub struct IpsecProtocol {
-    socket: UdpSocket,
-    peer_addr: SocketAddr,
+    _socket: UdpSocket,
+    _peer_addr: SocketAddr,
 }
 
 impl IpsecProtocol {
     pub fn new(socket: UdpSocket, peer_addr: SocketAddr) -> Self {
-        Self { socket, peer_addr }
+        Self { _socket: socket, _peer_addr: peer_addr }
     }
 }
 

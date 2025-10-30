@@ -3,7 +3,7 @@
 // These tests spawn the actual NetGet binary with SOCKS5 prompts
 // and validate the responses using a manual SOCKS5 client implementation.
 
-use crate::e2e::helpers::{start_netget_server, ServerConfig, E2EResult};
+use e2e::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use std::time::Duration;
@@ -183,7 +183,7 @@ async fn start_test_http_server() -> E2EResult<(u16, tokio::task::JoinHandle<()>
 
     let handle = tokio::spawn(async move {
         if let Ok((mut stream, _)) = listener.accept().await {
-            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
+            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 25\r\n\r\nHello from test server!";
             let _ = stream.write_all(response).await;
         }
     });
@@ -271,11 +271,12 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
     let (http_port, http_handle) = start_test_http_server().await?;
     println!("Test HTTP server started on port {}", http_port);
 
-    // PROMPT: Tell the LLM to require authentication
+    // PROMPT: Tell the LLM to require authentication with explicit configuration
     let socks_port = get_available_port().await?;
     let prompt = format!(
-        "Start a SOCKS5 proxy server on port {} that requires username/password authentication. \
-        Accept username 'testuser' with password 'testpass'. Allow all connections after authentication.",
+        "Start a SOCKS5 proxy server on port {} with username/password authentication. \
+        IMPORTANT: Use startup_params with auth_methods set to [\"username_password\"]. \
+        Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication.",
         socks_port
     );
 
@@ -415,12 +416,12 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
     let (http_port, http_handle) = start_test_http_server().await?;
     println!("Test HTTP server started on port {}", http_port);
 
-    // PROMPT: Tell the LLM to enable MITM mode for inspection
+    // PROMPT: Tell the LLM to enable MITM mode with explicit configuration
     let socks_port = get_available_port().await?;
     let prompt = format!(
-        "Start a SOCKS5 proxy server on port {} with MITM inspection enabled. \
-        When a connection request comes in, enable MITM mode to inspect all traffic. \
-        When you see HTTP data flowing through, forward it unchanged. \
+        "Start a SOCKS5 proxy server on port {} with MITM inspection. \
+        IMPORTANT: Use startup_params with mitm_by_default set to true. \
+        When HTTP data flows through, forward it unchanged to the target. \
         Allow all connections to localhost.",
         socks_port
     );

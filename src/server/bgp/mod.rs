@@ -53,11 +53,30 @@ impl BgpServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        startup_params: Option<serde_json::Value>,
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("BGP server listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] BGP server listening on {}", local_addr));
+
+        // Extract AS number and router ID from startup params
+        let (local_as, router_id) = if let Some(ref params) = startup_params {
+            let as_num = params.get("as_number")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u32)
+                .unwrap_or(65000); // Default private ASN
+            let router_id_str = params.get("router_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("192.168.1.1")
+                .to_string();
+            info!("BGP configured with AS {} and router ID {}", as_num, router_id_str);
+            let _ = status_tx.send(format!("[INFO] BGP configured with AS {} and router ID {}", as_num, router_id_str));
+            (as_num, router_id_str)
+        } else {
+            // Defaults
+            (65000, "192.168.1.1".to_string())
+        };
 
         let protocol = Arc::new(BgpProtocol::new());
 
@@ -73,6 +92,8 @@ impl BgpServer {
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
+                        let local_as_clone = local_as;
+                        let router_id_clone = router_id.clone();
 
                         tokio::spawn(async move {
                             let mut session = BgpSession {
@@ -88,8 +109,8 @@ impl BgpServer {
                                 peer_as: None,
                                 hold_time: DEFAULT_HOLD_TIME,
                                 keepalive_time: DEFAULT_KEEPALIVE_TIME,
-                                router_id: local_addr.ip().to_string(),
-                                local_as: 65000, // Default AS number (private ASN range)
+                                router_id: router_id_clone,
+                                local_as: local_as_clone,
                             };
 
                             // Handle BGP session
