@@ -50,6 +50,10 @@ pub enum UserCommand {
     ChangeScriptingEnv {
         env: String,
     },
+    /// Show current web search status (slash command: /web)
+    ShowWebSearch,
+    /// Toggle web search on/off (slash command: /web toggle)
+    ToggleWebSearch,
     /// Generate test output lines (slash command: /test <count>)
     TestOutput {
         count: usize,
@@ -125,6 +129,17 @@ impl UserCommand {
             return UserCommand::ChangeScriptingEnv {
                 env: rest.to_string(),
             };
+        }
+
+        // /web command
+        if input_lower.starts_with("/web") {
+            let rest = trimmed[4..].trim();
+            if rest.is_empty() {
+                // Show current web search status
+                return UserCommand::ShowWebSearch;
+            }
+            // Any argument toggles web search
+            return UserCommand::ToggleWebSearch;
         }
 
         // /test command - generate test output lines

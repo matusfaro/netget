@@ -120,6 +120,16 @@ impl EventHandler {
                 ui.add_llm_message("Scripting environment command is only supported in rolling TUI mode".to_string());
                 Ok(false)
             }
+            UserCommand::ShowWebSearch => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
+            UserCommand::ToggleWebSearch => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
         }
     }
 
