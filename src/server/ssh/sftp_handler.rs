@@ -111,7 +111,7 @@ impl LlmSftpHandler {
                     let pretty = serde_json::to_string_pretty(&execution_result.raw_actions[0])
                         .unwrap_or_else(|_| format!("{:?}", execution_result.raw_actions[0]));
                     trace!("SFTP LLM response ({}) JSON:\n{}", operation, pretty);
-                    let _ = self.status_tx.send(format!("[TRACE] SFTP LLM response ({}) JSON:\n{}", operation, pretty));
+                    let _ = self.status_tx.send(format!("[TRACE] SFTP LLM response ({}) JSON:\r\n{}", operation, pretty.replace('\n', "\r\n")));
                 }
 
                 // Return first action as the response (SFTP expects a single JSON response)

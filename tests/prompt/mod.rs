@@ -24,8 +24,13 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
     let scripting_env = netget::scripting::ScriptingEnvironment {
         python: None,
         javascript: None,
+        go: None,
     };
     state.set_scripting_env(scripting_env).await;
+    // Also set the mode to LLM (no scripting)
+    state
+        .set_selected_scripting_mode(netget::state::app_state::ScriptingMode::Llm)
+        .await;
 
     // Create a proxy server instance
     let mut server = ServerInstance::new(
@@ -99,10 +104,11 @@ async fn test_user_input_prompt() {
     // Create state WITHOUT any servers to trigger base_stack documentation
     let state = Arc::new(AppState::new());
 
-    // Set up mock scripting environment (the common case - Python/Node.js available)
+    // Set up mock scripting environment (the common case - Python/Node.js/Go available)
     let scripting_env = netget::scripting::ScriptingEnvironment {
         python: Some("Python 3.11.0".to_string()),
         javascript: Some("v20.0.0".to_string()),
+        go: Some("go version go1.21.0".to_string()),
     };
     state.set_scripting_env(scripting_env).await;
 
@@ -115,11 +121,12 @@ async fn test_user_input_prompt() {
     snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks - should include scripting info
-    assert!(prompt.contains("SCRIPT-BASED RESPONSES") || prompt.contains("Available environments"));
-    assert!(prompt.contains("Python") && prompt.contains("Node.js"));
-    assert!(prompt.contains("IMPORTANT: Only use scripts when"));
+    assert!(prompt.contains("SCRIPT-BASED RESPONSES"));
+    assert!(prompt.contains("Selected environment:"));
+    assert!(prompt.contains("python")); // Selected language
+    assert!(prompt.contains("Scripts are appropriate for:"));
     assert!(prompt.contains("Available Base Stacks"));
-    assert!(prompt.contains("For simple protocol responses"));
+    assert!(prompt.contains("script_inline"));
 }
 
 #[tokio::test]
@@ -131,8 +138,13 @@ async fn test_user_input_prompt_no_scripting() {
     let scripting_env = netget::scripting::ScriptingEnvironment {
         python: None,
         javascript: None,
+        go: None,
     };
     state.set_scripting_env(scripting_env).await;
+    // Also set the mode to LLM (no scripting)
+    state
+        .set_selected_scripting_mode(netget::state::app_state::ScriptingMode::Llm)
+        .await;
 
     let user_input = "start a DNS server on port 53";
 

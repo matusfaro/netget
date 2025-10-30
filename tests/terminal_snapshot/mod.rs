@@ -18,6 +18,11 @@ const SNAPSHOT_DIR: &str = "tests/terminal_snapshot/snapshots";
 
 /// Helper to spawn NetGet in a PTY and return the PTY handle and child process
 fn spawn_netget() -> (pty_process::blocking::Pty, Child) {
+    spawn_netget_with_args(&[])
+}
+
+/// Helper to spawn NetGet with arguments in a PTY
+fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) {
     let binary_path = "target/release/netget";
 
     // Verify binary exists
@@ -38,6 +43,9 @@ fn spawn_netget() -> (pty_process::blocking::Pty, Child) {
     // Note: The PTY size detection may fail in test environments, but NetGet
     // now handles this gracefully by defaulting to 80x24 in rolling_tui.rs
     let mut cmd = pty_process::blocking::Command::new(binary_path);
+    for arg in args {
+        cmd.arg(arg);
+    }
     let child = cmd
         .spawn(&pts)
         .expect("Failed to spawn netget in PTY");

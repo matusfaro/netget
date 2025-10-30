@@ -182,10 +182,10 @@ async fn handle_http_request_with_llm_actions(
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
                 let pretty = serde_json::to_string_pretty(&json).unwrap_or(body_str.to_string());
                 trace!("HTTP request body (JSON):\n{}", pretty);
-                let _ = status_tx.send(format!("[TRACE] HTTP request body (JSON):\n{}", pretty));
+                let _ = status_tx.send(format!("[TRACE] HTTP request body (JSON):\r\n{}", pretty.replace('\n', "\r\n")));
             } else {
                 trace!("HTTP request body:\n{}", body_str);
-                let _ = status_tx.send(format!("[TRACE] HTTP request body:\n{}", body_str));
+                let _ = status_tx.send(format!("[TRACE] HTTP request body:\r\n{}", body_str.replace('\n', "\r\n")));
             }
         } else {
             trace!("HTTP request body (binary): {} bytes", body_bytes.len());

@@ -105,63 +105,57 @@ pub fn show_message_action() -> ActionDefinition {
 }
 
 /// Get action definition for open_server
-pub fn open_server_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "open_server".to_string(),
-        description: "Start a new server".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "port".to_string(),
-                type_hint: "number".to_string(),
-                description: "Port number to listen on".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "base_stack".to_string(),
-                type_hint: "string".to_string(),
-                description: "Stack: tcp, http, udp, snmp, dns, dhcp, ntp, ssh, irc".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "send_first".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "initial_memory".to_string(),
-                type_hint: "string".to_string(),
-                description: "Optional initial memory as a string. Use for storing persistent context across connections. Example: \"user_count: 0\"".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "instruction".to_string(),
-                type_hint: "string".to_string(),
-                description: "Detailed instructions for handling network events".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "startup_params".to_string(),
-                type_hint: "object".to_string(),
-                description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "script_language".to_string(),
-                type_hint: "string".to_string(),
-                description: "Optional: Use 'python' or 'javascript' to handle deterministic responses via script instead of LLM.".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "script_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Optional: Path to script file (alternative to script_inline).".to_string(),
-                required: false,
-            },
+pub fn open_server_action(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
+    let mut parameters = vec![
+        Parameter {
+            name: "port".to_string(),
+            type_hint: "number".to_string(),
+            description: "Port number to listen on".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "base_stack".to_string(),
+            type_hint: "string".to_string(),
+            description: "Stack: tcp, http, udp, snmp, dns, dhcp, ntp, ssh, irc".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "send_first".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "initial_memory".to_string(),
+            type_hint: "string".to_string(),
+            description: "Optional initial memory as a string. Use for storing persistent context across connections. Example: \"user_count: 0\"".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "instruction".to_string(),
+            type_hint: "string".to_string(),
+            description: "Detailed instructions for handling network events".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "startup_params".to_string(),
+            type_hint: "object".to_string(),
+            description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
+            required: false,
+        },
+    ];
+
+    // Add script parameters if scripting is enabled
+    if selected_mode != crate::state::app_state::ScriptingMode::Llm {
+        let lang = selected_mode.as_str().to_lowercase();
+        parameters.extend(vec![
             Parameter {
                 name: "script_inline".to_string(),
                 type_hint: "string".to_string(),
-                description: "Optional: Inline script code (alternative to script_path).".to_string(),
+                description: format!(
+                    "Optional: Inline {} script code to handle deterministic responses instead of LLM. If provided, the script will be executed for network events.",
+                    lang
+                ),
                 required: false,
             },
             Parameter {
@@ -170,7 +164,13 @@ pub fn open_server_action() -> ActionDefinition {
                 description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
                 required: false,
             },
-        ],
+        ]);
+    }
+
+    ActionDefinition {
+        name: "open_server".to_string(),
+        description: "Start a new server".to_string(),
+        parameters,
         example: json!({
             "type": "open_server",
             "port": 21,
@@ -272,7 +272,8 @@ pub fn append_memory_action() -> ActionDefinition {
 }
 
 /// Get action definition for update_script
-pub fn update_script_action() -> ActionDefinition {
+pub fn update_script_action(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
+    let lang = selected_mode.as_str().to_lowercase();
     ActionDefinition {
         name: "update_script".to_string(),
         description: "Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.".to_string(),
@@ -290,21 +291,9 @@ pub fn update_script_action() -> ActionDefinition {
                 required: true,
             },
             Parameter {
-                name: "script_language".to_string(),
-                type_hint: "string".to_string(),
-                description: "Script language: 'python' or 'javascript' (required for 'set' operation)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "script_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to script file (alternative to script_inline, required for 'set')".to_string(),
-                required: false,
-            },
-            Parameter {
                 name: "script_inline".to_string(),
                 type_hint: "string".to_string(),
-                description: "Inline script code (alternative to script_path, required for 'set')".to_string(),
+                description: format!("Inline {} script code (required for 'set' operation)", lang),
                 required: false,
             },
             Parameter {
@@ -318,7 +307,6 @@ pub fn update_script_action() -> ActionDefinition {
             "type": "update_script",
             "server_id": 1,
             "operation": "set",
-            "script_language": "python",
             "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
             "script_handles": ["ssh_auth"]
         }),
@@ -358,26 +346,32 @@ pub fn append_to_log_action() -> ActionDefinition {
 /// 1. Server Management - Create/destroy servers
 /// 2. Server Configuration - Configure running servers
 /// 3. System/Utility - Model changes, messages, logging
-pub fn get_all_common_actions() -> Vec<ActionDefinition> {
-    vec![
+pub fn get_all_common_actions(selected_mode: crate::state::app_state::ScriptingMode) -> Vec<ActionDefinition> {
+    let mut actions = vec![
         // === Server Management ===
-        get_open_server_action_with_params(),
+        get_open_server_action_with_params(selected_mode),
         close_server_action(),
         // === Server Configuration ===
         update_instruction_action(),
-        update_script_action(),
         set_memory_action(),
         append_memory_action(),
         // === System/Utility ===
         change_model_action(),
         show_message_action(),
         append_to_log_action(),
-    ]
+    ];
+
+    // Only include update_script if scripting is enabled
+    if selected_mode != crate::state::app_state::ScriptingMode::Llm {
+        actions.insert(4, update_script_action(selected_mode)); // Insert after update_instruction
+    }
+
+    actions
 }
 
 /// Get common actions for user input (all common actions with enhanced open_server)
-pub fn get_user_input_common_actions() -> Vec<ActionDefinition> {
-    get_all_common_actions()
+pub fn get_user_input_common_actions(selected_mode: crate::state::app_state::ScriptingMode) -> Vec<ActionDefinition> {
+    get_all_common_actions(selected_mode)
 }
 
 /// Get common actions for network events (exclude server management actions)
@@ -576,8 +570,8 @@ pub fn generate_base_stack_documentation() -> String {
 ///
 /// Startup parameter documentation is provided in the base stack documentation section,
 /// not inline here, to avoid redundancy and reduce token usage.
-pub fn get_open_server_action_with_params() -> ActionDefinition {
-    let mut base_action = open_server_action();
+pub fn get_open_server_action_with_params(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
+    let mut base_action = open_server_action(selected_mode);
 
     // Use example that shows startup_params usage (proxy is a good example as it has params)
     base_action.example = json!({

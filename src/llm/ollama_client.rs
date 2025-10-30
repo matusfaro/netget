@@ -294,7 +294,7 @@ impl OllamaClient {
         // TRACE: Full payload
         trace!("Full LLM prompt:\n{}", prompt);
         if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!("[TRACE] LLM prompt:\n{}", prompt));
+            let _ = tx.send(format!("[TRACE] LLM prompt:\r\n{}", prompt.replace('\n', "\r\n")));
         }
         if let Some(ref schema) = format {
             trace!(
@@ -302,9 +302,10 @@ impl OllamaClient {
                 serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
             );
             if let Some(ref tx) = self.status_tx {
+                let schema_str = serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string());
                 let _ = tx.send(format!(
-                    "[TRACE] JSON schema:\n{}",
-                    serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
+                    "[TRACE] JSON schema:\r\n{}",
+                    schema_str.replace('\n', "\r\n")
                 ));
             }
         }

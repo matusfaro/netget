@@ -247,6 +247,19 @@ impl OllamaClient {
         prompt: &str,
         format: Option<serde_json::Value>,
     ) -> Result<String> {
+        // TEST-ONLY: Check for mock response environment variable
+        // This allows tests to inject predetermined responses without requiring Ollama
+        match std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
+            Ok(mock_response) => {
+                info!("🔧 TEST MODE: Using mock LLM response (length: {} chars)", mock_response.len());
+                debug!("Mock response: {}", mock_response);
+                return Ok(mock_response);
+            }
+            Err(_) => {
+                // Not in test mode, proceed normally
+            }
+        }
+
         let url = format!("{}/api/generate", self.base_url);
 
         debug!("Sending prompt to Ollama (model: {})", model);
