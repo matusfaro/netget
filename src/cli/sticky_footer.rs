@@ -781,35 +781,38 @@ impl StickyFooter {
     fn render_approval_prompt(&self, stdout: &mut impl Write, start_line: u16, url: &str) -> Result<u16> {
         let mut current_line = start_line;
 
-        // Parse URL to extract domain and path
-        let (domain, path) = if url.starts_with("http://") || url.starts_with("https://") {
+        // Parse URL to extract protocol, domain and path
+        let (protocol, domain, path) = if url.starts_with("http://") || url.starts_with("https://") {
             // Parse as URL
             if let Ok(parsed_url) = url::Url::parse(url) {
+                let protocol = parsed_url.scheme().to_string() + "://";
                 let domain = parsed_url.host_str().unwrap_or("unknown").to_string();
                 let path = parsed_url.path().to_string();
-                (domain, path)
+                (protocol, domain, path)
             } else {
                 // Fallback: treat whole thing as domain
-                (url.to_string(), String::new())
+                (String::new(), url.to_string(), String::new())
             }
         } else {
             // Treat as search query
-            ("search".to_string(), url.to_string())
+            (String::new(), "search".to_string(), url.to_string())
         };
 
         // Calculate available width for URL display
         // "Web Search Request: " = 20 chars
-        // " | (Y)es | (N)o | (A)lways Allow" = 33 chars
-        // Total prefix/suffix = 53 chars
-        let available_width = self.terminal_width.saturating_sub(53) as usize;
+        // " | (Y)es | (N)o | (A)llow All" = 30 chars
+        // Total prefix/suffix = 50 chars
+        let available_width = self.terminal_width.saturating_sub(50) as usize;
 
-        // Format the URL with domain highlighted
-        let domain_part = format!("{}", domain);
+        // Format the URL parts
+        let protocol_part = protocol;
+        let domain_part = domain;
         let path_part = if path.is_empty() {
             String::new()
         } else {
-            // Truncate path if needed to fit
-            let remaining_width = available_width.saturating_sub(domain.len());
+            // Calculate remaining width after protocol and domain
+            let used_width = protocol_part.len() + domain_part.len();
+            let remaining_width = available_width.saturating_sub(used_width);
             if path.len() <= remaining_width {
                 path
             } else if remaining_width > 3 {
@@ -826,11 +829,14 @@ impl StickyFooter {
             SetBackgroundColor(Color::DarkYellow),
             SetForegroundColor(Color::Black),
             Print(" Web Search Request: "),
-            // Domain in bright white/bold
+            // Protocol in cyan
+            SetForegroundColor(Color::Cyan),
+            Print(&protocol_part),
+            // Domain in bright white
             SetForegroundColor(Color::White),
             Print(&domain_part),
-            // Path in grey
-            SetForegroundColor(Color::DarkGrey),
+            // Path in grey (not dark grey for better visibility)
+            SetForegroundColor(Color::Grey),
             Print(&path_part),
             SetForegroundColor(Color::Black),
             Print(" | "),
@@ -845,12 +851,14 @@ impl StickyFooter {
             SetForegroundColor(Color::Blue),
             Print("(A)"),
             SetForegroundColor(Color::Black),
-            Print("lways Allow"),
+            Print("llow All"),
             ResetColor,
         )?;
 
         // Fill rest of line with background color
-        let text_len = 20 + domain_part.len() + path_part.len() + 33;
+        // "Web Search Request: " = 20 chars
+        // " | (Y)es | (N)o | (A)llow All" = 30 chars
+        let text_len = 20 + protocol_part.len() + domain_part.len() + path_part.len() + 30;
         if text_len < self.terminal_width as usize {
             let padding = " ".repeat(self.terminal_width as usize - text_len);
             execute!(

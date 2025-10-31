@@ -96,9 +96,9 @@ impl EventHandler {
                 let web_search_mode = self.state.get_web_search_mode().await;
                 let approval_tx = self.state.get_web_approval_channel().await;
 
-                // Create a web search action for DuckDuckGo
+                // Create a web search action for DuckDuckGo with a long path to test truncation
                 let action = ToolAction::WebSearch {
-                    query: "https://duckduckgo.com".to_string(),
+                    query: "https://duckduckgo.com/?q=test+search+query+with+very+long+parameters&ia=web&category=general&filters=none".to_string(),
                 };
 
                 // Execute the tool (this will trigger approval prompt if in ASK mode)
