@@ -10,9 +10,7 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::net::SocketAddr;
 use std::sync::LazyLock;
-use tokio::net::UdpSocket;
 
 /// IPSec/IKEv2 handshake initiation event
 pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -35,14 +33,11 @@ pub fn get_ipsec_event_types() -> Vec<EventType> {
 }
 
 /// IPSec protocol implementation
-pub struct IpsecProtocol {
-    _socket: UdpSocket,
-    _peer_addr: SocketAddr,
-}
+pub struct IpsecProtocol;
 
 impl IpsecProtocol {
-    pub fn new(socket: UdpSocket, peer_addr: SocketAddr) -> Self {
-        Self { _socket: socket, _peer_addr: peer_addr }
+    pub fn new() -> Self {
+        Self
     }
 }
 
