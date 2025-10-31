@@ -496,8 +496,8 @@ fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> 
 }
 
 /// Get all BaseStack enum values that should be available to the LLM
-/// Filters out protocols with ProtocolState::Abandoned
-fn all_base_stacks() -> Vec<BaseStack> {
+/// Filters out protocols with ProtocolState::Disabled unless include_disabled is true
+fn all_base_stacks(include_disabled: bool) -> Vec<BaseStack> {
     let all_protocols = vec![
         BaseStack::Tcp,
         BaseStack::Http,
@@ -535,27 +535,33 @@ fn all_base_stacks() -> Vec<BaseStack> {
         BaseStack::Bgp,
     ];
 
-    // Filter out abandoned protocols
+    // Filter out disabled protocols unless include_disabled flag is set
     let registry = crate::protocol::registry::registry();
     all_protocols
         .into_iter()
         .filter(|stack| {
-            registry
-                .metadata(stack)
-                .map(|m| m.is_available_to_llm())
-                .unwrap_or(true)
+            if include_disabled {
+                // Include all protocols when flag is set
+                true
+            } else {
+                // Only include protocols that are available to LLM (not Disabled)
+                registry
+                    .metadata(stack)
+                    .map(|m| m.is_available_to_llm())
+                    .unwrap_or(true)
+            }
         })
         .collect()
 }
 
 /// Generate comprehensive base stack documentation with startup parameters
 /// Returns formatted text listing all available stacks and their configuration options
-pub fn generate_base_stack_documentation() -> String {
+pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
     let mut doc = String::from("## Available Base Stacks\n\n");
     doc.push_str("Each protocol stack has a specific name to use in the 'base_stack' field:\n\n");
 
     let registry = crate::protocol::registry::registry();
-    for stack in all_base_stacks() {
+    for stack in all_base_stacks(include_disabled) {
         // Get the stack name/identifier
         let stack_str = stack.to_string();
         doc.push_str(&format!("### {}\n", stack_str));

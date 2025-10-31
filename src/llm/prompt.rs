@@ -205,9 +205,10 @@ Response (JSON only):"#,
         };
 
         // Conditionally generate base stack documentation
+        let include_disabled = state.get_include_disabled_protocols().await;
         let base_stack_docs = if include_base_stacks {
             // For user input when starting servers, include full documentation
-            generate_base_stack_documentation()
+            generate_base_stack_documentation(include_disabled)
         } else if server_id.is_some() {
             // For network events, don't include (server already running)
             String::new()

@@ -25,7 +25,7 @@ pub async fn run_non_interactive(
     debug!("Prompt: {}", prompt);
 
     // Create application state
-    let state = AppState::new();
+    let state = AppState::new_with_options(args.include_disabled_protocols);
 
     // Override model if specified in args
     if let Some(model) = &args.model {

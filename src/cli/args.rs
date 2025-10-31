@@ -76,6 +76,13 @@ pub struct Args {
     )]
     pub listen_addr: Option<String>,
 
+    /// Include disabled protocols (for testing honeypot-only protocols like IPSec, OpenVPN)
+    #[clap(
+        long = "include-disabled-protocols",
+        help = "Include disabled protocols in available options (useful for testing honeypot protocols)"
+    )]
+    pub include_disabled_protocols: bool,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,
