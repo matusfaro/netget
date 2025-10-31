@@ -420,6 +420,8 @@ impl OllamaClient {
     /// * `model` - Model name
     /// * `initial_prompt_builder` - Function that builds the initial system+user prompt
     /// * `max_iterations` - Maximum number of LLM calls (default: 5)
+    /// * `approval_tx` - Channel for sending web approval requests to UI (optional)
+    /// * `web_search_mode` - Current web search mode (On/Off/Ask)
     ///
     /// # Returns
     /// * `Vec<serde_json::Value>` - All non-tool actions collected across conversation turns
@@ -428,6 +430,8 @@ impl OllamaClient {
         model: &str,
         initial_prompt_builder: F,
         max_iterations: usize,
+        approval_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>>,
+        web_search_mode: crate::state::app_state::WebSearchMode,
     ) -> Result<Vec<serde_json::Value>>
     where
         F: Fn() -> Fut,
@@ -518,7 +522,7 @@ impl OllamaClient {
                                 tool_action.describe()
                             ));
                         }
-                        let result = execute_tool(&tool_action).await;
+                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode).await;
                         info!("  Result: {}", result.summary());
                         if let Some(ref tx) = self.status_tx {
                             let _ = tx.send(format!("[INFO]   Result: {}", result.summary()));

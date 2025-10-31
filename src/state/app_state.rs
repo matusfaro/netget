@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use super::server::{ServerId, ServerInstance};
 use crate::protocol::BaseStack;
@@ -65,6 +65,69 @@ impl std::fmt::Display for ScriptingMode {
     }
 }
 
+/// Web search mode - controls when web search is allowed
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebSearchMode {
+    /// Web search always enabled
+    On,
+    /// Web search always disabled
+    Off,
+    /// Ask user for approval before each search
+    Ask,
+}
+
+impl WebSearchMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Ask => "ask",
+        }
+    }
+}
+
+impl std::fmt::Display for WebSearchMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for WebSearchMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "on" | "enabled" | "enable" | "true" => Ok(Self::On),
+            "off" | "disabled" | "disable" | "false" => Ok(Self::Off),
+            "ask" => Ok(Self::Ask),
+            _ => Err(format!("Invalid web search mode: {}", s)),
+        }
+    }
+}
+
+impl Default for WebSearchMode {
+    fn default() -> Self {
+        Self::On
+    }
+}
+
+/// Request for web search approval (sent from tool executor to UI)
+pub struct WebApprovalRequest {
+    pub url: String,
+    pub response_tx: oneshot::Sender<WebApprovalResponse>,
+}
+
+/// Response from user for web search approval
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebApprovalResponse {
+    /// Allow this single request
+    Allow,
+    /// Deny this request
+    Deny,
+    /// Always allow (switch to ON mode for session)
+    AlwaysAllow,
+}
+
 /// Global application state
 #[derive(Clone)]
 pub struct AppState {
@@ -84,8 +147,10 @@ struct AppStateInner {
     scripting_env: crate::scripting::ScriptingEnvironment,
     /// Currently selected scripting mode (LLM, Python, or JavaScript)
     selected_scripting_mode: ScriptingMode,
-    /// Whether web search is enabled
-    web_search_enabled: bool,
+    /// Web search mode (On/Off/Ask)
+    web_search_mode: WebSearchMode,
+    /// Channel for sending web approval requests to UI
+    web_approval_tx: Option<mpsc::UnboundedSender<WebApprovalRequest>>,
 }
 
 impl AppState {
@@ -114,7 +179,8 @@ impl AppState {
                 ollama_model: "qwen3-coder:30b".to_string(),
                 scripting_env,
                 selected_scripting_mode,
-                web_search_enabled: true, // Default to enabled
+                web_search_mode: WebSearchMode::On, // Default to enabled
+                web_approval_tx: None, // Will be set by TUI
             })),
         }
     }
@@ -361,21 +427,35 @@ impl AppState {
         (next, true)
     }
 
-    /// Get whether web search is enabled
-    pub async fn get_web_search_enabled(&self) -> bool {
-        self.inner.read().await.web_search_enabled
+    /// Get the current web search mode
+    pub async fn get_web_search_mode(&self) -> WebSearchMode {
+        self.inner.read().await.web_search_mode
     }
 
-    /// Set whether web search is enabled
-    pub async fn set_web_search_enabled(&self, enabled: bool) {
-        self.inner.write().await.web_search_enabled = enabled;
+    /// Set the web search mode
+    pub async fn set_web_search_mode(&self, mode: WebSearchMode) {
+        self.inner.write().await.web_search_mode = mode;
     }
 
-    /// Toggle web search enabled state and return the new state
-    pub async fn toggle_web_search(&self) -> bool {
+    /// Cycle web search mode through ON -> ASK -> OFF -> ON and return the new state
+    pub async fn cycle_web_search_mode(&self) -> WebSearchMode {
         let mut inner = self.inner.write().await;
-        inner.web_search_enabled = !inner.web_search_enabled;
-        inner.web_search_enabled
+        inner.web_search_mode = match inner.web_search_mode {
+            WebSearchMode::On => WebSearchMode::Ask,
+            WebSearchMode::Ask => WebSearchMode::Off,
+            WebSearchMode::Off => WebSearchMode::On,
+        };
+        inner.web_search_mode
+    }
+
+    /// Set the web approval channel (called by TUI on startup)
+    pub async fn set_web_approval_channel(&self, tx: mpsc::UnboundedSender<WebApprovalRequest>) {
+        self.inner.write().await.web_approval_tx = Some(tx);
+    }
+
+    /// Get a clone of the web approval channel
+    pub async fn get_web_approval_channel(&self) -> Option<mpsc::UnboundedSender<WebApprovalRequest>> {
+        self.inner.read().await.web_approval_tx.clone()
     }
 
     /// Update script configuration for a server

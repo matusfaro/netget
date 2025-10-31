@@ -61,6 +61,17 @@ impl LogLevel {
             LogLevel::Trace => LogLevel::Error,
         }
     }
+
+    /// Get the color for this log level (matches output rendering colors)
+    pub fn color(&self) -> crossterm::style::Color {
+        match self {
+            LogLevel::Error => crossterm::style::Color::Red,
+            LogLevel::Warn => crossterm::style::Color::Yellow,
+            LogLevel::Info => crossterm::style::Color::Blue,
+            LogLevel::Debug => crossterm::style::Color::Cyan,
+            LogLevel::Trace => crossterm::style::Color::DarkGrey,
+        }
+    }
 }
 
 /// Server information for display

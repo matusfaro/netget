@@ -664,16 +664,32 @@ pub fn web_search_action() -> ActionDefinition {
 }
 
 /// Get all tool action definitions
-pub fn get_all_tool_actions(web_search_enabled: bool) -> Vec<ActionDefinition> {
+pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchMode) -> Vec<ActionDefinition> {
+    use crate::state::app_state::WebSearchMode;
+
     let mut actions = vec![read_file_action()];
-    if web_search_enabled {
-        actions.push(web_search_action());
+
+    // Include web search tool for both ON and ASK modes (not for OFF)
+    match web_search_mode {
+        WebSearchMode::On | WebSearchMode::Ask => {
+            actions.push(web_search_action());
+        }
+        WebSearchMode::Off => {
+            // Don't include web search tool
+        }
     }
+
     actions
 }
 
 /// Execute a tool action
-pub async fn execute_tool(action: &ToolAction) -> ToolResult {
+pub async fn execute_tool(
+    action: &ToolAction,
+    approval_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>>,
+    web_search_mode: crate::state::app_state::WebSearchMode,
+) -> ToolResult {
+    use crate::state::app_state::{WebApprovalRequest, WebApprovalResponse, WebSearchMode};
+
     match action {
         ToolAction::ReadFile {
             path,
@@ -693,6 +709,71 @@ pub async fn execute_tool(action: &ToolAction) -> ToolResult {
             )
             .await
         }
-        ToolAction::WebSearch { query } => execute_web_search(query).await,
+        ToolAction::WebSearch { query } => {
+            // Check if approval is needed (ASK mode)
+            if web_search_mode == WebSearchMode::Ask {
+                if let Some(tx) = approval_tx {
+                    debug!("Web search in ASK mode, requesting approval for: {}", query);
+
+                    // Create oneshot channel for response
+                    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+                    // Send approval request to UI
+                    let request = WebApprovalRequest {
+                        url: query.to_string(),
+                        response_tx,
+                    };
+
+                    if let Err(e) = tx.send(request) {
+                        error!("Failed to send web approval request: {}", e);
+                        return ToolResult::error(
+                            "web_search",
+                            query.to_string(),
+                            "Failed to request approval for web search".to_string(),
+                        );
+                    }
+
+                    // Wait for user response
+                    match response_rx.await {
+                        Ok(WebApprovalResponse::Allow) => {
+                            debug!("User approved web search");
+                            // Proceed with search
+                            execute_web_search(query).await
+                        }
+                        Ok(WebApprovalResponse::AlwaysAllow) => {
+                            debug!("User chose always allow (note: mode switch happens in UI)");
+                            // UI will switch mode to ON, proceed with this search
+                            execute_web_search(query).await
+                        }
+                        Ok(WebApprovalResponse::Deny) => {
+                            debug!("User denied web search");
+                            ToolResult::error(
+                                "web_search",
+                                query.to_string(),
+                                "Web search denied by user".to_string(),
+                            )
+                        }
+                        Err(e) => {
+                            error!("Failed to receive approval response: {}", e);
+                            ToolResult::error(
+                                "web_search",
+                                query.to_string(),
+                                "Approval request was cancelled".to_string(),
+                            )
+                        }
+                    }
+                } else {
+                    error!("Web search in ASK mode but no approval channel available");
+                    ToolResult::error(
+                        "web_search",
+                        query.to_string(),
+                        "Cannot request approval: approval channel not configured".to_string(),
+                    )
+                }
+            } else {
+                // ON mode - proceed directly
+                execute_web_search(query).await
+            }
+        }
     }
 }

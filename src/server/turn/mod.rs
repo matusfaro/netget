@@ -23,6 +23,7 @@ use crate::state::app_state::AppState;
 struct TurnAllocation {
     client_addr: SocketAddr,
     relay_addr: SocketAddr,
+    #[allow(dead_code)]
     allocated_at: Instant,
     expires_at: Instant,
     lifetime_seconds: u32,
