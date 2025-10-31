@@ -295,6 +295,7 @@ struct ImapSession<R, W> {
     writer: Arc<tokio::sync::Mutex<W>>,
     connection_id: ConnectionId,
     server_id: ServerId,
+    #[allow(dead_code)]
     remote_addr: SocketAddr,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,

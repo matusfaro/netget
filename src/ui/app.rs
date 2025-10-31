@@ -61,6 +61,17 @@ impl LogLevel {
             LogLevel::Trace => LogLevel::Error,
         }
     }
+
+    /// Get the color for this log level (matches output rendering colors)
+    pub fn color(&self) -> crossterm::style::Color {
+        match self {
+            LogLevel::Error => crossterm::style::Color::Red,
+            LogLevel::Warn => crossterm::style::Color::Yellow,
+            LogLevel::Info => crossterm::style::Color::Blue,
+            LogLevel::Debug => crossterm::style::Color::Cyan,
+            LogLevel::Trace => crossterm::style::Color::DarkGrey,
+        }
+    }
 }
 
 /// Server information for display
@@ -289,7 +300,8 @@ impl App {
             "/model [<name>] - List/select a model",
             "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
-            "/web [on/off] - Show/toggle web search",
+            "/web [on/off/ask] - Show/set web search mode",
+            "/test_ask - Test web search approval prompt",
             "/docs [<protocol>] - Show protocol documentation",
         ];
 

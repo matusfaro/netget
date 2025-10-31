@@ -195,26 +195,16 @@ impl ProtocolRegistry {
         );
 
         #[cfg(feature = "openvpn")]
-        {
-            use std::net::SocketAddr;
-            let socket = tokio::net::UdpSocket::from_std(std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap();
-            let addr = "127.0.0.1:1194".parse::<SocketAddr>().unwrap();
-            self.register(
-                BaseStack::Openvpn,
-                Arc::new(crate::server::OpenvpnProtocol::new(socket, addr)),
-            );
-        }
+        self.register(
+            BaseStack::Openvpn,
+            Arc::new(crate::server::OpenvpnProtocol::new()),
+        );
 
         #[cfg(feature = "ipsec")]
-        {
-            use std::net::SocketAddr;
-            let socket = tokio::net::UdpSocket::from_std(std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap();
-            let addr = "127.0.0.1:500".parse::<SocketAddr>().unwrap();
-            self.register(
-                BaseStack::Ipsec,
-                Arc::new(crate::server::IpsecProtocol::new(socket, addr)),
-            );
-        }
+        self.register(
+            BaseStack::Ipsec,
+            Arc::new(crate::server::IpsecProtocol::new()),
+        );
 
         #[cfg(feature = "stun")]
         self.register(BaseStack::Stun, Arc::new(crate::server::StunProtocol::new()));

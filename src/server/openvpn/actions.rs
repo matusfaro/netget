@@ -10,9 +10,7 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::net::SocketAddr;
 use std::sync::LazyLock;
-use tokio::net::UdpSocket;
 
 /// OpenVPN handshake initiation event
 pub static OPENVPN_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -35,14 +33,11 @@ pub fn get_openvpn_event_types() -> Vec<EventType> {
 }
 
 /// OpenVPN protocol implementation
-pub struct OpenvpnProtocol {
-    _socket: UdpSocket,
-    _peer_addr: SocketAddr,
-}
+pub struct OpenvpnProtocol;
 
 impl OpenvpnProtocol {
-    pub fn new(socket: UdpSocket, peer_addr: SocketAddr) -> Self {
-        Self { _socket: socket, _peer_addr: peer_addr }
+    pub fn new() -> Self {
+        Self
     }
 }
 

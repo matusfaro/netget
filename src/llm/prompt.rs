@@ -390,14 +390,15 @@ Response (JSON only):"#,
         let mut actions = get_user_input_common_actions(selected_mode);
 
         // Add tool actions
-        let web_search_enabled = state.get_web_search_enabled().await;
-        actions.extend(get_all_tool_actions(web_search_enabled));
+        let web_search_mode = state.get_web_search_mode().await;
+        actions.extend(get_all_tool_actions(web_search_mode));
 
         // Add protocol async actions
         actions.extend(protocol_async_actions);
 
         let trigger = format!("User input: \"{}\"", user_input);
-        let instructions = if web_search_enabled {
+        let web_search_available = web_search_mode != crate::state::app_state::WebSearchMode::Off;
+        let instructions = if web_search_available {
             "Interpret what the user wants and respond with appropriate actions. You can use tools like read_file and web_search to gather information before responding.\n\nIMPORTANT: If the user requests changes to an existing server (e.g., 'add a new endpoint', 'update the response', 'change the behavior'), DO NOT open another server on the same port. Instead, update the existing server's instruction using the update_instruction action. Only use open_server when explicitly asked to create a NEW server on a DIFFERENT port."
         } else {
             "Interpret what the user wants and respond with appropriate actions. You can use tools like read_file to gather information before responding.\n\nIMPORTANT: If the user requests changes to an existing server (e.g., 'add a new endpoint', 'update the response', 'change the behavior'), DO NOT open another server on the same port. Instead, update the existing server's instruction using the update_instruction action. Only use open_server when explicitly asked to create a NEW server on a DIFFERENT port."
@@ -464,14 +465,15 @@ Response (JSON only):"#,
         mut all_actions: Vec<ActionDefinition>,
     ) -> String {
         // Add tool actions to network events
-        let web_search_enabled = state.get_web_search_enabled().await;
-        all_actions.extend(get_all_tool_actions(web_search_enabled));
+        let web_search_mode = state.get_web_search_mode().await;
+        all_actions.extend(get_all_tool_actions(web_search_mode));
 
         // Note: all_actions already contains common + protocol + custom actions
         // They are pre-assembled by the action_helper, so we don't add common actions here
         let instruction = state.get_instruction(server_id).await.unwrap_or_default();
+        let web_search_available = web_search_mode != crate::state::app_state::WebSearchMode::Off;
         let instructions_str = if instruction.is_empty() {
-            if web_search_enabled {
+            if web_search_available {
                 "No specific instruction provided. Use your best judgment based on the protocol and event. You can use tools like read_file and web_search to gather information before responding."
             } else {
                 "No specific instruction provided. Use your best judgment based on the protocol and event. You can use tools like read_file to gather information before responding."

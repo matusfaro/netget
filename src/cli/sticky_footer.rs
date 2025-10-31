@@ -9,14 +9,22 @@
 use anyhow::Result;
 use crossterm::{
     cursor, execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
+use tokio::sync::oneshot;
 
+use crate::state::app_state::{WebApprovalResponse, WebSearchMode};
 use crate::ui::app::{ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo};
 
 use super::input_state::InputState;
+
+/// Pending web approval request
+pub struct PendingApproval {
+    pub url: String,
+    pub response_tx: oneshot::Sender<WebApprovalResponse>,
+}
 
 /// Content mode for the sticky footer
 #[derive(Debug, Clone)]
@@ -32,11 +40,21 @@ pub enum FooterContent {
 }
 
 /// Connection info for the status bar
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ConnectionInfo {
     pub model: String,
     pub scripting_env: String,
-    pub web_search_enabled: bool,
+    pub web_search_mode: WebSearchMode,
+}
+
+impl Default for ConnectionInfo {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            scripting_env: String::new(),
+            web_search_mode: WebSearchMode::On,
+        }
+    }
 }
 
 /// Sticky footer state and renderer
@@ -63,6 +81,8 @@ pub struct StickyFooter {
     blank_lines_buffer: u16,
     /// Track last footer height to clear properly when shrinking
     last_footer_height: u16,
+    /// Pending web approval request (if any)
+    pub pending_approval: Option<PendingApproval>,
 }
 
 impl StickyFooter {
@@ -84,6 +104,7 @@ impl StickyFooter {
             custom_status: None,
             blank_lines_buffer: 0,
             last_footer_height: 0,
+            pending_approval: None,
         };
 
         // Calculate actual footer height
@@ -223,8 +244,13 @@ impl StickyFooter {
         total_lines.min(15)
     }
 
-    /// Calculate lines needed for input
+    /// Calculate lines needed for input (or approval prompt if pending)
     fn calculate_input_lines(&self) -> u16 {
+        // If approval is pending, use 1 line for the approval prompt
+        if self.pending_approval.is_some() {
+            return 1;
+        }
+
         let lines = self.input.lines();
         let mut total = 0;
 
@@ -342,18 +368,25 @@ impl StickyFooter {
         // Render separator before input (always present)
         self.render_separator(stdout, separator_before_input)?;
 
-        // Render input (fixed position)
-        self.render_input(stdout, input_start)?;
+        // Render input or approval prompt (fixed position)
+        if let Some(ref approval) = self.pending_approval {
+            // Render approval prompt instead of input
+            self.render_approval_prompt(stdout, input_start, &approval.url)?;
+            // Hide cursor during approval
+            execute!(stdout, cursor::Hide)?;
+        } else {
+            // Render normal input
+            self.render_input(stdout, input_start)?;
+            // Position cursor in input field and show it
+            self.position_cursor(stdout)?;
+            execute!(stdout, cursor::Show)?;
+        }
 
         // Render separator before status bar (always present)
         self.render_separator(stdout, separator_before_status)?;
 
         // Render status bar (fixed position)
         self.render_status_bar(stdout, status_line)?;
-
-        // Position cursor in input field and show it
-        self.position_cursor(stdout)?;
-        execute!(stdout, cursor::Show)?;
 
         stdout.flush()?;
         Ok(())
@@ -390,8 +423,16 @@ impl StickyFooter {
             )?;
         }
 
-        // Render input and get the next line number
-        let next_line = self.render_input(stdout, input_start)?;
+        // Render input or approval prompt and get the next line number
+        let next_line = if let Some(ref approval) = self.pending_approval {
+            // Render approval prompt
+            let result = self.render_approval_prompt(stdout, input_start, &approval.url)?;
+            execute!(stdout, cursor::Hide)?;
+            result
+        } else {
+            // Render normal input
+            self.render_input(stdout, input_start)?
+        };
 
         // Clear and render separator before status bar
         execute!(
@@ -409,9 +450,12 @@ impl StickyFooter {
         )?;
         self.render_status_bar(stdout, separator_line)?;
 
-        // Position cursor
-        self.position_cursor(stdout)?;
-        execute!(stdout, cursor::Show)?;
+        // Position cursor (only if not in approval mode)
+        if self.pending_approval.is_none() {
+            self.position_cursor(stdout)?;
+            execute!(stdout, cursor::Show)?;
+        }
+
         stdout.flush()?;
         Ok(())
     }
@@ -608,10 +652,10 @@ impl StickyFooter {
 
     /// Render status bar
     fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
-        let web_status = if self.connection_info.web_search_enabled {
-            "ON"
-        } else {
-            "OFF"
+        let (web_status, web_color) = match self.connection_info.web_search_mode {
+            WebSearchMode::On => ("ON", Color::Green),
+            WebSearchMode::Off => ("OFF", Color::Red),
+            WebSearchMode::Ask => ("ASK", Color::Yellow),
         };
 
         execute!(stdout, cursor::MoveTo(0, line))?;
@@ -635,7 +679,9 @@ impl StickyFooter {
             SetForegroundColor(Color::DarkGrey),
             Print(" | ^l Log:"),
             ResetColor,
+            SetForegroundColor(self.log_level.color()),
             Print(format!("{}", self.log_level.as_str())),
+            ResetColor,
             SetForegroundColor(Color::DarkGrey),
             Print(" | ^e Script:"),
             ResetColor,
@@ -643,6 +689,7 @@ impl StickyFooter {
             SetForegroundColor(Color::DarkGrey),
             Print(" | ^w WebSearch:"),
             ResetColor,
+            SetForegroundColor(web_color),
             Print(format!("{}", web_status)),
             ResetColor,
         )?;
@@ -728,5 +775,84 @@ impl StickyFooter {
             .into_iter()
             .map(|s| s.to_string())
             .collect()
+    }
+
+    /// Render approval prompt when web search approval is pending
+    fn render_approval_prompt(&self, stdout: &mut impl Write, start_line: u16, url: &str) -> Result<u16> {
+        let mut current_line = start_line;
+
+        // Parse URL to extract protocol, domain and path
+        let (protocol, domain, path) = if url.starts_with("http://") || url.starts_with("https://") {
+            // Parse as URL
+            if let Ok(parsed_url) = url::Url::parse(url) {
+                let protocol = parsed_url.scheme().to_string() + "://";
+                let domain = parsed_url.host_str().unwrap_or("unknown").to_string();
+                let path = parsed_url.path().to_string();
+                (protocol, domain, path)
+            } else {
+                // Fallback: treat whole thing as domain
+                (String::new(), url.to_string(), String::new())
+            }
+        } else {
+            // Treat as search query
+            (String::new(), "search".to_string(), url.to_string())
+        };
+
+        // Calculate available width for URL display
+        // "Web Search Request: " = 20 chars
+        // " | (Y)es | (N)o | (A)llow All" = 30 chars
+        // Total prefix/suffix = 50 chars
+        let available_width = self.terminal_width.saturating_sub(50) as usize;
+
+        // Format the URL parts
+        let protocol_part = protocol;
+        let domain_part = domain;
+        let path_part = if path.is_empty() {
+            String::new()
+        } else {
+            // Calculate remaining width after protocol and domain
+            let used_width = protocol_part.len() + domain_part.len();
+            let remaining_width = available_width.saturating_sub(used_width);
+            if path.len() <= remaining_width {
+                path
+            } else if remaining_width > 3 {
+                format!("{}...", &path[..remaining_width.saturating_sub(3)])
+            } else {
+                String::new()
+            }
+        };
+
+        // Render the approval prompt
+        execute!(stdout, cursor::MoveTo(0, current_line))?;
+        execute!(
+            stdout,
+            Print(" Web Search Request: "),
+            // Protocol in grey (de-emphasized)
+            SetForegroundColor(Color::DarkGrey),
+            Print(&protocol_part),
+            // Domain in white (stands out)
+            SetForegroundColor(Color::White),
+            Print(&domain_part),
+            // Path in grey (de-emphasized)
+            SetForegroundColor(Color::DarkGrey),
+            Print(&path_part),
+            ResetColor,
+            Print(" | "),
+            SetForegroundColor(Color::Green),
+            Print("(Y)"),
+            ResetColor,
+            Print("es | "),
+            SetForegroundColor(Color::Red),
+            Print("(N)"),
+            ResetColor,
+            Print("o | "),
+            SetForegroundColor(Color::Blue),
+            Print("(A)"),
+            ResetColor,
+            Print("llow All"),
+        )?;
+
+        current_line += 1;
+        Ok(current_line)
     }
 }
