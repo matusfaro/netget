@@ -3,6 +3,7 @@ netget.log
 
 # Instance-specific build directories for concurrent Claude instances
 /target-claude/
+/$(pwd)/
 
 logs
 *.log
