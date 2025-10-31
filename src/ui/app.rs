@@ -300,7 +300,8 @@ impl App {
             "/model [<name>] - List/select a model",
             "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
-            "/web [on/off] - Show/toggle web search",
+            "/web [on/off/ask] - Show/set web search mode",
+            "/test_ask - Test web search approval prompt",
             "/docs [<protocol>] - Show protocol documentation",
         ];
 

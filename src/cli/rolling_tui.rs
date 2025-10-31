@@ -674,6 +674,41 @@ async fn handle_key_event(
                         // Re-render footer
                         footer.render(&mut stdout())?;
                     }
+                    UserCommand::TestAsk => {
+                        // Test web search approval by triggering a search
+                        use crate::llm::actions::tools::{execute_tool, ToolAction};
+
+                        print_output_line("[INFO] Testing web search approval with DuckDuckGo...", footer)?;
+
+                        // Get web search mode and approval channel
+                        let web_search_mode = state.get_web_search_mode().await;
+                        let approval_tx = state.get_web_approval_channel().await;
+
+                        // Create a web search action for DuckDuckGo
+                        let action = ToolAction::WebSearch {
+                            query: "https://duckduckgo.com".to_string(),
+                        };
+
+                        // Execute the tool asynchronously (this will trigger approval prompt if in ASK mode)
+                        let status_tx_clone = status_tx.clone();
+                        tokio::spawn(async move {
+                            let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode).await;
+
+                            // Send result to status channel
+                            if result.success {
+                                let _ = status_tx_clone.send("[INFO] Web search completed successfully".to_string());
+                                // Truncate result if too long
+                                let result_preview = if result.result.len() > 500 {
+                                    format!("{}... (truncated)", &result.result[..500])
+                                } else {
+                                    result.result.clone()
+                                };
+                                let _ = status_tx_clone.send(format!("[DEBUG] Result preview: {}", result_preview));
+                            } else {
+                                let _ = status_tx_clone.send(format!("[ERROR] Web search failed: {}", result.result));
+                            }
+                        });
+                    }
                     UserCommand::SetFooterStatus { message } => {
                         use std::fs::OpenOptions;
                         use std::io::Write as IoWrite;

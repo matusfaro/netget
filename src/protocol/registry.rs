@@ -197,7 +197,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "openvpn")]
         {
             use std::net::SocketAddr;
-            let socket = tokio::net::UdpSocket::from_std(std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap();
+            let std_socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            std_socket.set_nonblocking(true).unwrap();
+            let socket = tokio::net::UdpSocket::from_std(std_socket).unwrap();
             let addr = "127.0.0.1:1194".parse::<SocketAddr>().unwrap();
             self.register(
                 BaseStack::Openvpn,
@@ -208,7 +210,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "ipsec")]
         {
             use std::net::SocketAddr;
-            let socket = tokio::net::UdpSocket::from_std(std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap();
+            let std_socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            std_socket.set_nonblocking(true).unwrap();
+            let socket = tokio::net::UdpSocket::from_std(std_socket).unwrap();
             let addr = "127.0.0.1:500".parse::<SocketAddr>().unwrap();
             self.register(
                 BaseStack::Ipsec,
