@@ -2,6 +2,13 @@
 //!
 //! These tests verify IPSec/IKEv2 honeypot functionality by starting NetGet with IPSec prompts
 //! and sending crafted IKE handshake packets to detect reconnaissance attempts.
+//!
+//! **KNOWN LIMITATION**: These tests currently have issues with LLM stack selection.
+//! The LLM tends to choose generic UDP stack instead of the IPSec-specific stack,
+//! even with explicit "via ipsec" keywords in prompts. This may require:
+//! 1. Improved keyword matching in protocol selection
+//! 2. Different prompting strategy
+//! 3. Or these tests should use --no-scripts mode with direct stack specification
 
 #![cfg(feature = "e2e-tests")]
 
@@ -11,7 +18,7 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_ipsec_ikev2_sa_init_detection() {
-    let config = ServerConfig::new("Start an IPSec VPN honeypot on port 0");
+    let config = ServerConfig::new("Start an IPSec/IKEv2 VPN honeypot via ipsec protocol. Listen on a dynamically assigned port (use port 0, not the standard port 500 which requires root).");
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -62,7 +69,7 @@ async fn test_ipsec_ikev2_sa_init_detection() {
 
 #[tokio::test]
 async fn test_ipsec_ikev2_auth_detection() {
-    let config = ServerConfig::new("Start an IPSec honeypot on port 0");
+    let config = ServerConfig::new("Start an IPSec/IKEv2 honeypot via ipsec protocol. Listen on a dynamically assigned port (use port 0, not the standard port 500 which requires root).");
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -104,7 +111,7 @@ async fn test_ipsec_ikev2_auth_detection() {
 
 #[tokio::test]
 async fn test_ipsec_ikev1_detection() {
-    let config = ServerConfig::new("Start an IPSec/IKEv2 honeypot on port 0 that also detects IKEv1");
+    let config = ServerConfig::new("Start an IPSec/IKEv2 honeypot via ipsec that also detects IKEv1. Listen on a dynamically assigned port (use port 0, not the standard port 500 which requires root).");
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -146,7 +153,7 @@ async fn test_ipsec_ikev1_detection() {
 
 #[tokio::test]
 async fn test_ipsec_multiple_exchange_types() {
-    let config = ServerConfig::new("Start an IPSec honeypot on port 0 that logs all IKE exchange types");
+    let config = ServerConfig::new("Start an IPSec/IKE honeypot via ipsec that logs all IKE exchange types. Listen on a dynamically assigned port (use port 0, not the standard port 500 which requires root).");
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -197,7 +204,7 @@ async fn test_ipsec_multiple_exchange_types() {
 
 #[tokio::test]
 async fn test_ipsec_concurrent_connections() {
-    let config = ServerConfig::new("Start an IPSec VPN honeypot on port 0");
+    let config = ServerConfig::new("Start an IPSec/IKEv2 VPN honeypot via ipsec protocol. Listen on a dynamically assigned port (use port 0, not the standard port 500 which requires root).");
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
