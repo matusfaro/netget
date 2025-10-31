@@ -822,52 +822,35 @@ impl StickyFooter {
             }
         };
 
-        // Render the approval prompt on yellow background
+        // Render the approval prompt
         execute!(stdout, cursor::MoveTo(0, current_line))?;
         execute!(
             stdout,
-            SetBackgroundColor(Color::DarkYellow),
-            SetForegroundColor(Color::Black),
             Print(" Web Search Request: "),
             // Protocol in grey (de-emphasized)
             SetForegroundColor(Color::DarkGrey),
             Print(&protocol_part),
-            // Domain in black (most readable on yellow background)
-            SetForegroundColor(Color::Black),
+            // Domain in white (stands out)
+            SetForegroundColor(Color::White),
             Print(&domain_part),
             // Path in grey (de-emphasized)
             SetForegroundColor(Color::DarkGrey),
             Print(&path_part),
-            SetForegroundColor(Color::Black),
+            ResetColor,
             Print(" | "),
             SetForegroundColor(Color::Green),
             Print("(Y)"),
-            SetForegroundColor(Color::Black),
+            ResetColor,
             Print("es | "),
             SetForegroundColor(Color::Red),
             Print("(N)"),
-            SetForegroundColor(Color::Black),
+            ResetColor,
             Print("o | "),
             SetForegroundColor(Color::Blue),
             Print("(A)"),
-            SetForegroundColor(Color::Black),
-            Print("llow All"),
             ResetColor,
+            Print("llow All"),
         )?;
-
-        // Fill rest of line with background color
-        // "Web Search Request: " = 20 chars
-        // " | (Y)es | (N)o | (A)llow All" = 30 chars
-        let text_len = 20 + protocol_part.len() + domain_part.len() + path_part.len() + 30;
-        if text_len < self.terminal_width as usize {
-            let padding = " ".repeat(self.terminal_width as usize - text_len);
-            execute!(
-                stdout,
-                SetBackgroundColor(Color::DarkYellow),
-                Print(&padding),
-                ResetColor,
-            )?;
-        }
 
         current_line += 1;
         Ok(current_line)
