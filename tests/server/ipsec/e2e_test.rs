@@ -5,9 +5,7 @@
 
 #![cfg(feature = "e2e-tests")]
 
-mod e2e;
-
-use server::helpers::*;
+use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
@@ -48,17 +46,18 @@ async fn test_ipsec_ikev2_sa_init_detection() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Check server output for handshake detection
-    let output = get_server_output(&mut server);
+    let output = get_server_output(&server).await;
+    let output_str = output.join("\n");
     assert!(
-        output.contains("IPSec") || output.contains("IKE") || output.contains("handshake"),
+        output_str.contains("IPSec") || output_str.contains("IKE") || output_str.contains("handshake"),
         "Server output should contain IPSec handshake detection. Output: {}",
-        output
+        output_str
     );
 
     println!("✓ IKEv2 handshake detection successful");
 
     // Cleanup
-    stop_netget_server(mut server).await;
+    server.stop().await.expect("Failed to stop server");
 }
 
 #[tokio::test]
@@ -91,15 +90,16 @@ async fn test_ipsec_ikev2_auth_detection() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let output = get_server_output(&mut server);
+    let output = get_server_output(&server).await;
+    let output_str = output.join("\n");
     assert!(
-        output.contains("IPSec") || output.contains("IKE"),
+        output_str.contains("IPSec") || output_str.contains("IKE"),
         "Server should detect IKEv2 AUTH"
     );
 
     println!("✓ IKEv2 AUTH detection successful");
 
-    stop_netget_server(mut server).await;
+    server.stop().await.expect("Failed to stop server");
 }
 
 #[tokio::test]
@@ -132,15 +132,16 @@ async fn test_ipsec_ikev1_detection() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let output = get_server_output(&mut server);
+    let output = get_server_output(&server).await;
+    let output_str = output.join("\n");
     assert!(
-        output.contains("IKE"),
+        output_str.contains("IKE"),
         "Server should detect IKEv1 packets"
     );
 
     println!("✓ IKEv1 detection successful");
 
-    stop_netget_server(mut server).await;
+    server.stop().await.expect("Failed to stop server");
 }
 
 #[tokio::test]
@@ -180,17 +181,18 @@ async fn test_ipsec_multiple_exchange_types() {
 
     // Verify honeypot logged the packets
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let output = get_server_output(&mut server);
+    let output = get_server_output(&server).await;
+    let output_str = output.join("\n");
 
-    println!("Server output:\n{}", output);
+    println!("Server output:\n{}", output_str);
     assert!(
-        output.contains("IPSec") || output.contains("IKE"),
+        output_str.contains("IPSec") || output_str.contains("IKE"),
         "Server should log IKE packets"
     );
 
     println!("✓ Multiple IKE exchange types detected");
 
-    stop_netget_server(mut server).await;
+    server.stop().await.expect("Failed to stop server");
 }
 
 #[tokio::test]
@@ -229,7 +231,7 @@ async fn test_ipsec_concurrent_connections() {
 
     println!("✓ Concurrent IPSec connections handled");
 
-    stop_netget_server(mut server).await;
+    server.stop().await.expect("Failed to stop server");
 }
 
 // ============================================================================

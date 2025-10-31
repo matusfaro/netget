@@ -10,20 +10,13 @@
 
 #[cfg(all(test, feature = "e2e-tests", feature = "imap"))]
 mod e2e_imap_client {
+    use crate::server::helpers::*;
     use async_imap::types::Mailbox;
     use async_imap::Session;
     use async_native_tls::{TlsConnector, TlsStream};
     use futures::StreamExt; // For collecting Streams
     use tokio::net::TcpStream;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-
-    // Import test helpers
-    mod e2e {
-        pub mod helpers {
-            include!("e2e/helpers.rs");
-        }
-    }
-    use server::helpers::*;
 
     /// Helper to create an IMAP client connected to the server
     async fn connect_imap_client(port: u16) -> E2EResult<async_imap::Client<tokio_util::compat::Compat<TcpStream>>> {

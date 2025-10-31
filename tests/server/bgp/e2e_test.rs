@@ -5,15 +5,10 @@
 
 #[cfg(all(test, feature = "e2e-tests", feature = "bgp"))]
 mod e2e_bgp {
+    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::time::{timeout, Duration};
-
-    // Import test helpers
-    mod e2e {
-        include!("e2e/helpers.rs");
-    }
-    use e2e::*;
 
     // BGP message types
     const BGP_MSG_OPEN: u8 = 1;

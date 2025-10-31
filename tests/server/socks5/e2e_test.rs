@@ -5,9 +5,5 @@
 
 #![cfg(all(test, feature = "e2e-tests", feature = "socks5"))]
 
-mod e2e {
-    include!("e2e/helpers.rs");
-}
-
 // Include the SOCKS5 tests
-include!("e2e/server/socks5/test.rs");
+include!("test.rs");
