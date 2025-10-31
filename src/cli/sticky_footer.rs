@@ -829,14 +829,14 @@ impl StickyFooter {
             SetBackgroundColor(Color::DarkYellow),
             SetForegroundColor(Color::Black),
             Print(" Web Search Request: "),
-            // Protocol in cyan
-            SetForegroundColor(Color::Cyan),
+            // Protocol in grey (de-emphasized)
+            SetForegroundColor(Color::DarkGrey),
             Print(&protocol_part),
-            // Domain in bright white
-            SetForegroundColor(Color::White),
+            // Domain in black (most readable on yellow background)
+            SetForegroundColor(Color::Black),
             Print(&domain_part),
-            // Path in grey (not dark grey for better visibility)
-            SetForegroundColor(Color::Grey),
+            // Path in grey (de-emphasized)
+            SetForegroundColor(Color::DarkGrey),
             Print(&path_part),
             SetForegroundColor(Color::Black),
             Print(" | "),

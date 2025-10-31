@@ -48,8 +48,8 @@
 [34m•[0m [1mwireguard[0m [92m✓ Implemented[0m - [2mWireGuard VPN (port 51820)[0m [90m[Stack: [32mETH>IP>UDP>WG[0m][0m
 [34m•[0m [1mstun[0m [33mα Alpha[0m - [2mSTUN NAT traversal (port 3478)[0m [90m[Stack: [32mETH>IP>UDP>STUN[0m][0m
 [34m•[0m [1mturn[0m [33mα Alpha[0m - [2mTURN relay server (port 3478)[0m [90m[Stack: [32mETH>IP>UDP>TURN[0m][0m
-[34m•[0m [1mopenvpn[0m [31m✗ Abandoned[0m - [2mOpenVPN server (port 1194)[0m [90m[Stack: [32mETH>IP>TCP/UDP>OPENVPN[0m][0m
-[34m•[0m [1mipsec[0m [31m✗ Abandoned[0m - [2mIPSec/IKEv2 VPN (port 500/4500)[0m [90m[Stack: [32mETH>IP>UDP>IPSEC[0m][0m
+[34m•[0m [1mopenvpn[0m [31m✗ Disabled[0m - [2mOpenVPN server (port 1194)[0m [90m[Stack: [32mETH>IP>TCP/UDP>OPENVPN[0m][0m
+[34m•[0m [1mipsec[0m [31m✗ Disabled[0m - [2mIPSec/IKEv2 VPN (port 500/4500)[0m [90m[Stack: [32mETH>IP>UDP>IPSEC[0m][0m
 [34m•[0m [1mbgp[0m [33mα Alpha[0m - [2mBGP routing protocol (port 179)[0m [90m[Stack: [32mETH>IP>TCP>BGP[0m][0m
 
 [93m━━━ AI & API Protocols (Alpha) ━━━[0m
