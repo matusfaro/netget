@@ -55,11 +55,7 @@ async fn read_greeting(stream: &mut TcpStream) -> E2EResult<String> {
 
 #[tokio::test]
 async fn test_imap_greeting() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Send greeting: * OK IMAP4rev1 Server Ready",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Send greeting: * OK IMAP4rev1 Server Ready";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
 
@@ -69,7 +65,7 @@ async fn test_imap_greeting() -> E2EResult<()> {
     // Connect and verify greeting
     let mut client = timeout(
         Duration::from_secs(5),
-        TcpStream::connect(format!("127.0.0.1:{}", port)),
+        TcpStream::connect(format!("127.0.0.1:{}", server.port)),
     )
     .await??;
 
@@ -93,16 +89,12 @@ async fn test_imap_greeting() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_capability() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Support IMAP4rev1, IDLE, NAMESPACE capabilities.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Support IMAP4rev1, IDLE, NAMESPACE capabilities.";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Send CAPABILITY command
@@ -145,16 +137,12 @@ async fn test_imap_capability() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_login() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Any other credentials should fail.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Any other credentials should fail.";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Send LOGIN command with correct credentials
@@ -178,16 +166,12 @@ async fn test_imap_login() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_login_failure() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Reject invalid credentials with 'A001 NO Invalid credentials'.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Reject invalid credentials with 'A001 NO Invalid credentials'.";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Send LOGIN command with wrong credentials
@@ -210,18 +194,14 @@ async fn test_imap_login_failure() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_select_mailbox() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for 'alice' with password 'secret'. \
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice' with password 'secret'. \
          INBOX has 5 messages, 2 recent. After SELECT INBOX, respond with: \
-         * 5 EXISTS\r\n* 2 RECENT\r\n* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\nA002 OK [READ-WRITE] SELECT completed",
-        port
-    );
+         * 5 EXISTS\r\n* 2 RECENT\r\n* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\nA002 OK [READ-WRITE] SELECT completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Login first
@@ -260,19 +240,15 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_list_mailboxes() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for 'alice'. \
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
          Mailboxes: INBOX, Sent, Drafts. \
          After LIST \"\" \"*\", respond with: \
-         * LIST () \"/\" \"INBOX\"\r\n* LIST () \"/\" \"Sent\"\r\n* LIST () \"/\" \"Drafts\"\r\nA003 OK LIST completed",
-        port
-    );
+         * LIST () \"/\" \"INBOX\"\r\n* LIST () \"/\" \"Sent\"\r\n* LIST () \"/\" \"Drafts\"\r\nA003 OK LIST completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Login first
@@ -312,19 +288,15 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_fetch_message() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for 'alice'. \
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
          After SELECT INBOX, respond with 1 EXISTS. \
          After FETCH 1 (FLAGS BODY[]), respond with: \
-         * 1 FETCH (FLAGS (\\Seen) BODY[] {{50}}\r\nFrom: test@example.com\r\nSubject: Test\r\n\r\nHello)\r\nA004 OK FETCH completed",
-        port
-    );
+         * 1 FETCH (FLAGS (\\Seen) BODY[] {{50}}\r\nFrom: test@example.com\r\nSubject: Test\r\n\r\nHello)\r\nA004 OK FETCH completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Login and select
@@ -364,19 +336,15 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_search() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for 'alice'. \
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
          After SELECT INBOX, respond with 5 EXISTS. \
          After SEARCH ALL, respond with: \
-         * SEARCH 1 2 3 4 5\r\nA005 OK SEARCH completed",
-        port
-    );
+         * SEARCH 1 2 3 4 5\r\nA005 OK SEARCH completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Login and select
@@ -416,18 +384,14 @@ async fn test_imap_search() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_logout() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. \
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. \
          After LOGOUT, respond with: \
-         * BYE IMAP4rev1 Server logging out\r\nA001 OK LOGOUT completed",
-        port
-    );
+         * BYE IMAP4rev1 Server logging out\r\nA001 OK LOGOUT completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Send LOGOUT command
@@ -455,17 +419,13 @@ async fn test_imap_logout() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_noop() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for 'alice'. \
-         NOOP command should respond with A003 OK NOOP completed",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
+         NOOP command should respond with A003 OK NOOP completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Login first
@@ -492,18 +452,14 @@ async fn test_imap_noop() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_imap_status() -> E2EResult<()> {
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via imap. Allow LOGIN for 'alice'. \
+    let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
          After STATUS INBOX (MESSAGES RECENT), respond with: \
-         * STATUS \"INBOX\" (MESSAGES 5 RECENT 2)\r\nA004 OK STATUS completed",
-        port
-    );
+         * STATUS \"INBOX\" (MESSAGES 5 RECENT 2)\r\nA004 OK STATUS completed";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     let _greeting = read_greeting(&mut client).await?;
 
     // Login first

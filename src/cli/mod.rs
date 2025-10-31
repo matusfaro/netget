@@ -41,7 +41,7 @@ pub async fn run() -> Result<()> {
         non_interactive::run_non_interactive(prompt, &args, settings).await
     } else if args.is_interactive() {
         // Interactive TUI mode - no prompt and terminal is available
-        let state = AppState::new_with_options(args.include_disabled_protocols);
+        let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
 
         // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
         let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
@@ -73,7 +73,8 @@ pub async fn run() -> Result<()> {
         }
 
         let app = App::new();
-        let llm = OllamaClient::default();
+        let lock_enabled = state.get_ollama_lock_enabled().await;
+        let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
         let event_handler = EventHandler::new(state.clone(), llm.clone());
 
         // Note: init_terminal not needed for rolling TUI (manages terminal itself)

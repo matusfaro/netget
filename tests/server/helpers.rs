@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
 use std::future::Future;
+use netget::protocol::{base_stack::BaseStack, registry};
 
 /// Result type for e2e tests
 pub type E2EResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -122,6 +123,8 @@ pub struct ServerConfig {
     pub no_scripts: bool,
     /// Include disabled protocols (default: false)
     pub include_disabled_protocols: bool,
+    /// Enable Ollama lock for concurrent test execution (default: true)
+    pub ollama_lock: bool,
 }
 
 impl ServerConfig {
@@ -134,6 +137,7 @@ impl ServerConfig {
             listen_addr: "127.0.0.1".to_string(),
             no_scripts: false,
             include_disabled_protocols: false,
+            ollama_lock: true, // Enable by default for concurrent testing
         }
     }
 
@@ -146,6 +150,7 @@ impl ServerConfig {
             listen_addr: "127.0.0.1".to_string(),
             no_scripts: true,
             include_disabled_protocols: false,
+            ollama_lock: true, // Enable by default for concurrent testing
         }
     }
 
@@ -178,6 +183,40 @@ impl ServerConfig {
         self.include_disabled_protocols = include_disabled;
         self
     }
+
+    /// Enable or disable Ollama lock for concurrent testing
+    pub fn with_ollama_lock(mut self, enabled: bool) -> Self {
+        self.ollama_lock = enabled;
+        self
+    }
+}
+
+/// Replace {AVAILABLE_PORT} placeholders with actual available ports
+async fn replace_port_placeholders(prompt: &str) -> E2EResult<String> {
+    const PLACEHOLDER: &str = "{AVAILABLE_PORT}";
+
+    // Count how many placeholders we need to replace
+    let placeholder_count = prompt.matches(PLACEHOLDER).count();
+
+    if placeholder_count == 0 {
+        // No placeholders to replace, return original prompt
+        return Ok(prompt.to_string());
+    }
+
+    // Allocate unique available ports
+    let mut ports = Vec::with_capacity(placeholder_count);
+    for _ in 0..placeholder_count {
+        let port = get_available_port().await?;
+        ports.push(port);
+    }
+
+    // Replace placeholders one by one
+    let mut result = prompt.to_string();
+    for port in ports {
+        result = result.replacen(PLACEHOLDER, &port.to_string(), 1);
+    }
+
+    Ok(result)
 }
 
 /// A running NetGet server process
@@ -250,6 +289,9 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     // Get the path to the binary
     let binary_path = get_netget_binary_path()?;
 
+    // Replace {AVAILABLE_PORT} placeholders with actual available ports
+    let processed_prompt = replace_port_placeholders(&config.prompt).await?;
+
     // Build command arguments
     let mut cmd = Command::new(binary_path);
 
@@ -278,11 +320,14 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         cmd.arg("--include-disabled-protocols");
     }
 
-    // Add the prompt as trailing arguments
-    // We'll pass it as separate words to match how a user would type it
-    for word in config.prompt.split_whitespace() {
-        cmd.arg(word);
+    // Add --ollama-lock flag if enabled (default: true for concurrent testing)
+    if config.ollama_lock {
+        cmd.arg("--ollama-lock");
     }
+
+    // Add the prompt as a single argument (for non-interactive mode)
+    // The binary will receive this as a single command-line argument
+    cmd.arg(&processed_prompt);
 
     // Configure process
     cmd.stdout(Stdio::piped())
@@ -304,15 +349,16 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     let mut reader = BufReader::new(stdout).lines();
 
     // Parse the prompt to find the expected port and stack
-    let expected_port = extract_port_from_prompt(&config.prompt);
-    let expected_stack = extract_stack_from_prompt(&config.prompt);
+    let expected_port = extract_port_from_prompt(&processed_prompt);
+    // Use the protocol registry to parse the expected stack from the prompt
+    let expected_base_stack = registry::registry().parse_from_str(&processed_prompt);
 
     // Create shared storage for output lines (BEFORE reading so we capture everything)
     let output_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let output_lines_clone = output_lines.clone();
 
     // Wait for the server to start and parse the actual configuration
-    let (actual_port, actual_stack) = wait_for_server_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
+    let (actual_port, actual_base_stack) = wait_for_server_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
 
     // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
     // Without this, the server will crash with "Broken pipe" when stdout buffer fills
@@ -332,12 +378,20 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     });
 
     // Validate that the server started with the expected stack
-    if let Some(expected) = &expected_stack {
-        if !actual_stack.to_lowercase().contains(&expected.to_lowercase()) {
+    if let Some(expected_stack) = expected_base_stack {
+        if expected_stack != actual_base_stack {
+            // Get the stack names for error message
+            let expected_name = registry::registry()
+                .stack_name(&expected_stack)
+                .unwrap_or("Unknown");
+            let actual_name = registry::registry()
+                .stack_name(&actual_base_stack)
+                .unwrap_or("Unknown");
             return Err(format!(
-                "Server started with wrong stack! Expected: {}, Got: {}",
-                expected, actual_stack
-            ).into());
+                "Server started with wrong stack! Expected: {} ({:?}), Got: {} ({:?})",
+                expected_name, expected_stack, actual_name, actual_base_stack
+            )
+            .into());
         }
     }
 
@@ -346,16 +400,23 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         return Err(format!(
             "Server started on wrong port! Expected: {}, Got: {}",
             expected_port, actual_port
-        ).into());
+        )
+        .into());
     }
 
     // No need to check port availability - we already confirmed the server is listening
     // by waiting for the "listening on" message in wait_for_server_startup()
 
+    // Get the actual stack name for the NetGetServer struct
+    let actual_stack_name = registry::registry()
+        .stack_name(&actual_base_stack)
+        .unwrap_or("Unknown")
+        .to_string();
+
     Ok(NetGetServer {
         child,
         port: actual_port,
-        stack: actual_stack,
+        stack: actual_stack_name,
         output_lines,
     })
 }
@@ -404,83 +465,14 @@ fn extract_port_from_prompt(prompt: &str) -> u16 {
     0 // Default to 0 for dynamic allocation
 }
 
-/// Extract expected stack from prompt
-fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
-    let prompt_lower = prompt.to_lowercase();
-
-    // Look for various stack patterns
-    // Check specific protocol stacks first (before generic UDP/TCP)
-    if prompt_lower.contains("http stack") || prompt_lower.contains("via http") {
-        Some("HTTP".to_string())
-    } else if prompt_lower.contains("proxy stack") || prompt_lower.contains("using proxy") || prompt_lower.contains("via proxy") {
-        Some("Proxy".to_string())
-    } else if prompt_lower.contains("webdav stack") || prompt_lower.contains("using webdav") || prompt_lower.contains("via webdav") {
-        Some("WebDAV".to_string())
-    } else if prompt_lower.contains("nfs stack") || prompt_lower.contains("using nfs") || prompt_lower.contains("via nfs") {
-        Some("NFS".to_string())
-    } else if prompt_lower.contains("dynamo") {
-        Some("DYNAMO".to_string())
-    } else if prompt_lower.contains("ldap stack") || prompt_lower.contains("using ldap") || prompt_lower.contains("via ldap") || prompt_lower.contains("ldap") || prompt_lower.contains("directory server") {
-        Some("LDAP".to_string())
-    } else if prompt_lower.contains("imap stack") || prompt_lower.contains("using imap") || prompt_lower.contains("via imap") || prompt_lower.contains("imap") || prompt_lower.contains("imaps") {
-        Some("IMAP".to_string())
-    } else if prompt_lower.contains("elasticsearch") || prompt_lower.contains("opensearch") {
-        Some("ELASTICSEARCH".to_string())
-    } else if prompt_lower.contains("cassandra") || prompt_lower.contains("cql") {
-        Some("Cassandra".to_string())
-    } else if prompt_lower.contains("via ssh") || prompt_lower.contains("ssh.") || prompt_lower.contains("sftp") {
-        Some("SSH".to_string())
-    } else if prompt_lower.contains("via irc") || prompt_lower.contains("irc") {
-        Some("IRC".to_string())
-    } else if prompt_lower.contains("via smb") || prompt_lower.contains("smb") || prompt_lower.contains("cifs") {
-        Some("SMB".to_string())
-    } else if prompt_lower.contains("via ntp") || prompt_lower.contains("ntp") {
-        Some("NTP".to_string())
-    } else if prompt_lower.contains("via dhcp") {
-        // Only check for "via dhcp" to avoid matching "DNS server" in DHCP prompts
-        Some("DHCP".to_string())
-    } else if prompt_lower.contains("via dns") {
-        // Only check for "via dns" to avoid matching "DNS server" in other prompts
-        Some("DNS".to_string())
-    } else if prompt_lower.contains("via snmp") || prompt_lower.contains("snmp") {
-        Some("SNMP".to_string())
-    } else if prompt_lower.contains("via telnet") || prompt_lower.contains("telnet") {
-        // Telnet uses TCP stack
-        Some("TCP".to_string())
-    } else if prompt_lower.contains("via smtp") || prompt_lower.contains("smtp") {
-        // SMTP uses TCP stack
-        Some("TCP".to_string())
-    } else if prompt_lower.contains("via mdns") || prompt_lower.contains("mdns") {
-        // mDNS doesn't have a dedicated stack - LLM may choose any stack
-        // Don't validate stack for mDNS
-        None
-    } else if prompt_lower.contains("via stun") || prompt_lower.contains("stun") {
-        Some("STUN".to_string())
-    } else if prompt_lower.contains("via turn") || prompt_lower.contains("turn") || prompt_lower.contains("relay server") {
-        Some("TURN".to_string())
-    } else if prompt_lower.contains("via bgp") || prompt_lower.contains("bgp") || prompt_lower.contains("routing") {
-        Some("BGP".to_string())
-    } else if prompt_lower.contains("via ipsec") || prompt_lower.contains("ipsec") || prompt_lower.contains("ikev2") || prompt_lower.contains("ikev1") {
-        Some("IPSEC".to_string())
-    } else if prompt_lower.contains("via openvpn") || prompt_lower.contains("openvpn") {
-        Some("OPENVPN".to_string())
-    } else if prompt_lower.contains("tcp") || prompt_lower.contains("ftp") {
-        Some("TCP".to_string())
-    } else if prompt_lower.contains("udp") {
-        Some("UDP".to_string())
-    } else {
-        None
-    }
-}
-
 /// Wait for server startup and extract port and stack info
 async fn wait_for_server_startup_with_capture(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
-) -> E2EResult<(u16, String)> {
+) -> E2EResult<(u16, BaseStack)> {
     let wait_future = async {
         let mut port = 0u16;
-        let mut stack = "Unknown".to_string();
+        let mut base_stack: Option<BaseStack> = None;
         let mut found_starting_message = false;
 
         while let Some(line) = reader.next_line().await? {
@@ -489,67 +481,26 @@ async fn wait_for_server_startup_with_capture(
 
             // Look for SERVER message pattern: "[SERVER] Starting server #N (<STACK>) on <ADDRESS>:<PORT>"
             if line.contains("[SERVER]") && line.contains("Starting server") && line.contains("on ") {
-                // Extract stack type
-                // Check for new protocols first (more specific)
-                // Note: Server output uses UPPERCASE for protocol names in stack trace
-                // e.g., "ETH>IP>TCP>HTTP>PROXY" or "ETH>IP>TCP>HTTP>WEBDAV"
-                // So we check for uppercase versions but return title case for consistency
-                if line.contains("PROXY") {
-                    stack = "Proxy".to_string();
-                } else if line.contains("WEBDAV") {
-                    stack = "WebDAV".to_string();
-                } else if line.contains("NFS") {
-                    stack = "NFS".to_string();
-                } else if line.contains("ELASTICSEARCH") {
-                    stack = "Elasticsearch".to_string();
-                } else if line.contains("DYNAMO") {
-                    stack = "DYNAMO".to_string();
-                } else if line.contains("OPENAI") {
-                    stack = "OpenAI".to_string();
-                } else if line.contains("LDAP") {
-                    stack = "LDAP".to_string();
-                } else if line.contains("Cassandra") {
-                    stack = "Cassandra".to_string();
-                } else if line.contains("HTTP") {
-                    stack = "HTTP".to_string();
-                } else if line.contains("SNMP") {
-                    stack = "SNMP".to_string();
-                } else if line.contains("DNS") {
-                    stack = "DNS".to_string();
-                } else if line.contains("DHCP") {
-                    stack = "DHCP".to_string();
-                } else if line.contains("NTP") {
-                    stack = "NTP".to_string();
-                } else if line.contains("SSH") {
-                    stack = "SSH".to_string();
-                } else if line.contains("IRC") {
-                    stack = "IRC".to_string();
-                } else if line.contains("IMAP") {
-                    stack = "IMAP".to_string();
-                } else if line.contains("SMB") {
-                    stack = "SMB".to_string();
-                } else if line.contains("Telnet") {
-                    stack = "Telnet".to_string();
-                } else if line.contains("SMTP") {
-                    stack = "SMTP".to_string();
-                } else if line.contains("mDNS") {
-                    stack = "mDNS".to_string();
-                } else if line.contains("MySQL") {
-                    stack = "MySQL".to_string();
-                } else if line.contains("IPP") {
-                    stack = "IPP".to_string();
-                } else if line.contains("BGP") {
-                    stack = "BGP".to_string();
-                } else if line.contains("IPSEC") {
-                    stack = "IPSEC".to_string();
-                } else if line.contains("OPENVPN") {
-                    stack = "OPENVPN".to_string();
-                } else if line.contains("TCP") || line.contains("TCP/IP") {
-                    stack = "TCP".to_string();
-                } else if line.contains("UDP") {
-                    stack = "UDP".to_string();
-                } else if line.contains("FTP") {
-                    stack = "FTP".to_string();
+                // Extract stack type from parentheses
+                // Format: "[SERVER] Starting server #1 (ETH>IP>TCP>HTTP) on 127.0.0.1:8080"
+                if let Some(start_paren) = line.find('(') {
+                    if let Some(end_paren) = line.find(')') {
+                        if start_paren < end_paren {
+                            let stack_str = &line[start_paren + 1..end_paren];
+                            println!("[DEBUG] Extracted stack string from server output: '{}'", stack_str);
+
+                            // Parse using the protocol registry
+                            if let Some(parsed_stack) = registry::registry().parse_from_str(stack_str) {
+                                base_stack = Some(parsed_stack);
+                                println!("[DEBUG] Parsed stack: {:?}", parsed_stack);
+                            } else {
+                                return Err(format!(
+                                    "Failed to parse stack from server output: '{}'. This stack is not recognized by the registry.",
+                                    stack_str
+                                ).into());
+                            }
+                        }
+                    }
                 }
 
                 // Extract port from address
@@ -566,11 +517,12 @@ async fn wait_for_server_startup_with_capture(
                     }
                 }
 
-                // Set found_starting_message even if port is 0 (dynamic allocation)
-                // The actual port will be extracted from the "listening on" message
-                println!("[DEBUG] Server starting: {} stack (requested port: {})", stack, port);
-                found_starting_message = true;
-                // Don't return yet - wait for "listening on" message
+                // Set found_starting_message if we successfully parsed the stack
+                if base_stack.is_some() {
+                    println!("[DEBUG] Server starting: {:?} stack (requested port: {})", base_stack, port);
+                    found_starting_message = true;
+                    // Don't return yet - wait for "listening on" message
+                }
             }
 
             // Wait for the "listening on" message which means the server is ACTUALLY ready
@@ -588,14 +540,14 @@ async fn wait_for_server_startup_with_capture(
                         if let Ok(actual_port) = port_str.parse::<u16>() {
                             port = actual_port;
                             println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
-                            return Ok((port, stack));
+                            return Ok((port, base_stack.unwrap()));
                         }
                     }
                 }
                 // Fallback: if port extraction fails but message contains the port we expect
                 if line.contains(&port.to_string()) {
                     println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
-                    return Ok((port, stack));
+                    return Ok((port, base_stack.unwrap()));
                 }
             }
 
@@ -603,7 +555,7 @@ async fn wait_for_server_startup_with_capture(
             // Also accept "Server is running" or "advertising" as confirmation after seeing the starting message
             if found_starting_message && (line.contains("Server is running") || line.contains("advertising")) {
                 println!("[DEBUG] Server confirmed running on port {}", port);
-                return Ok((port, stack));
+                return Ok((port, base_stack.unwrap()));
             }
         }
         Err("Server did not output startup information".into())

@@ -16,11 +16,7 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     println!("\n=== E2E Test: SNMP Basic GET ===");
 
     // PROMPT: Tell the LLM to act as an SNMP agent
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via snmp. For OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v1.0'. For OID 1.3.6.1.2.1.1.5.0 (sysName) return 'netget.local'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via snmp. For OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v1.0'. For OID 1.3.6.1.2.1.1.5.0 (sysName) return 'netget.local'";
 
     // Start the server with debug logging (trace causes broken pipe due to huge prompt output)
     let server = helpers::start_netget_server(
@@ -93,12 +89,8 @@ async fn test_snmp_get_next() -> E2EResult<()> {
     println!("\n=== E2E Test: SNMP GETNEXT ===");
 
     // PROMPT: Tell the LLM to handle GETNEXT requests
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via snmp. Support GETNEXT requests. \
-        When queried with 1.3.6.1.2.1.1, return the next OID 1.3.6.1.2.1.1.1.0 with value 'NetGet SNMP'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via snmp. Support GETNEXT requests. \
+        When queried with 1.3.6.1.2.1.1, return the next OID 1.3.6.1.2.1.1.1.0 with value 'NetGet SNMP'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -135,16 +127,12 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
     println!("\n=== E2E Test: SNMP Interface Statistics ===");
 
     // PROMPT: Tell the LLM to provide network interface statistics
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via snmp. Provide interface statistics: \
+    let prompt = "listen on port {AVAILABLE_PORT} via snmp. Provide interface statistics: \
         1.3.6.1.2.1.2.2.1.1.1 = 1 (ifIndex), \
         1.3.6.1.2.1.2.2.1.2.1 = 'eth0' (ifDescr), \
         1.3.6.1.2.1.2.2.1.3.1 = 6 (ifType: ethernetCsmacd), \
         1.3.6.1.2.1.2.2.1.5.1 = 1000000000 (ifSpeed: 1 Gbps), \
-        1.3.6.1.2.1.2.2.1.8.1 = 1 (ifOperStatus: up)",
-        port
-    );
+        1.3.6.1.2.1.2.2.1.8.1 = 1 (ifOperStatus: up)";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -188,14 +176,10 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
     println!("\n=== E2E Test: Custom MIB Support ===");
 
     // PROMPT: Tell the LLM to support custom enterprise MIB
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via snmp. Support custom enterprise OID tree 1.3.6.1.4.1.99999: \
+    let prompt = "listen on port {AVAILABLE_PORT} via snmp. Support custom enterprise OID tree 1.3.6.1.4.1.99999: \
         1.3.6.1.4.1.99999.1.1.0 = 'Custom Application v1.0', \
         1.3.6.1.4.1.99999.1.2.0 = 42 (counter), \
-        1.3.6.1.4.1.99999.1.3.0 = 'active' (status)",
-        port
-    );
+        1.3.6.1.4.1.99999.1.3.0 = 'active' (status)";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

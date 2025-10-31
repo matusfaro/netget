@@ -29,6 +29,9 @@ impl ProtocolRegistry {
         registry.register_protocols();
         registry.build_keyword_map();
 
+        // Validate that no keywords overlap between protocols
+        registry.validate_keyword_uniqueness();
+
         registry
     }
 
@@ -44,6 +47,7 @@ impl ProtocolRegistry {
         #[cfg(feature = "udp")]
         self.register(BaseStack::Udp, Arc::new(crate::server::UdpProtocol::new()));
 
+        #[cfg(feature = "datalink")]
         self.register(
             BaseStack::DataLink,
             Arc::new(crate::server::DataLinkProtocol::new()),
@@ -51,6 +55,12 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "dns")]
         self.register(BaseStack::Dns, Arc::new(crate::server::DnsProtocol::new()));
+
+        #[cfg(feature = "dot")]
+        self.register(BaseStack::Dot, Arc::new(crate::server::DotProtocol::new()));
+
+        #[cfg(feature = "doh")]
+        self.register(BaseStack::Doh, Arc::new(crate::server::DohProtocol::new()));
 
         #[cfg(feature = "dhcp")]
         self.register(BaseStack::Dhcp, Arc::new(crate::server::DhcpProtocol::new()));
@@ -215,21 +225,120 @@ impl ProtocolRegistry {
         #[cfg(feature = "bgp")]
         self.register(BaseStack::Bgp, Arc::new(crate::server::BgpProtocol::new()));
 
+        #[cfg(feature = "mcp")]
+        self.register(BaseStack::Mcp, Arc::new(crate::server::McpProtocol::new()));
+
         // AI & API protocols
         #[cfg(feature = "openai")]
         self.register(
             BaseStack::OpenAi,
             Arc::new(crate::server::OpenAiProtocol::new()),
         );
+
+        #[cfg(feature = "jsonrpc")]
+        self.register(
+            BaseStack::JsonRpc,
+            Arc::new(crate::server::JsonRpcProtocol::new()),
+        );
+
+        #[cfg(feature = "xmlrpc")]
+        self.register(
+            BaseStack::XmlRpc,
+            Arc::new(crate::server::XmlRpcProtocol::new()),
+        );
+
+        #[cfg(feature = "grpc")]
+        self.register(BaseStack::Grpc, Arc::new(crate::server::GrpcProtocol::new()));
+
+        #[cfg(feature = "tor-directory")]
+        self.register(
+            BaseStack::TorDirectory,
+            Arc::new(crate::server::TorDirectoryProtocol::new()),
+        );
+
+        #[cfg(feature = "tor-relay")]
+        self.register(
+            BaseStack::TorRelay,
+            Arc::new(crate::server::TorRelayProtocol::new()),
+        );
+
+        #[cfg(feature = "vnc")]
+        self.register(BaseStack::Vnc, Arc::new(crate::server::VncProtocol::new()));
+
+        #[cfg(feature = "openapi")]
+        self.register(
+            BaseStack::OpenApi,
+            Arc::new(crate::server::OpenApiProtocol::new()),
+        );
     }
 
     /// Build keyword map for fast protocol parsing
     fn build_keyword_map(&mut self) {
         for (base_stack, protocol) in &self.protocols {
+            // Add all protocol keywords
             for keyword in protocol.keywords() {
                 self.keyword_map
                     .insert(keyword.to_lowercase(), *base_stack);
             }
+
+            // Also add the full stack name as a keyword
+            // This allows parsing inputs like "eth>ip>tcp>http" or "ETH>IP>UDP>DNS"
+            let stack_name = protocol.stack_name().to_lowercase();
+            self.keyword_map.insert(stack_name, *base_stack);
+        }
+    }
+
+    /// Validate that no two protocols share the same keyword
+    ///
+    /// This ensures keyword uniqueness across all registered protocols.
+    /// Panics if overlapping keywords are detected.
+    fn validate_keyword_uniqueness(&self) {
+        use std::collections::HashMap;
+
+        // Build a map: keyword (lowercase) -> Vec<(BaseStack, keyword_source)>
+        // keyword_source is either "keyword" or "stack_name"
+        let mut keyword_to_protocols: HashMap<String, Vec<(BaseStack, String)>> = HashMap::new();
+
+        for (base_stack, protocol) in &self.protocols {
+            // Collect all keywords from keywords()
+            for keyword in protocol.keywords() {
+                let key = keyword.to_lowercase();
+                keyword_to_protocols
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push((*base_stack, format!("keyword '{}'", keyword)));
+            }
+
+            // Also collect the stack name as a keyword
+            let stack_name = protocol.stack_name();
+            let key = stack_name.to_lowercase();
+            keyword_to_protocols
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push((*base_stack, format!("stack_name '{}'", stack_name)));
+        }
+
+        // Find all keywords that are claimed by multiple protocols
+        let mut overlaps = Vec::new();
+        for (keyword, protocols) in &keyword_to_protocols {
+            if protocols.len() > 1 {
+                overlaps.push((keyword.clone(), protocols.clone()));
+            }
+        }
+
+        // If overlaps found, panic with detailed error message
+        if !overlaps.is_empty() {
+            let mut error_msg = String::from("Keyword overlaps detected between protocols:\n");
+
+            for (keyword, protocols) in overlaps {
+                error_msg.push_str(&format!("\n  Keyword '{}' is used by:\n", keyword));
+                for (stack, source) in protocols {
+                    error_msg.push_str(&format!("    - {:?} ({})\n", stack, source));
+                }
+            }
+
+            error_msg.push_str("\nEach keyword must be unique to a single protocol.");
+            panic!("{}", error_msg);
         }
     }
 
@@ -287,6 +396,19 @@ impl ProtocolRegistry {
 
         // Priority 6: Check PostgreSQL before MySQL (avoid "sql" substring)
         if let Some(stack) = self.try_keyword_match(&input_lower, &["postgres", "psql"]) {
+            return Some(stack);
+        }
+
+        // Priority 7: Check XML-RPC and JSON-RPC before HTTP (avoid "http" substring in stack names)
+        if let Some(stack) = self.try_keyword_match(&input_lower, &["xmlrpc", "xml-rpc", "xml rpc"]) {
+            return Some(stack);
+        }
+        if let Some(stack) = self.try_keyword_match(&input_lower, &["jsonrpc", "json-rpc", "json rpc"]) {
+            return Some(stack);
+        }
+
+        // Priority 8: Check Proxy before HTTP (avoid "http" substring in "http proxy")
+        if let Some(stack) = self.try_keyword_match(&input_lower, &["proxy", "mitm"]) {
             return Some(stack);
         }
 

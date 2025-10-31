@@ -154,14 +154,10 @@ fn parse_bgp_open(body: &[u8]) -> E2EResult<(u8, u16, u16, [u8; 4])> {
 async fn test_bgp_peering_establishment() -> E2EResult<()> {
     println!("\n=== Test: BGP Peering Establishment ===");
 
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via bgp. You are AS 65001 with router ID 192.168.1.1. \
+    let prompt = "listen on port {AVAILABLE_PORT} via bgp. You are AS 65001 with router ID 192.168.1.1. \
          When you receive an OPEN message from a peer, validate it and respond with your own OPEN message. \
          After receiving a KEEPALIVE, send a KEEPALIVE back to complete the peering. \
-         Transition to Established state.",
-        port
-    );
+         Transition to Established state.";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
 
@@ -169,10 +165,10 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Connect to BGP server
-    println!("  [TEST] Connecting to BGP server on port {}", port);
+    println!("  [TEST] Connecting to BGP server on port {}", server.port);
     let mut client = timeout(
         Duration::from_secs(5),
-        TcpStream::connect(format!("127.0.0.1:{}", port)),
+        TcpStream::connect(format!("127.0.0.1:{}", server.port)),
     )
     .await??;
 
@@ -226,19 +222,15 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
 async fn test_bgp_notification_on_error() -> E2EResult<()> {
     println!("\n=== Test: BGP NOTIFICATION on Error ===");
 
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via bgp. You are AS 65001. \
+    let prompt = "listen on port {AVAILABLE_PORT} via bgp. You are AS 65001. \
          If you receive an invalid OPEN message (e.g., wrong version), \
-         send a NOTIFICATION message with error code 2 (OPEN Message Error), subcode 1 (Unsupported Version Number).",
-        port
-    );
+         send a NOTIFICATION message with error code 2 (OPEN Message Error), subcode 1 (Unsupported Version Number).";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("  [TEST] Connecting to BGP server");
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
 
     // Send OPEN message with wrong version (version 3 instead of 4)
     println!("  [TEST] Sending OPEN with invalid version");
@@ -289,19 +281,15 @@ async fn test_bgp_notification_on_error() -> E2EResult<()> {
 async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
     println!("\n=== Test: BGP KEEPALIVE Exchange ===");
 
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via bgp. You are AS 65001. \
+    let prompt = "listen on port {AVAILABLE_PORT} via bgp. You are AS 65001. \
          Establish BGP peering normally. After peering is established, \
-         respond to KEEPALIVE messages with KEEPALIVE messages.",
-        port
-    );
+         respond to KEEPALIVE messages with KEEPALIVE messages.";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("  [TEST] Connecting and establishing BGP peering");
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
 
     // Send OPEN
     let open_msg = build_bgp_open(65000, 180, [192, 168, 1, 100]);
@@ -362,19 +350,15 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
 async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
     println!("\n=== Test: BGP Graceful Shutdown ===");
 
-    let port = get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via bgp. You are AS 65001. \
+    let prompt = "listen on port {AVAILABLE_PORT} via bgp. You are AS 65001. \
          Establish BGP peering normally. If you receive a NOTIFICATION with error code 6 (Cease), \
-         acknowledge it by closing the connection gracefully.",
-        port
-    );
+         acknowledge it by closing the connection gracefully.";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("  [TEST] Establishing BGP peering");
-    let mut client = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
 
     // Establish peering
     let open_msg = build_bgp_open(65000, 180, [192, 168, 1, 100]);

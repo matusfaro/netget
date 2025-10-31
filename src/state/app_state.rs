@@ -153,16 +153,20 @@ struct AppStateInner {
     web_approval_tx: Option<mpsc::UnboundedSender<WebApprovalRequest>>,
     /// Whether to include disabled protocols (for testing)
     include_disabled_protocols: bool,
+    /// Whether Ollama API locking is enabled (for concurrent test execution)
+    ollama_lock_enabled: bool,
+    /// Unique instance ID for this NetGet process (for multi-instance isolation)
+    instance_id: String,
 }
 
 impl AppState {
     /// Create a new application state
     pub fn new() -> Self {
-        Self::new_with_options(false)
+        Self::new_with_options(false, false)
     }
 
     /// Create a new application state with options
-    pub fn new_with_options(include_disabled_protocols: bool) -> Self {
+    pub fn new_with_options(include_disabled_protocols: bool, ollama_lock_enabled: bool) -> Self {
         // Detect scripting environments at startup
         let scripting_env = crate::scripting::ScriptingEnvironment::detect();
 
@@ -178,6 +182,9 @@ impl AppState {
             ScriptingMode::Llm
         };
 
+        // Generate unique instance ID: process_id + timestamp + random bytes
+        let instance_id = Self::generate_instance_id();
+
         Self {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
@@ -189,8 +196,28 @@ impl AppState {
                 web_search_mode: WebSearchMode::On, // Default to enabled
                 web_approval_tx: None, // Will be set by TUI
                 include_disabled_protocols,
+                ollama_lock_enabled,
+                instance_id,
             })),
         }
+    }
+
+    /// Generate a unique instance ID for this NetGet process
+    /// Format: claude-{pid}-{timestamp}-{random4}
+    fn generate_instance_id() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let pid = std::process::id();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Generate 4 random hex characters for additional uniqueness
+        let random_bytes: [u8; 2] = rand::random();
+        let random_hex = hex::encode(&random_bytes);
+
+        format!("claude-{}-{}-{}", pid, timestamp, random_hex)
     }
 
     /// Get the current mode
@@ -469,6 +496,16 @@ impl AppState {
     /// Get whether disabled protocols should be included
     pub async fn get_include_disabled_protocols(&self) -> bool {
         self.inner.read().await.include_disabled_protocols
+    }
+
+    /// Get whether Ollama API locking is enabled
+    pub async fn get_ollama_lock_enabled(&self) -> bool {
+        self.inner.read().await.ollama_lock_enabled
+    }
+
+    /// Get the unique instance ID for this NetGet process
+    pub async fn get_instance_id(&self) -> String {
+        self.inner.read().await.instance_id.clone()
     }
 
     /// Update script configuration for a server
@@ -864,6 +901,40 @@ impl AppState {
                 conn.status_changed_at = std::time::Instant::now();
             }
         }
+    }
+
+    /// Update VNC connection authentication status
+    pub async fn update_vnc_connection_auth(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        authenticated: bool,
+        username: Option<String>,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Vnc { authenticated: auth, username: uname, .. } = &mut conn.protocol_info {
+                    *auth = authenticated;
+                    *uname = username;
+                }
+            }
+        }
+    }
+
+    /// Get VNC write half for sending framebuffer updates
+    pub async fn get_vnc_write_half(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Option<std::sync::Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>> {
+        let inner = self.inner.read().await;
+        for server in inner.servers.values() {
+            if let Some(conn) = server.connections.get(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Vnc { write_half, .. } = &conn.protocol_info {
+                    return Some(write_half.clone());
+                }
+            }
+        }
+        None
     }
 
     // ========== Backwards Compatibility Methods ==========

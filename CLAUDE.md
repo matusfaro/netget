@@ -12,6 +12,8 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
 - **UDP** (`BaseStack::Udp`) - LLM controls raw UDP datagrams
 - **DataLink** (`BaseStack::DataLink`) - LLM controls layer 2 Ethernet frames (ARP, custom frames)
 - **DNS** (`BaseStack::Dns`) - LLM generates DNS responses using hickory-dns
+- **DoT** (`BaseStack::Dot`) - DNS-over-TLS server using hickory-dns with TLS (port 853)
+- **DoH** (`BaseStack::Doh`) - DNS-over-HTTPS server using hickory-dns with HTTP/2 (port 443)
 - **DHCP** (`BaseStack::Dhcp`) - LLM handles DHCP requests using dhcproto
 - **NTP** (`BaseStack::Ntp`) - LLM handles time sync using ntpd-rs
 - **SNMP** (`BaseStack::Snmp`) - LLM handles SNMP get/set using rasn-snmp
@@ -128,6 +130,63 @@ LLM returns `{actions: [...]}` instead of nested structures. Each action is self
 - New protocols: `src/server/<protocol>/actions.rs`
 - Legacy protocols: `src/network/*_actions.rs` (older implementation pattern)
 
+## Protocol-Specific Documentation
+
+**CRITICAL**: When working with a specific protocol, ALWAYS check for protocol-specific CLAUDE.md files first.
+
+### Where to Find Protocol Information
+
+Each protocol has **two CLAUDE.md files** documenting different aspects:
+
+**1. Implementation Documentation** (`src/server/<protocol>/CLAUDE.md`):
+- Protocol overview and version/RFC compliance
+- Library choices and rationale
+- Architecture decisions
+- LLM integration approach
+- Connection and state management
+- Known limitations
+- Example prompts and responses
+
+**2. Test Documentation** (`tests/server/<protocol>/CLAUDE.md`):
+- Test strategy and structure
+- LLM call budget breakdown
+- Scripting mode usage
+- Client library details
+- Expected runtime and failure rate
+- Test cases covered
+- Known flaky tests or issues
+
+### When to Consult Protocol Documentation
+
+**Before modifying a protocol**:
+1. Read `src/server/<protocol>/CLAUDE.md` to understand implementation decisions
+2. Read `tests/server/<protocol>/CLAUDE.md` to understand test structure
+3. Check if changes might affect LLM call budget or test runtime
+
+**Before adding tests**:
+1. Read `tests/server/<protocol>/CLAUDE.md` to understand existing test strategy
+2. Ensure new tests follow established patterns (consolidation, scripting, etc.)
+3. Update LLM call budget after adding tests
+
+**When investigating test failures**:
+1. Check `tests/server/<protocol>/CLAUDE.md` for known flaky tests
+2. Verify expected runtime hasn't degraded
+3. Check if failure is environmental or protocol-specific
+
+### Example: Understanding DNS Protocol
+
+```bash
+# Read implementation details
+cat src/server/dns/CLAUDE.md
+# Learn: Uses hickory-dns, supports A/MX/AAAA/TXT records, scripting capable
+
+# Read test details
+cat tests/server/dns/CLAUDE.md
+# Learn: 2 LLM calls total, scripting enabled, ~25s runtime, stable tests
+```
+
+**Note**: Not all protocols may have these files yet (especially legacy protocols). If missing, they should be created following the Protocol Implementation Checklist.
+
 ## Testing
 
 **Philosophy**: Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients.
@@ -193,21 +252,27 @@ cargo test --features e2e-tests --test server::ssh::e2e_test  # SSH E2E tests
 cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2E tests
 ```
 
+**IMPORTANT - Protocol-Specific Testing**:
+- **MUST run tests for your protocol using feature gates** - Never run the entire test suite
+- E2E tests are extremely slow (each spawns NetGet process + makes LLM API calls)
+- Running all tests can take 30+ minutes
+- **Always use protocol-specific test command**:
+  ```bash
+  cargo test --features e2e-tests,<protocol> --test server::<protocol>::e2e_test
+  ```
+- Example for SSH: `cargo test --features e2e-tests,ssh --test server::ssh::e2e_test`
+- Example for HTTP Proxy: `cargo test --features e2e-tests,proxy --test server::proxy::e2e_test`
+
 ### E2E Test Performance
 
 **Critical**: E2E tests are slow because each test spawns a NetGet process and makes LLM API calls.
 
-**Expected runtimes** (with qwen3-coder:30b, sequential execution):
-- Fast protocols (IPP, MySQL): 30-60 seconds per suite
-- Medium protocols (Telnet, HTTP, IRC): 60-120 seconds per suite
-- Slow protocols (SMTP, mDNS, SMB): 120-300 seconds per suite
-- Very slow protocols (TCP/FTP): >5 minutes per suite (complex multi-round-trip protocols)
-
 **Test Execution**:
-- **Run tests sequentially** (do NOT use `--test-threads` > 1)
-- LLM processing becomes overloaded with concurrent tests
+- **Tests can run concurrently** (Ollama lock enabled by default in tests)
+- The `--ollama-lock` flag serializes LLM API access, preventing overload
 - Each test runs in isolation with dynamic port allocation
-- Example: `cargo test --features e2e-tests --test e2e_<protocol>_test`
+- Example: `cargo test --features e2e-tests --test server::http::e2e_test`
+- See "Multi-Instance Concurrency Support" section for details
 
 **Critical setup requirement**:
 - **MUST build release binary with all features before running tests**:
@@ -224,6 +289,101 @@ cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2
 - Example: `ServerConfig::new_no_scripts(prompt)` in test code
 - Prevents event_type_id mismatches between scripts and protocols
 
+### E2E Test Efficiency - Minimizing LLM Calls
+
+**CRITICAL**: Each LLM call is expensive in time and resources. Design E2E tests to minimize LLM invocations.
+
+**LLM Call Points**:
+1. **Server startup** - 1 LLM call to generate initial server logic
+2. **Each network request** - 1 LLM call per request (unless scripting is used)
+3. **Scripting mode** - 0 additional LLM calls after startup (script handles all requests)
+
+**Best Practices**:
+
+**1. Reuse Server Instances Across Test Cases**
+- **NEVER** spin up a new server for each test case
+- Provide comprehensive instructions in a single prompt covering all test scenarios
+- Test multiple operations against the same server instance
+
+**Bad Example** (3 server setups, 3+ LLM calls):
+```rust
+#[tokio::test]
+async fn test_dns_a_record() {
+    let prompt = "Listen on port 0 via DNS. For A record queries, return 93.184.216.34";
+    let server = start_server_with_prompt(prompt).await;
+    // Test A record...
+}
+
+#[tokio::test]
+async fn test_dns_mx_record() {
+    let prompt = "Listen on port 0 via DNS. For MX record queries, return mail.example.com";
+    let server = start_server_with_prompt(prompt).await;
+    // Test MX record...
+}
+```
+
+**Good Example** (1 server setup, 3 LLM calls total):
+```rust
+#[tokio::test]
+async fn test_dns_records() {
+    let prompt = r#"Listen on port 0 via DNS.
+    - For A record queries on example.com, return 93.184.216.34
+    - For MX record queries on example.com, return mail.example.com with priority 10
+    - For AAAA record queries on example.com, return 2606:2800:220:1:248:1893:25c8:1946"#;
+
+    let server = start_server_with_prompt(prompt).await;
+
+    // Test A record
+    // Test MX record
+    // Test AAAA record
+    // All against same server instance
+}
+```
+
+**2. Target < 10 Total LLM Calls Per Protocol Test Suite**
+- Count LLM calls carefully: 1 server startup + N requests (unless scripted)
+- Prefer scripting mode when protocol supports it (0 LLM calls per request)
+- Consolidate test cases to share server instances
+- Example budget for a protocol:
+  - 2-3 comprehensive server setups
+  - 2-3 requests per server (if not scripted)
+  - Total: 6-9 LLM calls
+
+**3. Use Scripting Mode When Available**
+- For protocols with repetitive request/response patterns, use scripting
+- Server startup generates script (1 LLM call), all subsequent requests use script (0 LLM calls)
+- Example: DNS, HTTP, DHCP are excellent candidates for scripting
+- Allows testing many scenarios with only 1 LLM call per server
+
+**4. Group Related Test Scenarios**
+- Bundle all CRUD operations into one test with one server
+- Bundle all error cases into one test with comprehensive error instructions
+- Bundle all edge cases into one test
+
+**Example Test Structure**:
+```rust
+#[tokio::test]
+async fn test_protocol_basic_operations() {
+    // 1 server setup with comprehensive instructions
+    // Tests: create, read, update, delete
+    // LLM calls: 1 startup + 4 requests = 5 total
+}
+
+#[tokio::test]
+async fn test_protocol_error_handling() {
+    // 1 server setup with error handling instructions
+    // Tests: invalid input, missing fields, timeouts
+    // LLM calls: 1 startup + 3 requests = 4 total
+}
+
+// Total for protocol: 9 LLM calls (within budget)
+```
+
+**Anti-Pattern to Avoid**:
+- Spinning up 10+ servers for 10+ test cases (10+ startup calls + N request calls = 20+ total LLM calls)
+- Testing each protocol feature in isolation (wastes server setup overhead)
+- Ignoring scripting mode when protocol supports it
+
 ### Privacy and Network Isolation Policy
 
 **CRITICAL SECURITY REQUIREMENT**: NetGet must NOT leak information to external networks during testing or runtime unless explicitly requested by the user.
@@ -234,33 +394,182 @@ cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2
 3. **Self-contained test infrastructure** - Create local HTTP/HTTPS servers within test code
 4. **Localhost only** - All test traffic must be to 127.0.0.1 or ::1
 
-**Runtime Requirements**:
-1. **Explicit user consent** - Only make external network requests when user prompt explicitly requests it
-2. **No telemetry** - Never send usage data, metrics, or logs to external services
-3. **No automatic updates** - Never check for updates or download content without user request
-4. **LLM-controlled external access** - External network requests only when LLM receives explicit instructions from user
+This policy ensures NetGet respects user privacy and works in isolated/air-gapped environments.
 
-**Test Server Pattern**:
-```rust
-// CORRECT: Local HTTPS test server
-async fn start_test_https_server() -> (u16, JoinHandle<()>) {
-    // Generate self-signed cert
-    // Bind to 127.0.0.1:0
-    // Return port and handle
-}
+## Multi-Instance Concurrency Support
 
-// INCORRECT: External service
-let response = client.get("https://httpbin.org/get").send().await; // ❌ NEVER
+**OVERVIEW**: NetGet supports running multiple instances and E2E tests concurrently using the `--ollama-lock` flag.
+
+### Ollama Lock Mechanism
+
+**Purpose**: Serialize access to the Ollama API to prevent overload and timeouts when multiple instances run simultaneously.
+
+**How it works**:
+- When `--ollama-lock` is enabled, NetGet acquires an exclusive file lock on `./ollama.lock` before each LLM API call
+- The lock is automatically released after the API call completes
+- Other instances wait their turn, preventing concurrent API requests
+- Lock file is created in the current directory (repo root) and persists across runs
+- **Stale lock detection**: If a lock is older than 30 seconds, it's assumed stale and forcibly acquired
+- **Lock file lifecycle**: Never deleted, only truncated and updated in-place to avoid race conditions
+- **Cross-platform**: Uses `fs2` crate (flock on Unix, LockFileEx on Windows)
+- **Git**: Lock file is gitignored
+
+**Usage**:
+```bash
+# Enable Ollama locking for concurrent execution
+netget --ollama-lock "listen on port 80 via http"
+
+# Run E2E tests concurrently (locking enabled by default in tests)
+cargo test --features e2e-tests --test server::http::e2e_test
 ```
 
-**Violation Examples**:
-- ❌ Using httpbin.org, example.com, or any public service in tests
-- ❌ DNS queries to real DNS servers in tests
-- ❌ Downloading dependencies or data at runtime
-- ❌ Sending logs/metrics to external services
-- ❌ Checking for updates automatically
+### E2E Test Concurrency
 
-This policy ensures NetGet respects user privacy and works in isolated/air-gapped environments.
+**Default behavior**: E2E tests enable `--ollama-lock` by default in `ServerConfig::new()`.
+
+**Running tests in parallel**:
+```bash
+# Run all protocol tests concurrently (uses available CPU cores)
+cargo test --features e2e-tests
+
+# Run specific protocol tests concurrently
+cargo test --features e2e-tests,http,tcp,ssh
+
+# Disable locking for serial execution (legacy behavior)
+# Not recommended - modify ServerConfig::new() to set ollama_lock: false
+```
+
+**Performance**:
+- Without locking: Tests may timeout or fail due to Ollama overload
+- With locking: Tests run reliably in parallel, utilizing available CPU cores
+- Lock acquisition is logged at DEBUG level: "Acquiring Ollama lock" / "Ollama lock acquired" / "Ollama lock released"
+
+### Automatic Instance ID Generation
+
+Each NetGet process automatically generates a unique instance ID:
+- Format: `claude-{pid}-{timestamp}-{random4}`
+- Used for potential future instance-specific features (logging, metrics, etc.)
+- Stored in AppState, accessible via `get_instance_id()`
+
+### Concurrency Safety
+
+**What's safe**:
+- ✅ Running multiple E2E test files concurrently
+- ✅ Running multiple NetGet instances with `--ollama-lock`
+- ✅ Mixing interactive and non-interactive instances
+
+**What's NOT safe without additional setup**:
+- ❌ Running multiple instances building to the same `target/` directory
+  - **Solution**: Set `CARGO_TARGET_DIR` to use session-specific build directories
+  - **At session start**, run once:
+    ```bash
+    export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
+    ```
+  - This creates: `target-claude/claude-{shell_pid}/` (one per session)
+  - Already gitignored via `/target-claude/` pattern
+  - See "Build Directory Management" section below for details and automation options
+- ❌ Modifying shared git state (commits, branch switches) simultaneously
+  - Solution: Use git worktrees for true isolation
+  - Example: `git worktree add /tmp/netget-claude-2`
+
+### Temporary File Isolation
+
+Test infrastructure automatically uses process-specific temp file names:
+- HTTPS certificates: `test_https_cert_{pid}.pem`, `test_https_key_{pid}.pem`
+- gRPC proto files: `test_grpc_{pid}.proto`, `test_grpc_descriptor_{pid}.pb`
+- No manual cleanup needed - OS temp directory handles lifecycle
+
+### Build Directory Management for Multiple Claude Instances
+
+**IMPORTANT**: When running multiple Claude instances against the same repository, each instance MUST use a separate build directory to avoid conflicts.
+
+#### Session Setup
+
+At the **start of each session** working on netget, run this once:
+
+```bash
+export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
+```
+
+This sets a session-specific build directory that:
+- Uses the shell PID (`$$`) - unique per Claude session, not per command
+- Persists for all commands in this session
+- Prevents Cargo lock contention between concurrent Claude instances
+
+**You only need to run this once per session.** All subsequent `cargo` commands will automatically use this directory.
+
+#### Alternative: Automatic Setup
+
+If you want this to happen automatically, add to `~/.bashrc` or `~/.zshrc`:
+
+```bash
+# Auto-detect netget project and set isolated build directory
+if [[ "$PWD" == *"/netget"* ]] && [ -f "Cargo.toml" ]; then
+  export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
+fi
+```
+
+Or use a project-specific `.envrc` file (if you have direnv installed):
+
+```bash
+# .envrc in netget root
+export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
+```
+
+Then run `direnv allow` once.
+
+#### What This Does
+
+1. **Creates isolated builds**: Each Claude session gets `target-claude/claude-{shell_pid}/`
+2. **Prevents lock contention**: No more "Blocking waiting for file lock" errors
+3. **Stays in repo**: All build dirs under `target-claude/` (already gitignored)
+4. **No per-command overhead**: Set once, applies to entire session
+5. **No approval prompts**: Avoids prefixing every cargo command with export
+
+#### Maintenance - Cleaning Old Build Directories
+
+Build directories accumulate over time. Clean them manually when needed:
+
+**Option 1: Unified `cargo clean` (Recommended)**
+
+Create a shell alias that cleans both `target/` and `target-claude/`:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+alias cargo-clean-all='cargo clean && rm -rf target-claude/'
+```
+
+Usage: `cargo-clean-all` (cleans standard target and all Claude instance builds)
+
+**Option 2: Periodic Manual Cleanup**
+
+```bash
+# Remove build directories older than 10 days
+find target-claude/ -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
+
+# Or keep only the 3 most recent builds
+ls -t target-claude/ | tail -n +4 | xargs -I {} rm -rf target-claude/{}
+
+# Or nuke everything (safe - will rebuild on next build)
+rm -rf target-claude/
+```
+
+**Option 3: Weekly Cron Job**
+
+```bash
+# Add to crontab for weekly cleanup (every Sunday at 2am)
+0 2 * * 0 cd ~/dev/netget && find target-claude/ -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null
+```
+
+**DO NOT clean on every `cd`** - This is slow and disruptive. Clean manually when disk space becomes an issue.
+
+#### Disk Space Considerations
+
+- Each build directory: ~2-5 GB (full build with all features)
+- After 10 concurrent sessions: ~20-50 GB
+- Cleanup recommendation: Use `cargo-clean-all` alias or clean manually when disk space is low
+- Monitor disk usage: `du -sh target-claude/` to see total size
+- Safe to delete: Old build directories don't affect current sessions (they rebuild on next compile)
 
 ## Logging (CRITICAL)
 
@@ -307,11 +616,6 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id))
   - Ctrl+C (quit), Ctrl+L (cycle log level)
 - **CLI arguments**: `netget "listen on port 21 via ftp"` executes before TUI starts
 
-### Scripting Modes
-- **LLM mode** (default): All decisions made by LLM
-- **Python mode**: LLM generates Python scripts for protocol logic
-- **JavaScript mode**: LLM generates JavaScript scripts for protocol logic
-
 ## Key Technical Details
 
 1. **TcpStream sharing**: Use `tokio::io::split()`, never clone
@@ -325,6 +629,8 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id))
 9. **Action execution**: Sequential, in-order from action array
 
 ## Protocol Implementation Checklist
+
+**CRITICAL REQUIREMENT**: ALL protocols MUST be feature gated. No protocol implementation should be compiled unconditionally. This keeps build times fast and allows users to compile only the protocols they need.
 
 When creating new protocols in NetGet, ensure ALL of these steps are completed:
 
@@ -362,8 +668,47 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Define sync actions (network event triggered, with context)
 - Create action definitions with parameters and examples
 - Implement action execution logic
+- **Server Configuration Parameters**:
+  - When possible, allow configuration via `startup_params` in `open_server` action (for initial setup)
+  - Also provide separate action(s) to reconfigure parameters during runtime (allows LLM to adjust behavior dynamically)
+  - Example: DNS server could accept `default_ttl` in startup_params AND have a `set_default_ttl` action for runtime changes
 
-### 5. Module Registration (`src/server/mod.rs`)
+### 5. Protocol Implementation Documentation (`src/server/<protocol>/CLAUDE.md`) - **MANDATORY**
+- **CRITICAL**: Every protocol MUST have a CLAUDE.md file documenting implementation details
+- **Location**: `src/server/<protocol>/CLAUDE.md`
+- **Required Content**:
+  - **Protocol Overview**: What protocol is implemented, version/RFC compliance
+  - **Library Choices**: Which Rust crates are used and why (or why manual implementation)
+  - **Architecture Decisions**: Key design choices made during implementation
+  - **LLM Integration**: How the LLM controls the protocol (action-based, scripted, hybrid)
+  - **Connection Management**: How connections are tracked and managed
+  - **State Management**: Protocol-specific state structures and lifecycle
+  - **Limitations**: Known limitations, unsupported features, edge cases
+  - **Examples**: Example LLM prompts and responses for this protocol
+  - **References**: Links to protocol specs, library docs, relevant RFCs
+- **Example Structure**:
+  ```markdown
+  # SMTP Protocol Implementation
+
+  ## Overview
+  SMTP server implementing RFC 5321 (Simple Mail Transfer Protocol)
+
+  ## Library Choices
+  - `rust-smtp-server` (v0.1) - Chosen for parsing SMTP commands, handles protocol state machine
+  - Manual response construction - Provides flexibility for LLM-controlled responses
+
+  ## Architecture Decisions
+  - **Connection State Machine**: Tracks HELO, MAIL FROM, RCPT TO, DATA states per connection
+  - **LLM Control Points**: LLM decides whether to accept/reject recipients and message content
+  - **No Authentication**: SMTP AUTH not implemented (can be added later)
+
+  ## Limitations
+  - No STARTTLS support (port 25 only, not 587)
+  - No authentication (accepts all senders)
+  - No message persistence (messages logged but not stored)
+  ```
+
+### 6. Module Registration (`src/server/mod.rs`)
 - Add module declarations with feature flags
 - Export server and protocol structs
 - Example: `#[cfg(feature = "imap")] pub mod imap;`
@@ -378,18 +723,26 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Add variant to `ProtocolConnectionInfo` enum
 - Include protocol-specific state (write_half, queued_data, etc.)
 
-### 8. Feature Flag (`Cargo.toml`)
-- Add feature flag for protocol
-- Add protocol-specific dependencies
+### 8. Feature Flag (`Cargo.toml`) - **MANDATORY**
+- **CRITICAL**: Every protocol MUST have a feature flag - no exceptions
+- Add feature flag for protocol (use lowercase name matching the protocol)
+- Add protocol-specific dependencies with `optional = true`
 - Include in `all-protocols` feature
+- Example: `myprotocol = ["dep:myprotocol-lib", "async-trait"]`
 
-### 9. E2E Test (`tests/server/<protocol>/e2e_test.rs`)
+### 9. E2E Test (`tests/server/<protocol>/e2e_test.rs`) - **CRITICAL: Follow Efficiency Guidelines**
 - **Must create protocol directory** `tests/server/<protocol>/`
 - **Must create mod.rs** with `pub mod e2e_test;` (add feature flag `#[cfg(feature = "e2e-tests")]`)
 - **Must add to `tests/server/mod.rs`** with `pub mod <protocol>;`
 - **Must start NetGet in non-interactive mode** with a prompt
 - **Must assert server started with correct stack** using helpers
 - **Must use real client** or emulated client (only if no library available)
+- **CRITICAL: Follow E2E Test Efficiency Guidelines** (see section above):
+  - **Minimize server setups** - Reuse servers across multiple test cases
+  - **Target < 10 total LLM calls** for entire protocol test suite
+  - **Use scripting mode** when protocol supports it
+  - **Consolidate test cases** - Don't create separate servers for each scenario
+  - Example: One DNS server handles A, MX, AAAA records; don't create 3 servers
 - Test multiple scenarios:
   - Basic functionality (connect, send, receive)
   - Protocol-specific commands
@@ -399,13 +752,72 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   ```bash
   cargo build --release --all-features
   ```
-- **Run tests sequentially** (no parallel execution):
+- **Run tests** (concurrent execution supported with Ollama lock):
   ```bash
   cargo test --features e2e-tests --test server::<protocol>::e2e_test
   ```
 - **Fix any issues before considering protocol complete**
 
-### 10. Test Helpers (`tests/server/helpers.rs`)
+### 10. Test Documentation (`tests/server/<protocol>/CLAUDE.md`) - **MANDATORY**
+- **CRITICAL**: Every protocol MUST have a test CLAUDE.md file documenting test details
+- **Location**: `tests/server/<protocol>/CLAUDE.md`
+- **Required Content**:
+  - **Test Overview**: What aspects of the protocol are tested
+  - **Test Strategy**: How tests are structured (consolidated vs isolated)
+  - **LLM Call Budget**: Total LLM calls for entire test suite (target: < 10)
+    - Count server startups + network requests (unless scripted)
+    - Show breakdown per test function
+  - **Scripting Usage**: Whether tests use scripting mode or action-based
+  - **Client Library**: Actual client library used (e.g., hickory-client for DNS) or manual/emulated client
+  - **Expected Runtime**: Typical runtime for full test suite (with specified model)
+  - **Failure Rate**: Historical failure/flakiness rate (if any)
+  - **Test Cases**: List of test scenarios covered
+  - **Known Issues**: Flaky tests, timing issues, or environment dependencies
+- **Example Structure**:
+  ```markdown
+  # DNS Protocol E2E Tests
+
+  ## Test Overview
+  Tests DNS server with A, MX, AAAA, TXT, NXDOMAIN record types
+
+  ## Test Strategy
+  - Single consolidated test with one server handling all record types
+  - Reuses server instance across multiple queries
+  - Uses scripting mode for fast, deterministic responses
+
+  ## LLM Call Budget
+  - `test_dns_records_comprehensive()`: 1 startup call (scripted mode)
+  - `test_dns_error_handling()`: 1 startup call (scripted mode)
+  - **Total: 2 LLM calls** (well under 10 limit)
+
+  ## Scripting Usage
+  ✅ **Scripting Enabled** - All responses generated by script, no LLM calls per request
+
+  ## Client Library
+  - `hickory-client` v0.24 with UDP transport
+  - Uses real DNS client for protocol correctness
+
+  ## Expected Runtime
+  - Model: qwen3-coder:30b
+  - Runtime: ~25 seconds for full test suite
+  - Fast due to scripting (no LLM calls per query)
+
+  ## Failure Rate
+  - **Low** (<1%) - Occasional timeout if Ollama is slow on startup
+  - No flakiness - scripted responses are deterministic
+
+  ## Test Cases
+  1. A record resolution (IPv4)
+  2. MX record with priority
+  3. AAAA record (IPv6)
+  4. TXT record
+  5. NXDOMAIN for non-existent domains
+
+  ## Known Issues
+  - None - tests are stable and deterministic
+  ```
+
+### 11. Test Helpers (`tests/server/helpers.rs`)
 - Update `extract_stack_from_prompt()` if needed
 - Update `wait_for_server_startup()` to detect new protocol
 - Handle protocol-specific stack validation
@@ -413,152 +825,29 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 ### Validation Checklist
 - [ ] Protocol compiles with feature flag
 - [ ] Protocol compiles in `all-protocols` mode
+- [ ] **Implementation CLAUDE.md exists** at `src/server/<protocol>/CLAUDE.md` with complete documentation
+- [ ] **Test CLAUDE.md exists** at `tests/server/<protocol>/CLAUDE.md` with LLM call budget and runtime
 - [ ] E2E tests pass
 - [ ] No compilation warnings
 - [ ] Logging appears in Output panel
 - [ ] Connections tracked in UI
 - [ ] Stack name displays correctly
 - [ ] Protocol responds to LLM actions correctly
+- [ ] Total LLM calls < 10 for entire test suite
 
 ### Common Pitfalls
+- **Forgetting to add feature flag** - EVERY protocol must be feature gated
+- **Missing CLAUDE.md files** - MUST create both `src/server/<protocol>/CLAUDE.md` (implementation) and `tests/server/<protocol>/CLAUDE.md` (testing)
+- **Inefficient E2E tests** - Spinning up multiple servers instead of reusing one comprehensive server, exceeding 10 LLM calls
+- **Ignoring scripting mode** - Not using scripting when protocol supports it, wasting LLM calls on repetitive requests
 - Forgetting dual logging (tracing + status_tx)
 - Not tracking connections in server state
-- Missing feature flags in multiple files
+- Missing feature flags in multiple files (server/mod.rs, cli/server_startup.rs, Cargo.toml)
 - E2E tests using interactive mode instead of prompt mode
 - Not validating server stack in tests
 - Forgetting to update base_stack.rs parsing
 - Not creating tests/server/<protocol>/ directory structure
 - Not adding protocol to tests/server/mod.rs
-
-## SSH/SFTP Implementation
-
-**Library**: russh 0.45 + russh-sftp 2.1
-**Location**: `src/network/ssh.rs`, `src/network/sftp_handler.rs`
-
-**SSH Shell Buffering**: Line-based with character echo. Backspace erases on screen. Enter triggers LLM. Ctrl-C passed to LLM. First Enter shows banner, subsequent empty Enters skip LLM.
-
-**SFTP**: LLM-controlled virtual filesystem. Operations: opendir, readdir, open, read, close, lstat, fstat, realpath. Handle tracking prevents re-reads.
-
-**Connection Tracking**: SSH connections tracked with `ProtocolConnectionInfo::Ssh {authenticated, username, channels}`.
-
-## VPN Protocol Implementations
-
-### WireGuard - Full VPN Server ✅
-
-**Status**: Production-ready, fully functional VPN server with actual tunnel support
-**Library**: defguard_wireguard_rs 0.7 (multi-platform WireGuard library)
-**Location**: `src/server/wireguard/mod.rs`, `src/server/wireguard/actions.rs`
-
-**Key Features**:
-- **Actual VPN Tunnels**: Clients can connect and route traffic through NetGet
-- **TUN Interface**: Creates `netget_wg0` (Linux/Windows) or `utun10` (macOS)
-- **Secure Keys**: Curve25519 keypair generation using `defguard_wireguard_rs::key::Key`
-- **VPN Subnet**: Configures 10.20.30.0/24 network by default
-- **Peer Monitoring**: Tracks connections every 5 seconds
-- **Stats Tracking**: Bytes sent/received, last handshake time, endpoints
-- **Cross-Platform**: Linux kernel, macOS userspace, Windows kernel, FreeBSD
-
-**LLM Control Points**:
-- `authorize_peer`: Allow peer to connect with specific allowed IPs (e.g., ["10.20.30.2/32"])
-- `reject_peer`: Deny peer connection request
-- `set_peer_traffic_limit`: Configure bandwidth/data limits
-- `disconnect_peer`: Immediately disconnect a peer
-- `list_peers`: View all connected peers
-- `remove_peer`: Permanently remove peer from configuration
-- `get_server_info`: View server public key and config
-
-**Connection Tracking**: WireGuard peers tracked with `ProtocolConnectionInfo::Wireguard {public_key, endpoint, allowed_ips, last_handshake}`.
-
-**Requirements**:
-- Linux/FreeBSD: root or CAP_NET_ADMIN
-- macOS: wireguard-go userspace
-- Windows: administrator privileges
-
-### OpenVPN - Honeypot Only ⚠️
-
-**Status**: Detection-only honeypot (no actual VPN tunnels)
-**Reason**: No viable Rust OpenVPN server library exists
-**Location**: `src/server/openvpn/mod.rs`, `src/server/openvpn/actions.rs`
-
-**Capabilities**:
-- Detects OpenVPN handshake packets (V1 and V2)
-- Recognizes opcodes: HARD_RESET, CONTROL, ACK
-- Logs reconnaissance attempts with packet details
-- LLM receives handshake detection events but cannot establish tunnels
-
-**Why Not Full Implementation**: OpenVPN protocol is extremely complex (500K+ lines of C++), no mature Rust server library, Rust ecosystem focused on WireGuard.
-
-**Recommendation**: Use WireGuard for production VPN. OpenVPN honeypot is sufficient for security research.
-
-### IPSec/IKEv2 - Honeypot Only ⚠️
-
-**Status**: Detection-only honeypot (no actual VPN tunnels)
-**Reason**: No viable Rust IPSec server library exists (ipsec-parser is parse-only)
-**Location**: `src/server/ipsec/mod.rs`, `src/server/ipsec/actions.rs`
-
-**Capabilities**:
-- Detects IKEv1 and IKEv2 handshakes
-- Recognizes exchange types: IKE_SA_INIT, IKE_AUTH, CREATE_CHILD_SA, INFORMATIONAL
-- Extracts SPIs (Security Parameter Indexes)
-- Logs reconnaissance attempts with packet details
-- LLM receives handshake detection events but cannot establish tunnels
-
-**Why Not Full Implementation**: IPSec/IKEv2 is extremely complex (hundreds of thousands of lines in strongSwan/libreswan), requires deep OS integration (XFRM policy), no mature Rust server library.
-
-**Recommendation**: Use WireGuard for production VPN. IPSec honeypot is sufficient for IKE protocol analysis.
-
-**VPN Implementation Details**: See `VPN_IMPLEMENTATION_STATUS.md` for comprehensive comparison and future roadmap.
-
-## SMB/CIFS Implementation
-
-**Protocol Version**: SMB2 (dialect 0x0210)
-**Library**: smb-msg 0.10 (for message structures, not used for parsing in current implementation)
-**Location**: `src/server/smb/mod.rs`, `src/server/smb/actions.rs`
-
-**Authentication**: LLM-controlled. Supports both guest and user authentication:
-- **Guest mode**: If no username detected or username is "guest", uses guest authentication
-- **User mode**: Extracts username from SESSION_SETUP request, consults LLM for approval
-- LLM responds with `smb_auth_success` to allow or `smb_auth_deny` to reject
-- Failed authentication returns SMB2 STATUS_ACCESS_DENIED (0xC0000016)
-
-**Protocol Flow**:
-1. **NEGOTIATE** - Server offers SMB 2.1 dialect, responds with server GUID and capabilities
-2. **SESSION_SETUP** - Consults LLM with username, creates session if LLM approves
-3. **TREE_CONNECT** - Grants access to virtual share (accepts all share names)
-4. **File Operations** - All operations consult LLM for virtual filesystem
-
-**SMB2 Operations** (all LLM-integrated):
-- **CREATE** - Opens/creates files, generates 16-byte file handles (GUIDs), stores path mappings
-- **CLOSE** - Releases file handles, cleans up state
-- **READ** - Reads file content from LLM, supports offset/length parameters
-- **WRITE** - Sends file content to LLM for storage (text files)
-- **QUERY_INFO** - Returns file metadata (size, attributes, timestamps) from LLM
-- **QUERY_DIRECTORY** - Lists directory contents from LLM, returns UTF-16LE encoded names
-
-**File Handle Management**: Per-connection HashMap tracks `file_id → {path, is_directory}`. Handles generated using timestamp-based GUIDs. Proper cleanup on CLOSE.
-
-**LLM Actions** (defined in `actions.rs`):
-- Sync: `smb_auth_success`, `smb_auth_deny`, `smb_list_directory`, `smb_read_file`, `smb_write_file`, `smb_get_file_info`, `smb_create_file`, `smb_delete_file`, `smb_create_directory`, `smb_delete_directory`
-- Async: `disconnect_client`
-
-**UTF-16LE Handling**: All file paths parsed from UTF-16LE (Windows encoding). Directory listings returned in UTF-16LE format for client compatibility.
-
-**Response Construction**: Manual SMB2 response building (not using smb-msg parsing). Each response includes:
-- 64-byte SMB2 header (signature `\xFESMB`, command code, message ID, tree/session IDs)
-- Variable-length body (operation-specific structures)
-- Proper Windows FILETIME timestamps and file attributes
-
-**Default Port**: 8445 (non-privileged alternative to standard 445)
-
-**Connection Tracking**: SMB connections tracked with `ProtocolConnectionInfo::Smb {authenticated, username, session_id, open_files}`.
-
-**Limitations**:
-- Simplified username extraction (no full NTLM/Kerberos parsing - uses heuristic ASCII extraction)
-- Text file support for WRITE operations (binary treated as UTF-8 lossy)
-- Simplified timestamps (zeros for creation/modification times)
-- Single share model (all tree connects succeed)
-
-**Compatible Clients**: Windows File Explorer, Linux smbclient, macOS Finder, any SMB2+ compatible client.
 
 ## Git Commit Instructions
 
@@ -572,4 +861,3 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 
 - Ollama API: http://localhost:11434
 - Tokio: https://docs.rs/tokio
-- Ratatui: https://github.com/ratatui-org/ratatui

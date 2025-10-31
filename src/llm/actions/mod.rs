@@ -150,8 +150,13 @@ impl ActionResponse {
             trimmed
         };
 
-        serde_json::from_str::<ActionResponse>(json_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse action response: {}", e))
+        // Strip any extra characters before the JSON object
+        // Sometimes LLMs add extra text like "Y{" instead of just "{"
+        let json_start = json_str.find('{').unwrap_or(0);
+        let clean_json = &json_str[json_start..];
+
+        serde_json::from_str::<ActionResponse>(clean_json)
+            .map_err(|e| anyhow::anyhow!("Failed to parse action response: {}. Input: {}", e, clean_json))
     }
 
     /// Create empty action response

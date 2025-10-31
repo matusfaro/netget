@@ -200,12 +200,8 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
     println!("Test HTTP server started on port {}", http_port);
 
     // PROMPT: Tell the LLM to act as a SOCKS5 proxy that allows all connections
-    let socks_port = get_available_port().await?;
-    let prompt = format!(
-        "Start a SOCKS5 proxy server on port {} that allows all connections without authentication. \
-        When clients send CONNECT requests, establish the connection to the target.",
-        socks_port
-    );
+    let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT} that allows all connections without authentication. \
+        When clients send CONNECT requests, establish the connection to the target.";
 
     // Start the SOCKS5 server
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
@@ -272,13 +268,9 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
     println!("Test HTTP server started on port {}", http_port);
 
     // PROMPT: Tell the LLM to require authentication with explicit configuration
-    let socks_port = get_available_port().await?;
-    let prompt = format!(
-        "Start a SOCKS5 proxy server on port {} with username/password authentication. \
+    let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT} with username/password authentication. \
         IMPORTANT: Use startup_params with auth_methods set to [\"username_password\"]. \
-        Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication.",
-        socks_port
-    );
+        Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication.";
 
     // Start the SOCKS5 server
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
@@ -322,12 +314,8 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
     println!("\n=== E2E Test: SOCKS5 Connection Rejection ===");
 
     // PROMPT: Tell the LLM to deny connections to port 9999
-    let socks_port = get_available_port().await?;
-    let prompt = format!(
-        "Start a SOCKS5 proxy server on port {}. Deny any connection attempts to port 9999. \
-        Allow all other connections.",
-        socks_port
-    );
+    let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT}. Deny any connection attempts to port 9999. \
+        Allow all other connections.";
 
     // Start the SOCKS5 server
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
@@ -368,12 +356,8 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
     println!("Test HTTP server started on port {}", http_port);
 
     // PROMPT: Tell the LLM to allow connections using domain names
-    let socks_port = get_available_port().await?;
-    let prompt = format!(
-        "Start a SOCKS5 proxy server on port {} that accepts domain names in CONNECT requests. \
-        Allow connections to localhost.",
-        socks_port
-    );
+    let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT} that accepts domain names in CONNECT requests. \
+        Allow connections to localhost.";
 
     // Start the SOCKS5 server
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
@@ -417,14 +401,10 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
     println!("Test HTTP server started on port {}", http_port);
 
     // PROMPT: Tell the LLM to enable MITM mode with explicit configuration
-    let socks_port = get_available_port().await?;
-    let prompt = format!(
-        "Start a SOCKS5 proxy server on port {} with MITM inspection. \
+    let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT} with MITM inspection. \
         IMPORTANT: Use startup_params with mitm_by_default set to true. \
         When HTTP data flows through, forward it unchanged to the target. \
-        Allow all connections to localhost.",
-        socks_port
-    );
+        Allow all connections to localhost.";
 
     // Start the SOCKS5 server
     let server = start_netget_server(ServerConfig::new(prompt)).await?;

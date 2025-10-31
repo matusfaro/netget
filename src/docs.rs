@@ -320,6 +320,8 @@ fn get_protocol_description(stack: BaseStack) -> &'static str {
         BaseStack::Udp => "Raw UDP/IP stack where the LLM controls datagrams",
         BaseStack::DataLink => "Layer 2 Ethernet stack where the LLM controls frames (ARP, custom protocols)",
         BaseStack::Dns => "DNS server using hickory-dns where the LLM generates DNS responses",
+        BaseStack::Dot => "DNS-over-TLS server using hickory-dns where the LLM generates DNS responses over TLS",
+        BaseStack::Doh => "DNS-over-HTTPS server using hickory-dns where the LLM generates DNS responses over HTTPS",
         BaseStack::Dhcp => "DHCP server using dhcproto where the LLM handles DHCP requests",
         BaseStack::Ntp => "NTP server using ntpd-rs where the LLM handles time synchronization",
         BaseStack::Snmp => "SNMP agent using rasn-snmp where the LLM handles get/set requests",
@@ -349,6 +351,14 @@ fn get_protocol_description(stack: BaseStack) -> &'static str {
         BaseStack::OpenAi => "OpenAI-compatible API server where the LLM handles chat completions",
         BaseStack::Ldap => "LDAP directory server where the LLM handles directory queries",
         BaseStack::Bgp => "BGP routing protocol where the LLM handles peering and route announcements",
+        BaseStack::Mcp => "Model Context Protocol server",
+        BaseStack::Grpc => "gRPC server",
+        BaseStack::TorDirectory => "Tor directory server",
+        BaseStack::TorRelay => "Tor relay server",
+        BaseStack::JsonRpc => "JSON-RPC server",
+        BaseStack::XmlRpc => "XML-RPC server",
+        BaseStack::Vnc => "VNC server",
+        BaseStack::OpenApi => "OpenAPI spec-driven HTTP server",
     }
 }
 

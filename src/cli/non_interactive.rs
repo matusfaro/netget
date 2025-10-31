@@ -25,7 +25,7 @@ pub async fn run_non_interactive(
     debug!("Prompt: {}", prompt);
 
     // Create application state
-    let state = AppState::new_with_options(args.include_disabled_protocols);
+    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
 
     // Override model if specified in args
     if let Some(model) = &args.model {
@@ -83,7 +83,8 @@ pub async fn run_non_interactive(
     debug!("Web search mode: {:?}", web_search_mode);
 
     // Create event handler and LLM client
-    let llm = OllamaClient::default();
+    let lock_enabled = state.get_ollama_lock_enabled().await;
+    let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
     let mut event_handler = EventHandler::new(state.clone(), llm.clone());
 
     // Create status channel for messages from spawned servers

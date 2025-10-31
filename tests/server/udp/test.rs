@@ -19,8 +19,7 @@ async fn test_udp_echo_server() -> E2EResult<()> {
     println!("\n=== E2E Test: UDP Echo Server ===");
 
     // PROMPT: Tell the LLM to act as a UDP echo server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via udp. Echo back any data you receive.", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via udp. Echo back any data you receive.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

@@ -22,10 +22,9 @@ async fn test_arp_responder() -> E2EResult<()> {
     println!("Using interface: {}", interface);
 
     // PROMPT: Tell the LLM to act as an ARP server on the detected interface
-    let port = helpers::get_available_port().await?;
     let prompt = format!(
-        "listen on port {} datalink on interface {}. Respond to ARP requests for IP address 192.168.100.50 with MAC address 00:11:22:33:44:55",
-        port, interface
+        "listen on port {{AVAILABLE_PORT}} datalink on interface {}. Respond to ARP requests for IP address 192.168.100.50 with MAC address 00:11:22:33:44:55",
+        interface
     );
 
     // Start the server

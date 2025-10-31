@@ -9,7 +9,7 @@
 use anyhow::Result;
 use crossterm::{
     cursor, execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use std::io::Write;

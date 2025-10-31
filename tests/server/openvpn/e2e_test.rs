@@ -11,12 +11,8 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_openvpn_handshake_detection_v2() {
-    let port = get_available_port().await.expect("Failed to get available port");
-    let config = ServerConfig::new(&format!(
-        "Start an OpenVPN honeypot on port {} via openvpn",
-        port
-    ))
-    .with_include_disabled_protocols(true);
+    let config = ServerConfig::new("Start an OpenVPN honeypot on port {AVAILABLE_PORT} via openvpn")
+        .with_include_disabled_protocols(true);
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -66,12 +62,8 @@ async fn test_openvpn_handshake_detection_v2() {
 
 #[tokio::test]
 async fn test_openvpn_handshake_detection_v1() {
-    let port = get_available_port().await.expect("Failed to get available port");
-    let config = ServerConfig::new(&format!(
-        "Start an OpenVPN honeypot on port {} via openvpn",
-        port
-    ))
-    .with_include_disabled_protocols(true);
+    let config = ServerConfig::new("Start an OpenVPN honeypot on port {AVAILABLE_PORT} via openvpn")
+        .with_include_disabled_protocols(true);
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -113,12 +105,8 @@ async fn test_openvpn_handshake_detection_v1() {
 
 #[tokio::test]
 async fn test_openvpn_multiple_packet_types() {
-    let port = get_available_port().await.expect("Failed to get available port");
-    let config = ServerConfig::new(&format!(
-        "Start an OpenVPN honeypot on port {} via openvpn that logs all packet types",
-        port
-    ))
-    .with_include_disabled_protocols(true);
+    let config = ServerConfig::new("Start an OpenVPN honeypot on port {AVAILABLE_PORT} via openvpn that logs all packet types")
+        .with_include_disabled_protocols(true);
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 
@@ -168,12 +156,8 @@ async fn test_openvpn_multiple_packet_types() {
 
 #[tokio::test]
 async fn test_openvpn_concurrent_connections() {
-    let port = get_available_port().await.expect("Failed to get available port");
-    let config = ServerConfig::new(&format!(
-        "Start an OpenVPN honeypot on port {} via openvpn",
-        port
-    ))
-    .with_include_disabled_protocols(true);
+    let config = ServerConfig::new("Start an OpenVPN honeypot on port {AVAILABLE_PORT} via openvpn")
+        .with_include_disabled_protocols(true);
 
     let mut server = start_netget_server(config).await.expect("Failed to start server");
 

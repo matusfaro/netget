@@ -16,14 +16,10 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
     println!("\n=== E2E Test: MySQL Simple Query ===");
 
     // PROMPT: Tell the LLM to act as a MySQL server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack mysql. When clients query SELECT 1, use mysql_query_response action \
-        with columns=[{{name:'result',type:'INT'}}] rows=[[1]]. For SELECT @@* queries, return \
-        mysql_query_response with columns=[{{name:'value',type:'VARCHAR'}}] rows=[['1000']]. \
-        Other queries use mysql_ok_response affected_rows=0.",
-        port
-    );
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack mysql. When clients query SELECT 1, use mysql_query_response action \
+        with columns=[{name:'result',type:'INT'}] rows=[[1]]. For SELECT @@* queries, return \
+        mysql_query_response with columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. \
+        Other queries use mysql_ok_response affected_rows=0.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -95,15 +91,11 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
 async fn test_mysql_multi_row_query() -> E2EResult<()> {
     println!("\n=== E2E Test: MySQL Multi-Row Query ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack mysql. For SELECT * FROM users query, use mysql_query_response \
-        columns=[{{name:'id',type:'INT'}},{{name:'name',type:'VARCHAR'}}] \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack mysql. For SELECT * FROM users query, use mysql_query_response \
+        columns=[{name:'id',type:'INT'},{name:'name',type:'VARCHAR'}] \
         rows=[[\"1\",\"Alice\"],[\"2\",\"Bob\"],[\"3\",\"Charlie\"]]. \
-        For SELECT @@* queries use mysql_query_response columns=[{{name:'value',type:'VARCHAR'}}] rows=[['1000']]. \
-        Other queries use mysql_ok_response affected_rows=0.",
-        port
-    );
+        For SELECT @@* queries use mysql_query_response columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. \
+        Other queries use mysql_ok_response affected_rows=0.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -138,13 +130,9 @@ async fn test_mysql_multi_row_query() -> E2EResult<()> {
 async fn test_mysql_create_table() -> E2EResult<()> {
     println!("\n=== E2E Test: MySQL CREATE TABLE ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack mysql. For SELECT @@* queries, use mysql_query_response \
-        columns=[{{name:'value',type:'VARCHAR'}}] rows=[['1000']]. For CREATE/INSERT/UPDATE queries, \
-        use mysql_ok_response affected_rows=1. For other SELECT queries use mysql_ok_response affected_rows=0.",
-        port
-    );
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack mysql. For SELECT @@* queries, use mysql_query_response \
+        columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. For CREATE/INSERT/UPDATE queries, \
+        use mysql_ok_response affected_rows=1. For other SELECT queries use mysql_ok_response affected_rows=0.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);

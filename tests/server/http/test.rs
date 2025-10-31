@@ -15,8 +15,7 @@ async fn test_http_simple_get() -> E2EResult<()> {
 
     // PROMPT: Simple HTML response
     // Get an available port first (since port 0 has issues in non-interactive mode)
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via http stack. For any GET request, return status 200 with body: <h1>Hello World</h1>", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via http stack. For any GET request, return status 200 with body: <h1>Hello World</h1>";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -46,8 +45,7 @@ async fn test_http_json_api() -> E2EResult<()> {
     println!("\n=== E2E Test: JSON API ===");
 
     // PROMPT: JSON API response
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(r#"listen on port {} via http stack. For any POST to /api/data, return status 201 with Content-Type: application/json and body: {{"status": "created", "id": 123}}"#, port);
+    let prompt = r#"listen on port {AVAILABLE_PORT} via http stack. For any POST to /api/data, return status 201 with Content-Type: application/json and body: {"status": "created", "id": 123}"#;
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -87,8 +85,7 @@ async fn test_http_routing() -> E2EResult<()> {
     println!("\n=== E2E Test: HTTP Routing ===");
 
     // PROMPT: Route-based responses
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via http stack. For GET /home return 'Welcome Home'. For GET /about return 'About Us'. For other paths return 404 with 'Not Found'", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET /home return 'Welcome Home'. For GET /about return 'About Us'. For other paths return 404 with 'Not Found'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -136,8 +133,7 @@ async fn test_http_headers() -> E2EResult<()> {
     println!("\n=== E2E Test: Custom Headers ===");
 
     // PROMPT: Custom headers in response
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via http stack. For GET /api return status 200 with headers: X-API-Version: 1.0, X-Custom: test-value, and body: API Response", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET /api return status 200 with headers: X-API-Version: 1.0, X-Custom: test-value, and body: API Response";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -178,8 +174,7 @@ async fn test_http_methods() -> E2EResult<()> {
     println!("\n=== E2E Test: HTTP Methods ===");
 
     // PROMPT: Different responses for different methods
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via http stack. For GET return 'GET Response'. For POST return 'POST Response'. For PUT return 'PUT Response'. For DELETE return 'DELETE Response'", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET return 'GET Response'. For POST return 'POST Response'. For PUT return 'PUT Response'. For DELETE return 'DELETE Response'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -226,8 +221,7 @@ async fn test_http_error_responses() -> E2EResult<()> {
     println!("\n=== E2E Test: Error Responses ===");
 
     // PROMPT: Various error codes
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via http stack. For GET /forbidden return 403 with 'Access Denied'. For GET /error return 500 with 'Server Error'. For GET /redirect return 301 with Location header: /home", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET /forbidden return 403 with 'Access Denied'. For GET /error return 500 with 'Server Error'. For GET /redirect return 301 with Location header: /home";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -281,11 +275,7 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
     println!("\n=== E2E Test: Simple HTTP GET with Access Log ===");
 
     // PROMPT: Simple HTML response with access logging
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via http stack. For any GET request, return status 200 with body: <h1>Hello World</h1>. Also, log all access logs to a file named 'access_logs'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via http stack. For any GET request, return status 200 with body: <h1>Hello World</h1>. Also, log all access logs to a file named 'access_logs'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

@@ -20,11 +20,7 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
     println!("\n=== E2E Test: DNS A Record Query ===");
 
     // PROMPT: Tell the LLM to act as a DNS server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dns. Respond to all A record queries for example.com with IP address 93.184.216.34",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dns. Respond to all A record queries for example.com with IP address 93.184.216.34";
 
     // Start the server with debug logging
     let server = helpers::start_netget_server(
@@ -69,11 +65,7 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     println!("\n=== E2E Test: DNS Multiple Records ===");
 
     // PROMPT: Tell the LLM to handle multiple record types
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8";
 
     // Start the server
     let server = helpers::start_netget_server(
@@ -112,11 +104,7 @@ async fn test_dns_txt_record() -> E2EResult<()> {
     println!("\n=== E2E Test: DNS TXT Record ===");
 
     // PROMPT: Tell the LLM to handle TXT records
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dns. For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dns. For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'";
 
     // Start the server
     let server = helpers::start_netget_server(
@@ -155,11 +143,7 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
     println!("\n=== E2E Test: DNS NXDOMAIN Response ===");
 
     // PROMPT: Tell the LLM to return NXDOMAIN for unknown domains
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN";
 
     // Start the server
     let server = helpers::start_netget_server(

@@ -109,11 +109,7 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
     println!("\n=== E2E Test: DHCP DISCOVER/OFFER ===");
 
     // PROMPT: Tell the LLM to act as a DHCP server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dhcp. When receiving DHCP DISCOVER messages, respond with DHCP OFFER. Offer IP addresses in the 192.168.1.0/24 range starting from 192.168.1.100",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. When receiving DHCP DISCOVER messages, respond with DHCP OFFER. Offer IP addresses in the 192.168.1.0/24 range starting from 192.168.1.100";
 
     // Start the server with debug logging
     let server = helpers::start_netget_server(
@@ -166,11 +162,7 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
     println!("\n=== E2E Test: DHCP REQUEST/ACK ===");
 
     // PROMPT: Tell the LLM to handle DHCP REQUEST
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dhcp. Handle DHCP DISCOVER and REQUEST messages. Assign IP addresses from 192.168.1.100 onwards. Respond with OFFER to DISCOVER and ACK to REQUEST",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Handle DHCP DISCOVER and REQUEST messages. Assign IP addresses from 192.168.1.100 onwards. Respond with OFFER to DISCOVER and ACK to REQUEST";
 
     // Start the server
     let server = helpers::start_netget_server(
@@ -227,11 +219,7 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
     println!("\n=== E2E Test: DHCP with Lease Options ===");
 
     // PROMPT: Tell the LLM to include DHCP options
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via dhcp. Respond to DHCP requests with: IP address 192.168.1.100, subnet mask 255.255.255.0, gateway 192.168.1.1, DNS server 8.8.8.8, lease time 86400 seconds",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Respond to DHCP requests with: IP address 192.168.1.100, subnet mask 255.255.255.0, gateway 192.168.1.1, DNS server 8.8.8.8, lease time 86400 seconds";
 
     // Start the server
     let server = helpers::start_netget_server(

@@ -13,7 +13,7 @@
 
 #![cfg(feature = "e2e-tests")]
 
-#[path = "e2e/helpers.rs"]
+#[path = "server/helpers.rs"]
 mod helpers;
 
 use helpers::{ServerConfig, E2EResult};

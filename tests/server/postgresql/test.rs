@@ -27,14 +27,10 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
     println!("\n=== E2E Test: PostgreSQL Simple Query ===");
 
     // PROMPT: Tell the LLM to act as a PostgreSQL server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack postgresql. When clients query SELECT 1, use postgresql_query_response action \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack postgresql. When clients query SELECT 1, use postgresql_query_response action \
         with columns=[{{name:'?column?',type:'int4'}}] rows=[[1]]. For SELECT version() queries, return \
         postgresql_query_response with columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0 (LLM)']]. \
-        Other queries use postgresql_ok_response tag='OK'.",
-        port
-    );
+        Other queries use postgresql_ok_response tag='OK'.";
 
     // Start the server (using default qwen3-coder:30b)
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -101,15 +97,11 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
 async fn test_postgresql_multi_row_query() -> E2EResult<()> {
     println!("\n=== E2E Test: PostgreSQL Multi-Row Query ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack postgresql. For SELECT * FROM users query, use postgresql_query_response \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack postgresql. For SELECT * FROM users query, use postgresql_query_response \
         columns=[{{name:'id',type:'int4'}},{{name:'name',type:'text'}}] \
         rows=[[1,\"Alice\"],[2,\"Bob\"],[3,\"Charlie\"]]. \
         For SELECT version() queries use postgresql_query_response columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0']]. \
-        Other queries use postgresql_ok_response tag='SELECT 0'.",
-        port
-    );
+        Other queries use postgresql_ok_response tag='SELECT 0'.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -147,13 +139,9 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
 async fn test_postgresql_create_table() -> E2EResult<()> {
     println!("\n=== E2E Test: PostgreSQL CREATE TABLE ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack postgresql. For SELECT version() queries, use postgresql_query_response \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack postgresql. For SELECT version() queries, use postgresql_query_response \
         columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0']]. For CREATE/INSERT/UPDATE queries, \
-        use postgresql_ok_response tag='CREATE TABLE'. For SELECT queries use postgresql_ok_response tag='SELECT 0'.",
-        port
-    );
+        use postgresql_ok_response tag='CREATE TABLE'. For SELECT queries use postgresql_ok_response tag='SELECT 0'.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -188,14 +176,10 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
 async fn test_postgresql_error_response() -> E2EResult<()> {
     println!("\n=== E2E Test: PostgreSQL Error Response ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack postgresql. For SELECT version() queries, use postgresql_query_response \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack postgresql. For SELECT version() queries, use postgresql_query_response \
         columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0']]. \
         For queries containing 'invalid_table', use postgresql_error_response severity='ERROR' code='42P01' \
-        message='relation \"invalid_table\" does not exist'. Other queries use postgresql_ok_response tag='OK'.",
-        port
-    );
+        message='relation \"invalid_table\" does not exist'. Other queries use postgresql_ok_response tag='OK'.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);

@@ -28,11 +28,7 @@ async fn test_nfs_server_start() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Server Start ===");
 
     // PROMPT: Basic NFS server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using nfs stack. Provide NFSv3 filesystem with export /data",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Provide NFSv3 filesystem with export /data";
 
     // Start the NFS server
     let mut server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -54,11 +50,7 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS TCP Connection ===");
 
     // PROMPT: NFS server that accepts connections
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using nfs stack. Accept NFS client connections",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Accept NFS client connections";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -112,11 +104,7 @@ async fn test_nfs_multiple_connections() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Multiple Connections ===");
 
     // PROMPT: NFS server with multiple client support
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using nfs stack. Support multiple concurrent NFS clients",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Support multiple concurrent NFS clients";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -158,11 +146,7 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Connection Lifecycle ===");
 
     // PROMPT: NFS server for lifecycle testing
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using nfs stack. Handle connection lifecycle events",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Handle connection lifecycle events";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -198,18 +182,11 @@ async fn test_nfs_port_configuration() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Port Configuration ===");
 
     // PROMPT: NFS on custom port
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using nfs stack. Standard NFS v3 service",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Standard NFS v3 service";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
-    println!("NFS server started on requested port {}", server.port);
-
-    // Verify server is on the requested port
-    assert_eq!(server.port, port, "Server should be on requested port");
+    println!("NFS server started on port {}", server.port);
 
     // Verify it's listening
     let addr = format!("127.0.0.1:{}", server.port);
@@ -228,11 +205,7 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Server Stop ===");
 
     // PROMPT: NFS server with graceful shutdown
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using nfs stack. Support clean shutdown",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Support clean shutdown";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

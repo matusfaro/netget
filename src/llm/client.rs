@@ -1,14 +1,36 @@
 //! Ollama client for LLM communication
 
 use std::collections::HashMap;
+use std::fs::File;
 
 use crate::llm::actions::{
     execute_tool, summarize_actions, ActionResponse, ToolAction, ToolResult,
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
+
+/// RAII guard for Ollama lock file
+///
+/// Automatically releases the lock when dropped.
+struct OllamaLockGuard {
+    file: Option<File>,
+}
+
+impl Drop for OllamaLockGuard {
+    fn drop(&mut self) {
+        if let Some(file) = self.file.take() {
+            // Unlock the file (errors are logged but not fatal)
+            if let Err(e) = file.unlock() {
+                error!("Failed to release Ollama lock: {}", e);
+            } else {
+                debug!("Ollama lock released");
+            }
+        }
+    }
+}
 
 /// Structured response from the LLM
 ///
@@ -219,20 +241,112 @@ impl CommandInterpretation {
 pub struct OllamaClient {
     base_url: String,
     client: reqwest::Client,
+    /// Whether to use file locking for Ollama API access
+    lock_enabled: bool,
 }
 
 impl OllamaClient {
     /// Create a new Ollama client
     pub fn new(base_url: impl Into<String>) -> Self {
+        Self::new_with_options(base_url, false)
+    }
+
+    /// Create a new Ollama client with options
+    pub fn new_with_options(base_url: impl Into<String>, lock_enabled: bool) -> Self {
         Self {
             base_url: base_url.into(),
             client: reqwest::Client::new(),
+            lock_enabled,
         }
     }
 
     /// Create a default client pointing to localhost
     pub fn default() -> Self {
         Self::new("http://localhost:11434")
+    }
+
+    /// Acquire the Ollama lock file if locking is enabled
+    ///
+    /// Returns a guard that will release the lock when dropped.
+    /// The lock file is created at ./ollama.lock in the current directory.
+    ///
+    /// Implements stale lock detection: if the lock file is older than 30 seconds,
+    /// it's assumed to be stale and the lock is forcibly acquired.
+    fn acquire_ollama_lock(&self) -> Result<Option<OllamaLockGuard>> {
+        if !self.lock_enabled {
+            return Ok(None);
+        }
+
+        use fs2::FileExt;
+        use std::fs::{self, OpenOptions};
+        use std::path::Path;
+        use std::time::{Duration, SystemTime};
+
+        let lock_path = Path::new("./ollama.lock");
+        let stale_timeout = Duration::from_secs(30);
+
+        debug!("Acquiring Ollama lock at {:?}", lock_path);
+
+        // Open (or create) the lock file
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(lock_path)
+            .context("Failed to open Ollama lock file")?;
+
+        // Try to acquire lock with timeout/stale detection
+        let lock_acquired = loop {
+            // Try non-blocking lock first
+            match file.try_lock_exclusive() {
+                Ok(()) => {
+                    debug!("Ollama lock acquired immediately");
+                    break true;
+                }
+                Err(_) => {
+                    // Lock is held, check if it's stale
+                    if let Ok(metadata) = file.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            if let Ok(elapsed) = SystemTime::now().duration_since(modified) {
+                                if elapsed > stale_timeout {
+                                    warn!(
+                                        "Ollama lock is stale ({}s old), breaking it",
+                                        elapsed.as_secs()
+                                    );
+
+                                    // Force-acquire the lock (blocking if needed)
+                                    // This is safe because we've determined the lock is stale
+                                    file.lock_exclusive()
+                                        .context("Failed to acquire exclusive lock after detecting stale lock")?;
+
+                                    debug!("Ollama lock acquired after breaking stale lock");
+                                    break true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Not stale yet, wait with blocking lock
+                    debug!("Ollama lock is held, waiting...");
+                    file.lock_exclusive()
+                        .context("Failed to acquire exclusive lock on Ollama lock file")?;
+                    break true;
+                }
+            }
+        };
+
+        if lock_acquired {
+            // Update the lock file's modification time to mark it as active
+            file.set_len(0)?; // Truncate
+            use std::io::Write;
+            writeln!(file, "{}", std::process::id())?; // Write our PID
+            file.sync_all()?; // Ensure it's written
+
+            debug!("Ollama lock acquired and updated");
+            Ok(Some(OllamaLockGuard { file: Some(file) }))
+        } else {
+            Err(anyhow::anyhow!("Failed to acquire Ollama lock"))
+        }
     }
 
     /// Generate a completion from the model with optional JSON schema
@@ -247,6 +361,8 @@ impl OllamaClient {
         prompt: &str,
         format: Option<serde_json::Value>,
     ) -> Result<String> {
+        // Acquire Ollama lock if enabled (blocks until available)
+        let _lock_guard = self.acquire_ollama_lock()?;
         // TEST-ONLY: Check for mock response environment variable
         // This allows tests to inject predetermined responses without requiring Ollama
         match std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
