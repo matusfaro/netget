@@ -86,6 +86,34 @@ impl EventHandler {
                 }
                 Ok(false)
             }
+            UserCommand::TestAsk => {
+                // Test web search approval prompt by triggering a search to DuckDuckGo
+                use crate::llm::actions::tools::{execute_tool, ToolAction};
+
+                ui.add_llm_message("[INFO] Testing web search approval with DuckDuckGo...".to_string());
+
+                // Get web search mode and approval channel
+                let web_search_mode = self.state.get_web_search_mode().await;
+                let approval_tx = self.state.get_web_approval_channel().await;
+
+                // Create a web search action for DuckDuckGo
+                let action = ToolAction::WebSearch {
+                    query: "https://duckduckgo.com".to_string(),
+                };
+
+                // Execute the tool (this will trigger approval prompt if in ASK mode)
+                let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode).await;
+
+                // Display the result
+                if result.success {
+                    ui.add_llm_message(format!("[INFO] Web search completed successfully"));
+                    ui.add_llm_message(format!("[DEBUG] Result: {}", result.result));
+                } else {
+                    ui.add_llm_message(format!("[ERROR] Web search failed: {}", result.result));
+                }
+
+                Ok(false)
+            }
             UserCommand::SetFooterStatus { message } => {
                 // This command is only supported in rolling TUI mode
                 if message.is_some() {

@@ -60,6 +60,8 @@ pub enum UserCommand {
     TestOutput {
         count: usize,
     },
+    /// Test web search approval prompt (slash command: /test_ask)
+    TestAsk,
     /// Set custom footer status message (slash command: /footer_status <message>)
     SetFooterStatus {
         message: Option<String>,
@@ -154,6 +156,11 @@ impl UserCommand {
                     };
                 }
             }
+        }
+
+        // /test_ask command - test web search approval prompt
+        if input_lower == "/test_ask" {
+            return UserCommand::TestAsk;
         }
 
         // /test command - generate test output lines
