@@ -289,11 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_action_definitions() {
-        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let protocol = IpsecProtocol::new(
-            socket,
-            "127.0.0.1:500".parse().unwrap(),
-        );
+        let protocol = IpsecProtocol::new();
 
         let sync_actions = protocol.get_sync_actions();
         assert!(!sync_actions.is_empty());

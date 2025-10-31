@@ -16,12 +16,8 @@ async fn test_irc_welcome() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC Welcome (RPL_WELCOME) ===");
 
     // PROMPT: Tell the LLM to act as an IRC server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via irc. When users connect and send NICK and USER commands, \
-        respond with IRC welcome numeric 001: ':servername 001 nickname :Welcome to the IRC Network'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via irc. When users connect and send NICK and USER commands, \
+        respond with IRC welcome numeric 001: ':servername 001 nickname :Welcome to the IRC Network'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -87,12 +83,8 @@ async fn test_irc_ping_pong() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC PING/PONG ===");
 
     // PROMPT: Tell the LLM to handle IRC PING
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via irc. When you receive a PING command with a token, \
-        respond with PONG using the same token. Format: 'PONG :token'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via irc. When you receive a PING command with a token, \
+        respond with PONG using the same token. Format: 'PONG :token'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -149,12 +141,8 @@ async fn test_irc_join_channel() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC Channel Join ===");
 
     // PROMPT: Tell the LLM to handle channel joins
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via irc. When users send JOIN #channel, \
-        respond with ':nickname JOIN #channel' to confirm the join",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via irc. When users send JOIN #channel, \
+        respond with ':nickname JOIN #channel' to confirm the join";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -209,12 +197,8 @@ async fn test_irc_privmsg() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC PRIVMSG ===");
 
     // PROMPT: Tell the LLM to handle private messages
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via irc. When you receive 'PRIVMSG target :message', \
-        echo it back as 'PRIVMSG sender :message'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via irc. When you receive 'PRIVMSG target :message', \
+        echo it back as 'PRIVMSG sender :message'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -261,12 +245,8 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC Multiple Clients ===");
 
     // PROMPT: Tell the LLM to handle multiple IRC clients
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via irc. Handle multiple concurrent IRC clients. \
-        Send welcome message (001) to each client that connects with NICK and USER",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via irc. Handle multiple concurrent IRC clients. \
+        Send welcome message (001) to each client that connects with NICK and USER";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

@@ -14,11 +14,7 @@ async fn test_webdav_server_start() -> E2EResult<()> {
     println!("\n=== E2E Test: WebDAV Server Start ===");
 
     // PROMPT: Basic WebDAV server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using webdav stack. Provide a virtual filesystem with directory /documents",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. Provide a virtual filesystem with directory /documents";
 
     // Start the WebDAV server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -39,11 +35,7 @@ async fn test_webdav_propfind() -> E2EResult<()> {
     println!("\n=== E2E Test: WebDAV PROPFIND ===");
 
     // PROMPT: WebDAV server with file listings
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using webdav stack. For PROPFIND requests on /, return directory listing showing 'documents' folder",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. For PROPFIND requests on /, return directory listing showing 'documents' folder";
 
     // Start the WebDAV server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -81,11 +73,7 @@ async fn test_webdav_put_file() -> E2EResult<()> {
     println!("\n=== E2E Test: WebDAV PUT File ===");
 
     // PROMPT: WebDAV server with file creation
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using webdav stack. Accept PUT requests to create files. Return status 201 Created",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. Accept PUT requests to create files. Return status 201 Created";
 
     // Start the WebDAV server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -122,11 +110,7 @@ async fn test_webdav_mkcol() -> E2EResult<()> {
     println!("\n=== E2E Test: WebDAV MKCOL (Create Collection) ===");
 
     // PROMPT: WebDAV server with directory creation
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using webdav stack. Accept MKCOL requests to create directories. Return status 201 Created",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. Accept MKCOL requests to create directories. Return status 201 Created";
 
     // Start the WebDAV server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

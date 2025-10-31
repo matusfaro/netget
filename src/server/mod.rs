@@ -4,8 +4,14 @@
 
 pub mod connection;
 pub mod packet;
+// server_trait requires async-trait, so only compile when features that provide it are enabled
+#[cfg(any(feature = "tcp", feature = "ssh", feature = "mysql", feature = "postgresql", feature = "redis", feature = "cassandra", feature = "grpc", feature = "mcp", feature = "vnc"))]
 pub mod server_trait;
 pub mod socket_helpers;
+
+// TLS certificate management for DoT and DoH
+#[cfg(any(feature = "dot", feature = "doh"))]
+pub mod tls_cert_manager;
 
 #[cfg(feature = "tcp")]
 pub mod tcp;
@@ -21,8 +27,11 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "datalink")]
 pub mod datalink;
+#[cfg(feature = "datalink")]
 pub use datalink::DataLinkServer;
+#[cfg(feature = "datalink")]
 pub use datalink::actions::DataLinkProtocol;
 
 #[cfg(feature = "udp")]
@@ -38,6 +47,20 @@ pub mod dns;
 pub use dns::DnsServer;
 #[cfg(feature = "dns")]
 pub use dns::actions::DnsProtocol;
+
+#[cfg(feature = "dot")]
+pub mod dot;
+#[cfg(feature = "dot")]
+pub use dot::DotServer;
+#[cfg(feature = "dot")]
+pub use dot::actions::DotProtocol;
+
+#[cfg(feature = "doh")]
+pub mod doh;
+#[cfg(feature = "doh")]
+pub use doh::DohServer;
+#[cfg(feature = "doh")]
+pub use doh::actions::DohProtocol;
 
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
@@ -224,6 +247,13 @@ pub use openai::OpenAiServer;
 #[cfg(feature = "openai")]
 pub use openai::actions::OpenAiProtocol;
 
+#[cfg(feature = "jsonrpc")]
+pub mod jsonrpc;
+#[cfg(feature = "jsonrpc")]
+pub use jsonrpc::JsonRpcServer;
+#[cfg(feature = "jsonrpc")]
+pub use jsonrpc::actions::JsonRpcProtocol;
+
 // VPN utilities (shared infrastructure for VPN protocols)
 pub mod vpn_util;
 
@@ -254,6 +284,55 @@ pub mod bgp;
 pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
+
+#[cfg(feature = "mcp")]
+pub mod mcp;
+#[cfg(feature = "mcp")]
+pub use mcp::McpServer;
+#[cfg(feature = "mcp")]
+pub use mcp::actions::McpProtocol;
+
+#[cfg(feature = "grpc")]
+pub mod grpc;
+#[cfg(feature = "grpc")]
+pub use grpc::GrpcServer;
+#[cfg(feature = "grpc")]
+pub use grpc::actions::GrpcProtocol;
+
+#[cfg(feature = "xmlrpc")]
+pub mod xmlrpc;
+#[cfg(feature = "xmlrpc")]
+pub use xmlrpc::XmlRpcServer;
+#[cfg(feature = "xmlrpc")]
+pub use xmlrpc::actions::XmlRpcProtocol;
+
+#[cfg(feature = "tor-directory")]
+pub mod tor_directory;
+#[cfg(feature = "tor-directory")]
+pub use tor_directory::TorDirectoryServer;
+#[cfg(feature = "tor-directory")]
+pub use tor_directory::actions::TorDirectoryProtocol;
+
+#[cfg(feature = "tor-relay")]
+pub mod tor_relay;
+#[cfg(feature = "tor-relay")]
+pub use tor_relay::TorRelayServer;
+#[cfg(feature = "tor-relay")]
+pub use tor_relay::actions::TorRelayProtocol;
+
+#[cfg(feature = "vnc")]
+pub mod vnc;
+#[cfg(feature = "vnc")]
+pub use vnc::VncServer;
+#[cfg(feature = "vnc")]
+pub use vnc::actions::VncProtocol;
+
+#[cfg(feature = "openapi")]
+pub mod openapi;
+#[cfg(feature = "openapi")]
+pub use openapi::OpenApiServer;
+#[cfg(feature = "openapi")]
+pub use openapi::actions::OpenApiProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

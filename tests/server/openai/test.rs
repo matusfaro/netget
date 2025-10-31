@@ -14,12 +14,8 @@ async fn test_openai_list_models() -> E2EResult<()> {
     println!("\n=== E2E Test: OpenAI List Models ===");
 
     // Start OpenAI-compatible server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack openai. This is an OpenAI-compatible API server \
-        that wraps Ollama. When clients request GET /v1/models, list available Ollama models.",
-        port
-    );
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack openai. This is an OpenAI-compatible API server \
+        that wraps Ollama. When clients request GET /v1/models, list available Ollama models.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -84,13 +80,9 @@ async fn test_openai_list_models() -> E2EResult<()> {
 async fn test_openai_chat_completion() -> E2EResult<()> {
     println!("\n=== E2E Test: OpenAI Chat Completion ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack openai. This is an OpenAI-compatible API server \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack openai. This is an OpenAI-compatible API server \
         that wraps Ollama. When clients send POST /v1/chat/completions requests, \
-        use Ollama to generate responses and return them in OpenAI format.",
-        port
-    );
+        use Ollama to generate responses and return them in OpenAI format.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -195,11 +187,7 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
 async fn test_openai_invalid_endpoint() -> E2EResult<()> {
     println!("\n=== E2E Test: OpenAI Invalid Endpoint ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack openai. Return 404 errors for unknown endpoints.",
-        port
-    );
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack openai. Return 404 errors for unknown endpoints.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -250,13 +238,9 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
 async fn test_openai_with_rust_client() -> E2EResult<()> {
     println!("\n=== E2E Test: OpenAI with Official Rust Client ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack openai. This is an OpenAI-compatible API server \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack openai. This is an OpenAI-compatible API server \
         that wraps Ollama. When clients request models, list available Ollama models. \
-        When clients request chat completions, use Ollama to generate responses.",
-        port
-    );
+        When clients request chat completions, use Ollama to generate responses.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);

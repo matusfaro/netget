@@ -33,22 +33,22 @@ pub struct SmbServer;
 struct SmbSession {
     session_id: u64,
     username: String,
-    authenticated: bool,
+    _authenticated: bool,
 }
 
 /// SMB2 tree connection state
 #[derive(Debug, Clone)]
 struct SmbTreeConnect {
-    tree_id: u32,
-    share_name: String,
+    _tree_id: u32,
+    _share_name: String,
 }
 
 /// SMB2 file handle state
 #[derive(Debug, Clone)]
 struct SmbFileHandle {
-    file_id: Vec<u8>, // 16-byte GUID
+    _file_id: Vec<u8>, // 16-byte GUID
     path: String,
-    is_directory: bool,
+    _is_directory: bool,
 }
 
 /// Per-connection SMB state
@@ -366,7 +366,7 @@ impl SmbServer {
                 let response = Self::build_session_setup_response_with_user(_header, _state, username.clone())?;
 
                 // Get the session info from state to update connection tracking
-                let (session_id, auth_username) = {
+                let (session_id, _auth_username) = {
                     let s = _state.lock().await;
                     if let Some(session) = s.sessions.values().last() {
                         (Some(session.session_id), Some(session.username.clone()))
@@ -433,9 +433,9 @@ impl SmbServer {
                 {
                     let mut s = _state.lock().await;
                     s.files.insert(file_id.clone(), SmbFileHandle {
-                        file_id: file_id.clone(),
+                        _file_id: file_id.clone(),
                         path: path.clone(),
-                        is_directory: false, // TODO: Parse from LLM response
+                        _is_directory: false, // TODO: Parse from LLM response
                     });
                 }
 
@@ -795,7 +795,7 @@ impl SmbServer {
     /// Build SMB2 Session Setup Response (Guest)
     /// Accepts any session setup as guest
     #[cfg(feature = "smb")]
-    fn build_session_setup_response(
+    fn _build_session_setup_response(
         request_header: &[u8],
         state: &Arc<Mutex<SmbConnectionState>>,
     ) -> Result<Vec<u8>> {
@@ -811,7 +811,7 @@ impl SmbServer {
             s.sessions.insert(sid, SmbSession {
                 session_id: sid,
                 username: "guest".to_string(),
-                authenticated: true,
+                _authenticated: true,
             });
             sid
         };
@@ -860,8 +860,8 @@ impl SmbServer {
             s.next_tree_id += 1;
 
             s.trees.insert(tid, SmbTreeConnect {
-                tree_id: tid,
-                share_name,
+                _tree_id: tid,
+                _share_name: share_name,
             });
             tid
         };
@@ -1309,7 +1309,7 @@ impl SmbServer {
             s.sessions.insert(sid, SmbSession {
                 session_id: sid,
                 username: username.clone(),
-                authenticated: true,
+                _authenticated: true,
             });
             sid
         };

@@ -4,6 +4,7 @@
 //! and act as a server or client for various protocols (TCP, FTP, etc.).
 
 pub mod cli;
+pub mod display;
 pub mod docs;
 pub mod events;
 pub mod llm;

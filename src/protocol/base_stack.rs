@@ -81,6 +81,14 @@ pub enum BaseStack {
     /// The LLM generates DNS responses to queries (port 53)
     Dns,
 
+    /// DNS-over-TLS stack - DoT server using hickory-dns with TLS
+    /// The LLM generates DNS responses over TLS (port 853)
+    Dot,
+
+    /// DNS-over-HTTPS stack - DoH server using hickory-dns with HTTPS
+    /// The LLM generates DNS responses over HTTPS (port 443)
+    Doh,
+
     /// DHCP stack - DHCP server using dhcproto
     /// The LLM handles DHCP requests and assignments (ports 67/68)
     Dhcp,
@@ -190,6 +198,10 @@ pub enum BaseStack {
     /// The LLM handles chat completions and model listings (port 11435/8000)
     OpenAi,
 
+    /// JSON-RPC stack - JSON-RPC 2.0 server over HTTP
+    /// The LLM handles RPC method calls and generates responses (port 8000)
+    JsonRpc,
+
     /// LDAP stack - LDAP directory server
     /// The LLM handles LDAP operations and directory queries (port 389)
     Ldap,
@@ -197,6 +209,34 @@ pub enum BaseStack {
     /// BGP stack - BGP routing protocol
     /// The LLM handles BGP peering, route announcements, and withdrawals (port 179)
     Bgp,
+
+    /// MCP stack - Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
+    /// The LLM controls all MCP server capabilities: resources, tools, and prompts (port 8000)
+    Mcp,
+
+    /// gRPC stack - gRPC server using tonic
+    /// The LLM provides protobuf schema and handles RPC requests (port 50051)
+    Grpc,
+
+    /// XML-RPC stack - XML-RPC server using quick-xml
+    /// The LLM controls RPC method execution and introspection (system.* methods)
+    XmlRpc,
+
+    /// Tor Directory stack - Tor directory mirror/authority
+    /// The LLM serves directory consensus, relay descriptors, and microdescriptors (port 9030)
+    TorDirectory,
+
+    /// Tor Relay stack - Tor OR protocol relay (Guard/Middle/Exit)
+    /// The LLM controls circuit creation, relay decisions, and traffic filtering (port 9001)
+    TorRelay,
+
+    /// VNC stack - VNC (Remote Frame Buffer) server
+    /// The LLM controls display generation, authentication, and input handling (port 5900)
+    Vnc,
+
+    /// OpenAPI stack - OpenAPI 3.1 spec-driven HTTP server
+    /// The LLM provides OpenAPI spec and generates spec-compliant or intentionally non-compliant responses (port 8080)
+    OpenApi,
 }
 
 impl BaseStack {

@@ -1,8 +1,14 @@
 /target
 netget.log
 
+# Instance-specific build directories for concurrent Claude instances
+/target-claude/
+
 logs
 *.log
+
+# Ollama lock file for concurrent instance coordination
+ollama.lock
 
 .vscode/*
 !.vscode/extensions.json

@@ -83,6 +83,13 @@ pub struct Args {
     )]
     pub include_disabled_protocols: bool,
 
+    /// Use file locking to serialize Ollama API access (enables concurrent test execution)
+    #[clap(
+        long = "ollama-lock",
+        help = "Enable file-based locking for Ollama API access. This prevents concurrent requests from overloading the LLM, allowing multiple NetGet instances to run safely in parallel. The lock file is created at ./ollama.lock in the current directory."
+    )]
+    pub ollama_lock: bool,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,

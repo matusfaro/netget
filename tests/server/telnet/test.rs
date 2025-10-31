@@ -16,12 +16,8 @@ async fn test_telnet_echo() -> E2EResult<()> {
     println!("\n=== E2E Test: Telnet Echo Server ===");
 
     // PROMPT: Tell the LLM to act as a Telnet echo server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via telnet. Echo back any text you receive, line by line. \
-        Add '> ' prompt after each echo.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via telnet. Echo back any text you receive, line by line. \
+        Add '> ' prompt after each echo.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -78,12 +74,8 @@ async fn test_telnet_prompt() -> E2EResult<()> {
     println!("\n=== E2E Test: Telnet Interactive Prompt ===");
 
     // PROMPT: Tell the LLM to provide an interactive prompt
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via telnet. Send a welcome message 'Welcome to NetGet Telnet' \
-        when clients connect, then show a '$ ' prompt. Echo commands back with 'You said: ' prefix.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via telnet. Send a welcome message 'Welcome to NetGet Telnet' \
+        when clients connect, then show a '$ ' prompt. Echo commands back with 'You said: ' prefix.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -135,12 +127,8 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
     println!("\n=== E2E Test: Telnet Multiple Lines ===");
 
     // PROMPT: Tell the LLM to handle multiple lines
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via telnet. For each line received, respond with 'Line N: <content>' \
-        where N is the line number starting from 1.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via telnet. For each line received, respond with 'Line N: <content>' \
+        where N is the line number starting from 1.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -186,12 +174,8 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
     println!("\n=== E2E Test: Telnet Concurrent Connections ===");
 
     // PROMPT: Tell the LLM to handle multiple clients
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via telnet. Handle multiple concurrent clients. \
-        Echo each message back with the client's message.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via telnet. Handle multiple concurrent clients. \
+        Echo each message back with the client's message.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

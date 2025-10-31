@@ -16,13 +16,9 @@ async fn test_redis_ping() -> E2EResult<()> {
     println!("\n=== E2E Test: Redis PING ===");
 
     // PROMPT: Tell the LLM to act as a Redis server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack redis. For any command (PING, CLIENT, etc), use redis_simple_string \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack redis. For any command (PING, CLIENT, etc), use redis_simple_string \
         action with value='PONG' for PING, value='OK' for all others. For GET commands, use redis_bulk_string with value='hello'. \
-        For SET commands, use redis_simple_string value='OK'.",
-        port
-    );
+        For SET commands, use redis_simple_string value='OK'.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -81,13 +77,9 @@ async fn test_redis_ping() -> E2EResult<()> {
 async fn test_redis_get_set() -> E2EResult<()> {
     println!("\n=== E2E Test: Redis GET/SET ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
         For SET commands, use redis_simple_string value='OK'. \
-        For GET key commands, use redis_bulk_string value='test_value'.",
-        port
-    );
+        For GET key commands, use redis_bulk_string value='test_value'.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -119,13 +111,9 @@ async fn test_redis_get_set() -> E2EResult<()> {
 async fn test_redis_integer_response() -> E2EResult<()> {
     println!("\n=== E2E Test: Redis Integer Response ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
         For INCR commands, use redis_integer value=42. \
-        For DEL commands, use redis_integer value=1.",
-        port
-    );
+        For DEL commands, use redis_integer value=1.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -151,13 +139,9 @@ async fn test_redis_integer_response() -> E2EResult<()> {
 async fn test_redis_array_response() -> E2EResult<()> {
     println!("\n=== E2E Test: Redis Array Response ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
         For MGET commands, use redis_array values=['value1','value2','value3']. \
-        For KEYS commands, use redis_array values=['key1','key2','key3'].",
-        port
-    );
+        For KEYS commands, use redis_array values=['key1','key2','key3'].";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -186,13 +170,9 @@ async fn test_redis_array_response() -> E2EResult<()> {
 async fn test_redis_null_response() -> E2EResult<()> {
     println!("\n=== E2E Test: Redis Null Response ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
         For GET nonexistent commands, use redis_null. \
-        For other GET commands, use redis_bulk_string value='exists'.",
-        port
-    );
+        For other GET commands, use redis_bulk_string value='exists'.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
@@ -218,13 +198,9 @@ async fn test_redis_null_response() -> E2EResult<()> {
 async fn test_redis_error_response() -> E2EResult<()> {
     println!("\n=== E2E Test: Redis Error Response ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "open_server port {} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack redis. For PING/CLIENT commands, use redis_simple_string value='OK'. \
         For commands containing 'INVALID', use redis_error message='ERR unknown command'. \
-        For other commands, use redis_simple_string value='OK'.",
-        port
-    );
+        For other commands, use redis_simple_string value='OK'.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);

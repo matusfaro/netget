@@ -491,54 +491,36 @@ fn get_protocol_for_stack(stack: BaseStack) -> Option<Box<dyn ProtocolActions>> 
             use crate::server::NfsProtocol;
             Some(Box::new(NfsProtocol::new()))
         }
+        #[cfg(feature = "grpc")]
+        BaseStack::Grpc => {
+            use crate::server::GrpcProtocol;
+            Some(Box::new(GrpcProtocol::new()))
+        }
+        #[cfg(feature = "xmlrpc")]
+        BaseStack::XmlRpc => {
+            use crate::server::XmlRpcProtocol;
+            Some(Box::new(XmlRpcProtocol::new()))
+        }
+        #[cfg(feature = "jsonrpc")]
+        BaseStack::JsonRpc => {
+            use crate::server::JsonRpcProtocol;
+            Some(Box::new(JsonRpcProtocol::new()))
+        }
         _ => None,
     }
 }
 
 /// Get all BaseStack enum values that should be available to the LLM
 /// Filters out protocols with ProtocolState::Disabled unless include_disabled is true
+/// Dynamically determined from the ProtocolRegistry based on compiled features
 fn all_base_stacks(include_disabled: bool) -> Vec<BaseStack> {
-    let all_protocols = vec![
-        BaseStack::Tcp,
-        BaseStack::Http,
-        BaseStack::DataLink,
-        BaseStack::Udp,
-        BaseStack::Dns,
-        BaseStack::Dhcp,
-        BaseStack::Ntp,
-        BaseStack::Snmp,
-        BaseStack::Ssh,
-        BaseStack::Irc,
-        BaseStack::Telnet,
-        BaseStack::Smtp,
-        BaseStack::Imap,
-        BaseStack::Mdns,
-        BaseStack::Mysql,
-        BaseStack::Ipp,
-        BaseStack::Postgresql,
-        BaseStack::Redis,
-        BaseStack::Proxy,
-        BaseStack::WebDav,
-        BaseStack::Nfs,
-        BaseStack::Socks5,
-        BaseStack::Smb,
-        BaseStack::Cassandra,
-        BaseStack::Stun,
-        BaseStack::Turn,
-        BaseStack::Elasticsearch,
-        BaseStack::Wireguard,
-        BaseStack::Openvpn,
-        BaseStack::Ipsec,
-        BaseStack::Dynamo,
-        BaseStack::OpenAi,
-        BaseStack::Ldap,
-        BaseStack::Bgp,
-    ];
-
-    // Filter out disabled protocols unless include_disabled flag is set
     let registry = crate::protocol::registry::registry();
-    all_protocols
+
+    // Get all registered protocols from the registry (only includes compiled features)
+    registry
+        .all_protocols()
         .into_iter()
+        .map(|(stack, _protocol)| stack)
         .filter(|stack| {
             if include_disabled {
                 // Include all protocols when flag is set

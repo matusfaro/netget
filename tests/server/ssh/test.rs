@@ -17,11 +17,7 @@ async fn test_ssh_banner() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Banner ===");
 
     // PROMPT: Tell the LLM to act as an SSH server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ssh. Send SSH protocol version banner 'SSH-2.0-NetGet_1.0' when clients connect",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Send SSH protocol version banner 'SSH-2.0-NetGet_1.0' when clients connect";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -84,12 +80,8 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Version Exchange ===");
 
     // PROMPT: Tell the LLM to handle SSH version exchange
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ssh. Implement SSH-2.0 protocol. \
-        Send banner 'SSH-2.0-NetGet_OpenSSH_8.0' and accept client version strings",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Implement SSH-2.0 protocol. \
+        Send banner 'SSH-2.0-NetGet_OpenSSH_8.0' and accept client version strings";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -148,12 +140,8 @@ async fn test_ssh_connection_attempt() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Connection Attempt ===");
 
     // PROMPT: Tell the LLM to accept SSH connections
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ssh. Accept SSH connections. \
-        Send banner SSH-2.0-NetGet. Handle version exchange and key exchange init",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Accept SSH connections. \
+        Send banner SSH-2.0-NetGet. Handle version exchange and key exchange init";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -209,12 +197,8 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Multiple Connections ===");
 
     // PROMPT: Tell the LLM to handle multiple SSH connections
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ssh. Handle multiple concurrent SSH connections. \
-        Send banner SSH-2.0-NetGet to each client",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Handle multiple concurrent SSH connections. \
+        Send banner SSH-2.0-NetGet to each client";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -266,12 +250,7 @@ async fn test_ssh_python_auth_script() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH with Python Auth Script ===");
 
     // PROMPT: Simple prompt asking for SSH auth via script
-    let port = helpers::get_available_port().await?;
-
-    let prompt = format!(
-        "listen on port {} via ssh. Allow user 'alice' and deny all other users. Handle authentication via script.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Allow user 'alice' and deny all other users. Handle authentication via script.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -396,13 +375,8 @@ async fn test_ssh_script_update() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Script Update on Running Server ===");
 
     // PROMPT: Start SSH server with script, then request to update it
-    let port = helpers::get_available_port().await?;
-
-    let prompt = format!(
-        "listen on port {} via ssh. Initially deny all authentication via script. \
-        Then immediately update the script to allow user 'charlie' and deny others.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Initially deny all authentication via script. \
+        Then immediately update the script to allow user 'charlie' and deny others.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -489,13 +463,8 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Script Fallback to LLM ===");
 
     // PROMPT: Simple prompt asking for script with fallback behavior
-    let port = helpers::get_available_port().await?;
-
-    let prompt = format!(
-        "listen on port {} via ssh. Use a script that allows user 'dave', and falls back to LLM for other users. \
-        The LLM should allow user 'eve' but deny other unknown users.",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Use a script that allows user 'dave', and falls back to LLM for other users. \
+        The LLM should allow user 'eve' but deny other unknown users.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -623,16 +592,12 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
     println!("\n=== E2E Test: SFTP Basic Operations ===");
 
     // PROMPT: Tell the LLM to act as an SFTP server with a virtual filesystem
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ssh. Enable SFTP subsystem. \
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Enable SFTP subsystem. \
         When SFTP clients connect and request directory listing for '/', \
         return a virtual directory with 3 files: 'readme.txt' (100 bytes), \
         'data.json' (256 bytes), and 'logs' (directory). \
         When clients read 'readme.txt', return the content 'Hello from NetGet SFTP!'. \
-        Accept password authentication for user 'test' with any password.",
-        port
-    );
+        Accept password authentication for user 'test' with any password.";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

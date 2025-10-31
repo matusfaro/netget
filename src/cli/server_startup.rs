@@ -153,7 +153,21 @@ pub async fn start_server_by_id(
             }
         }
         BaseStack::DataLink => {
-            let _ = status_tx.send("DataLink server not yet implemented in TUI".to_string());
+            #[cfg(feature = "datalink")]
+            {
+                let _ = status_tx.send("DataLink server not yet implemented in TUI".to_string());
+            }
+            #[cfg(not(feature = "datalink"))]
+            {
+                let _ = status_tx
+                    .send("DataLink support not compiled in. Enable 'datalink' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("DataLink not compiled".to_string()),
+                    )
+                    .await;
+            }
         }
         BaseStack::Udp => {
             #[cfg(feature = "udp")]
@@ -257,6 +271,112 @@ pub async fn start_server_by_id(
                     .update_server_status(
                         server_id,
                         ServerStatus::Error("DNS not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::Dot => {
+            #[cfg(feature = "dot")]
+            {
+                use crate::server::dot::DotServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn DoT server
+                match DotServer::spawn(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    server_id,
+                    status_tx.clone(),
+                )
+                .await
+                {
+                    Ok(_handle) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] DoT server #{} listening on {}",
+                            server_id.as_u32(),
+                            listen_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start DoT server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "dot"))]
+            {
+                let _ = status_tx
+                    .send("DoT support not compiled in. Enable 'dot' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("DoT not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::Doh => {
+            #[cfg(feature = "doh")]
+            {
+                use crate::server::doh::DohServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn DoH server
+                match DohServer::spawn(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    server_id,
+                    status_tx.clone(),
+                )
+                .await
+                {
+                    Ok(_handle) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] DoH server #{} listening on {}",
+                            server_id.as_u32(),
+                            listen_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start DoH server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "doh"))]
+            {
+                let _ = status_tx
+                    .send("DoH support not compiled in. Enable 'doh' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("DoH not compiled".to_string()),
                     )
                     .await;
             }
@@ -1663,6 +1783,60 @@ pub async fn start_server_by_id(
                     .await;
             }
         }
+        BaseStack::JsonRpc => {
+            #[cfg(feature = "jsonrpc")]
+            {
+                use crate::server::jsonrpc::JsonRpcServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn JSON-RPC server
+                match JsonRpcServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    false, // send_first
+                    server_id,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] JSON-RPC server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start JSON-RPC server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "jsonrpc"))]
+            {
+                let _ = status_tx
+                    .send("JSON-RPC support not compiled in. Enable 'jsonrpc' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("JSON-RPC not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
         BaseStack::Socks5 => {
             #[cfg(feature = "socks5")]
             {
@@ -1881,6 +2055,402 @@ pub async fn start_server_by_id(
                     .update_server_status(
                         server_id,
                         ServerStatus::Error("IPSec not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::Mcp => {
+            #[cfg(feature = "mcp")]
+            {
+                use crate::server::mcp::McpServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn MCP server
+                match McpServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] MCP server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start MCP server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "mcp"))]
+            {
+                let _ = status_tx
+                    .send("MCP support not compiled in. Enable 'mcp' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("MCP feature not enabled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::Grpc => {
+            #[cfg(feature = "grpc")]
+            {
+                use crate::server::grpc::GrpcServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Get startup params from server (must contain proto_schema)
+                let startup_params = server.startup_params.clone();
+
+                // Spawn gRPC server with LLM-provided schema
+                match GrpcServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                    startup_params,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] gRPC server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start gRPC server: {}",
+                            e
+                        ));
+                    }
+                }
+            }
+            #[cfg(not(feature = "grpc"))]
+            {
+                let _ = status_tx
+                    .send("gRPC support not compiled in. Enable 'grpc' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("gRPC not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::XmlRpc => {
+            #[cfg(feature = "xmlrpc")]
+            {
+                use crate::server::xmlrpc::XmlRpcServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn XML-RPC server
+                match XmlRpcServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] XML-RPC server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start XML-RPC server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "xmlrpc"))]
+            {
+                let _ = status_tx
+                    .send("XML-RPC support not compiled in. Enable 'xmlrpc' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("XML-RPC not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::TorDirectory => {
+            #[cfg(feature = "tor-directory")]
+            {
+                use crate::server::tor_directory::TorDirectoryServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn Tor Directory server
+                match TorDirectoryServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] Tor Directory server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start Tor Directory server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "tor-directory"))]
+            {
+                let _ = status_tx
+                    .send("Tor Directory support not compiled in. Enable 'tor-directory' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("Tor Directory not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::TorRelay => {
+            #[cfg(feature = "tor-relay")]
+            {
+                use crate::server::tor_relay::TorRelayServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn Tor Relay server (OR protocol with TLS)
+                match TorRelayServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] Tor Relay (OR protocol) server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start Tor Relay server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "tor-relay"))]
+            {
+                let _ = status_tx
+                    .send("Tor Relay support not compiled in. Enable 'tor-relay' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("Tor Relay not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::Vnc => {
+            #[cfg(feature = "vnc")]
+            {
+                use crate::server::vnc::VncServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Spawn VNC server
+                match VncServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] Starting server #{} (ETH>IP>TCP>VNC) on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start VNC server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "vnc"))]
+            {
+                let _ = status_tx
+                    .send("VNC support not compiled in. Enable 'vnc' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("VNC not compiled".to_string()),
+                    )
+                    .await;
+            }
+        }
+        BaseStack::OpenApi => {
+            #[cfg(feature = "openapi")]
+            {
+                use crate::server::openapi::OpenApiServer;
+                let state_arc = Arc::new(state.clone());
+
+                // Get startup params from server (may contain spec or spec_file)
+                let startup_params = server.startup_params.clone();
+
+                // Spawn OpenAPI server
+                match OpenApiServer::spawn_with_llm_actions(
+                    listen_addr,
+                    llm_client.clone(),
+                    state_arc,
+                    status_tx.clone(),
+                    server_id,
+                    startup_params,
+                )
+                .await
+                {
+                    Ok(actual_addr) => {
+                        state
+                            .update_server_status(server_id, ServerStatus::Running)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[SERVER] OpenAPI server #{} listening on {}",
+                            server_id.as_u32(),
+                            actual_addr
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    }
+                    Err(e) => {
+                        state
+                            .update_server_status(
+                                server_id,
+                                ServerStatus::Error(e.to_string()),
+                            )
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start OpenAPI server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(not(feature = "openapi"))]
+            {
+                let _ = status_tx
+                    .send("OpenAPI support not compiled in. Enable 'openapi' feature.".to_string());
+                state
+                    .update_server_status(
+                        server_id,
+                        ServerStatus::Error("OpenAPI not compiled".to_string()),
                     )
                     .await;
             }

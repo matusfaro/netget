@@ -246,6 +246,12 @@ impl OllamaClient {
         }
     }
 
+    /// Create a new Ollama client with options (lock_enabled is ignored, maintained for compatibility)
+    pub fn new_with_options(base_url: impl Into<String>, _lock_enabled: bool) -> Self {
+        // Note: lock_enabled is ignored here as locking is handled at a different layer
+        Self::new(base_url)
+    }
+
     /// Set the status channel for sending trace logs to TUI
     pub fn with_status_tx(mut self, status_tx: mpsc::UnboundedSender<String>) -> Self {
         self.status_tx = Some(status_tx);
@@ -552,7 +558,8 @@ impl OllamaClient {
             conversation_history.push_str("\nNow that you have the tool results, use the information to COMPLETE the original request.\n");
             conversation_history.push_str("If the user asked you to extract information, use show_message to report what you found.\n");
             conversation_history.push_str("If the user asked you to perform a task, execute the appropriate actions to finish it.\n");
-            conversation_history.push_str("RESPONSE FORMAT: Respond with JSON: {{\"actions\": [...]}}\n");
+            conversation_history.push_str("\nIMPORTANT: Return ONLY valid JSON with no extra text or characters before or after.\n");
+            conversation_history.push_str("RESPONSE FORMAT: {{\"actions\": [...]}}\n");
 
             let conv_size = conversation_history.len();
             trace!(

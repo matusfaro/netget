@@ -20,11 +20,7 @@ async fn test_ftp_greeting() -> E2EResult<()> {
     println!("\n=== E2E Test: FTP Greeting ===");
 
     // PROMPT: Tell the LLM to respond to CONNECT with FTP greeting
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ftp. When a client sends 'CONNECT', respond with '220 NetGet FTP Server\\r\\n'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ftp. When a client sends 'CONNECT', respond with '220 NetGet FTP Server\\r\\n'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -70,11 +66,7 @@ async fn test_ftp_user_command() -> E2EResult<()> {
     println!("\n=== E2E Test: FTP USER Command ===");
 
     // PROMPT: Tell the LLM to respond to USER command
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ftp. When you receive 'USER' command, respond with '331 Password required\\r\\n'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ftp. When you receive 'USER' command, respond with '331 Password required\\r\\n'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -120,11 +112,7 @@ async fn test_ftp_pwd_command() -> E2EResult<()> {
     println!("\n=== E2E Test: FTP PWD Command ===");
 
     // PROMPT: Tell the LLM to respond to PWD command
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ftp. When you receive 'PWD' command, respond with '257 \"/home/user\"\\r\\n'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ftp. When you receive 'PWD' command, respond with '257 \"/home/user\"\\r\\n'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -170,8 +158,7 @@ async fn test_simple_echo() -> E2EResult<()> {
     println!("\n=== E2E Test: Simple Echo Server ===");
 
     // PROMPT: Tell the LLM to echo back with ACK prefix
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via tcp. When you receive any data, reply with 'ACK: ' followed by the received data", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via tcp. When you receive any data, reply with 'ACK: ' followed by the received data";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -225,11 +212,7 @@ async fn test_custom_response() -> E2EResult<()> {
     println!("\n=== E2E Test: Custom Response Server ===");
 
     // PROMPT: Tell the LLM to respond to PING with PONG
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via tcp. When you receive 'PING', respond with 'PONG\\r\\n'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via tcp. When you receive 'PING', respond with 'PONG\\r\\n'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

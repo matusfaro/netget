@@ -672,8 +672,8 @@ fn generate_self_signed_cert() -> Result<Vec<u8>> {
     let key_pem = key_pair.serialize_pem();
 
     // Convert to PKCS12
-    let cert_der: Vec<u8> = cert.der().to_vec();
-    let key_der = key_pair.serialize_der();
+    let _cert_der: Vec<u8> = cert.der().to_vec();
+    let _key_der = key_pair.serialize_der();
 
     // Create PKCS12 bundle (requires openssl or similar)
     // For simplicity, we'll use native-tls's Identity::from_pkcs12

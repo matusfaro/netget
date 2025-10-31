@@ -185,7 +185,7 @@ async fn test_user_input_prompt_without_web_search() {
     state.set_scripting_env(scripting_env).await;
 
     // Disable web search
-    state.set_web_search_enabled(false).await;
+    state.set_web_search_mode(netget::state::app_state::WebSearchMode::Off).await;
 
     let user_input = "start a DNS server on port 53";
 
@@ -265,7 +265,7 @@ async fn test_network_event_prompt_for_proxy() {
 fn test_base_stack_documentation_includes_all_stacks() {
     use netget::llm::actions::generate_base_stack_documentation;
 
-    let docs = generate_base_stack_documentation();
+    let docs = generate_base_stack_documentation(false);
 
     // Should include all base stacks with their full names
     assert!(docs.contains("### ETH>IP>TCP"));
@@ -287,7 +287,7 @@ fn test_base_stack_documentation_includes_all_stacks() {
 fn test_base_stack_documentation_snapshot() {
     use netget::llm::actions::generate_base_stack_documentation;
 
-    let docs = generate_base_stack_documentation();
+    let docs = generate_base_stack_documentation(false);
 
     // Assert snapshot
     snapshot_util::assert_snapshot("base_stack_documentation", SNAPSHOT_DIR, &docs);

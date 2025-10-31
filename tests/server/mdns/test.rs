@@ -15,13 +15,9 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
     println!("\n=== E2E Test: mDNS Service Advertisement ===");
 
     // PROMPT: Tell the LLM to advertise a service via mDNS
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via mdns. Advertise service: \
-        type '_http._tcp.local.', name 'NetGet Test Server', port {}, \
-        with property 'version=1.0'",
-        port, port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via mdns. Advertise service: \
+        type '_http._tcp.local.', name 'NetGet Test Server', port {AVAILABLE_PORT}, \
+        with property 'version=1.0'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -112,14 +108,9 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
     println!("\n=== E2E Test: mDNS Multiple Services ===");
 
     // PROMPT: Tell the LLM to advertise multiple services
-    let port1 = helpers::get_available_port().await?;
-    let port2 = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via mdns. Register two services: \
-        1) type '_http._tcp.local.', name 'Web Service', port {} \
-        2) type '_ftp._tcp.local.', name 'FTP Service', port {}",
-        port1, port1, port2
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via mdns. Register two services: \
+        1) type '_http._tcp.local.', name 'Web Service', port {AVAILABLE_PORT} \
+        2) type '_ftp._tcp.local.', name 'FTP Service', port {AVAILABLE_PORT}";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -189,13 +180,9 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
     println!("\n=== E2E Test: mDNS Service with TXT Properties ===");
 
     // PROMPT: Tell the LLM to advertise a service with properties
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via mdns. Register service: \
-        type '_http._tcp.local.', name 'Property Test', port {}, \
-        with properties: version='2.0', path='/api', secure='true'",
-        port, port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via mdns. Register service: \
+        type '_http._tcp.local.', name 'Property Test', port {AVAILABLE_PORT}, \
+        with properties: version='2.0', path='/api', secure='true'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -259,12 +246,8 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
     println!("\n=== E2E Test: mDNS Custom Service Type ===");
 
     // PROMPT: Tell the LLM to advertise a custom service type
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via mdns. Register custom service: \
-        type '_netget._tcp.local.', name 'Custom NetGet Service', port {}",
-        port, port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via mdns. Register custom service: \
+        type '_netget._tcp.local.', name 'Custom NetGet Service', port {AVAILABLE_PORT}";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

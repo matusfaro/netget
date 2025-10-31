@@ -20,7 +20,7 @@ use crate::state::app_state::AppState;
 
 /// TURN allocation information
 #[derive(Clone, Debug)]
-struct TurnAllocation {
+pub struct TurnAllocation {
     client_addr: SocketAddr,
     relay_addr: SocketAddr,
     #[allow(dead_code)]

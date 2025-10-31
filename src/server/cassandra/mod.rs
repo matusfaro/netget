@@ -36,7 +36,7 @@ use tracing::{debug, error, info, trace, warn};
 pub struct CassandraServer {
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
+    _status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
 }
 
@@ -63,7 +63,7 @@ impl CassandraServer {
         Self {
             llm_client,
             app_state,
-            status_tx,
+            _status_tx: status_tx,
             server_id,
         }
     }
@@ -1329,7 +1329,7 @@ impl CassandraServer {
     }
 
     /// Send AUTHENTICATE response (request authentication)
-    async fn send_authenticate(
+    async fn _send_authenticate(
         &self,
         stream_id: i16,
         authenticator: &str,

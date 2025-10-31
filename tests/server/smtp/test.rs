@@ -16,12 +16,8 @@ async fn test_smtp_greeting() -> E2EResult<()> {
     println!("\n=== E2E Test: SMTP Greeting (220) ===");
 
     // PROMPT: Tell the LLM to send SMTP greeting
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via smtp. When a client connects, send SMTP greeting: \
-        '220 mail.example.com ESMTP Service Ready'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via smtp. When a client connects, send SMTP greeting: \
+        '220 mail.example.com ESMTP Service Ready'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -71,12 +67,8 @@ async fn test_smtp_ehlo() -> E2EResult<()> {
     println!("\n=== E2E Test: SMTP EHLO Command ===");
 
     // PROMPT: Tell the LLM to handle EHLO
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via smtp. Send greeting '220 mail.test ESMTP'. \
-        When client sends EHLO, respond with '250-mail.test' followed by '250 8BITMIME'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via smtp. Send greeting '220 mail.test ESMTP'. \
+        When client sends EHLO, respond with '250-mail.test' followed by '250 8BITMIME'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -138,17 +130,13 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
     println!("\n=== E2E Test: SMTP Mail Transaction ===");
 
     // PROMPT: Tell the LLM to handle a full SMTP transaction
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via smtp. Handle full SMTP mail transaction: \
+    let prompt = "listen on port {AVAILABLE_PORT} via smtp. Handle full SMTP mail transaction: \
         1) Send '220' greeting \
         2) Respond to EHLO with '250 OK' \
         3) Respond to MAIL FROM with '250 Sender OK' \
         4) Respond to RCPT TO with '250 Recipient OK' \
         5) Respond to DATA with '354 Start mail input' \
-        6) After mail data ending with '.', respond with '250 Message accepted'",
-        port
-    );
+        6) After mail data ending with '.', respond with '250 Message accepted'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -232,12 +220,8 @@ async fn test_smtp_quit() -> E2EResult<()> {
     println!("\n=== E2E Test: SMTP QUIT Command ===");
 
     // PROMPT: Tell the LLM to handle QUIT
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via smtp. Send greeting '220 mail.test'. \
-        When client sends QUIT, respond with '221 Bye' and close connection",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via smtp. Send greeting '220 mail.test'. \
+        When client sends QUIT, respond with '221 Bye' and close connection";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -289,12 +273,8 @@ async fn test_smtp_error_handling() -> E2EResult<()> {
     println!("\n=== E2E Test: SMTP Error Handling ===");
 
     // PROMPT: Tell the LLM to handle invalid commands
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via smtp. Send greeting '220 mail.test'. \
-        When you receive invalid commands, respond with '500 Command not recognized'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via smtp. Send greeting '220 mail.test'. \
+        When you receive invalid commands, respond with '500 Command not recognized'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

@@ -143,6 +143,16 @@ pub enum ProtocolConnectionInfo {
     Dns {
         recent_queries: Vec<(String, Instant)>, // query, time
     },
+    /// DNS-over-TLS connection (persistent TCP+TLS)
+    Dot {
+        peer_addr: SocketAddr,
+        recent_queries: Vec<(String, chrono::DateTime<chrono::Utc>)>, // query, time
+    },
+    /// DNS-over-HTTPS connection (HTTP/2 session)
+    Doh {
+        peer_addr: SocketAddr,
+        recent_queries: Vec<(String, chrono::DateTime<chrono::Utc>)>, // query, time
+    },
     /// DHCP connection (recent requests)
     Dhcp {
         recent_requests: Vec<(String, Instant)>, // client MAC, time
@@ -257,6 +267,10 @@ pub enum ProtocolConnectionInfo {
     OpenAi {
         recent_requests: Vec<String>, // Recent endpoints accessed
     },
+    /// JSON-RPC connection (recent method calls)
+    JsonRpc {
+        recent_methods: Vec<String>, // Recent RPC methods called
+    },
     /// WireGuard VPN connection
     Wireguard {
         public_key: String,                      // Peer's public key (base64)
@@ -294,6 +308,69 @@ pub enum ProtocolConnectionInfo {
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
     },
+    /// gRPC connection (HTTP/2)
+    Grpc {
+        service_name: String,              // Service being called
+        method_name: String,               // Method being called
+        metadata: std::collections::HashMap<String, String>,  // gRPC metadata (headers)
+    },
+    /// XML-RPC connection (HTTP-based RPC)
+    XmlRpc {
+        recent_methods: Vec<(String, Instant)>,  // method_name, time
+    },
+    /// MCP (Model Context Protocol) connection
+    Mcp {
+        session_id: String,                              // Session ID
+        initialized: bool,                               // Whether session completed initialization
+        capabilities: serde_json::Value,                 // Server capabilities
+        subscriptions: std::collections::HashSet<String>, // Resource URIs subscribed to
+        tools: std::collections::HashMap<String, String>, // Tool name -> description
+        resources: std::collections::HashMap<String, String>, // Resource URI -> name
+        prompts: std::collections::HashMap<String, String>, // Prompt name -> description
+    },
+    /// Tor Directory connection (HTTP requests for consensus/descriptors)
+    TorDirectory {
+        recent_requests: Vec<(String, Instant)>, // path, time
+    },
+    /// Tor Relay connection (OR protocol with TLS and cells)
+    TorRelay {
+        circuits: Vec<String>,         // Active circuit IDs (hex format)
+        relay_type: Option<String>,    // Guard, Middle, or Exit (if configured)
+        last_cell: Option<Instant>,    // Last cell received time
+    },
+    /// VNC connection (Remote Frame Buffer protocol)
+    Vnc {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        authenticated: bool,
+        username: Option<String>,
+        framebuffer_width: u16,
+        framebuffer_height: u16,
+        pixel_format: VncPixelFormat,
+    },
+    /// OpenAPI connection (HTTP requests validated against OpenAPI spec)
+    OpenApi {
+        operation_id: Option<String>,  // Matched OpenAPI operation ID
+        method: Option<String>,        // HTTP method (GET, POST, etc.)
+        path: Option<String>,          // Request path
+        validated: bool,               // Whether request was successfully validated
+    },
+}
+
+/// VNC pixel format
+#[derive(Debug, Clone)]
+pub struct VncPixelFormat {
+    pub bits_per_pixel: u8,
+    pub depth: u8,
+    pub big_endian: bool,
+    pub true_color: bool,
+    pub red_max: u16,
+    pub green_max: u16,
+    pub blue_max: u16,
+    pub red_shift: u8,
+    pub green_shift: u8,
+    pub blue_shift: u8,
 }
 
 /// Connection status

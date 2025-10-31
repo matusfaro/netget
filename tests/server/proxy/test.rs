@@ -91,8 +91,10 @@ async fn start_test_https_server() -> E2EResult<(u16, tokio::task::JoinHandle<()
     let key_pem = key_pair.serialize_pem();
 
     // Write cert and key to temp files for rustls config
-    let cert_path = std::env::temp_dir().join("test_https_cert.pem");
-    let key_path = std::env::temp_dir().join("test_https_key.pem");
+    // Use PID to avoid conflicts when running tests concurrently
+    let pid = std::process::id();
+    let cert_path = std::env::temp_dir().join(format!("test_https_cert_{}.pem", pid));
+    let key_path = std::env::temp_dir().join(format!("test_https_key_{}.pem", pid));
 
     std::fs::write(&cert_path, cert_pem.as_bytes())?;
     std::fs::write(&key_path, key_pem.as_bytes())?;
@@ -134,11 +136,7 @@ async fn test_proxy_http_passthrough() -> E2EResult<()> {
     println!("Target HTTP server started on port {}", target_port);
 
     // Start proxy server with pass-through configuration
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack. Pass all HTTP requests through unchanged to their destination",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Pass all HTTP requests through unchanged to their destination";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {}", server.port);
@@ -184,11 +182,7 @@ async fn test_proxy_http_block() -> E2EResult<()> {
     println!("Target HTTP server started on port {}", target_port);
 
     // Start proxy server with blocking configuration
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack. Block all HTTP requests with status 403 and body 'Access Denied by Proxy'",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Block all HTTP requests with status 403 and body 'Access Denied by Proxy'";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {}", server.port);
@@ -206,7 +200,9 @@ async fn test_proxy_http_block() -> E2EResult<()> {
 
     assert_eq!(response.status(), 403);
     let body = response.text().await?;
-    assert!(body.contains("Access Denied"));
+    println!("DEBUG: Response body = {:?}", body);
+    println!("DEBUG: Body length = {}", body.len());
+    assert!(body.contains("Access Denied"), "Expected 'Access Denied' in body, got: {:?}", body);
 
     println!("✓ Request successfully blocked by proxy");
     server.stop().await?;
@@ -223,11 +219,7 @@ async fn test_proxy_modify_request_headers() -> E2EResult<()> {
     println!("Target HTTP server started on port {}", target_port);
 
     // Start proxy server with header modification
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack. For all HTTP requests, add header 'X-Proxy-Modified: NetGet' and remove 'User-Agent' header before forwarding",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. For all HTTP requests, add header 'X-Proxy-Modified: NetGet' and remove 'User-Agent' header before forwarding";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {}", server.port);
@@ -265,11 +257,7 @@ async fn test_proxy_modify_request_body() -> E2EResult<()> {
     println!("Target HTTP server started on port {}", target_port);
 
     // Start proxy server in simple pass-through mode for POST requests
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        r#"listen on port {} using proxy stack. Pass all HTTP requests through unchanged to their destination."#,
-        proxy_port
-    );
+    let prompt = r#"listen on port {AVAILABLE_PORT} using proxy stack. Pass all HTTP requests through unchanged to their destination."#;
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {}", server.port);
@@ -307,11 +295,7 @@ async fn test_proxy_filter_by_path() -> E2EResult<()> {
     println!("Target HTTP server started on port {}", target_port);
 
     // Start proxy server with path-based filtering
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack. Block only requests to /json with status 403. Pass all other requests through unchanged",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Block only requests to /json with status 403. Pass all other requests through unchanged";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {}", server.port);
@@ -349,11 +333,7 @@ async fn test_proxy_https_passthrough() -> E2EResult<()> {
     println!("Target HTTPS server started on port {}", target_port);
 
     // Start proxy server in pass-through mode (no certificate)
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack with no certificate (pass-through mode). Allow all HTTPS connections",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate (pass-through mode). Allow all HTTPS connections";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {} (pass-through mode)", server.port);
@@ -389,11 +369,7 @@ async fn test_proxy_https_block_by_sni() -> E2EResult<()> {
     println!("Target HTTPS server started on port {}", target_port);
 
     // Start proxy server with SNI-based blocking
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack with no certificate. Block HTTPS connections to 127.0.0.1 with reason 'Blocked by policy'",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate. Block HTTPS connections to 127.0.0.1 with reason 'Blocked by policy'";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {} (SNI blocking mode)", server.port);
@@ -441,11 +417,7 @@ async fn test_proxy_url_rewrite() -> E2EResult<()> {
     println!("Target HTTP server started on port {}", target_port);
 
     // Start proxy server with URL rewriting
-    let proxy_port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} using proxy stack. Rewrite all requests to /api/* to just / before forwarding",
-        proxy_port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Rewrite all requests to /api/* to just / before forwarding";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Proxy server started on port {}", server.port);

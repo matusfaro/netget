@@ -17,11 +17,7 @@ async fn test_ntp_basic_query() -> E2EResult<()> {
     println!("\n=== E2E Test: NTP Basic Query ===");
 
     // PROMPT: Tell the LLM to act as an NTP server
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ntp. Respond to NTP time requests with the current system time. Use stratum 2",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ntp. Respond to NTP time requests with the current system time. Use stratum 2";
 
     // Start the server with debug logging
     let server = helpers::start_netget_server(
@@ -82,11 +78,7 @@ async fn test_ntp_time_sync() -> E2EResult<()> {
     println!("\n=== E2E Test: NTP Time Synchronization ===");
 
     // PROMPT: Tell the LLM to provide accurate time
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ntp. Act as a stratum 1 NTP server. Respond with accurate current time in NTP format",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ntp. Act as a stratum 1 NTP server. Respond with accurate current time in NTP format";
 
     // Start the server
     let server = helpers::start_netget_server(
@@ -139,11 +131,7 @@ async fn test_ntp_stratum_levels() -> E2EResult<()> {
     println!("\n=== E2E Test: NTP Stratum Levels ===");
 
     // PROMPT: Tell the LLM to use a specific stratum level
-    let port = helpers::get_available_port().await?;
-    let prompt = format!(
-        "listen on port {} via ntp. Act as a stratum 3 NTP server. Include reference identifier 'LOCL'",
-        port
-    );
+    let prompt = "listen on port {AVAILABLE_PORT} via ntp. Act as a stratum 3 NTP server. Include reference identifier 'LOCL'";
 
     // Start the server
     let server = helpers::start_netget_server(
