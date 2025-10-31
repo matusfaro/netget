@@ -125,7 +125,7 @@ impl EventHandler {
                 ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
                 Ok(false)
             }
-            UserCommand::SetWebSearch { enabled: _ } => {
+            UserCommand::SetWebSearch { mode: _ } => {
                 // This command is only supported in rolling TUI mode
                 ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
                 Ok(false)
@@ -166,6 +166,10 @@ impl EventHandler {
         let input_clone = input.clone();
         let actions_clone = protocol_async_actions.clone();
 
+        // Get web search mode and approval channel
+        let web_search_mode = self.state.get_web_search_mode().await;
+        let approval_tx = self.state.get_web_approval_channel().await;
+
         let actions = llm_with_status
             .generate_with_tools(
                 &model,
@@ -183,6 +187,8 @@ impl EventHandler {
                     }
                 },
                 5, // max 5 iterations
+                approval_tx,
+                web_search_mode,
             )
             .await;
 

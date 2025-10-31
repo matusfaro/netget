@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Instant};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::events::{EventHandler, UserCommand};
 use crate::llm::OllamaClient;
@@ -61,8 +61,8 @@ pub async fn run_rolling_tui(
     app.connection_info.model = effective_model;
 
     // Load web search setting from settings file
-    let web_search_enabled = settings.lock().await.web_search_enabled;
-    state.set_web_search_enabled(web_search_enabled).await;
+    let web_search_mode = settings.lock().await.get_web_search_mode();
+    state.set_web_search_mode(web_search_mode).await;
 
     // Setup terminal (raw mode only, no alternate screen)
     terminal::enable_raw_mode()?;
@@ -77,6 +77,10 @@ pub async fn run_rolling_tui(
     let mut footer = StickyFooter::new(width, height)?;
     let scroll_height = footer.scroll_region_height();
     let footer_height = height.saturating_sub(scroll_height);
+
+    // Create web approval channel for ASK mode
+    let (web_approval_tx, mut web_approval_rx) = tokio::sync::mpsc::unbounded_channel();
+    state.set_web_approval_channel(web_approval_tx).await;
 
     // BEFORE setting scrolling region, push any existing terminal content up
     // by printing newlines. This makes room for the footer without overwriting content.
@@ -100,12 +104,12 @@ pub async fn run_rolling_tui(
 
     let scripting_mode = state.get_selected_scripting_mode().await;
     let scripting_status = format_scripting_mode(scripting_mode);
-    let web_search_enabled = state.get_web_search_enabled().await;
+    let web_search_mode = state.get_web_search_mode().await;
 
     footer.set_connection_info(ConnectionInfo {
         model: app.connection_info.model.clone(),
         scripting_env: scripting_status,
-        web_search_enabled,
+        web_search_mode,
     });
     footer.set_packet_stats(app.packet_stats.clone());
     footer.set_log_level(app.log_level);
@@ -206,6 +210,21 @@ pub async fn run_rolling_tui(
                         break;
                     }
                 }
+            }
+
+            // Web search approval requests
+            Some(request) = web_approval_rx.recv() => {
+                debug!("Received web approval request for: {}", request.url);
+
+                // Store approval request in footer
+                footer.pending_approval = Some(crate::cli::sticky_footer::PendingApproval {
+                    url: request.url,
+                    response_tx: request.response_tx,
+                });
+
+                // Re-render footer to show approval prompt
+                footer.render(&mut stdout())?;
+                ui_needs_update = false;
             }
 
             // Periodic tick for UI updates
@@ -459,6 +478,50 @@ async fn handle_key_event(
     footer: &mut StickyFooter,
     settings: Arc<Mutex<Settings>>,
 ) -> Result<bool> {
+    // Handle web approval prompt first (if active)
+    if let Some(approval) = footer.pending_approval.take() {
+        use crate::state::app_state::{WebApprovalResponse, WebSearchMode};
+
+        match key_code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                debug!("User approved web search");
+                let _ = approval.response_tx.send(WebApprovalResponse::Allow);
+                footer.render(&mut stdout())?;
+                return Ok(false);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                debug!("User denied web search");
+                let _ = approval.response_tx.send(WebApprovalResponse::Deny);
+                footer.render(&mut stdout())?;
+                return Ok(false);
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                debug!("User chose always allow - switching to ON mode");
+
+                // Switch mode to ON
+                state.set_web_search_mode(WebSearchMode::On).await;
+
+                // Save to settings
+                if let Err(e) = settings.lock().await.set_web_search_mode(WebSearchMode::On) {
+                    error!("Failed to save web search mode: {}", e);
+                }
+
+                // Send response
+                let _ = approval.response_tx.send(WebApprovalResponse::AlwaysAllow);
+
+                // Update UI
+                update_ui_from_state(app, state, footer).await;
+                footer.render(&mut stdout())?;
+                return Ok(false);
+            }
+            _ => {
+                // Any other key - restore the approval and ignore
+                footer.pending_approval = Some(approval);
+                return Ok(false);
+            }
+        }
+    }
+
     // Handle special keys first
     match key_code {
         // Ctrl+C to quit
@@ -512,18 +575,18 @@ async fn handle_key_event(
             return Ok(false);
         }
 
-        // Ctrl+W to toggle web search
+        // Ctrl+W to cycle web search mode (ON -> ASK -> OFF -> ON)
         KeyCode::Char('w') | KeyCode::Char('W') if modifiers.contains(KeyModifiers::CONTROL) => {
-            let new_state = state.toggle_web_search().await;
-            let message = if new_state {
-                "LLM may perform web searches to assist with requests"
-            } else {
-                "LLM will not be able to perform web searches"
+            let new_mode = state.cycle_web_search_mode().await;
+            let message = match new_mode {
+                crate::state::app_state::WebSearchMode::On => "Web search: ON - LLM may perform web searches",
+                crate::state::app_state::WebSearchMode::Ask => "Web search: ASK - LLM will request approval before searching",
+                crate::state::app_state::WebSearchMode::Off => "Web search: OFF - LLM cannot perform web searches",
             };
             print_output_line(message, footer)?;
 
-            // Save the new web search state to settings
-            if let Err(e) = settings.lock().await.set_web_search_enabled(new_state) {
+            // Save the new web search mode to settings
+            if let Err(e) = settings.lock().await.set_web_search_mode(new_mode) {
                 error!("Failed to save web search setting: {}", e);
             }
 
@@ -815,17 +878,17 @@ async fn handle_key_event(
                             print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go", env), footer)?;
                         }
                     }
-                    UserCommand::SetWebSearch { enabled } => {
-                        state.set_web_search_enabled(enabled).await;
-                        let message = if enabled {
-                            "Web search enabled"
-                        } else {
-                            "Web search disabled"
+                    UserCommand::SetWebSearch { mode } => {
+                        state.set_web_search_mode(mode).await;
+                        let message = match mode {
+                            crate::state::app_state::WebSearchMode::On => "Web search: ON",
+                            crate::state::app_state::WebSearchMode::Ask => "Web search: ASK - will request approval",
+                            crate::state::app_state::WebSearchMode::Off => "Web search: OFF",
                         };
                         print_output_line(message, footer)?;
 
-                        // Save the new web search state to settings
-                        if let Err(e) = settings.lock().await.set_web_search_enabled(enabled) {
+                        // Save the new web search mode to settings
+                        if let Err(e) = settings.lock().await.set_web_search_mode(mode) {
                             error!("Failed to save web search setting: {}", e);
                         }
 
@@ -1085,12 +1148,12 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
 
     let scripting_mode = state.get_selected_scripting_mode().await;
     let scripting_status = format_scripting_mode(scripting_mode);
-    let web_search_enabled = state.get_web_search_enabled().await;
+    let web_search_mode = state.get_web_search_mode().await;
 
     footer.set_connection_info(ConnectionInfo {
         model: app.connection_info.model.clone(),
         scripting_env: scripting_status,
-        web_search_enabled,
+        web_search_mode,
     });
 
     // CRITICAL: Handle footer size changes (expansion/shrinking)
@@ -1220,11 +1283,16 @@ async fn handle_status_command(
             )?;
         }
         UserCommand::ShowWebSearch => {
-            let enabled = state.get_web_search_enabled().await;
-            let status = if enabled { "enabled" } else { "disabled" };
-            print_output_line(&format!("Web search is {}", status), footer)?;
+            let mode = state.get_web_search_mode().await;
+            let status = match mode {
+                crate::state::app_state::WebSearchMode::On => "ON (always allowed)",
+                crate::state::app_state::WebSearchMode::Ask => "ASK (requires approval)",
+                crate::state::app_state::WebSearchMode::Off => "OFF (disabled)",
+            };
+            print_output_line(&format!("Web search mode: {}", status), footer)?;
             print_output_line("", footer)?;
-            print_output_line("To change, use: /web on or /web off", footer)?;
+            print_output_line("To change, use: /web on, /web ask, or /web off", footer)?;
+            print_output_line("Or press Ctrl+W to cycle through modes", footer)?;
         }
         _ => {}
     }

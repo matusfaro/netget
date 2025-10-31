@@ -4448,6 +4448,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "vt100",
  "webrtc-stun",

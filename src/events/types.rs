@@ -3,6 +3,8 @@
 use bytes::Bytes;
 use std::collections::HashMap;
 
+use crate::state::app_state::WebSearchMode;
+
 /// HTTP response to be sent back to the client
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
@@ -52,8 +54,8 @@ pub enum UserCommand {
     },
     /// Show current web search status (slash command: /web)
     ShowWebSearch,
-    /// Set web search on/off (slash command: /web on|off)
-    SetWebSearch { enabled: bool },
+    /// Set web search mode (slash command: /web on|off|ask)
+    SetWebSearch { mode: WebSearchMode },
     /// Generate test output lines (slash command: /test <count>)
     TestOutput {
         count: usize,
@@ -142,17 +144,16 @@ impl UserCommand {
                 // Show current web search status
                 return UserCommand::ShowWebSearch;
             }
-            // Parse on/off argument
-            let rest_lower = rest.to_lowercase();
-            if rest_lower == "on" || rest_lower == "enable" || rest_lower == "enabled" || rest_lower == "true" {
-                return UserCommand::SetWebSearch { enabled: true };
-            } else if rest_lower == "off" || rest_lower == "disable" || rest_lower == "disabled" || rest_lower == "false" {
-                return UserCommand::SetWebSearch { enabled: false };
+            // Parse on/off/ask argument using WebSearchMode's FromStr
+            match rest.parse::<WebSearchMode>() {
+                Ok(mode) => return UserCommand::SetWebSearch { mode },
+                Err(_) => {
+                    // Unknown argument - treat as unknown command
+                    return UserCommand::UnknownSlashCommand {
+                        command: trimmed.to_string(),
+                    };
+                }
             }
-            // Unknown argument - treat as unknown command
-            return UserCommand::UnknownSlashCommand {
-                command: trimmed.to_string(),
-            };
         }
 
         // /test command - generate test output lines
