@@ -5,15 +5,10 @@
 
 #[cfg(all(test, feature = "e2e-tests", feature = "ldap"))]
 mod e2e_ldap {
+    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
     use ldap3::{LdapConnAsync, Scope, SearchEntry};
     use std::time::Duration;
     use tokio::time::sleep;
-
-    // Import test helpers
-    mod e2e {
-        include!("e2e/helpers.rs");
-    }
-    use e2e::*;
 
     /// Test basic LDAP bind (authentication)
     #[tokio::test]

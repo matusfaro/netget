@@ -3,7 +3,7 @@
 // These tests spawn the actual NetGet binary with SOCKS5 prompts
 // and validate the responses using a manual SOCKS5 client implementation.
 
-use e2e::*;
+use crate::server::helpers::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use std::time::Duration;

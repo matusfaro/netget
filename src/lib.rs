@@ -13,7 +13,3 @@ pub mod server;
 pub mod settings;
 pub mod state;
 pub mod ui;
-
-#[cfg(test)]
-#[path = "../tests/e2e/mod.rs"]
-mod e2e;

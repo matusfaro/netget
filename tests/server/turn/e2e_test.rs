@@ -5,9 +5,7 @@
 
 #![cfg(feature = "e2e-tests")]
 
-mod e2e;
-
-use server::helpers::*;
+use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 

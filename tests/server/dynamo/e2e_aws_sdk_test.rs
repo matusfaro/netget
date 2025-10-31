@@ -503,9 +503,3 @@ mod tests {
         Ok(())
     }
 }
-
-#[cfg(feature = "e2e-tests")]
-#[allow(dead_code)]
-mod e2e {
-    pub mod helpers;
-}

@@ -5,9 +5,7 @@
 
 #![cfg(feature = "e2e-tests")]
 
-mod e2e;
-
-use server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, ServerConfig, E2EResult};
 use serde_json::Value;
 use std::time::Duration;
 

@@ -5,14 +5,9 @@
 
 #[cfg(all(test, feature = "e2e-tests", feature = "cassandra"))]
 mod e2e_cassandra {
+    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
     use std::time::Duration;
     use tokio::time::sleep;
-
-    // Import test helpers
-    mod e2e {
-        include!("e2e/helpers.rs");
-    }
-    use e2e::*;
 
     // Import Scylla types from their module paths
     use scylla::client::session::Session;

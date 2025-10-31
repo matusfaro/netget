@@ -612,3 +612,105 @@ pub async fn cleanup_stray_processes() {
             .await;
     }
 }
+
+/// Wait for server to be ready and responsive
+///
+/// This function waits for the server to have specific output indicating it's ready.
+/// The server is considered ready when output contains the protocol name.
+///
+/// # Arguments
+/// * `server` - The NetGetServer instance to check
+/// * `timeout_duration` - Maximum time to wait for server readiness
+/// * `protocol_name` - Expected protocol name to find in output (e.g., "IMAP", "HTTP")
+///
+/// # Returns
+/// * `Ok(())` if server is ready within timeout
+/// * `Err(_)` if timeout expires before server is ready
+///
+/// # Example
+/// ```rust,ignore
+/// let server = start_netget_server(config).await?;
+/// wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
+/// ```
+pub async fn wait_for_server_startup(
+    server: &NetGetServer,
+    timeout_duration: Duration,
+    protocol_name: &str,
+) -> E2EResult<()> {
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout_duration {
+        // Check if server output contains the protocol name
+        if server.output_contains(protocol_name).await {
+            println!("  [WAIT] Server ready with {} protocol after {:?}", protocol_name, start.elapsed());
+            return Ok(());
+        }
+
+        // Check for common ready indicators
+        if server.output_contains("Server is running").await ||
+           server.output_contains("listening on").await ||
+           server.output_contains("advertising").await {
+            println!("  [WAIT] Server ready after {:?}", start.elapsed());
+            return Ok(());
+        }
+
+        // Small delay before checking again
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    // Timeout - show output for debugging
+    let output = server.get_output().await;
+    eprintln!("  [ERROR] Server startup timeout. Last 20 lines of output:");
+    for line in output.iter().rev().take(20).rev() {
+        eprintln!("    {}", line);
+    }
+
+    Err(format!(
+        "Server did not become ready within {:?}. Expected to see '{}' in output.",
+        timeout_duration, protocol_name
+    ).into())
+}
+
+/// Assert that the server is using the expected protocol stack
+///
+/// # Arguments
+/// * `server` - The NetGetServer instance to check
+/// * `expected_stack` - Expected stack name (e.g., "TCP", "HTTP", "IMAP")
+///
+/// # Panics
+/// * If the server is not using the expected stack
+///
+/// # Example
+/// ```rust,ignore
+/// let server = start_netget_server(config).await?;
+/// assert_stack_name(&server, "HTTP");
+/// ```
+pub fn assert_stack_name(server: &NetGetServer, expected_stack: &str) {
+    assert_eq!(
+        server.stack, expected_stack,
+        "Expected stack '{}' but got '{}'",
+        expected_stack, server.stack
+    );
+}
+
+/// Get all captured output lines from the server
+///
+/// This is a convenience function that returns owned Vec<String> instead of
+/// requiring async/await for simple access patterns.
+///
+/// # Arguments
+/// * `server` - The NetGetServer instance
+///
+/// # Returns
+/// * Vector of output lines captured since server start
+///
+/// # Example
+/// ```rust,ignore
+/// let server = start_netget_server(config).await?;
+/// tokio::time::sleep(Duration::from_secs(2)).await;
+/// let output = get_server_output(&server).await;
+/// assert!(output.iter().any(|line| line.contains("ready")));
+/// ```
+pub async fn get_server_output(server: &NetGetServer) -> Vec<String> {
+    server.get_output().await
+}

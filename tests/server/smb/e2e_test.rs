@@ -5,10 +5,7 @@
 
 #![cfg(all(test, feature = "e2e-tests", feature = "smb"))]
 
-mod e2e {
-    include!("e2e/helpers.rs");
-}
-use e2e::*;
+use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
