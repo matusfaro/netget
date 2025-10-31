@@ -6,6 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::{debug, warn};
 
+use crate::state::app_state::WebSearchMode;
+
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -17,17 +19,21 @@ pub struct Settings {
     #[serde(default)]
     pub scripting_mode: Option<String>,
 
-    /// Whether web search is enabled
-    #[serde(default = "default_web_search_enabled")]
-    pub web_search_enabled: bool,
+    /// Web search mode (on, off, ask)
+    #[serde(default = "default_web_search_mode")]
+    pub web_search_mode: String,
+
+    /// Legacy field for migration (deprecated)
+    #[serde(skip_serializing, default)]
+    web_search_enabled: Option<bool>,
 }
 
 fn default_model() -> String {
     "qwen3-coder:30b".to_string()
 }
 
-fn default_web_search_enabled() -> bool {
-    true
+fn default_web_search_mode() -> String {
+    "on".to_string()
 }
 
 impl Default for Settings {
@@ -35,7 +41,8 @@ impl Default for Settings {
         Self {
             model: default_model(),
             scripting_mode: None,
-            web_search_enabled: default_web_search_enabled(),
+            web_search_mode: default_web_search_mode(),
+            web_search_enabled: None,
         }
     }
 }
@@ -63,8 +70,29 @@ impl Settings {
 
         match fs::read_to_string(&path) {
             Ok(contents) => match serde_json::from_str::<Settings>(&contents) {
-                Ok(settings) => {
+                Ok(mut settings) => {
                     debug!("Loaded settings from {:?}", path);
+
+                    // Migration: If legacy web_search_enabled field is present and web_search_mode is default,
+                    // migrate the old bool value to the new string mode
+                    if let Some(enabled) = settings.web_search_enabled {
+                        if settings.web_search_mode == default_web_search_mode() {
+                            settings.web_search_mode = if enabled {
+                                "on".to_string()
+                            } else {
+                                "off".to_string()
+                            };
+                            debug!("Migrated web_search_enabled={} to web_search_mode={}", enabled, settings.web_search_mode);
+
+                            // Save migrated settings
+                            if let Err(e) = settings.save() {
+                                warn!("Failed to save migrated settings: {}", e);
+                            }
+                        }
+                        // Clear the legacy field after migration
+                        settings.web_search_enabled = None;
+                    }
+
                     settings
                 }
                 Err(e) => {
@@ -106,9 +134,17 @@ impl Settings {
         self.save()
     }
 
-    /// Update web search enabled and save
-    pub fn set_web_search_enabled(&mut self, enabled: bool) -> Result<()> {
-        self.web_search_enabled = enabled;
+    /// Get web search mode
+    pub fn get_web_search_mode(&self) -> WebSearchMode {
+        self.web_search_mode.parse().unwrap_or_else(|e| {
+            warn!("Invalid web search mode in settings: '{}' ({}), using default", self.web_search_mode, e);
+            WebSearchMode::On
+        })
+    }
+
+    /// Update web search mode and save
+    pub fn set_web_search_mode(&mut self, mode: WebSearchMode) -> Result<()> {
+        self.web_search_mode = mode.to_string();
         self.save()
     }
 

@@ -71,6 +71,17 @@ pub async fn run_non_interactive(
         debug!("Using scripting mode: {}", mode);
     }
 
+    // Load web search setting from settings file
+    // In non-interactive mode, ASK mode is not supported (no way to prompt user)
+    // so we convert ASK to OFF
+    let mut web_search_mode = settings.get_web_search_mode();
+    if web_search_mode == crate::state::app_state::WebSearchMode::Ask {
+        debug!("Web search mode ASK is not supported in non-interactive mode, using OFF instead");
+        web_search_mode = crate::state::app_state::WebSearchMode::Off;
+    }
+    state.set_web_search_mode(web_search_mode).await;
+    debug!("Web search mode: {:?}", web_search_mode);
+
     // Create event handler and LLM client
     let llm = OllamaClient::default();
     let mut event_handler = EventHandler::new(state.clone(), llm.clone());

@@ -193,6 +193,10 @@ pub async fn call_llm_with_actions(
     let context_clone = context_json.clone();
     let actions_clone = all_actions.clone();
 
+    // Get web search mode and approval channel
+    let web_search_mode = state.get_web_search_mode().await;
+    let approval_tx = state.get_web_approval_channel().await;
+
     let action_values = llm_client
         .generate_with_tools(
             &model,
@@ -213,6 +217,8 @@ pub async fn call_llm_with_actions(
                 }
             },
             5, // max 5 iterations
+            approval_tx,
+            web_search_mode,
         )
         .await
         .context("LLM generate with tools failed")?;
