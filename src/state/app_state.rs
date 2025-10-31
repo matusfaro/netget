@@ -86,11 +86,18 @@ struct AppStateInner {
     selected_scripting_mode: ScriptingMode,
     /// Whether web search is enabled
     web_search_enabled: bool,
+    /// Whether to include disabled protocols (for testing)
+    include_disabled_protocols: bool,
 }
 
 impl AppState {
     /// Create a new application state
     pub fn new() -> Self {
+        Self::new_with_options(false)
+    }
+
+    /// Create a new application state with options
+    pub fn new_with_options(include_disabled_protocols: bool) -> Self {
         // Detect scripting environments at startup
         let scripting_env = crate::scripting::ScriptingEnvironment::detect();
 
@@ -115,6 +122,7 @@ impl AppState {
                 scripting_env,
                 selected_scripting_mode,
                 web_search_enabled: true, // Default to enabled
+                include_disabled_protocols,
             })),
         }
     }
@@ -376,6 +384,11 @@ impl AppState {
         let mut inner = self.inner.write().await;
         inner.web_search_enabled = !inner.web_search_enabled;
         inner.web_search_enabled
+    }
+
+    /// Get whether disabled protocols should be included
+    pub async fn get_include_disabled_protocols(&self) -> bool {
+        self.inner.read().await.include_disabled_protocols
     }
 
     /// Update script configuration for a server

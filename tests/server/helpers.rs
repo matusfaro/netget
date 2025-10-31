@@ -120,6 +120,8 @@ pub struct ServerConfig {
     pub listen_addr: String,
     /// Disable script generation (default: false)
     pub no_scripts: bool,
+    /// Include disabled protocols (default: false)
+    pub include_disabled_protocols: bool,
 }
 
 impl ServerConfig {
@@ -131,6 +133,7 @@ impl ServerConfig {
             log_level: "off".to_string(),
             listen_addr: "127.0.0.1".to_string(),
             no_scripts: false,
+            include_disabled_protocols: false,
         }
     }
 
@@ -142,6 +145,7 @@ impl ServerConfig {
             log_level: "off".to_string(),
             listen_addr: "127.0.0.1".to_string(),
             no_scripts: true,
+            include_disabled_protocols: false,
         }
     }
 
@@ -166,6 +170,12 @@ impl ServerConfig {
     /// Disable script generation
     pub fn with_no_scripts(mut self, no_scripts: bool) -> Self {
         self.no_scripts = no_scripts;
+        self
+    }
+
+    /// Include disabled protocols (for testing honeypot-only protocols like IPSec, OpenVPN)
+    pub fn with_include_disabled_protocols(mut self, include_disabled: bool) -> Self {
+        self.include_disabled_protocols = include_disabled;
         self
     }
 }
@@ -261,6 +271,11 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     // Add --no-scripts flag if enabled
     if config.no_scripts {
         cmd.arg("--no-scripts");
+    }
+
+    // Add --include-disabled-protocols flag if enabled
+    if config.include_disabled_protocols {
+        cmd.arg("--include-disabled-protocols");
     }
 
     // Add the prompt as trailing arguments
@@ -445,6 +460,10 @@ fn extract_stack_from_prompt(prompt: &str) -> Option<String> {
         Some("TURN".to_string())
     } else if prompt_lower.contains("via bgp") || prompt_lower.contains("bgp") || prompt_lower.contains("routing") {
         Some("BGP".to_string())
+    } else if prompt_lower.contains("via ipsec") || prompt_lower.contains("ipsec") || prompt_lower.contains("ikev2") || prompt_lower.contains("ikev1") {
+        Some("IPSEC".to_string())
+    } else if prompt_lower.contains("via openvpn") || prompt_lower.contains("openvpn") {
+        Some("OPENVPN".to_string())
     } else if prompt_lower.contains("tcp") || prompt_lower.contains("ftp") {
         Some("TCP".to_string())
     } else if prompt_lower.contains("udp") {
@@ -521,6 +540,10 @@ async fn wait_for_server_startup_with_capture(
                     stack = "IPP".to_string();
                 } else if line.contains("BGP") {
                     stack = "BGP".to_string();
+                } else if line.contains("IPSEC") {
+                    stack = "IPSEC".to_string();
+                } else if line.contains("OPENVPN") {
+                    stack = "OPENVPN".to_string();
                 } else if line.contains("TCP") || line.contains("TCP/IP") {
                     stack = "TCP".to_string();
                 } else if line.contains("UDP") {

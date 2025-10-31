@@ -41,7 +41,7 @@ pub async fn run() -> Result<()> {
         non_interactive::run_non_interactive(prompt, &args, settings).await
     } else if args.is_interactive() {
         // Interactive TUI mode - no prompt and terminal is available
-        let state = AppState::new();
+        let state = AppState::new_with_options(args.include_disabled_protocols);
 
         // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
         let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
