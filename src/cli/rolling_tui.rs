@@ -482,20 +482,26 @@ async fn handle_key_event(
     if let Some(approval) = footer.pending_approval.take() {
         use crate::state::app_state::{WebApprovalResponse, WebSearchMode};
 
-        match key_code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
+        match (key_code, modifiers) {
+            (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
+                // Ctrl-C during approval - deny and quit
+                debug!("User pressed Ctrl-C during approval - denying and quitting");
+                let _ = approval.response_tx.send(WebApprovalResponse::Deny);
+                return Ok(true); // Signal quit
+            }
+            (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => {
                 debug!("User approved web search");
                 let _ = approval.response_tx.send(WebApprovalResponse::Allow);
                 footer.render(&mut stdout())?;
                 return Ok(false);
             }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
+            (KeyCode::Char('n'), _) | (KeyCode::Char('N'), _) => {
                 debug!("User denied web search");
                 let _ = approval.response_tx.send(WebApprovalResponse::Deny);
                 footer.render(&mut stdout())?;
                 return Ok(false);
             }
-            KeyCode::Char('a') | KeyCode::Char('A') => {
+            (KeyCode::Char('a'), _) | (KeyCode::Char('A'), _) => {
                 debug!("User chose always allow - switching to ON mode");
 
                 // Switch mode to ON
