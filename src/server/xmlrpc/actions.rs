@@ -7,10 +7,10 @@
 //! - Extensions (nil values, i8/64-bit integers, system.multicall)
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
-use crate::protocol::{Event, EventType, base_stack::ProtocolMetadata, base_stack::ProtocolState};
+use crate::protocol::{Event, EventType, metadata::ProtocolMetadata, metadata::DevelopmentState};
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -198,7 +198,25 @@ impl XmlRpcProtocol {
     }
 }
 
-impl ProtocolActions for XmlRpcProtocol {
+impl Server for XmlRpcProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::xmlrpc::XmlRpcServer;
+            XmlRpcServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // XML-RPC is purely request-response, no async actions needed
         Vec::new()
@@ -247,7 +265,7 @@ impl ProtocolActions for XmlRpcProtocol {
     }
 
     fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::new(ProtocolState::Beta)
+        ProtocolMetadata::new(DevelopmentState::Beta)
     }
 }
 

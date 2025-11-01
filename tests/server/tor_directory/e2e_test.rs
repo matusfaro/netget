@@ -13,7 +13,7 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
     println!("\n=== E2E Test: Tor Directory Consensus Request ===");
 
     // Start Tor Directory server
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack tor_directory. This is a Tor directory mirror. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack ETH>IP>TCP>HTTP>TorDirectory. This is a Tor directory mirror. \
         When clients request /tor/status-vote/current/consensus, return a simple test consensus document \
         with network-status-version 3 and a few fake relays. When clients request any other path, \
         return a 404 error.";
@@ -67,7 +67,7 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
 async fn test_tor_directory_404_error() -> E2EResult<()> {
     println!("\n=== E2E Test: Tor Directory 404 Error ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack tor_directory. This is a Tor directory mirror. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack ETH>IP>TCP>HTTP>TorDirectory. This is a Tor directory mirror. \
         When clients request unknown paths, return a 404 Not Found error.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -112,7 +112,7 @@ async fn test_tor_directory_404_error() -> E2EResult<()> {
 async fn test_tor_directory_microdescriptors() -> E2EResult<()> {
     println!("\n=== E2E Test: Tor Directory Microdescriptors ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack tor_directory. This is a Tor directory mirror. \
+    let prompt = "open_server port {AVAILABLE_PORT} base_stack ETH>IP>TCP>HTTP>TorDirectory. This is a Tor directory mirror. \
         When clients request /tor/micro/d/<hash>, return a simple microdescriptor with \
         onion-key and ntor-onion-key fields.";
 

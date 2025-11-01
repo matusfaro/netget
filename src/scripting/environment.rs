@@ -15,6 +15,9 @@ pub struct ScriptingEnvironment {
 
     /// Go availability and version
     pub go: Option<String>,
+
+    /// Perl availability and version
+    pub perl: Option<String>,
 }
 
 impl ScriptingEnvironment {
@@ -23,6 +26,7 @@ impl ScriptingEnvironment {
         let python = Self::detect_python();
         let javascript = Self::detect_javascript();
         let go = Self::detect_go();
+        let perl = Self::detect_perl();
 
         info!("Scripting environment detection:");
         if let Some(ref ver) = python {
@@ -40,11 +44,17 @@ impl ScriptingEnvironment {
         } else {
             info!("  Go: not available");
         }
+        if let Some(ref ver) = perl {
+            info!("  Perl: {} ✓", ver);
+        } else {
+            info!("  Perl: not available");
+        }
 
         Self {
             python,
             javascript,
             go,
+            perl,
         }
     }
 
@@ -105,12 +115,39 @@ impl ScriptingEnvironment {
         }
     }
 
+    /// Detect Perl availability and version
+    fn detect_perl() -> Option<String> {
+        match Command::new("perl").arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                // Perl --version outputs multiple lines, extract version line
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                let version_line = output_str
+                    .lines()
+                    .find(|line| line.contains("This is perl"))
+                    .unwrap_or("Perl (version unknown)")
+                    .trim()
+                    .to_string();
+                debug!("Perl detected: {}", version_line);
+                Some(version_line)
+            }
+            Ok(output) => {
+                debug!("Perl command failed: {:?}", output.status);
+                None
+            }
+            Err(e) => {
+                debug!("Perl not found: {}", e);
+                None
+            }
+        }
+    }
+
     /// Check if a specific language is available
     pub fn is_available(&self, language: ScriptLanguage) -> bool {
         match language {
             ScriptLanguage::Python => self.python.is_some(),
             ScriptLanguage::JavaScript => self.javascript.is_some(),
             ScriptLanguage::Go => self.go.is_some(),
+            ScriptLanguage::Perl => self.perl.is_some(),
         }
     }
 
@@ -120,6 +157,7 @@ impl ScriptingEnvironment {
             ScriptLanguage::Python => self.python.as_deref(),
             ScriptLanguage::JavaScript => self.javascript.as_deref(),
             ScriptLanguage::Go => self.go.as_deref(),
+            ScriptLanguage::Perl => self.perl.as_deref(),
         }
     }
 
@@ -135,6 +173,9 @@ impl ScriptingEnvironment {
         }
         if let Some(ref ver) = self.go {
             parts.push(format!("Go ({})", ver));
+        }
+        if let Some(ref ver) = self.perl {
+            parts.push(format!("Perl ({})", ver));
         }
 
         if parts.is_empty() {

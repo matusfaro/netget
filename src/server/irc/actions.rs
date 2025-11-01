@@ -1,7 +1,7 @@
 //! IRC protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -102,7 +102,31 @@ impl IrcProtocol {
     }
 }
 
-impl ProtocolActions for IrcProtocol {
+impl Server for IrcProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::irc::IrcServer;
+            let send_first = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get("send_first"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            IrcServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                                ctx.server_id,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // IRC could have async actions like broadcast_message in the future
         Vec::new()
@@ -160,9 +184,9 @@ impl ProtocolActions for IrcProtocol {
         vec!["irc", "chat"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Alpha
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
 }

@@ -7,8 +7,7 @@ use tracing::info;
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
 use crate::llm::OllamaClient;
-use crate::llm::{execute_actions, CommonAction, ProtocolActions};
-use crate::protocol::BaseStack;
+use crate::llm::{execute_actions, CommonAction, Server};
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
 
@@ -171,7 +170,7 @@ impl EventHandler {
         &mut self,
         input: String,
         status_tx: mpsc::UnboundedSender<String>,
-        protocol: Option<Box<dyn ProtocolActions + Send>>,
+        protocol: Option<Box<dyn Server + Send>>,
     ) -> Result<()> {
         use crate::llm::PromptBuilder;
 
@@ -236,9 +235,9 @@ impl EventHandler {
                 }
 
                 // Then execute all other actions (including append_to_log)
-                let protocol_ref: Option<&dyn ProtocolActions> = protocol
+                let protocol_ref: Option<&dyn Server> = protocol
                     .as_ref()
-                    .map(|p| p.as_ref() as &dyn ProtocolActions);
+                    .map(|p| p.as_ref() as &dyn Server);
 
                 match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
                     Ok(result) => {
@@ -281,16 +280,16 @@ impl EventHandler {
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
-                // Parse base stack using registry
-                let stack = crate::protocol::registry::registry()
+                // Parse protocol name using registry
+                let protocol_name = crate::protocol::registry::registry()
                     .parse_from_str(&base_stack)
-                    .unwrap_or(BaseStack::Tcp);
+                    .unwrap_or_else(|| "TCP".to_string());
 
                 // Create a new server instance
                 let mut server = ServerInstance::new(
                     crate::state::ServerId::new(0), // Temporary ID, will be replaced by add_server
                     port,
-                    stack,
+                    protocol_name.clone(),
                     instruction,
                 );
 
@@ -335,10 +334,10 @@ impl EventHandler {
                 }
 
                 let _ = status_tx.send(format!(
-                    "[SERVER] Opening server #{} on port {} with stack {}",
+                    "[SERVER] Opening server #{} on port {} with protocol {}",
                     server_id.as_u32(),
                     port,
-                    stack
+                    protocol_name
                 ));
 
                 // Spawn the server directly (no more message passing!)

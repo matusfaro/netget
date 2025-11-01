@@ -5,7 +5,7 @@
 
 use super::{
     common::CommonAction,
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
 };
 use crate::state::app_state::AppState;
 use anyhow::{Context as AnyhowContext, Result};
@@ -55,7 +55,7 @@ impl ExecutionResult {
 pub async fn execute_actions(
     actions: Vec<serde_json::Value>,
     state: &AppState,
-    protocol: Option<&dyn ProtocolActions>,
+    protocol: Option<&dyn Server>,
 ) -> Result<ExecutionResult> {
     let mut result = ExecutionResult::new();
 
@@ -112,7 +112,7 @@ async fn execute_common_action(
     match action {
         CommonAction::ShowMessage { message } => {
             info!("LLM message: {}", message);
-            result.add_message(message);
+            result.add_message(format!("[INFO] {}", message));
         }
 
         CommonAction::OpenServer { .. } => {

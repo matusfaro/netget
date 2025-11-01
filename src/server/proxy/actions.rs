@@ -8,7 +8,7 @@
 //! - Handling HTTPS connections in pass-through mode (allow/block)
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use super::filter::{
@@ -30,7 +30,26 @@ impl ProxyProtocol {
     }
 }
 
-impl ProtocolActions for ProxyProtocol {
+impl Server for ProxyProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::proxy::ProxyServer;
+            ProxyServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            ).await
+        })
+    }
+
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -155,9 +174,9 @@ impl ProtocolActions for ProxyProtocol {
         vec!["proxy", "mitm"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Alpha
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
 }

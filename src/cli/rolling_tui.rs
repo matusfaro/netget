@@ -563,6 +563,9 @@ async fn handle_key_event(
                     crate::state::app_state::ScriptingMode::Go => {
                         "LLM will produce Go code to handle simple requests"
                     }
+                    crate::state::app_state::ScriptingMode::Perl => {
+                        "LLM will produce Perl code to handle simple requests"
+                    }
                 };
                 print_output_line(message, footer)?;
 
@@ -883,6 +886,7 @@ async fn handle_key_event(
                             "python" | "py" => Some(crate::state::app_state::ScriptingMode::Python),
                             "javascript" | "js" | "node" => Some(crate::state::app_state::ScriptingMode::JavaScript),
                             "go" | "golang" => Some(crate::state::app_state::ScriptingMode::Go),
+                            "perl" => Some(crate::state::app_state::ScriptingMode::Perl),
                             _ => None,
                         };
 
@@ -894,6 +898,7 @@ async fn handle_key_event(
                                 crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
                                 crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
                                 crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
+                                crate::state::app_state::ScriptingMode::Perl => scripting_env.perl.is_some(),
                             };
 
                             if available {
@@ -911,6 +916,9 @@ async fn handle_key_event(
                                     crate::state::app_state::ScriptingMode::Go => {
                                         "Scripting environment set to: Go (LLM will produce Go code)"
                                     }
+                                    crate::state::app_state::ScriptingMode::Perl => {
+                                        "Scripting environment set to: Perl (LLM will produce Perl code)"
+                                    }
                                 };
                                 print_output_line(message, footer)?;
 
@@ -926,7 +934,7 @@ async fn handle_key_event(
                                 print_output_line(&format!("{} environment is not available on this system", new_mode), footer)?;
                             }
                         } else {
-                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go", env), footer)?;
+                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go, perl", env), footer)?;
                         }
                     }
                     UserCommand::SetWebSearch { mode } => {
@@ -1150,7 +1158,7 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
         .iter()
         .map(|s| ServerDisplayInfo {
             id: format!("#{}", s.id.as_u32()),
-            protocol: s.base_stack.to_string(),
+            protocol: s.protocol_name.clone(),
             port: s.port,
             status: s.status.to_string(),
             connections: s.connections.len(),
@@ -1191,7 +1199,7 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
 
     // Update connection info
     if let Some(first_server) = servers.first() {
-        app.connection_info.protocol = first_server.base_stack.to_string();
+        app.connection_info.protocol = first_server.protocol_name.clone();
         if let Some(addr) = first_server.local_addr {
             app.connection_info.local_addr = Some(addr.to_string());
         }

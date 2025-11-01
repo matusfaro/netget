@@ -3,7 +3,7 @@
 //! Defines LLM actions for controlling MCP server responses.
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,7 +20,25 @@ impl McpProtocol {
     }
 }
 
-impl ProtocolActions for McpProtocol {
+impl Server for McpProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::mcp::McpServer;
+            McpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new() // MCP is HTTP-based, no async actions needed
     }
@@ -77,9 +95,9 @@ impl ProtocolActions for McpProtocol {
         vec!["mcp", "model-context-protocol", "model context protocol"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Alpha
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
 }

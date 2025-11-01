@@ -82,15 +82,34 @@ impl ActionResult {
     }
 }
 
-/// Trait for protocol-specific action systems
+/// Trait for protocol server implementations
 ///
 /// Each protocol implements this trait to provide:
-/// 1. Startup parameters - configuration accepted when opening server
-/// 2. Async actions - executable anytime from user input
-/// 3. Sync actions - executable during network events
-/// 4. Action executor - parses and executes protocol actions
-/// 5. Protocol metadata - stack name, keywords, and implementation state
-pub trait ProtocolActions: Send + Sync {
+/// 1. Server spawning - how to start the protocol server
+/// 2. Startup parameters - configuration accepted when opening server
+/// 3. Async actions - executable anytime from user input
+/// 4. Sync actions - executable during network events
+/// 5. Action executor - parses and executes protocol actions
+/// 6. Protocol metadata - stack name, keywords, and implementation state
+pub trait Server: Send + Sync {
+    /// Spawn a server instance for this protocol
+    ///
+    /// This is called when a server needs to be started. The implementation
+    /// should bind to the listen address, set up any necessary resources,
+    /// and return the actual bound address.
+    ///
+    /// # Arguments
+    /// * `ctx` - Spawn context with all necessary dependencies
+    ///
+    /// # Returns
+    /// * `Ok(SocketAddr)` - The actual address the server bound to
+    /// * `Err(_)` - If server spawning failed
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    >;
     /// Get startup parameters that can be provided when opening a server
     ///
     /// These parameters configure the protocol before it starts accepting
@@ -169,5 +188,5 @@ pub trait ProtocolActions: Send + Sync {
     ///
     /// Returns the current implementation state (Beta, Alpha, Implemented, Abandoned)
     /// and optional notes explaining limitations or status.
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata;
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata;
 }

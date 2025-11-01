@@ -94,14 +94,7 @@ async fn test_doh_server() -> E2EResult<()> {
 
     // Create a prompt with a simple Python script
     // Keep it short to avoid LLM confusion with long prompts
-    let prompt = r#"Open a DNS-over-HTTPS (DoH) server on port {AVAILABLE_PORT} using base_stack 'ETH>IP>TCP>TLS>HTTP2>DNS'.
-
-Use this script:
-import json,sys
-d=json.load(sys.stdin)
-qid=d['event']['query_id']
-print(json.dumps({"actions":[{"type":"send_dns_a_response","query_id":qid,"domain":"example.com","ip":"93.184.216.34","ttl":300}]}))
-"#;
+    let prompt = r#"listen on port {AVAILABLE_PORT} via doh. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300. Use scripting."#;
 
     // Start server (LLM will parse the prompt and create the script)
     let server = helpers::start_netget_server(

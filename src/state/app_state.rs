@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use super::server::{ServerId, ServerInstance};
-use crate::protocol::BaseStack;
 use crate::server::connection::ConnectionId;
 
 /// Operating mode for the application
@@ -46,6 +45,8 @@ pub enum ScriptingMode {
     JavaScript,
     /// Go scripting enabled
     Go,
+    /// Perl scripting enabled
+    Perl,
 }
 
 impl ScriptingMode {
@@ -55,6 +56,7 @@ impl ScriptingMode {
             Self::Python => "Python",
             Self::JavaScript => "JavaScript",
             Self::Go => "Go",
+            Self::Perl => "Perl",
         }
     }
 }
@@ -171,13 +173,15 @@ impl AppState {
         let scripting_env = crate::scripting::ScriptingEnvironment::detect();
 
         // Select default scripting mode based on availability
-        // Priority: Python > JavaScript > Go > LLM
+        // Priority: Python > JavaScript > Go > Perl > LLM
         let selected_scripting_mode = if scripting_env.python.is_some() {
             ScriptingMode::Python
         } else if scripting_env.javascript.is_some() {
             ScriptingMode::JavaScript
         } else if scripting_env.go.is_some() {
             ScriptingMode::Go
+        } else if scripting_env.perl.is_some() {
+            ScriptingMode::Perl
         } else {
             ScriptingMode::Llm
         };
@@ -268,7 +272,7 @@ impl AppState {
             ServerInstance {
                 id: s.id,
                 port: s.port,
-                base_stack: s.base_stack,
+                protocol_name: s.protocol_name.clone(),
                 instruction: s.instruction.clone(),
                 memory: s.memory.clone(),
                 status: s.status.clone(),
@@ -303,7 +307,7 @@ impl AppState {
             .map(|s| ServerInstance {
                 id: s.id,
                 port: s.port,
-                base_stack: s.base_stack,
+                protocol_name: s.protocol_name.clone(),
                 instruction: s.instruction.clone(),
                 memory: s.memory.clone(),
                 status: s.status.clone(),
@@ -328,6 +332,13 @@ impl AppState {
         if let Some(server) = self.inner.write().await.servers.get_mut(&id) {
             server.status = status;
             server.status_changed_at = std::time::Instant::now();
+        }
+    }
+
+    /// Update server local listening address
+    pub async fn update_server_local_addr(&self, id: ServerId, local_addr: std::net::SocketAddr) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&id) {
+            server.local_addr = Some(local_addr);
         }
     }
 
@@ -419,13 +430,14 @@ impl AppState {
         let has_python = env.python.is_some();
         let has_javascript = env.javascript.is_some();
         let has_go = env.go.is_some();
+        let has_perl = env.perl.is_some();
 
         // If no languages are available, we can't cycle
-        if !has_python && !has_javascript && !has_go {
+        if !has_python && !has_javascript && !has_go && !has_perl {
             return (current, false);
         }
 
-        // Cycle through: LLM -> Python (if available) -> JavaScript (if available) -> Go (if available) -> LLM
+        // Cycle through: LLM -> Python (if available) -> JavaScript (if available) -> Go (if available) -> Perl (if available) -> LLM
         let next = match current {
             ScriptingMode::Llm => {
                 if has_python {
@@ -434,6 +446,8 @@ impl AppState {
                     ScriptingMode::JavaScript
                 } else if has_go {
                     ScriptingMode::Go
+                } else if has_perl {
+                    ScriptingMode::Perl
                 } else {
                     ScriptingMode::Llm
                 }
@@ -443,6 +457,8 @@ impl AppState {
                     ScriptingMode::JavaScript
                 } else if has_go {
                     ScriptingMode::Go
+                } else if has_perl {
+                    ScriptingMode::Perl
                 } else {
                     ScriptingMode::Llm
                 }
@@ -450,11 +466,20 @@ impl AppState {
             ScriptingMode::JavaScript => {
                 if has_go {
                     ScriptingMode::Go
+                } else if has_perl {
+                    ScriptingMode::Perl
                 } else {
                     ScriptingMode::Llm
                 }
             }
-            ScriptingMode::Go => ScriptingMode::Llm,
+            ScriptingMode::Go => {
+                if has_perl {
+                    ScriptingMode::Perl
+                } else {
+                    ScriptingMode::Llm
+                }
+            }
+            ScriptingMode::Perl => ScriptingMode::Llm,
         };
 
         drop(inner); // Release read lock before acquiring write lock
@@ -541,14 +566,14 @@ impl AppState {
         )
     }
 
-    /// Get base stack for a server
-    pub async fn get_base_stack(&self, server_id: ServerId) -> Option<BaseStack> {
+    /// Get protocol name for a server
+    pub async fn get_protocol_name(&self, server_id: ServerId) -> Option<String> {
         self.inner
             .read()
             .await
             .servers
             .get(&server_id)
-            .map(|s| s.base_stack)
+            .map(|s| s.protocol_name.clone())
     }
 
     /// Cleanup old connections across all servers (connectionless protocols like UDP)
@@ -952,15 +977,15 @@ impl AppState {
             .map(|s| s.port)
     }
 
-    /// Get the first server's base stack (for backwards compat)
-    pub async fn get_first_base_stack(&self) -> Option<BaseStack> {
+    /// Get the first server's protocol name (for backwards compat)
+    pub async fn get_first_protocol_name(&self) -> Option<String> {
         self.inner
             .read()
             .await
             .servers
             .values()
             .next()
-            .map(|s| s.base_stack)
+            .map(|s| s.protocol_name.clone())
     }
 
     /// Get the first server's instruction (for backwards compat)

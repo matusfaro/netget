@@ -14,6 +14,7 @@ pub use common::{
     generate_base_stack_documentation, get_network_event_common_actions,
     get_user_input_common_actions,
 };
+pub use protocol_trait::Server; // Export the Server trait
 pub use summary::{summarize_action, summarize_actions};
 pub use tools::{execute_tool, get_all_tool_actions, ToolAction, ToolResult};
 

@@ -4,7 +4,6 @@
 //! When prompts change, review the diff to ensure it's intentional.
 
 use netget::llm::PromptBuilder;
-use netget::protocol::BaseStack;
 use netget::state::app_state::AppState;
 use netget::state::server::{ServerInstance, ServerStatus};
 use netget::state::ServerId;
@@ -36,7 +35,7 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
     let mut server = ServerInstance::new(
         ServerId::new(1),
         8080,
-        BaseStack::Proxy,
+        "Proxy".to_string(),
         "Act as HTTP proxy".to_string(),
     );
     server.status = ServerStatus::Running;
@@ -58,7 +57,7 @@ async fn test_user_input_prompt_proxy_server() {
     // Get proxy async actions
     #[cfg(feature = "proxy")]
     let protocol_actions = {
-        use netget::llm::actions::protocol_trait::ProtocolActions;
+        use netget::llm::actions::protocol_trait::Server;
         use netget::server::ProxyProtocol;
         let protocol = ProxyProtocol::new();
         protocol.get_async_actions(&state)
@@ -217,7 +216,7 @@ async fn test_network_event_prompt_for_proxy() {
     #[cfg(feature = "proxy")]
     let all_actions = {
         use netget::llm::actions::get_network_event_common_actions;
-        use netget::llm::actions::protocol_trait::ProtocolActions;
+        use netget::llm::actions::protocol_trait::Server;
         use netget::server::ProxyProtocol;
 
         let protocol = ProxyProtocol::new();

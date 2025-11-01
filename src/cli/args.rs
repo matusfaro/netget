@@ -57,7 +57,7 @@ pub struct Args {
         short = 'e',
         long = "env",
         value_name = "ENVIRONMENT",
-        help = "Scripting environment: llm (LLM handles all requests), python (LLM produces Python code), javascript (LLM produces JavaScript code), go (LLM produces Go code)"
+        help = "Scripting environment: llm (LLM handles all requests), python (LLM produces Python code), javascript (LLM produces JavaScript code), go (LLM produces Go code), perl (LLM produces Perl code)"
     )]
     pub scripting_env: Option<String>,
 
@@ -189,10 +189,11 @@ impl Args {
                     "python" | "py" => crate::state::app_state::ScriptingMode::Python,
                     "javascript" | "js" | "node" => crate::state::app_state::ScriptingMode::JavaScript,
                     "go" | "golang" => crate::state::app_state::ScriptingMode::Go,
+                    "perl" => crate::state::app_state::ScriptingMode::Perl,
                     _ => {
                         anyhow::bail!(
                             "Invalid scripting environment: '{}'\n\
-                             Valid options: llm, python (py), javascript (js, node), go (golang)",
+                             Valid options: llm, python (py), javascript (js, node), go (golang), perl",
                             env
                         );
                     }

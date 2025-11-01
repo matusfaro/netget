@@ -3,7 +3,7 @@
 //! Reuses DNS actions since DoH is just DNS delivered over HTTPS.
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -72,7 +72,28 @@ impl DohProtocol {
     }
 }
 
-impl ProtocolActions for DohProtocol {
+impl Server for DohProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::doh::DohServer;
+            // DoH spawn returns JoinHandle, but we need to return the socket address
+            // The server binds before spawning, so we can return listen_addr
+            let _ = DohServer::spawn(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            ).await?;
+            Ok(ctx.listen_addr)
+        })
+    }
+
     fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition> {
         self.dns_protocol.get_async_actions(state)
     }
@@ -101,9 +122,9 @@ impl ProtocolActions for DohProtocol {
         vec!["doh", "dns-over-https", "dns over https"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Beta
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Beta
         )
     }
 }
