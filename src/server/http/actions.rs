@@ -81,6 +81,18 @@ impl Server for HttpProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "Web server serving HTTP traffic"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Pretend to be a sassy HTTP server on port 8080 serving cooking recipes"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl HttpProtocol {

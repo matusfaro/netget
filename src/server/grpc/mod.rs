@@ -55,20 +55,18 @@ impl GrpcServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        startup_params: Option<serde_json::Value>,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         // Extract proto schema from startup params
         let proto_schema = startup_params
             .as_ref()
-            .and_then(|p| p.get("proto_schema"))
-            .and_then(|s| s.as_str())
+            .map(|p| p.get_string("proto_schema"))
             .context("Missing 'proto_schema' in startup_params. LLM must provide protobuf definition.")?;
 
         // Enable reflection by default (can be disabled in startup_params)
         let enable_reflection = startup_params
             .as_ref()
-            .and_then(|p| p.get("enable_reflection"))
-            .and_then(|r| r.as_bool())
+            .and_then(|p| p.get_optional_bool("enable_reflection"))
             .unwrap_or(true);
 
         debug!("Compiling protobuf schema for gRPC server");
@@ -76,7 +74,7 @@ impl GrpcServer {
         let _ = status_tx.send(format!("[DEBUG] Compiling protobuf schema"));
 
         // Compile proto schema to FileDescriptorSet
-        let file_descriptor_set = Self::compile_proto_schema(proto_schema)
+        let file_descriptor_set = Self::compile_proto_schema(&proto_schema)
             .context("Failed to compile protobuf schema")?;
 
         // Build descriptor pool for dynamic message handling
@@ -224,17 +222,23 @@ impl GrpcServer {
 
         // Try base64 decode first (FileDescriptorSet encoded as base64)
         if let Ok(decoded) = STANDARD.decode(proto_schema.trim()) {
-            if let Ok(fds) = FileDescriptorSet::decode(decoded.as_slice()) {
-                debug!("Loaded FileDescriptorSet from base64 ({} bytes)", decoded.len());
-                return Ok(fds);
+            match FileDescriptorSet::decode(decoded.as_slice()) {
+                Ok(fds) => {
+                    debug!("Loaded FileDescriptorSet from base64 ({} bytes)", decoded.len());
+                    return Ok(fds);
+                }
+                Err(e) => {
+                    // Base64 decoded successfully but FileDescriptorSet decode failed
+                    // This is likely the correct format but corrupted data
+                    bail!("Successfully decoded base64 but failed to parse FileDescriptorSet: {}. \
+                           The base64 string may be corrupted or not a valid FileDescriptorSet.", e);
+                }
             }
         }
 
         // Check if it's a file path
         if proto_schema.ends_with(".proto") || proto_schema.ends_with(".pb") {
-            if let Ok(fds) = Self::load_proto_from_file(proto_schema) {
-                return Ok(fds);
-            }
+            return Self::load_proto_from_file(proto_schema);
         }
 
         // Assume it's .proto text and compile with protoc

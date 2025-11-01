@@ -102,6 +102,14 @@ impl Server for NfsProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "NFS file server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an NFS file server on port 2049"
+    }
 }
 
 impl NfsProtocol {

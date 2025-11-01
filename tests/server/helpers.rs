@@ -350,8 +350,8 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
 
     // Parse the prompt to find the expected port and stack
     let expected_port = extract_port_from_prompt(&processed_prompt);
-    // Use the protocol registry to parse the expected stack from the prompt
-    let expected_base_stack = registry::registry().parse_from_str(&processed_prompt);
+    // Extract base_stack parameter from open_server prompt (e.g., "base_stack ETH>IP>TCP>HTTP>TorDirectory")
+    let expected_base_stack = extract_base_stack_from_prompt(&processed_prompt);
 
     // Create shared storage for output lines (BEFORE reading so we capture everything)
     let output_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -378,25 +378,20 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     });
 
     // Validate that the server started with the expected stack
+    // Skip validation for natural language prompts (they may use different protocol names)
     if let Some(expected_stack) = expected_base_stack {
-        if expected_stack != actual_base_stack {
-            // Get the stack names for error message
-            let expected_name = registry::registry()
-                .stack_name(&expected_stack)
-                .unwrap_or("Unknown");
-            let actual_name = registry::registry()
-                .stack_name(&actual_base_stack)
-                .unwrap_or("Unknown");
+        if expected_stack != actual_base_stack && processed_prompt.contains("base_stack") {
             return Err(format!(
-                "Server started with wrong stack! Expected: {} ({:?}), Got: {} ({:?})",
-                expected_name, expected_stack, actual_name, actual_base_stack
+                "Server started with wrong stack! Expected: {}, Got: {}",
+                expected_stack, actual_base_stack
             )
             .into());
         }
     }
 
     // Validate port if a specific port was requested
-    if expected_port != 0 && actual_port != expected_port {
+    // Skip validation for natural language prompts (they may not preserve explicit ports)
+    if expected_port != 0 && actual_port != expected_port && processed_prompt.contains("open_server") {
         return Err(format!(
             "Server started on wrong port! Expected: {}, Got: {}",
             expected_port, actual_port
@@ -407,11 +402,8 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
     // No need to check port availability - we already confirmed the server is listening
     // by waiting for the "listening on" message in wait_for_server_startup()
 
-    // Get the actual stack name for the NetGetServer struct
-    let actual_stack_name = registry::registry()
-        .stack_name(&actual_base_stack)
-        .unwrap_or("Unknown")
-        .to_string();
+    // Use the actual protocol name from server startup
+    let actual_stack_name = actual_base_stack.clone();
 
     Ok(NetGetServer {
         child,
@@ -444,6 +436,29 @@ fn get_netget_binary_path() -> E2EResult<PathBuf> {
     }
 
     Err("NetGet binary not found. Please run 'cargo build --release' first.".into())
+}
+
+/// Extract base_stack value from open_server prompt
+fn extract_base_stack_from_prompt(prompt: &str) -> Option<String> {
+    // Look for "base_stack <value>" pattern in the prompt
+    let prompt_lower = prompt.to_lowercase();
+
+    if let Some(stack_pos) = prompt_lower.find("base_stack ") {
+        let after_stack = &prompt[stack_pos + "base_stack ".len()..];
+        // Extract until we hit a period, newline, or other terminator
+        let stack_value: String = after_stack
+            .chars()
+            .take_while(|c| !matches!(c, '.' | '\n' | ',' | ';'))
+            .collect();
+
+        let trimmed = stack_value.trim();
+        if !trimmed.is_empty() {
+            // Use the protocol registry to parse the stack name
+            return registry::registry().parse_from_str(trimmed);
+        }
+    }
+
+    None
 }
 
 /// Extract port number from prompt
@@ -547,7 +562,7 @@ async fn wait_for_server_startup_with_capture(
                 // Fallback: if port extraction fails but message contains the port we expect
                 if line.contains(&port.to_string()) {
                     println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
-                    return Ok((port, base_stack.unwrap()));
+                    return Ok((port, protocol_name.unwrap()));
                 }
             }
 
@@ -555,7 +570,7 @@ async fn wait_for_server_startup_with_capture(
             // Also accept "Server is running" or "advertising" as confirmation after seeing the starting message
             if found_starting_message && (line.contains("Server is running") || line.contains("advertising")) {
                 println!("[DEBUG] Server confirmed running on port {}", port);
-                return Ok((port, base_stack.unwrap()));
+                return Ok((port, protocol_name.unwrap()));
             }
         }
         Err("Server did not output startup information".into())

@@ -84,6 +84,14 @@ impl Server for StunProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "STUN server for NAT traversal"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a STUN server for NAT traversal on port 3478"
+    }
 }
 
 impl StunProtocol {

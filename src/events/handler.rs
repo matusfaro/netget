@@ -277,6 +277,7 @@ impl EventHandler {
                 script_path: _,
                 script_inline,
                 script_handles,
+                scheduled_tasks,
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
@@ -351,6 +352,55 @@ impl EventHandler {
                         e
                     ));
                 }
+
+                // Create tasks attached to this server if provided
+                if let Some(task_defs) = scheduled_tasks {
+                    use crate::state::task::{ScheduledTask, TaskScope};
+
+                    for task_def in task_defs {
+                        // Determine delay: for one-shot use delay_secs, for recurring use delay_secs or interval_secs
+                        let delay = if task_def.recurring {
+                            task_def.delay_secs.or(task_def.interval_secs).unwrap_or(0)
+                        } else {
+                            task_def.delay_secs.unwrap_or(0)
+                        };
+
+                        let task = if task_def.recurring {
+                            let interval_secs = task_def.interval_secs.unwrap_or(delay);
+                            ScheduledTask::new_recurring(
+                                crate::state::TaskId::new(0), // Temporary, will be assigned by add_task
+                                task_def.task_id.clone(),
+                                TaskScope::Server(server_id),
+                                interval_secs,
+                                task_def.max_executions,
+                                task_def.instruction,
+                                task_def.context,
+                            )
+                        } else {
+                            ScheduledTask::new_one_shot(
+                                crate::state::TaskId::new(0), // Temporary, will be assigned by add_task
+                                task_def.task_id.clone(),
+                                TaskScope::Server(server_id),
+                                delay,
+                                task_def.instruction,
+                                task_def.context,
+                            )
+                        };
+
+                        let task_id = self.state.add_task(task).await;
+
+                        // TODO: Add script configuration support for scheduled tasks
+                        // For now, tasks use LLM by default. Script support will be added in a future iteration.
+
+                        let _ = status_tx.send(format!(
+                            "[TASK] Created {} task '{}' (ID: {}) for server #{}",
+                            if task_def.recurring { "recurring" } else { "one-shot" },
+                            task_def.task_id,
+                            task_id,
+                            server_id.as_u32()
+                        ));
+                    }
+                }
             }
             CommonAction::CloseServer { server_id } => {
                 use crate::state::server::ServerStatus;
@@ -370,6 +420,13 @@ impl EventHandler {
                         .await;
                     let _ =
                         status_tx.send(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
+
+                    // Clean up tasks associated with this server
+                    self.state.cleanup_server_tasks(server_id).await;
+                    let _ = status_tx.send(format!(
+                        "[TASK] Cleaned up tasks for server #{}",
+                        server_id.as_u32()
+                    ));
                 }
 
                 // Check if all servers are stopped/error
@@ -537,6 +594,101 @@ impl EventHandler {
             CommonAction::AppendToLog { .. } => {
                 // AppendToLog is handled by the action executor, not here
                 // This match arm exists to satisfy exhaustiveness checking
+            }
+            CommonAction::ScheduleTask {
+                task_id,
+                recurring,
+                delay_secs,
+                interval_secs,
+                max_executions,
+                server_id,
+                instruction,
+                context,
+                script_language: _,
+                script_path: _,
+                script_inline,
+                script_handles,
+            } => {
+                use crate::state::task::{ScheduledTask, TaskScope};
+
+                let scope = if let Some(sid) = server_id {
+                    TaskScope::Server(crate::state::ServerId::new(sid))
+                } else {
+                    TaskScope::Global
+                };
+
+                // Determine delay: for one-shot use delay_secs, for recurring use delay_secs or interval_secs
+                let delay = if recurring {
+                    delay_secs.or(interval_secs).unwrap_or(0)
+                } else {
+                    delay_secs.unwrap_or(0)
+                };
+
+                let task = if recurring {
+                    let interval = interval_secs.unwrap_or(delay);
+                    ScheduledTask::new_recurring(
+                        crate::state::TaskId::new(0), // Temporary, will be assigned by add_task
+                        task_id.clone(),
+                        scope,
+                        interval,
+                        max_executions,
+                        instruction,
+                        context,
+                    )
+                } else {
+                    ScheduledTask::new_one_shot(
+                        crate::state::TaskId::new(0), // Temporary, will be assigned by add_task
+                        task_id.clone(),
+                        scope,
+                        delay,
+                        instruction,
+                        context,
+                    )
+                };
+
+                let task_id_num = self.state.add_task(task).await;
+
+                // TODO: Add script configuration support for standalone scheduled tasks
+                // For now, tasks use LLM by default. Script support will be added in a future iteration.
+                let _ = script_inline; // Silence unused variable warning
+                let _ = script_handles; // Silence unused variable warning
+
+                if recurring {
+                    let interval = interval_secs.unwrap_or(delay);
+                    let max_info = if let Some(max) = max_executions {
+                        format!(" (max {} executions)", max)
+                    } else {
+                        String::new()
+                    };
+                    let _ = status_tx.send(format!(
+                        "[TASK] Scheduled recurring task '{}' (ID: {}) to execute every {}s{}",
+                        task_id, task_id_num, interval, max_info
+                    ));
+                } else {
+                    let _ = status_tx.send(format!(
+                        "[TASK] Scheduled one-shot task '{}' (ID: {}) to execute in {}s",
+                        task_id, task_id_num, delay
+                    ));
+                }
+            }
+            CommonAction::CancelTask { task_id } => {
+                if let Some(task) = self.state.get_task(&task_id).await {
+                    self.state.remove_task(task.id).await;
+                    let _ = status_tx.send(format!("[TASK] Cancelled task '{}'", task_id));
+                } else {
+                    let _ = status_tx.send(format!("[WARN] Task '{}' not found", task_id));
+                }
+            }
+            CommonAction::ListTasks => {
+                let tasks = self.state.get_all_tasks().await;
+                if tasks.is_empty() {
+                    let _ = status_tx.send("[TASK] No scheduled tasks".to_string());
+                } else {
+                    let _ = status_tx.send(format!("[TASK] {} scheduled task(s):", tasks.len()));
+                    for task in tasks {
+                        let _ = status_tx.send(format!("  {}", task.format_for_prompt()));
+                    }
+                }
             }
         }
 

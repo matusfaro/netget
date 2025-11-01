@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use super::server::{ServerId, ServerInstance};
+use super::task::{ScheduledTask, TaskId};
 use crate::server::connection::ConnectionId;
 
 /// Operating mode for the application
@@ -159,6 +160,12 @@ struct AppStateInner {
     ollama_lock_enabled: bool,
     /// Unique instance ID for this NetGet process (for multi-instance isolation)
     instance_id: String,
+    /// Scheduled tasks registry
+    tasks: HashMap<TaskId, ScheduledTask>,
+    /// Next task ID to assign
+    next_task_id: u64,
+    /// Task name to ID mapping (for user-friendly task_id strings)
+    task_names: HashMap<String, TaskId>,
 }
 
 impl AppState {
@@ -202,6 +209,9 @@ impl AppState {
                 include_disabled_protocols,
                 ollama_lock_enabled,
                 instance_id,
+                tasks: HashMap::new(),
+                next_task_id: 1,
+                task_names: HashMap::new(),
             })),
         }
     }
@@ -1039,6 +1049,131 @@ impl AppState {
             .servers
             .get_mut(&server_id)
             .map(f)
+    }
+
+    // ===== Task Management Methods =====
+
+    /// Add a new scheduled task
+    pub async fn add_task(&self, task: ScheduledTask) -> TaskId {
+        let mut inner = self.inner.write().await;
+        let id = TaskId::new(inner.next_task_id);
+        inner.next_task_id += 1;
+
+        inner.task_names.insert(task.name.clone(), id);
+        inner.tasks.insert(id, task);
+        id
+    }
+
+    /// Get a task by ID or name
+    pub async fn get_task(&self, id_or_name: &str) -> Option<ScheduledTask> {
+        let inner = self.inner.read().await;
+
+        // Try parsing as numeric ID first
+        if let Some(id) = TaskId::from_string(id_or_name) {
+            return inner.tasks.get(&id).cloned();
+        }
+
+        // Try looking up by name
+        if let Some(&id) = inner.task_names.get(id_or_name) {
+            return inner.tasks.get(&id).cloned();
+        }
+
+        None
+    }
+
+    /// Remove a task
+    pub async fn remove_task(&self, id: TaskId) -> Option<ScheduledTask> {
+        let mut inner = self.inner.write().await;
+        if let Some(task) = inner.tasks.remove(&id) {
+            inner.task_names.remove(&task.name);
+            Some(task)
+        } else {
+            None
+        }
+    }
+
+    /// Get all tasks
+    pub async fn get_all_tasks(&self) -> Vec<ScheduledTask> {
+        self.inner.read().await.tasks.values().cloned().collect()
+    }
+
+    /// Get tasks for a specific server
+    pub async fn get_server_tasks(&self, server_id: ServerId) -> Vec<ScheduledTask> {
+        use crate::state::task::TaskScope;
+
+        self.inner
+            .read()
+            .await
+            .tasks
+            .values()
+            .filter(|task| matches!(&task.scope, TaskScope::Server(sid) if *sid == server_id))
+            .cloned()
+            .collect()
+    }
+
+    /// Update task status
+    pub async fn update_task_status(&self, id: TaskId, status: crate::state::task::TaskStatus) {
+        if let Some(task) = self.inner.write().await.tasks.get_mut(&id) {
+            task.status = status;
+        }
+    }
+
+    /// Update task next execution time
+    pub async fn update_task_next_execution(&self, id: TaskId, next: std::time::Instant) {
+        if let Some(task) = self.inner.write().await.tasks.get_mut(&id) {
+            task.next_execution = next;
+        }
+    }
+
+    /// Record task execution result
+    pub async fn record_task_execution(
+        &self,
+        id: TaskId,
+        result: &crate::state::task::TaskExecutionResult,
+    ) {
+        use crate::state::task::TaskType;
+
+        let mut inner = self.inner.write().await;
+        if let Some(task) = inner.tasks.get_mut(&id) {
+            if result.success {
+                task.failure_count = 0;
+                task.last_error = None;
+            } else {
+                task.failure_count += 1;
+                task.last_error = result.error.clone();
+            }
+
+            // Update execution count for recurring tasks
+            if let TaskType::Recurring {
+                ref mut executions_count,
+                ..
+            } = task.task_type
+            {
+                *executions_count += 1;
+            }
+        }
+    }
+
+    /// Clean up tasks associated with a server
+    pub async fn cleanup_server_tasks(&self, server_id: ServerId) {
+        use crate::state::task::TaskScope;
+
+        let mut inner = self.inner.write().await;
+
+        // Collect task IDs to remove
+        let task_ids_to_remove: Vec<TaskId> = inner
+            .tasks
+            .iter()
+            .filter(|(_, task)| matches!(&task.scope, TaskScope::Server(sid) if *sid == server_id))
+            .map(|(&id, _)| id)
+            .collect();
+
+        // Remove tasks and their name mappings
+        for id in task_ids_to_remove {
+            if let Some(task) = inner.tasks.remove(&id) {
+                inner.task_names.remove(&task.name);
+            }
+        }
     }
 }
 

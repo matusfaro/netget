@@ -45,8 +45,7 @@ impl Server for CassandraProtocol {
             use crate::server::cassandra::CassandraServer;
             let send_first = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("send_first"))
-                .and_then(|v| v.as_bool())
+                .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
             CassandraServer::spawn_with_llm_actions(
@@ -60,6 +59,18 @@ impl Server for CassandraProtocol {
         })
     }
 
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                required: false,
+                example: serde_json::json!(false),
+            },
+        ]
+    }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_cassandra_connections_action()]
     }
@@ -115,6 +126,14 @@ impl Server for CassandraProtocol {
         crate::protocol::metadata::ProtocolMetadata::new(
             crate::protocol::metadata::DevelopmentState::Alpha
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "Cassandra/CQL database server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a Cassandra/CQL database server on port 9042"
     }
 }
 

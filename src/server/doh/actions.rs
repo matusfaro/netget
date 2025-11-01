@@ -127,4 +127,12 @@ impl Server for DohProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "DNS-over-HTTPS server for secure domain resolution"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "DNS-over-HTTPS server on port 443 resolving all queries to 93.184.216.34"
+    }
 }

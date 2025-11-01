@@ -119,6 +119,14 @@ impl Server for OpenApiProtocol {
         )
     }
 
+    fn description(&self) -> &'static str {
+        "OpenAPI specification server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an OpenAPI server for a TODO API on port 8080"
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
@@ -332,5 +340,25 @@ impl Server for OpenApiProtocol {
                 Err(anyhow!("Unknown action type: {}", action_type))
             }
         }
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "spec".to_string(),
+                type_hint: "string".to_string(),
+                description: "OpenAPI 3.x specification in YAML or JSON format (inline)".to_string(),
+                required: false,
+                example: serde_json::json!("openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"),
+            },
+            ParameterDefinition {
+                name: "spec_file".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to OpenAPI specification file (YAML or JSON)".to_string(),
+                required: false,
+                example: serde_json::json!("/path/to/openapi.yaml"),
+            },
+        ]
     }
 }

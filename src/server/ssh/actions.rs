@@ -93,8 +93,7 @@ impl Server for SshProtocol {
             use crate::server::ssh::SshServer;
             let send_first = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("send_first"))
-                .and_then(|v| v.as_bool())
+                .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
             SshServer::spawn_with_llm_actions(
@@ -108,6 +107,18 @@ impl Server for SshProtocol {
         })
     }
 
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                required: false,
+                example: serde_json::json!(false),
+            },
+        ]
+    }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![close_ssh_connection_action(), list_ssh_connections_action()]
     }
@@ -160,6 +171,14 @@ impl Server for SshProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "Secure shell server for remote access"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Pretent to be a shell via SSH on port 2222"
+    }
 }
 
 impl SshProtocol {
@@ -175,7 +194,6 @@ impl SshProtocol {
     fn execute_ssh_auth_decision(&self, action: serde_json::Value) -> Result<ActionResult> {
         let allowed = action
             .get("allowed")
-            .and_then(|v| v.as_bool())
             .context("Missing 'allowed' parameter")?;
 
         debug!("SSH auth decision action: allowed={}", allowed);

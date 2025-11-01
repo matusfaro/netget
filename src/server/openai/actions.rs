@@ -87,6 +87,14 @@ impl Server for OpenAiProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "OpenAI-compatible API server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an OpenAI-compatible API server on port 11435"
+    }
 }
 
 impl OpenAiProtocol {

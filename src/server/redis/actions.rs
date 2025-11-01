@@ -47,8 +47,7 @@ impl Server for RedisProtocol {
             use crate::server::redis::RedisServer;
             let send_first = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("send_first"))
-                .and_then(|v| v.as_bool())
+                .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
             RedisServer::spawn_with_llm_actions(
@@ -60,6 +59,18 @@ impl Server for RedisProtocol {
                 ctx.server_id,
             ).await
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the server should send the first message after connection (not typically needed for Redis)".to_string(),
+                required: false,
+                example: json!(false),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -117,6 +128,14 @@ impl Server for RedisProtocol {
         crate::protocol::metadata::ProtocolMetadata::new(
             crate::protocol::metadata::DevelopmentState::Alpha
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "Redis in-memory data store"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a Redis server on port 6379"
     }
 }
 

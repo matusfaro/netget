@@ -71,8 +71,7 @@ impl Server for TcpProtocol {
             // Extract send_first from startup_params
             let send_first = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("send_first"))
-                .and_then(|v| v.as_bool())
+                .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
             use crate::server::tcp::TcpServer;
@@ -85,6 +84,18 @@ impl Server for TcpProtocol {
                 ctx.server_id,
             ).await
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the server should send the first message after connection (e.g., for FTP/SMTP greeting banners)".to_string(),
+                required: false,
+                example: serde_json::json!(false),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -173,6 +184,14 @@ impl Server for TcpProtocol {
         crate::protocol::metadata::ProtocolMetadata::new(
             crate::protocol::metadata::DevelopmentState::Beta
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "Raw TCP socket server for custom protocols"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Pretend to be FTP server on port 2121; serve file accounts.csv with 'balance,0'"
     }
 }
 

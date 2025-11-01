@@ -99,6 +99,14 @@ impl Server for DnsProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "Domain name resolution server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "DNS server on port 53 and resolve everything to 93.184.216.34"
+    }
 }
 
 impl DnsProtocol {

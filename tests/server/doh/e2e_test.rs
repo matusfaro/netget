@@ -94,11 +94,13 @@ async fn test_doh_server() -> E2EResult<()> {
 
     // Create a prompt with a simple Python script
     // Keep it short to avoid LLM confusion with long prompts
-    let prompt = r#"listen on port {AVAILABLE_PORT} via doh. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300. Use scripting."#;
+    let prompt = r#"listen on port {AVAILABLE_PORT} via doh. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300."#;
 
-    // Start server (LLM will parse the prompt and create the script)
+    // Start server (no scripting, pure LLM mode)
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("info")
+        ServerConfig::new(prompt)
+            .with_log_level("info")
+            .with_no_scripts(true)  // Disable scripting
     ).await?;
 
     println!("DoH server started on port {}", server.port);

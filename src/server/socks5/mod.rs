@@ -78,7 +78,7 @@ impl Socks5Server {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
-        startup_params: Option<serde_json::Value>,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         info!("SOCKS5 proxy server (action-based) starting on {}", listen_addr);
         let _ = status_tx.send(format!("[INFO] SOCKS5 starting on {}", listen_addr));
@@ -91,12 +91,12 @@ impl Socks5Server {
             });
 
         // Apply startup parameters if provided
-        if let Some(params) = startup_params {
+        if let Some(ref params) = startup_params {
             info!("Applying startup parameters: {:?}", params);
             let _ = status_tx.send("[INFO] Applying SOCKS5 startup parameters".to_string());
 
             // Parse auth methods
-            if let Some(methods) = params.get("auth_methods").and_then(|v| v.as_array()) {
+            if let Some(methods) = params.get_optional_array("auth_methods") {
                 config.auth_methods.clear();
                 for method in methods {
                     if let Some(method_str) = method.as_str() {
@@ -111,13 +111,13 @@ impl Socks5Server {
             }
 
             // Parse default action
-            if let Some(action_str) = params.get("default_action").and_then(|v| v.as_str()) {
-                config.default_action = action_str.to_string();
+            if let Some(action_str) = params.get_optional_string("default_action") {
+                config.default_action = action_str;
                 let _ = status_tx.send(format!("[INFO] Default action: {}", config.default_action));
             }
 
             // Parse filter configuration
-            if let Some(filter) = params.get("filter") {
+            if let Some(filter) = params.get_optional_object("filter") {
                 if let Some(patterns) = filter.get("target_host_patterns").and_then(|v| v.as_array()) {
                     config.target_host_patterns = patterns.iter()
                         .filter_map(|v| v.as_str())
@@ -141,8 +141,8 @@ impl Socks5Server {
             }
 
             // Parse filter mode
-            if let Some(mode_str) = params.get("filter_mode").and_then(|v| v.as_str()) {
-                config.filter_mode = match mode_str {
+            if let Some(mode_str) = params.get_optional_string("filter_mode") {
+                config.filter_mode = match mode_str.as_str() {
                     "allow_all" => FilterMode::AllowAll,
                     "deny_all" => FilterMode::DenyAll,
                     "ask_llm" => FilterMode::AskLlm,

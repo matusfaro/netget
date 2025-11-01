@@ -1,77 +1,171 @@
 ## Available Base Stacks
 
-Each protocol stack has a specific name to use in the 'base_stack' field:
+### Other
 
-### ETH>IP>TCP
-Stack name: "ETH>IP>TCP"
-No startup parameters.
+**BGP**
+Full name: "ETH>IP>TCP>BGP"
+Description: BGP routing server
+Example: "Start a BGP routing server on port 179"
+Startup parameters:
+  • as_number (optional) - BGP Autonomous System Number (1-4294967295). Use private ASNs (64512-65534) for testing.
+    Example: 65001
+  • router_id (optional) - BGP router ID in IPv4 address format (e.g., 192.168.1.1)
+    Example: "192.168.1.1"
 
-### ETH>IP>TCP>HTTP
-Stack name: "ETH>IP>TCP>HTTP"
-No startup parameters.
+**Cassandra**
+Full name: "ETH>IP>TCP>Cassandra"
+Description: Cassandra/CQL database server
+Example: "Start a Cassandra/CQL database server on port 9042"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
 
-### ETH
-Stack name: "ETH"
-No startup parameters.
+**DHCP**
+Full name: "ETH>IP>UDP>DHCP"
+Description: DHCP server for IP address assignment
+Example: "Start a DHCP server on interface eth0"
+Startup parameters: None
 
-### ETH>IP>UDP
-Stack name: "ETH>IP>UDP"
-No startup parameters.
+**DNS**
+Full name: "ETH>IP>UDP>DNS"
+Description: Domain name resolution server
+Example: "DNS server on port 53 and resolve everything to 93.184.216.34"
+Startup parameters: None
 
-### ETH>IP>UDP>DNS
-Stack name: "ETH>IP>UDP>DNS"
-No startup parameters.
+**DataLink**
+Full name: "ETH"
+Description: Layer 2 Ethernet frame server
+Example: "Listen on eth0 via Ethernet"
+Startup parameters:
+  • interface (required) - Network interface name to capture packets from (e.g., 'eth0', 'en0', 'wlan0')
+    Example: "eth0"
+  • filter (optional) - Optional BPF (Berkeley Packet Filter) expression to filter captured packets (e.g., 'arp', 'tcp port 80')
+    Example: "arp"
 
-### ETH>IP>UDP>DHCP
-Stack name: "ETH>IP>UDP>DHCP"
-No startup parameters.
+**DoH**
+Full name: "ETH>IP>TCP>TLS>HTTP2>DNS"
+Description: DNS-over-HTTPS server for secure domain resolution
+Example: "DNS-over-HTTPS server on port 443 resolving all queries to 93.184.216.34"
+Startup parameters: None
 
-### ETH>IP>UDP>NTP
-Stack name: "ETH>IP>UDP>NTP"
-No startup parameters.
+**DoT**
+Full name: "ETH>IP>TCP>TLS>DNS"
+Description: DNS-over-TLS server for secure domain resolution
+Example: "DNS-over-TLS server on port 853 resolving all queries to 93.184.216.34"
+Startup parameters: None
 
-### ETH>IP>UDP>SNMP
-Stack name: "ETH>IP>UDP>SNMP"
-No startup parameters.
+**DynamoDB**
+Full name: "ETH>IP>TCP>HTTP>DYNAMODB"
+Description: DynamoDB-compatible database server
+Example: "Start a DynamoDB-compatible server on port 8000"
+Startup parameters: None
 
-### ETH>IP>TCP>SSH
-Stack name: "ETH>IP>TCP>SSH"
-No startup parameters.
+**Elasticsearch**
+Full name: "ETH>IP>TCP>HTTP>ELASTICSEARCH"
+Description: Elasticsearch search engine
+Example: "Start an Elasticsearch server on port 9200"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
 
-### ETH>IP>TCP>IRC
-Stack name: "ETH>IP>TCP>IRC"
-No startup parameters.
+**HTTP**
+Full name: "ETH>IP>TCP>HTTP"
+Description: Web server serving HTTP traffic
+Example: "Pretend to be a sassy HTTP server on port 8080 serving cooking recipes"
+Startup parameters: None
 
-### ETH>IP>TCP>Telnet
-Stack name: "ETH>IP>TCP>Telnet"
-No startup parameters.
+**IMAP**
+Full name: "ETH>IP>TCP>IMAP"
+Description: IMAP mail server
+Example: "Start an IMAP mail server on port 143"
+Startup parameters: None
 
-### ETH>IP>TCP>SMTP
-Stack name: "ETH>IP>TCP>SMTP"
-No startup parameters.
+**IPP**
+Full name: "ETH>IP>TCP>HTTP>IPP"
+Description: Internet Printing Protocol server
+Example: "Start an IPP server on port 631"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
 
-### ETH>IP>UDP>mDNS
-Stack name: "ETH>IP>UDP>mDNS"
-No startup parameters.
+**IRC**
+Full name: "ETH>IP>TCP>IRC"
+Description: IRC chat server
+Example: "Start an IRC server"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
 
-### ETH>IP>TCP>MySQL
-Stack name: "ETH>IP>TCP>MySQL"
-No startup parameters.
+**JSON-RPC**
+Full name: "ETH>IP>TCP>HTTP>JSONRPC"
+Description: JSON-RPC 2.0 server
+Example: "Start a JSON-RPC 2.0 server on port 8000"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for JSON-RPC over HTTP)
+    Example: false
 
-### ETH>IP>TCP>HTTP>IPP
-Stack name: "ETH>IP>TCP>HTTP>IPP"
-No startup parameters.
+**LDAP**
+Full name: "ETH>IP>TCP>LDAP"
+Description: LDAP directory server
+Example: "Start an LDAP directory server on port 389"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
 
-### ETH>IP>TCP>PostgreSQL
-Stack name: "ETH>IP>TCP>PostgreSQL"
-No startup parameters.
+**MCP**
+Full name: "ETH>IP>TCP>HTTP>MCP"
+Description: Model Context Protocol server
+Example: "Start an MCP (Model Context Protocol) server on port 8000"
+Startup parameters: None
 
-### ETH>IP>TCP>Redis
-Stack name: "ETH>IP>TCP>Redis"
-No startup parameters.
+**MySQL**
+Full name: "ETH>IP>TCP>MySQL"
+Description: MySQL database server
+Example: "Start a MySQL server on port 3306"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
 
-### ETH>IP>TCP>HTTP>PROXY
-Stack name: "ETH>IP>TCP>HTTP>PROXY"
+**NFS**
+Full name: "ETH>IP>TCP>NFS"
+Description: NFS file server
+Example: "Start an NFS file server on port 2049"
+Startup parameters: None
+
+**NTP**
+Full name: "ETH>IP>UDP>NTP"
+Description: Network Time Protocol server for time synchronization
+Example: "pretend to be a ntp server on port 123"
+Startup parameters: None
+
+**OpenAI**
+Full name: "ETH>IP>TCP>HTTP>OPENAI"
+Description: OpenAI-compatible API server
+Example: "Start an OpenAI-compatible API server on port 11435"
+Startup parameters: None
+
+**OpenAPI**
+Full name: "ETH>IP>TCP>HTTP>OPENAPI"
+Description: OpenAPI specification server
+Example: "Start an OpenAPI server for a TODO API on port 8080"
+Startup parameters:
+  • spec (optional) - OpenAPI 3.x specification in YAML or JSON format (inline)
+    Example: "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
+  • spec_file (optional) - Path to OpenAPI specification file (YAML or JSON)
+    Example: "/path/to/openapi.yaml"
+
+**PostgreSQL**
+Full name: "ETH>IP>TCP>PostgreSQL"
+Description: PostgreSQL database server
+Example: "Start a PostgreSQL server on port 5432"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for PostgreSQL)
+    Example: false
+
+**Proxy**
+Full name: "ETH>IP>TCP>HTTP>PROXY"
+Description: HTTP/HTTPS proxy server
+Example: "Start an HTTP proxy on port 8080"
 Startup parameters:
   • certificate_mode (optional) - Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)
     Example: "generate"
@@ -86,11 +180,129 @@ Startup parameters:
   • https_connection_filter_mode (optional) - HTTPS connection filter mode (pass-through only): 'all', 'match_only', or 'none'
     Example: "match_only"
 
-### ETH>IP>TCP>HTTP>WEBDAV
-Stack name: "ETH>IP>TCP>HTTP>WEBDAV"
-No startup parameters.
+**Redis**
+Full name: "ETH>IP>TCP>Redis"
+Description: Redis in-memory data store
+Example: "Start a Redis server on port 6379"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for Redis)
+    Example: false
 
-### ETH>IP>TCP>NFS
-Stack name: "ETH>IP>TCP>NFS"
-No startup parameters.
+**SMB**
+Full name: "ETH>IP>TCP>SMB"
+Description: SMB/CIFS file server
+Example: "Start an SMB/CIFS file server on port 8445"
+Startup parameters: None
+
+**SMTP**
+Full name: "ETH>IP>TCP>SMTP"
+Description: SMTP mail server
+Example: "Start an SMTP mail server on port 25"
+Startup parameters: None
+
+**SNMP**
+Full name: "ETH>IP>UDP>SNMP"
+Description: SNMP agent for network monitoring
+Example: "SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'"
+Startup parameters: None
+
+**SOCKS5**
+Full name: "ETH>IP>TCP>SOCKS5"
+Description: SOCKS5 proxy server
+Example: "Start a SOCKS5 proxy on port 1080 that asks before connecting"
+Startup parameters: None
+
+**SSH**
+Full name: "ETH>IP>TCP>SSH"
+Description: Secure shell server for remote access
+Example: "Pretent to be a shell via SSH on port 2222"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
+
+**STUN**
+Full name: "ETH>IP>UDP>STUN"
+Description: STUN server for NAT traversal
+Example: "Start a STUN server for NAT traversal on port 3478"
+Startup parameters: None
+
+**TCP**
+Full name: "ETH>IP>TCP"
+Description: Raw TCP socket server for custom protocols
+Example: "Pretend to be FTP server on port 2121; serve file accounts.csv with 'balance,0'"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (e.g., for FTP/SMTP greeting banners)
+    Example: false
+
+**TURN**
+Full name: "ETH>IP>UDP>TURN"
+Description: TURN relay server for NAT traversal
+Example: "Start a TURN relay server on port 3478 with 10 minute allocations"
+Startup parameters: None
+
+**Telnet**
+Full name: "ETH>IP>TCP>Telnet"
+Description: Telnet terminal server
+Example: "Start a telnet server on port 23 that echoes commands"
+Startup parameters:
+  • send_first (optional) - Whether the server should send the first message after connection (not typically needed for this protocol)
+    Example: false
+
+**Tor Directory**
+Full name: "ETH>IP>TCP>HTTP>TorDirectory"
+Description: Tor directory server serving consensus documents
+Example: "Start a Tor directory on port 9030 serving fake consensus documents"
+Startup parameters: None
+
+**Tor Relay**
+Full name: "ETH>IP>TCP>TLS>TorRelay"
+Description: Tor relay server for anonymous communication
+Example: "Start a Tor exit relay on port 9001 allowing connections to localhost"
+Startup parameters: None
+
+**UDP**
+Full name: "ETH>IP>UDP"
+Description: UDP datagram server
+Example: "Listen on port 5000 via UDP"
+Startup parameters: None
+
+**VNC**
+Full name: "ETH>IP>TCP>VNC"
+Description: VNC remote desktop server
+Example: "Start a VNC server on port 5900 displaying a blue background"
+Startup parameters: None
+
+**WebDAV**
+Full name: "ETH>IP>TCP>HTTP>WEBDAV"
+Description: WebDAV file server
+Example: "Start a WebDAV server on port 8080"
+Startup parameters: None
+
+**WireGuard**
+Full name: "ETH>IP>UDP>WG"
+Description: WireGuard VPN server
+Example: "Start a WireGuard VPN server on port 51820"
+Startup parameters: None
+
+**XML-RPC**
+Full name: "ETH>IP>TCP>HTTP>XML-RPC"
+Description: XML-RPC server
+Example: "Start an XML-RPC server on port 8080 with methods add(a,b) and greet(name)"
+Startup parameters: None
+
+**gRPC**
+Full name: "ETH>IP>TCP>HTTP2>GRPC"
+Description: gRPC server
+Example: "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
+Startup parameters:
+  • proto_schema (required) - Protobuf schema definition. Can be: (1) base64-encoded FileDescriptorSet (recommended), (2) path to .proto file, or (3) inline .proto text
+    Example: "syntax = \"proto3\"; package test; service UserService { rpc GetUser(UserId) returns (User); } message UserId { int32 id = 1; } message User { int32 id = 1; string name = 2; string email = 3; }"
+  • enable_reflection (optional) - Enable gRPC server reflection (allows clients to discover schema dynamically)
+    Example: true
+
+**mDNS**
+Full name: "ETH>IP>UDP>mDNS"
+Description: Multicast DNS service discovery server
+Example: "Advertise a web service via mDNS on port 8080"
+Startup parameters: None
 

@@ -86,6 +86,14 @@ impl Server for WebDavProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "WebDAV file server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a WebDAV server on port 8080"
+    }
 }
 
 impl WebDavProtocol {

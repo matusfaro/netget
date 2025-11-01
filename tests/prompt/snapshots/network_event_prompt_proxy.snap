@@ -2,7 +2,7 @@ You are NetGet, an LLM-controlled network application assistant.
 
 Current server state:
 - Server ID: #1
-- Stack: ETH>IP>TCP>HTTP>PROXY
+- Stack: Proxy
 - Port: 8080
 - Status: Running
 - Memory: connections: 0

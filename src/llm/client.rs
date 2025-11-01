@@ -23,7 +23,7 @@ impl Drop for OllamaLockGuard {
     fn drop(&mut self) {
         if let Some(file) = self.file.take() {
             // Unlock the file (errors are logged but not fatal)
-            if let Err(e) = file.unlock() {
+            if let Err(e) = fs2::FileExt::unlock(&file) {
                 error!("Failed to release Ollama lock: {}", e);
             } else {
                 debug!("Ollama lock released");
@@ -277,8 +277,7 @@ impl OllamaClient {
             return Ok(None);
         }
 
-        use fs2::FileExt;
-        use std::fs::{self, OpenOptions};
+        use std::fs::OpenOptions;
         use std::path::Path;
         use std::time::{Duration, SystemTime};
 

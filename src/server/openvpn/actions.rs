@@ -115,6 +115,14 @@ impl Server for OpenvpnProtocol {
             "No actual VPN tunnels. Full OpenVPN implementation is infeasible: no viable Rust library exists, protocol is extremely complex (500K+ lines in C++). Use WireGuard for production VPN. OpenVPN honeypot sufficient for detection/logging reconnaissance attempts."
         )
     }
+
+    fn description(&self) -> &'static str {
+        "OpenVPN honeypot server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an OpenVPN honeypot on port 1194"
+    }
 }
 
 impl OpenvpnProtocol {

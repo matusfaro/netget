@@ -59,6 +59,14 @@ impl Server for VncProtocol {
         "ETH>IP>TCP>VNC"
     }
 
+    fn description(&self) -> &'static str {
+        "VNC remote desktop server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a VNC server on port 5900 displaying a blue background"
+    }
+
     fn keywords(&self) -> Vec<&'static str> {
         vec!["vnc", "rfb", "remote desktop", "framebuffer"]
     }

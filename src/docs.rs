@@ -3,7 +3,6 @@
 //! Provides functionality to generate documentation for all protocols
 //! including their event types, actions, and parameters.
 
-use crate::llm::Server;
 use crate::protocol::{ProtocolMetadata, DevelopmentState};
 
 /// ANSI color codes for terminal output
@@ -32,66 +31,90 @@ pub fn list_all_protocols() -> String {
     let mut output = String::new();
 
     // Title with colors
-    output.push_str(&format!("\n{}{}Available Protocols{}\n\n",
+    output.push_str(&format!("\n{}{}NetGet - LLM-Controlled Network Protocols{}\n\n",
         colors::BOLD, colors::BRIGHT_CYAN, colors::RESET));
-    output.push_str(&format!("{}NetGet supports the following protocol stacks.{}\n",
+
+    // NetGet description
+    output.push_str(&format!("{}NetGet is an experimental network application where an LLM (via Ollama){}\n",
         colors::DIM, colors::RESET));
+    output.push_str(&format!("{}controls network protocols and acts as a server for 50+ protocols.{}\n",
+        colors::DIM, colors::RESET));
+    output.push_str(&format!("{}All protocol logic is handled by the LLM - you describe behavior in natural language.{}\n\n",
+        colors::DIM, colors::RESET));
+
+    // Key Features
+    output.push_str(&format!("{}Key Features:{}\n",
+        colors::BOLD, colors::RESET));
+    output.push_str(&format!("  {}•{} {}Scripting:{} LLM generates on-the-fly Python/JavaScript code to reduce LLM calls\n",
+        colors::GREEN, colors::RESET,
+        colors::BOLD, colors::RESET));
+    output.push_str(&format!("  {}•{} {}Web Search:{} LLM can fetch protocol RFCs and documentation from the web\n",
+        colors::GREEN, colors::RESET,
+        colors::BOLD, colors::RESET));
+    output.push_str(&format!("  {}•{} {}File Reading:{} LLM can read local files (schemas, configs, prompts)\n",
+        colors::GREEN, colors::RESET,
+        colors::BOLD, colors::RESET));
+    output.push_str(&format!("  {}•{} {}Logging:{} Comprehensive logging system (TRACE/DEBUG/INFO/WARN/ERROR levels)\n",
+        colors::GREEN, colors::RESET,
+        colors::BOLD, colors::RESET));
+    output.push_str(&format!("  {}•{} {}Action-Based:{} Structured JSON responses for precise protocol control\n",
+        colors::GREEN, colors::RESET,
+        colors::BOLD, colors::RESET));
+    output.push_str(&format!("  {}•{} {}Dynamic Reconfiguration:{} Change server behavior at runtime without restart\n\n",
+        colors::GREEN, colors::RESET,
+        colors::BOLD, colors::RESET));
+
+    // Dynamically generate grouped protocol list
+    output.push_str(&format!("{}Available Protocols:{}\n",
+        colors::BOLD, colors::RESET));
     output.push_str(&format!("{}Use{} {}{}/docs <protocol>{} {}to see detailed information.{}\n\n",
         colors::DIM, colors::RESET,
         colors::CYAN, colors::BOLD, colors::RESET,
         colors::DIM, colors::RESET));
 
-    output.push_str(&format!("{}━━━ Core Protocols (Beta) ━━━{}\n\n",
-        colors::BRIGHT_GREEN, colors::RESET));
-    add_protocol_entry(&mut output, "TCP", "Raw TCP - LLM controls entire protocol (FTP, HTTP, custom)");
-    add_protocol_entry(&mut output, "HTTP", "HTTP server - LLM controls responses (status, headers, body)");
-    add_protocol_entry(&mut output, "UDP", "Raw UDP - LLM controls datagrams");
-    add_protocol_entry(&mut output, "DataLink", "Layer 2 Ethernet - LLM controls frames (ARP, custom)");
-    add_protocol_entry(&mut output, "DNS", "DNS server - LLM generates DNS responses");
-    add_protocol_entry(&mut output, "DHCP", "DHCP server - LLM handles DHCP requests");
-    add_protocol_entry(&mut output, "NTP", "NTP server - LLM handles time sync");
-    add_protocol_entry(&mut output, "SNMP", "SNMP agent - LLM handles get/set requests");
-    add_protocol_entry(&mut output, "SSH", "SSH server - LLM handles auth and shell");
+    // Get all protocols from registry and group them
+    let registry = crate::protocol::registry::registry();
+    let all_protocols = registry.all_protocols();
 
-    output.push_str(&format!("\n{}━━━ Application Protocols (Alpha) ━━━{}\n\n",
-        colors::BRIGHT_YELLOW, colors::RESET));
-    add_protocol_entry(&mut output, "IRC", "IRC chat server");
-    add_protocol_entry(&mut output, "Telnet", "Telnet terminal server");
-    add_protocol_entry(&mut output, "SMTP", "SMTP mail server (port 25)");
-    add_protocol_entry(&mut output, "IMAP", "IMAP mail server (port 143/993)");
-    add_protocol_entry(&mut output, "mDNS", "mDNS service discovery (port 5353)");
-    add_protocol_entry(&mut output, "LDAP", "LDAP directory server (port 389)");
+    // Group protocols by their group_name
+    let mut groups: std::collections::HashMap<&'static str, Vec<String>> = std::collections::HashMap::new();
 
-    output.push_str(&format!("\n{}━━━ Database Protocols (Alpha) ━━━{}\n\n",
-        colors::BRIGHT_YELLOW, colors::RESET));
-    add_protocol_entry(&mut output, "MySQL", "MySQL server (port 3306)");
-    add_protocol_entry(&mut output, "PostgreSQL", "PostgreSQL server (port 5432)");
-    add_protocol_entry(&mut output, "Redis", "Redis server (port 6379)");
-    add_protocol_entry(&mut output, "Cassandra", "Cassandra/CQL database (port 9042)");
-    add_protocol_entry(&mut output, "DynamoDB", "DynamoDB-compatible server (port 8000)");
-    add_protocol_entry(&mut output, "Elasticsearch", "Elasticsearch server (port 9200)");
+    for (protocol_name, protocol) in &all_protocols {
+        let group = protocol.group_name();
+        groups.entry(group).or_insert_with(Vec::new).push(protocol_name.clone());
+    }
 
-    output.push_str(&format!("\n{}━━━ Web & File Protocols (Alpha) ━━━{}\n\n",
-        colors::BRIGHT_YELLOW, colors::RESET));
-    add_protocol_entry(&mut output, "IPP", "Internet Printing Protocol (port 631)");
-    add_protocol_entry(&mut output, "WebDAV", "WebDAV file server");
-    add_protocol_entry(&mut output, "NFS", "NFSv3 file server (port 2049)");
-    add_protocol_entry(&mut output, "SMB", "SMB/CIFS file server (port 445)");
+    // Sort groups by a predefined order
+    let group_order = vec![
+        "Core",
+        "Application",
+        "Database",
+        "Web & File",
+        "Proxy & Network",
+        "AI & API",
+        "Other"
+    ];
 
-    output.push_str(&format!("\n{}━━━ Proxy & Network Protocols (Alpha) ━━━{}\n\n",
-        colors::BRIGHT_YELLOW, colors::RESET));
-    add_protocol_entry(&mut output, "Proxy", "HTTP/HTTPS proxy (port 8080/3128)");
-    add_protocol_entry(&mut output, "SOCKS5", "SOCKS5 proxy (port 1080)");
-    add_protocol_entry(&mut output, "WireGuard", "WireGuard VPN (port 51820)");
-    add_protocol_entry(&mut output, "STUN", "STUN NAT traversal (port 3478)");
-    add_protocol_entry(&mut output, "TURN", "TURN relay server (port 3478)");
-    add_protocol_entry(&mut output, "OpenVPN", "OpenVPN server (port 1194)");
-    add_protocol_entry(&mut output, "IPSec/IKEv2", "IPSec/IKEv2 VPN (port 500/4500)");
-    add_protocol_entry(&mut output, "BGP", "BGP routing protocol (port 179)");
+    for group_name in group_order {
+        if let Some(protocols) = groups.get(group_name) {
+            if protocols.is_empty() {
+                continue;
+            }
 
-    output.push_str(&format!("\n{}━━━ AI & API Protocols (Alpha) ━━━{}\n\n",
-        colors::BRIGHT_YELLOW, colors::RESET));
-    add_protocol_entry(&mut output, "OpenAI", "OpenAI-compatible API (port 11435)");
+            // Output group header
+            output.push_str(&format!("{}━━━ {} ━━━{}\n",
+                colors::BRIGHT_GREEN, group_name, colors::RESET));
+
+            // Sort protocols alphabetically within group
+            let mut sorted_protocols = protocols.clone();
+            sorted_protocols.sort();
+
+            // Output protocol names as comma-separated list
+            let protocol_list = sorted_protocols.join(", ");
+            output.push_str(&format!("  {}{}{}\n\n",
+                colors::DIM, protocol_list, colors::RESET));
+        }
+    }
 
     output
 }

@@ -276,18 +276,18 @@ async fn test_grpc_error_response() -> E2EResult<()> {
     // Create schema
     let proto_text = create_test_proto_schema();
     let descriptor_bytes = compile_proto_to_fds(&proto_text)?;
-    use base64::engine::general_purpose::STANDARD;
-    use base64::Engine;
-    let descriptor_b64 = STANDARD.encode(&descriptor_bytes);
 
     // PROMPT: gRPC server that returns errors for specific IDs
+    // Use inline proto text instead of base64 (LLMs truncate long base64 strings)
     let prompt = format!(
-        r#"Start a gRPC server on port {{AVAILABLE_PORT}}. The protobuf schema is: {}
+        r#"Start a gRPC server on port {{AVAILABLE_PORT}}. Here is the protobuf schema:
+
+{}
 
 When you receive GetUser requests:
 - If the id is 0, respond with a gRPC error using code NOT_FOUND and message "User not found"
 - For any other id, respond with a User message containing that id, name "Charlie", and email "charlie@test.com"."#,
-        descriptor_b64
+        proto_text
     );
 
     // Start the server
@@ -360,16 +360,16 @@ async fn test_grpc_concurrent_requests() -> E2EResult<()> {
     // Create schema
     let proto_text = create_test_proto_schema();
     let descriptor_bytes = compile_proto_to_fds(&proto_text)?;
-    use base64::engine::general_purpose::STANDARD;
-    use base64::Engine;
-    let descriptor_b64 = STANDARD.encode(&descriptor_bytes);
 
     // PROMPT: gRPC server
+    // Use inline proto text instead of base64 (LLMs truncate long base64 strings)
     let prompt = format!(
-        r#"Start a gRPC server on port {{AVAILABLE_PORT}}. The protobuf schema is: {}
+        r#"Start a gRPC server on port {{AVAILABLE_PORT}}. Here is the protobuf schema:
+
+{}
 
 When you receive GetUser requests, respond with a User message where the id matches the request, name is "User<id>", and email is "user<id>@test.com"."#,
-        descriptor_b64
+        proto_text
     );
 
     // Start the server

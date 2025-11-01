@@ -14,7 +14,7 @@ async fn test_jsonrpc_basic_method_call() -> E2EResult<()> {
     println!("\n=== E2E Test: JSON-RPC Basic Method Call ===");
 
     // Start JSON-RPC server
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack jsonrpc. This is a JSON-RPC 2.0 server. \
+    let prompt = "Open JSON-RPC on port {AVAILABLE_PORT}. This is a JSON-RPC 2.0 server. \
         When clients call method 'add' with params [a, b], return their sum. \
         When clients call 'greet' with param name, return 'Hello, <name>!'.";
 
@@ -92,7 +92,7 @@ async fn test_jsonrpc_basic_method_call() -> E2EResult<()> {
 async fn test_jsonrpc_notification() -> E2EResult<()> {
     println!("\n=== E2E Test: JSON-RPC Notification (no response expected) ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack jsonrpc. This is a JSON-RPC 2.0 server. \
+    let prompt = "Open JSON-RPC on port {AVAILABLE_PORT}. This is a JSON-RPC 2.0 server. \
         Handle notifications (requests without 'id') by logging them but not sending responses.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -138,7 +138,7 @@ async fn test_jsonrpc_notification() -> E2EResult<()> {
 async fn test_jsonrpc_batch_request() -> E2EResult<()> {
     println!("\n=== E2E Test: JSON-RPC Batch Request ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack jsonrpc. This is a JSON-RPC 2.0 server. \
+    let prompt = "Open JSON-RPC on port {AVAILABLE_PORT}. This is a JSON-RPC 2.0 server. \
         Handle batch requests by processing each method call and returning results in an array. \
         For method 'echo', return the first parameter as the result.";
 
@@ -198,7 +198,7 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
 async fn test_jsonrpc_method_not_found() -> E2EResult<()> {
     println!("\n=== E2E Test: JSON-RPC Method Not Found Error ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack jsonrpc. This is a JSON-RPC 2.0 server. \
+    let prompt = "Open JSON-RPC on port {AVAILABLE_PORT}. This is a JSON-RPC 2.0 server. \
         When clients call unknown methods, return error code -32601 (Method not found).";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

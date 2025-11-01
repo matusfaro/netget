@@ -322,6 +322,22 @@ impl DohServer {
         for protocol_result in &execution_result.protocol_results {
             use crate::llm::actions::protocol_trait::ActionResult;
             match protocol_result {
+                ActionResult::Output(bytes) => {
+                    // DNS action returned binary response directly
+                    debug!("DoH sending {} bytes response", bytes.len());
+                    let _ = status_tx.send(format!("[DEBUG] DoH sending {} bytes", bytes.len()));
+
+                    trace!("DoH response hex: {}", hex::encode(bytes));
+                    let _ = status_tx.send(format!("[TRACE] DoH response hex: {}", hex::encode(bytes)));
+
+                    // Return DNS response with correct Content-Type
+                    return Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "application/dns-message")
+                        .header("Content-Length", bytes.len())
+                        .body(Full::new(Bytes::from(bytes.clone())))
+                        .unwrap());
+                }
                 ActionResult::Custom { data, .. } => {
                     if let Some(output_data) = data.get("output_data").and_then(|v| v.as_str()) {
                         // Decode hex DNS response

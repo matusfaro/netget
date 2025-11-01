@@ -16,9 +16,11 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
         .join("tests/server/openapi/test_spec.yaml");
     let spec_path_str = spec_path.to_str().unwrap();
 
-    // Create prompt with startup_params containing spec_file path
+    // Create prompt that tells LLM to read spec and open server
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}",
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
         spec_path_str
     );
 
@@ -174,10 +176,11 @@ async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
         .join("tests/server/openapi/test_spec.yaml");
     let spec_path_str = spec_path.to_str().unwrap();
 
-    // Create prompt with startup_params containing spec_file path
-    // Note: llm_on_invalid=true must be set after server starts via configure_error_handling action
+    // Create prompt that tells LLM to read spec, open server, and configure error handling
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}. \
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value. \
         After opening, use configure_error_handling action with llm_on_invalid=true so you can customize 404 and 405 responses.",
         spec_path_str
     );

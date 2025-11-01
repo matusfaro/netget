@@ -121,4 +121,12 @@ impl Server for DotProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "DNS-over-TLS server for secure domain resolution"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "DNS-over-TLS server on port 853 resolving all queries to 93.184.216.34"
+    }
 }

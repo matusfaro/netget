@@ -116,6 +116,14 @@ impl Server for WireguardProtocol {
             "Full VPN server with actual tunnel support using defguard_wireguard_rs. Creates TUN interface and supports peer connections."
         )
     }
+
+    fn description(&self) -> &'static str {
+        "WireGuard VPN server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a WireGuard VPN server on port 51820"
+    }
 }
 
 impl WireguardProtocol {

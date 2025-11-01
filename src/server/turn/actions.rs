@@ -93,6 +93,14 @@ impl Server for TurnProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "TURN relay server for NAT traversal"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a TURN relay server on port 3478 with 10 minute allocations"
+    }
 }
 
 impl TurnProtocol {

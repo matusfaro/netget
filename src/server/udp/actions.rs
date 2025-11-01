@@ -93,6 +93,14 @@ impl Server for UdpProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "UDP datagram server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Listen on port 5000 via UDP"
+    }
 }
 
 impl UdpProtocol {

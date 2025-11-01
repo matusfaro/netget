@@ -45,7 +45,7 @@ impl ProxyServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
-        startup_params: Option<serde_json::Value>,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         let _ = status_tx.send("[INFO] @@@ spawn_with_llm_actions CALLED @@@".to_string());
         info!("Proxy server (action-based) starting on {}", listen_addr);
@@ -59,21 +59,18 @@ impl ProxyServer {
             });
 
         // Apply startup parameters if provided
-        if let Some(params) = startup_params {
-            info!("Applying startup parameters: {:?}", params);
+        if let Some(ref params) = startup_params {
             let _ = status_tx.send(format!("[INFO] Applying proxy startup parameters"));
 
             // Parse certificate_mode
-            if let Some(cert_mode_str) = params.get("certificate_mode").and_then(|v| v.as_str()) {
-                config.certificate_mode = match cert_mode_str {
+            if let Some(cert_mode_str) = params.get_optional_string("certificate_mode") {
+                config.certificate_mode = match cert_mode_str.as_str() {
                     "generate" => CertificateMode::Generate,
                     "none" => CertificateMode::None,
                     "load_from_file" => {
-                        let cert_path = params.get("cert_path")
-                            .and_then(|v| v.as_str())
+                        let cert_path = params.get_optional_string("cert_path")
                             .context("Missing cert_path for load_from_file mode")?;
-                        let key_path = params.get("key_path")
-                            .and_then(|v| v.as_str())
+                        let key_path = params.get_optional_string("key_path")
                             .context("Missing key_path for load_from_file mode")?;
                         CertificateMode::LoadFromFile {
                             cert_path: cert_path.into(),
@@ -89,21 +86,21 @@ impl ProxyServer {
             }
 
             // Parse filter modes
-            if let Some(mode_str) = params.get("request_filter_mode").and_then(|v| v.as_str()) {
+            if let Some(mode_str) = params.get_optional_string("request_filter_mode") {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
                     let _ = status_tx.send(format!("[INFO] Request filter mode: {mode:?}"));
                     config.request_filter_mode = mode;
                 }
             }
 
-            if let Some(mode_str) = params.get("response_filter_mode").and_then(|v| v.as_str()) {
+            if let Some(mode_str) = params.get_optional_string("response_filter_mode") {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
                     let _ = status_tx.send(format!("[INFO] Response filter mode: {mode:?}"));
                     config.response_filter_mode = mode;
                 }
             }
 
-            if let Some(mode_str) = params.get("https_connection_filter_mode").and_then(|v| v.as_str()) {
+            if let Some(mode_str) = params.get_optional_string("https_connection_filter_mode") {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
                     let _ = status_tx.send(format!("[INFO] HTTPS connection filter mode: {:?}", mode));
                     config.https_connection_filter_mode = mode;

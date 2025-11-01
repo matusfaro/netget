@@ -393,6 +393,14 @@ impl ProtocolRegistry {
             return Some(stack);
         }
 
+        // Priority 9: Check Tor protocols before TCP fallback
+        if let Some(stack) = self.try_keyword_match(&input_lower, &["tor_directory", "tor-directory", "directory authority", "tordirectory"]) {
+            return Some(stack);
+        }
+        if let Some(stack) = self.try_keyword_match(&input_lower, &["tor_relay", "tor-relay", "onion router", "torrelay"]) {
+            return Some(stack);
+        }
+
         // For all other protocols, check keywords in registration order
         for (protocol_name, protocol) in &self.protocols {
             for keyword in protocol.keywords() {
@@ -432,10 +440,13 @@ impl ProtocolRegistry {
 
     /// Get list of available protocol names
     pub fn available_protocols(&self) -> Vec<&'static str> {
-        self.protocols
+        let mut protocols: Vec<&'static str> = self.protocols
             .values()
             .map(|p| p.protocol_name())
-            .collect()
+            .collect();
+        // Sort alphabetically for deterministic output
+        protocols.sort();
+        protocols
     }
 
     /// Get stack name by protocol name (e.g., "HTTP" -> "ETH>IP>TCP>HTTP")

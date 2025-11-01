@@ -19,7 +19,9 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
     let spec_path_str = spec_path.to_str().unwrap();
 
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}",
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
         spec_path_str
     );
 
@@ -98,7 +100,9 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
     let spec_path_str = spec_path.to_str().unwrap();
 
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}",
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
         spec_path_str
     );
 
@@ -178,7 +182,9 @@ async fn test_openapi_method_validation() -> E2EResult<()> {
     let spec_path_str = spec_path.to_str().unwrap();
 
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}",
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
         spec_path_str
     );
 
@@ -259,7 +265,9 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
     let spec_path_str = spec_path.to_str().unwrap();
 
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}",
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
         spec_path_str
     );
 
@@ -320,7 +328,9 @@ async fn test_openapi_404_not_found() -> E2EResult<()> {
     let spec_path_str = spec_path.to_str().unwrap();
 
     let prompt = format!(
-        "open_server port {{AVAILABLE_PORT}} base_stack openapi startup_params {{\"spec_file\": \"{}\"}}",
+        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
+        First, read the OpenAPI spec file at {} using read_file tool. \
+        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
         spec_path_str
     );
 

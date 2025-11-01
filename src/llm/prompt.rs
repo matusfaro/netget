@@ -506,5 +506,112 @@ Response (JSON only):"#,
         .await
     }
 
+    /// Build prompt for scheduled task execution
+    ///
+    /// # Arguments
+    /// * `state` - Application state
+    /// * `task` - The scheduled task to execute
+    /// * `protocol_actions` - Protocol-specific actions (if server-scoped)
+    pub async fn build_task_execution_prompt(
+        state: &crate::state::AppState,
+        task: &crate::state::ScheduledTask,
+        protocol_actions: Vec<crate::llm::actions::ActionDefinition>,
+    ) -> String {
+        use crate::llm::actions::{get_all_tool_actions, get_network_event_common_actions, get_user_input_common_actions};
+        use crate::state::task::TaskScope;
+
+        let selected_mode = state.get_selected_scripting_mode().await;
+
+        let (server_id, actions, trigger, instructions) = match &task.scope {
+            TaskScope::Global => {
+                // Global task: use user input actions
+                let mut actions = get_user_input_common_actions(selected_mode);
+
+                // Add tool actions
+                let web_search_mode = state.get_web_search_mode().await;
+                actions.extend(get_all_tool_actions(web_search_mode));
+
+                let trigger = format!(
+                    "Scheduled task '{}' triggered (created {} ago)",
+                    task.name,
+                    crate::state::task::format_duration(task.created_at.elapsed())
+                );
+
+                let instructions = &task.instruction;
+
+                (None, actions, trigger, instructions.clone())
+            }
+            TaskScope::Server(sid) => {
+                // Server-scoped task: use server instruction + protocol actions
+                let server = state.get_server(*sid).await;
+                if server.is_none() {
+                    // Server no longer exists - return error prompt
+                    return format!(
+                        r#"ERROR: Server #{} no longer exists. Task '{}' cannot execute.
+
+Return: {{"actions": [{{"type": "show_message", "message": "Task '{}' cancelled - server no longer exists"}}]}}"#,
+                        sid.as_u32(), task.name, task.name
+                    );
+                }
+
+                let mut actions = get_network_event_common_actions();
+                actions.extend(protocol_actions);
+
+                // Add tool actions
+                let web_search_mode = state.get_web_search_mode().await;
+                actions.extend(get_all_tool_actions(web_search_mode));
+
+                let trigger = format!(
+                    "Scheduled task '{}' triggered on server #{} (created {} ago)",
+                    task.name,
+                    sid.as_u32(),
+                    crate::state::task::format_duration(task.created_at.elapsed())
+                );
+
+                // Combine server instruction with task instruction
+                let server_instruction = state.get_instruction(*sid).await.unwrap_or_default();
+                let combined = if server_instruction.is_empty() {
+                    task.instruction.clone()
+                } else {
+                    format!("{}\n\nScheduled task: {}", server_instruction, task.instruction)
+                };
+
+                (Some(*sid), actions, trigger, combined)
+            }
+        };
+
+        // Add context data to trigger if present
+        let full_trigger = if let Some(ctx) = &task.context {
+            format!(
+                "{}\n\nTask context:\n{}",
+                trigger,
+                serde_json::to_string_pretty(ctx).unwrap_or_else(|_| ctx.to_string())
+            )
+        } else {
+            trigger
+        };
+
+        // Add previous error if this is a retry
+        let instructions_with_error = if let Some(error) = &task.last_error {
+            format!(
+                "{}\n\nPREVIOUS EXECUTION ERROR:\nThe last execution failed with: {}\nAttempt to handle or resolve this issue.",
+                instructions,
+                error
+            )
+        } else {
+            instructions
+        };
+
+        Self::build_action_prompt(
+            state,
+            server_id,
+            &full_trigger,
+            &instructions_with_error,
+            actions,
+            false, // Don't include base stack docs for tasks
+        )
+        .await
+    }
+
     // ========================================================================
 }

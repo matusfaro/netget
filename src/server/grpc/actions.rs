@@ -197,6 +197,14 @@ impl Server for GrpcProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "gRPC server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
+    }
 }
 
 // ============================================================================
