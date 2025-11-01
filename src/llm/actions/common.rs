@@ -174,7 +174,7 @@ pub fn open_server_action(selected_mode: crate::state::app_state::ScriptingMode)
         Parameter {
             name: "base_stack".to_string(),
             type_hint: "string".to_string(),
-            description: format!("Protocol stack to use. IMPORTANT: Match the protocol name from the user prompt exactly (e.g., if prompt says 'gRPC server', use 'gRPC', not 'HTTP'). Available: {}", all_base_stacks(false).join(", ")),
+            description: format!("Protocol stack to use. Choose the best stack for the task. Available: {}", all_base_stacks(false).join(", ")),
             required: true,
         },
         Parameter {

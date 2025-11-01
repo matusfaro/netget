@@ -27,9 +27,9 @@ use super::super::helpers::{start_netget_server, ServerConfig};
 #[tokio::test]
 async fn test_sqs_basic_queue_operations() {
     let prompt = r#"
-Start an AWS SQS-compatible message queue server on port 0.
+Listen on port 0 via SQS (AWS Simple Queue Service).
 
-Configure the server with:
+Configure the SQS server with:
 - Default visibility timeout: 30 seconds
 - Message retention period: 4 days (345600 seconds)
 - Support for standard queues
@@ -217,7 +217,7 @@ Remember messages across operations: when a message is sent, it should be retrie
 #[tokio::test]
 async fn test_sqs_message_visibility() {
     let prompt = r#"
-Start an AWS SQS-compatible queue server on port 0 with default_visibility_timeout=30.
+Listen on port 0 via SQS with default_visibility_timeout=30.
 
 Create a queue "visibility-test" and handle these operations:
 
@@ -322,7 +322,7 @@ Remember: Once a message is received, it should not appear in subsequent Receive
 #[tokio::test]
 async fn test_sqs_queue_not_found() {
     let prompt = r#"
-Start an AWS SQS-compatible queue server on port 0.
+Listen on port 0 via SQS.
 
 Handle queue operations:
 1. SendMessage to non-existent queue: Return 400 error with {"__type":"QueueDoesNotExist","message":"The specified queue does not exist"}

@@ -5,7 +5,7 @@
 
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, Server};
-use crate::protocol::{DevelopmentState, Event, EventType, ProtocolMetadata};
+use crate::protocol::{DevelopmentState, EventType, ProtocolMetadata};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
