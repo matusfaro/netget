@@ -55,9 +55,8 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor-directory", "tor-relay", "vnc", "openapi", "git"]  # Temporarily removed etcd and kafka due to compilation errors
-# E2E testing feature - marker to enable end-to-end black-box tests
-e2e-tests = []
+e2e-tests = []  # Enable E2E tests (tests that spawn NetGet process and make real network requests)
+all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor-directory", "tor-relay", "vnc", "openapi", "git", "kafka", "etcd"]
 
 [dependencies]
 # Async runtime

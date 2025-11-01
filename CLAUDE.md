@@ -266,6 +266,56 @@ cat tests/server/dns/CLAUDE.md
 - **No `#[cfg(test)]` modules in `src/` files** - keep production code clean
 - Tests that need private API access should be refactored to test through public interfaces
 
+**CRITICAL: Feature Gating Tests**:
+- **ALL tests (both E2E and unit tests) MUST be feature-gated** to match their protocol
+- Tests compile the protocol code, so they need the same feature flags
+- Failure to feature gate tests will cause compilation errors or slow builds
+
+**Implementation**:
+```rust
+// tests/server/<protocol>/mod.rs - Module declaration
+#[cfg(all(test, feature = "<protocol>"))]
+pub mod e2e_test;
+
+// tests/server/<protocol>/e2e_test.rs - Individual E2E tests (no additional gate)
+#[tokio::test]
+async fn test_protocol_feature() {
+    // Test implementation
+}
+
+// tests/base_stack_test.rs - Protocol-specific unit tests
+#[test]
+#[cfg(feature = "<protocol>")]
+fn test_parse_protocol_stack() {
+    // Test implementation
+}
+```
+
+**Examples**:
+```rust
+// tests/server/ssh/mod.rs - Module declaration
+#[cfg(all(test, feature = "ssh"))]
+pub mod e2e_test;
+
+// tests/server/ssh/e2e_test.rs - E2E test (no additional feature gate)
+#[tokio::test]
+async fn test_ssh_authentication() {
+    // Test implementation
+}
+
+// tests/base_stack_test.rs - Protocol parsing test
+#[test]
+#[cfg(feature = "ssh")]
+fn test_parse_ssh_stack() {
+    assert_eq!(registry().parse_from_str("ssh"), Some("SSH".to_string()));
+}
+```
+
+**Why this matters**:
+- Without feature gates, tests compile even when protocol is disabled → compilation errors
+- Running `cargo test` without feature flags would try to compile all protocol tests
+- Feature gates ensure tests only compile when their protocol is enabled
+
 **Test Directory Structure**:
 ```
 tests/
@@ -297,11 +347,11 @@ tests/
 
 **Running tests**:
 ```bash
-./cargo-isolated.sh test --lib                                              # Unit tests
-./cargo-isolated.sh test --features e2e-tests --test server::tcp::e2e_test  # TCP E2E tests
-./cargo-isolated.sh test --features e2e-tests --test server::http::e2e_test # HTTP E2E tests
-./cargo-isolated.sh test --features e2e-tests --test server::ssh::e2e_test  # SSH E2E tests
-./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2E tests
+./cargo-isolated.sh test --lib                                        # Unit tests
+./cargo-isolated.sh test --features tcp --test server::tcp::e2e_test # TCP E2E tests
+./cargo-isolated.sh test --features http --test server::http::e2e_test # HTTP E2E tests
+./cargo-isolated.sh test --features ssh --test server::ssh::e2e_test # SSH E2E tests
+./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test # Proxy E2E tests
 ```
 
 **IMPORTANT - Protocol-Specific Testing**:
@@ -310,10 +360,10 @@ tests/
 - Running all tests can take 30+ minutes
 - **Always use protocol-specific test command**:
   ```bash
-  ./cargo-isolated.sh test --features e2e-tests,<protocol> --test server::<protocol>::e2e_test
+  ./cargo-isolated.sh test --features <protocol> --test server::<protocol>::e2e_test
   ```
-- Example for SSH: `./cargo-isolated.sh test --features e2e-tests,ssh --test server::ssh::e2e_test`
-- Example for HTTP Proxy: `./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::e2e_test`
+- Example for SSH: `./cargo-isolated.sh test --features ssh --test server::ssh::e2e_test`
+- Example for HTTP Proxy: `./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test`
 
 ### E2E Test Performance
 
@@ -323,7 +373,7 @@ tests/
 - **Tests can run concurrently** (Ollama lock enabled by default in tests)
 - The `--ollama-lock` flag serializes LLM API access, preventing overload
 - Each test runs in isolation with dynamic port allocation
-- Example: `./cargo-isolated.sh test --features e2e-tests --test server::http::e2e_test`
+- Example: `./cargo-isolated.sh test --features http --test server::http::e2e_test`
 - See "Multi-Instance Concurrency Support" section for details
 
 **Critical setup requirement**:
@@ -409,7 +459,7 @@ This policy ensures NetGet respects user privacy and works in isolated/air-gappe
 netget --ollama-lock "listen on port 80 via http"
 
 # Run E2E tests concurrently (locking enabled by default in tests)
-./cargo-isolated.sh test --features e2e-tests --test server::http::e2e_test
+./cargo-isolated.sh test --features http --test server::http::e2e_test
 ```
 
 ### E2E Test Concurrency
@@ -419,10 +469,10 @@ netget --ollama-lock "listen on port 80 via http"
 **Running tests in parallel**:
 ```bash
 # Run all protocol tests concurrently (uses available CPU cores)
-./cargo-isolated.sh test --features e2e-tests
+cargo test
 
 # Run specific protocol tests concurrently
-./cargo-isolated.sh test --features e2e-tests,http,tcp,ssh
+./cargo-isolated.sh test --features http,tcp,ssh
 
 # Disable locking for serial execution (legacy behavior)
 # Not recommended - modify ServerConfig::new() to set ollama_lock: false
@@ -479,8 +529,8 @@ Test infrastructure automatically uses process-specific temp file names:
 # Instead of: ./cargo-isolated.sh build --release --all-features
 ./cargo-isolated.sh build --release --all-features
 
-# Instead of: ./cargo-isolated.sh test --features e2e-tests
-./cargo-isolated.sh test --features e2e-tests
+# Instead of: cargo test
+cargo test
 
 # Instead of: ./cargo-isolated.sh check
 ./cargo-isolated.sh check
@@ -494,6 +544,42 @@ Test infrastructure automatically uses process-specific temp file names:
 - Example: Terminal session with PID 12345 uses `target-claude/claude-12345/`
 
 **IMPORTANT**: Always use `./cargo-isolated.sh` instead of direct `cargo` commands in this codebase.
+
+**CRITICAL - Feature Flags for Fast Compilation**:
+- **ALWAYS use specific feature flags when working on a single protocol** to avoid compiling all protocols
+- Compiling with `--all-features` takes 1-2 minutes and compiles 40+ protocols
+- Compiling with specific features takes 10-30 seconds and only compiles what you need
+- Other protocols may have compilation errors that will block your work
+
+**Examples**:
+```bash
+# ❌ SLOW - Compiles all 40+ protocols (~1-2 minutes)
+./cargo-isolated.sh build --all-features
+cargo test  # Uses default = all-protocols
+
+# ✅ FAST - Compiles only what you need (~10-30 seconds)
+./cargo-isolated.sh build --no-default-features --features http
+./cargo-isolated.sh test --no-default-features --features grpc --test server::grpc::e2e_test
+./cargo-isolated.sh check --no-default-features --features ssh,tcp
+
+# Testing specific protocol (recommended pattern)
+./cargo-isolated.sh test --no-default-features --features <protocol> --test server::<protocol>::e2e_test
+
+# Examples:
+./cargo-isolated.sh test --no-default-features --features ssh --test server::ssh::e2e_test
+./cargo-isolated.sh test --no-default-features --features http --test server::http::e2e_test
+./cargo-isolated.sh test --no-default-features --features kafka --test server::kafka::e2e_test
+```
+
+**When to use `--all-features`**:
+- Only when explicitly testing or building all protocols
+- When preparing release binaries
+- When running full integration test suite
+
+**When to use `--no-default-features`**:
+- When working on a specific protocol (99% of the time)
+- When running protocol-specific E2E tests
+- When you want fast iteration cycles
 
 **Cleanup** (builds accumulate ~2-5 GB each):
 ```bash
@@ -718,13 +804,17 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 ### 10. E2E Test (`tests/server/<protocol>/e2e_test.rs`) - **CRITICAL: Follow Efficiency Guidelines**
 - **Must create**: `tests/server/<protocol>/` directory, `mod.rs` with `pub mod e2e_test;`, add to `tests/server/mod.rs`
 - **Must**: Start NetGet non-interactively, assert correct stack, use real client
+- **CRITICAL - Feature Gate Tests**: Add `#[cfg(all(test, feature = "<protocol>"))]` to test module
+  - Example: `#[cfg(all(test, feature = "ssh"))]`
+  - Without feature gates, tests will fail to compile when protocol is disabled
+  - See "CRITICAL: Feature Gating Tests" section for full examples
 - **CRITICAL**: Follow efficiency guidelines (see section above):
   - Minimize server setups - reuse across test cases
   - Target < 10 total LLM calls for entire suite
   - Use scripting mode when protocol supports it
   - Consolidate test cases
-- **Before running**: `./cargo-isolated.sh build --release --all-features`
-- **Run**: `./cargo-isolated.sh test --features e2e-tests --test server::<protocol>::e2e_test`
+- **Before running**: `./cargo-isolated.sh build --no-default-features --release --features <protocol>`
+- **Run**: `./cargo-isolated.sh test --no-default-features --features <protocol> --test server::<protocol>::e2e_test`
 
 ### 11. Test Documentation (`tests/server/<protocol>/CLAUDE.md`) - **MANDATORY**
 - **Location**: `tests/server/<protocol>/CLAUDE.md`
@@ -737,8 +827,10 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Handle protocol-specific stack validation
 
 ### Validation Checklist
-- [ ] Protocol compiles with feature flag
-- [ ] Protocol compiles in `all-protocols` mode
+- [ ] Protocol compiles with feature flag: `./cargo-isolated.sh build --no-default-features --features <protocol>`
+- [ ] Protocol compiles in `all-protocols` mode: `./cargo-isolated.sh build --all-features`
+- [ ] **Tests are feature-gated**: E2E tests use `#[cfg(all(test, feature = "<protocol>"))]`
+- [ ] **Tests compile with protocol feature**: `./cargo-isolated.sh test --no-default-features --features <protocol> --test server::<protocol>::e2e_test`
 - [ ] **Implementation CLAUDE.md exists** at `src/server/<protocol>/CLAUDE.md` with complete documentation
 - [ ] **Test CLAUDE.md exists** at `tests/server/<protocol>/CLAUDE.md` with LLM call budget and runtime
 - [ ] E2E tests pass
@@ -751,9 +843,11 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 
 ### Common Pitfalls
 - **Forgetting to add feature flag** - EVERY protocol must be feature gated
+- **Forgetting to feature gate tests** - EVERY test (E2E and unit) must use `#[cfg(all(test, feature = "<protocol>"))]`
 - **Missing CLAUDE.md files** - MUST create both `src/server/<protocol>/CLAUDE.md` (implementation) and `tests/server/<protocol>/CLAUDE.md` (testing)
 - **Inefficient E2E tests** - Spinning up multiple servers instead of reusing one comprehensive server, exceeding 10 LLM calls
 - **Ignoring scripting mode** - Not using scripting when protocol supports it, wasting LLM calls on repetitive requests
+- **Using `--all-features` for single protocol work** - Wastes 1-2 minutes compiling all protocols, use `--no-default-features --features <protocol>` instead
 - Forgetting dual logging (tracing + status_tx)
 - Not tracking connections in server state
 - Missing feature flags in multiple files (server/mod.rs, cli/server_startup.rs, Cargo.toml)
