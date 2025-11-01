@@ -543,6 +543,6 @@ impl Server for BgpProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "VPN & Routing Protocols"
+        "VPN & Routing"
     }
 }

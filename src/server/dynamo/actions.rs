@@ -196,6 +196,6 @@ impl Server for DynamoProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Database Protocols"
+        "Database"
     }
 }

@@ -126,7 +126,7 @@ impl Server for WireguardProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "VPN & Routing Protocols"
+        "VPN & Routing"
     }
 }
 

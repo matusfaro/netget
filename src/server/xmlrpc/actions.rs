@@ -277,7 +277,7 @@ impl Server for XmlRpcProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "AI & API Protocols"
+        "AI & API"
     }
 }
 

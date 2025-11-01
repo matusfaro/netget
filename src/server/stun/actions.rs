@@ -94,7 +94,7 @@ impl Server for StunProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Proxy & Network Protocols"
+        "Proxy & Network"
     }
 }
 

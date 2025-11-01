@@ -103,7 +103,7 @@ impl Server for TurnProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Proxy & Network Protocols"
+        "Proxy & Network"
     }
 }
 

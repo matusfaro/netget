@@ -215,7 +215,7 @@ impl Server for SmtpProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Application Protocols"
+        "Application"
     }
 }
 

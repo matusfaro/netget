@@ -96,7 +96,7 @@ impl Server for MdnsProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Application Protocols"
+        "Application"
     }
 }
 

@@ -112,7 +112,7 @@ impl Server for NfsProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Web & File Protocols"
+        "Web & File"
     }
 }
 

@@ -139,7 +139,7 @@ impl Server for RedisProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Database Protocols"
+        "Database"
     }
 }
 

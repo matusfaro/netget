@@ -137,7 +137,7 @@ impl Server for CassandraProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Database Protocols"
+        "Database"
     }
 }
 

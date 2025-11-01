@@ -195,7 +195,7 @@ impl Server for TcpProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Core Protocols"
+        "Core"
     }
 }
 

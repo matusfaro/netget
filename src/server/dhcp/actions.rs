@@ -123,7 +123,7 @@ impl Server for DhcpProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Core Protocols"
+        "Core"
     }
 }
 
