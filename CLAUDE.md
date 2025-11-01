@@ -345,6 +345,44 @@ tests/
 
 **Dynamic ports**: Use port 0 in prompts for auto-assignment.
 
+**CRITICAL: Port Allocation in E2E Tests**:
+All E2E tests MUST use the `{AVAILABLE_PORT}` placeholder in prompts instead of hardcoding ports or using port 0 directly. The test helper automatically:
+1. Allocates an available port using `helpers::get_available_port()`
+2. Replaces `{AVAILABLE_PORT}` with the allocated port number
+3. Returns the port so the test client can connect
+
+**Correct pattern**:
+```rust
+#[tokio::test]
+async fn test_my_protocol() {
+    let prompt = "listen on port {AVAILABLE_PORT} via myprotocol";
+    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+
+    // server.port contains the actual allocated port
+    let client = MyClient::connect(format!("127.0.0.1:{}", server.port)).await?;
+    // ... test logic
+}
+```
+
+**Incorrect patterns** (DO NOT USE):
+```rust
+// ❌ WRONG - Hardcoded port
+let prompt = "listen on port 8080 via myprotocol";
+
+// ❌ WRONG - Port 0 without placeholder
+let prompt = "listen on port 0 via myprotocol";
+
+// ❌ WRONG - Manual port allocation
+let port = helpers::get_available_port().await?;
+let prompt = format!("listen on port {} via myprotocol", port);
+```
+
+**Why this matters**:
+- Prevents port conflicts when tests run concurrently
+- Ensures consistent pattern across all protocol tests
+- The helper function handles the port allocation and replacement automatically
+- Tests are self-contained and don't need manual port management
+
 **Running tests**:
 ```bash
 ./cargo-isolated.sh test --lib                                        # Unit tests
