@@ -97,7 +97,7 @@ impl Server for SmbProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Web & File Protocols"
+        "Web & File"
     }
 }
 

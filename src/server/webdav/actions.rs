@@ -96,7 +96,7 @@ impl Server for WebDavProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Web & File Protocols"
+        "Web & File"
     }
 }
 

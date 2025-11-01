@@ -590,6 +590,6 @@ impl Server for ElasticsearchProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Database Protocols"
+        "Database"
     }
 }

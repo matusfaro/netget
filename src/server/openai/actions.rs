@@ -97,7 +97,7 @@ impl Server for OpenAiProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "AI & API Protocols"
+        "AI & API"
     }
 }
 

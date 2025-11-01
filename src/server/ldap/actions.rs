@@ -271,7 +271,7 @@ impl Server for LdapProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Application Protocols"
+        "Application"
     }
 }
 

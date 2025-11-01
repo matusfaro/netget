@@ -211,16 +211,16 @@ pub trait Server: Send + Sync {
 
     /// Get the group name for categorizing this protocol
     ///
-    /// Protocols are grouped in documentation by category. Examples:
+    /// Protocols are grouped in documentation by category. Valid groups:
     /// - "Core" - Stable, well-tested protocols (TCP, HTTP, UDP, DNS, etc.)
-    /// - "Application" - IRC, Telnet, SMTP, IMAP, etc.
-    /// - "Database" - MySQL, PostgreSQL, Redis, etc.
-    /// - "Web & File" - WebDAV, NFS, SMB, IPP
-    /// - "Proxy & Network" - HTTP Proxy, SOCKS5, VPN, etc.
-    /// - "AI & API" - OpenAI, gRPC, JSON-RPC, etc.
+    /// - "Application" - IRC, Telnet, SMTP, IMAP, MQTT, etc.
+    /// - "Database" - MySQL, PostgreSQL, Redis, Kafka, etcd, etc.
+    /// - "Web & File" - WebDAV, NFS, SMB, IPP, Git, S3
+    /// - "Proxy & Network" - HTTP Proxy, SOCKS5, STUN, TURN
+    /// - "VPN & Routing" - WireGuard, OpenVPN, IPSec, BGP
+    /// - "AI & API" - OpenAI, gRPC, JSON-RPC, MCP, etc.
+    /// - "Network Services" - VNC, Tor Directory, Tor Relay
     ///
-    /// Default implementation returns "Other" if not specified.
-    fn group_name(&self) -> &'static str {
-        "Other"
-    }
+    /// This method is mandatory and must be implemented by all protocols.
+    fn group_name(&self) -> &'static str;
 }

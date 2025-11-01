@@ -103,7 +103,7 @@ impl Server for UdpProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Core Protocols"
+        "Core"
     }
 }
 

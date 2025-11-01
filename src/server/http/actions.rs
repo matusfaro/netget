@@ -91,7 +91,7 @@ impl Server for HttpProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Core Protocols"
+        "Core"
     }
 }
 

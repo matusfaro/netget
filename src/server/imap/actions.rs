@@ -435,7 +435,7 @@ impl Server for ImapProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Application Protocols"
+        "Application"
     }
 }
 

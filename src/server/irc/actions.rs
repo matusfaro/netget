@@ -210,7 +210,7 @@ impl Server for IrcProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Application Protocols"
+        "Application"
     }
 }
 

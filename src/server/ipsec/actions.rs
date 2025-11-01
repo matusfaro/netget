@@ -125,7 +125,7 @@ impl Server for IpsecProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "VPN & Routing Protocols"
+        "VPN & Routing"
     }
 }
 

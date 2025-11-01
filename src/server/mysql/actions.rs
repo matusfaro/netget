@@ -136,7 +136,7 @@ impl Server for MysqlProtocol {
     }
 
     fn group_name(&self) -> &'static str {
-        "Database Protocols"
+        "Database"
     }
 }
 
