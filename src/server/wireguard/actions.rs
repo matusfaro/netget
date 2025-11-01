@@ -3,7 +3,7 @@
 //! Defines LLM-controllable actions for WireGuard VPN server
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -39,7 +39,26 @@ impl WireguardProtocol {
     }
 }
 
-impl ProtocolActions for WireguardProtocol {
+impl Server for WireguardProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::wireguard::WireguardServer;
+            use std::sync::Arc;
+            WireguardServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                Arc::new(ctx.llm_client),
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             list_peers_action(),
@@ -91,9 +110,9 @@ impl ProtocolActions for WireguardProtocol {
         vec!["wireguard", "wg"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::with_notes(
-            crate::protocol::base_stack::ProtocolState::Implemented,
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::with_notes(
+            crate::protocol::metadata::DevelopmentState::Implemented,
             "Full VPN server with actual tunnel support using defguard_wireguard_rs. Creates TUN interface and supports peer connections."
         )
     }

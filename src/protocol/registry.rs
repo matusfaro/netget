@@ -1,20 +1,20 @@
 //! Protocol registry
 //!
-//! This module provides a centralized registry that maps BaseStack enum variants
+//! This module provides a centralized registry that maps protocol names
 //! to their protocol implementations. It enables trait-based protocol lookup
 //! and keyword-based parsing.
 
-use super::base_stack::{BaseStack, ProtocolMetadata};
-use crate::llm::actions::protocol_trait::ProtocolActions;
+use super::metadata::ProtocolMetadata;
+use crate::llm::actions::Server;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Global protocol registry mapping BaseStack to protocol implementations
+/// Global protocol registry mapping protocol names to protocol implementations
 pub struct ProtocolRegistry {
-    /// Maps BaseStack enum to protocol implementation
-    protocols: HashMap<BaseStack, Arc<dyn ProtocolActions>>,
-    /// Maps lowercase keywords to BaseStack for fast parsing
-    keyword_map: HashMap<String, BaseStack>,
+    /// Maps protocol name (e.g., "TCP", "HTTP") to protocol implementation
+    protocols: HashMap<String, Arc<dyn Server>>,
+    /// Maps lowercase keywords to protocol name for fast parsing
+    keyword_map: HashMap<String, String>,
 }
 
 impl ProtocolRegistry {
@@ -39,62 +39,60 @@ impl ProtocolRegistry {
     fn register_protocols(&mut self) {
         // Core protocols
         #[cfg(feature = "tcp")]
-        self.register(BaseStack::Tcp, Arc::new(crate::server::TcpProtocol::new()));
+        self.register(Arc::new(crate::server::TcpProtocol::new()));
 
         #[cfg(feature = "http")]
-        self.register(BaseStack::Http, Arc::new(crate::server::HttpProtocol::new()));
+        self.register(Arc::new(crate::server::HttpProtocol::new()));
 
         #[cfg(feature = "udp")]
-        self.register(BaseStack::Udp, Arc::new(crate::server::UdpProtocol::new()));
+        self.register(Arc::new(crate::server::UdpProtocol::new()));
 
         #[cfg(feature = "datalink")]
         self.register(
-            BaseStack::DataLink,
             Arc::new(crate::server::DataLinkProtocol::new()),
         );
 
         #[cfg(feature = "dns")]
-        self.register(BaseStack::Dns, Arc::new(crate::server::DnsProtocol::new()));
+        self.register(Arc::new(crate::server::DnsProtocol::new()));
 
         #[cfg(feature = "dot")]
-        self.register(BaseStack::Dot, Arc::new(crate::server::DotProtocol::new()));
+        self.register(Arc::new(crate::server::DotProtocol::new()));
 
         #[cfg(feature = "doh")]
-        self.register(BaseStack::Doh, Arc::new(crate::server::DohProtocol::new()));
+        self.register(Arc::new(crate::server::DohProtocol::new()));
 
         #[cfg(feature = "dhcp")]
-        self.register(BaseStack::Dhcp, Arc::new(crate::server::DhcpProtocol::new()));
+        self.register(Arc::new(crate::server::DhcpProtocol::new()));
 
         #[cfg(feature = "ntp")]
-        self.register(BaseStack::Ntp, Arc::new(crate::server::NtpProtocol::new()));
+        self.register(Arc::new(crate::server::NtpProtocol::new()));
 
         #[cfg(feature = "snmp")]
-        self.register(BaseStack::Snmp, Arc::new(crate::server::SnmpProtocol::new()));
+        self.register(Arc::new(crate::server::SnmpProtocol::new()));
 
         #[cfg(feature = "ssh")]
-        self.register(BaseStack::Ssh, Arc::new(crate::server::SshProtocol::new()));
+        self.register(Arc::new(crate::server::SshProtocol::new()));
 
         // Application protocols
         #[cfg(feature = "irc")]
-        self.register(BaseStack::Irc, Arc::new(crate::server::IrcProtocol::new()));
+        self.register(Arc::new(crate::server::IrcProtocol::new()));
 
         #[cfg(feature = "telnet")]
         self.register(
-            BaseStack::Telnet,
             Arc::new(crate::server::TelnetProtocol::new()),
         );
 
         #[cfg(feature = "smtp")]
-        self.register(BaseStack::Smtp, Arc::new(crate::server::SmtpProtocol::new()));
+        self.register(Arc::new(crate::server::SmtpProtocol::new()));
 
         #[cfg(feature = "imap")]
-        self.register(BaseStack::Imap, Arc::new(crate::server::ImapProtocol::new()));
+        self.register(Arc::new(crate::server::ImapProtocol::new()));
 
         #[cfg(feature = "mdns")]
-        self.register(BaseStack::Mdns, Arc::new(crate::server::MdnsProtocol::new()));
+        self.register(Arc::new(crate::server::MdnsProtocol::new()));
 
         #[cfg(feature = "ldap")]
-        self.register(BaseStack::Ldap, Arc::new(crate::server::LdapProtocol::new()));
+        self.register(Arc::new(crate::server::LdapProtocol::new()));
 
         // Database protocols
         #[cfg(feature = "mysql")]
@@ -103,7 +101,6 @@ impl ProtocolRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
-                BaseStack::Mysql,
                 Arc::new(crate::server::MysqlProtocol::new(
                     ConnectionId::new(),
                     Arc::new(crate::state::app_state::AppState::new()),
@@ -118,7 +115,6 @@ impl ProtocolRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
-                BaseStack::Postgresql,
                 Arc::new(crate::server::PostgresqlProtocol::new(
                     ConnectionId::new(),
                     Arc::new(crate::state::app_state::AppState::new()),
@@ -133,7 +129,6 @@ impl ProtocolRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
-                BaseStack::Redis,
                 Arc::new(crate::server::RedisProtocol::new(
                     ConnectionId::new(),
                     Arc::new(crate::state::app_state::AppState::new()),
@@ -148,7 +143,6 @@ impl ProtocolRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
-                BaseStack::Cassandra,
                 Arc::new(crate::server::CassandraProtocol::new(
                     ConnectionId::new(),
                     Arc::new(crate::state::app_state::AppState::new()),
@@ -159,132 +153,118 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "dynamo")]
         self.register(
-            BaseStack::Dynamo,
             Arc::new(crate::server::DynamoProtocol::new()),
         );
 
         #[cfg(feature = "elasticsearch")]
         self.register(
-            BaseStack::Elasticsearch,
             Arc::new(crate::server::ElasticsearchProtocol::new()),
         );
 
         // Web & File protocols
         #[cfg(feature = "ipp")]
-        self.register(BaseStack::Ipp, Arc::new(crate::server::IppProtocol::new()));
+        self.register(Arc::new(crate::server::IppProtocol::new()));
 
         #[cfg(feature = "webdav")]
         self.register(
-            BaseStack::WebDav,
             Arc::new(crate::server::WebDavProtocol::new()),
         );
 
         #[cfg(feature = "nfs")]
-        self.register(BaseStack::Nfs, Arc::new(crate::server::NfsProtocol::new()));
+        self.register(Arc::new(crate::server::NfsProtocol::new()));
 
         #[cfg(feature = "smb")]
-        self.register(BaseStack::Smb, Arc::new(crate::server::SmbProtocol::new()));
+        self.register(Arc::new(crate::server::SmbProtocol::new()));
 
         // Proxy & Network protocols
         #[cfg(feature = "proxy")]
         self.register(
-            BaseStack::Proxy,
             Arc::new(crate::server::ProxyProtocol::new()),
         );
 
         #[cfg(feature = "socks5")]
         self.register(
-            BaseStack::Socks5,
             Arc::new(crate::server::Socks5Protocol::new()),
         );
 
         #[cfg(feature = "wireguard")]
         self.register(
-            BaseStack::Wireguard,
             Arc::new(crate::server::WireguardProtocol::new()),
         );
 
         #[cfg(feature = "openvpn")]
         self.register(
-            BaseStack::Openvpn,
             Arc::new(crate::server::OpenvpnProtocol::new()),
         );
 
         #[cfg(feature = "ipsec")]
         self.register(
-            BaseStack::Ipsec,
             Arc::new(crate::server::IpsecProtocol::new()),
         );
 
         #[cfg(feature = "stun")]
-        self.register(BaseStack::Stun, Arc::new(crate::server::StunProtocol::new()));
+        self.register(Arc::new(crate::server::StunProtocol::new()));
 
         #[cfg(feature = "turn")]
-        self.register(BaseStack::Turn, Arc::new(crate::server::TurnProtocol::new()));
+        self.register(Arc::new(crate::server::TurnProtocol::new()));
 
         #[cfg(feature = "bgp")]
-        self.register(BaseStack::Bgp, Arc::new(crate::server::BgpProtocol::new()));
+        self.register(Arc::new(crate::server::BgpProtocol::new()));
 
         #[cfg(feature = "mcp")]
-        self.register(BaseStack::Mcp, Arc::new(crate::server::McpProtocol::new()));
+        self.register(Arc::new(crate::server::McpProtocol::new()));
 
         // AI & API protocols
         #[cfg(feature = "openai")]
         self.register(
-            BaseStack::OpenAi,
             Arc::new(crate::server::OpenAiProtocol::new()),
         );
 
         #[cfg(feature = "jsonrpc")]
         self.register(
-            BaseStack::JsonRpc,
             Arc::new(crate::server::JsonRpcProtocol::new()),
         );
 
         #[cfg(feature = "xmlrpc")]
         self.register(
-            BaseStack::XmlRpc,
             Arc::new(crate::server::XmlRpcProtocol::new()),
         );
 
         #[cfg(feature = "grpc")]
-        self.register(BaseStack::Grpc, Arc::new(crate::server::GrpcProtocol::new()));
+        self.register(Arc::new(crate::server::GrpcProtocol::new()));
 
         #[cfg(feature = "tor-directory")]
         self.register(
-            BaseStack::TorDirectory,
             Arc::new(crate::server::TorDirectoryProtocol::new()),
         );
 
         #[cfg(feature = "tor-relay")]
         self.register(
-            BaseStack::TorRelay,
             Arc::new(crate::server::TorRelayProtocol::new()),
         );
 
         #[cfg(feature = "vnc")]
-        self.register(BaseStack::Vnc, Arc::new(crate::server::VncProtocol::new()));
+        self.register(Arc::new(crate::server::VncProtocol::new()));
 
         #[cfg(feature = "openapi")]
         self.register(
-            BaseStack::OpenApi,
             Arc::new(crate::server::OpenApiProtocol::new()),
         );
     }
 
     /// Build keyword map for fast protocol parsing
     fn build_keyword_map(&mut self) {
-        for (base_stack, protocol) in &self.protocols {
+        for (protocol_name, protocol) in &self.protocols {
             // Add all protocol keywords
             for keyword in protocol.keywords() {
                 self.keyword_map
-                    .insert(keyword.to_lowercase(), *base_stack);
+                    .insert(keyword.to_lowercase(), protocol_name.clone());
             }
 
             // Also add the full stack name as a keyword
             // This allows parsing inputs like "eth>ip>tcp>http" or "ETH>IP>UDP>DNS"
             let stack_name = protocol.stack_name().to_lowercase();
-            self.keyword_map.insert(stack_name, *base_stack);
+            self.keyword_map.insert(stack_name, protocol_name.clone());
         }
     }
 
@@ -295,18 +275,18 @@ impl ProtocolRegistry {
     fn validate_keyword_uniqueness(&self) {
         use std::collections::HashMap;
 
-        // Build a map: keyword (lowercase) -> Vec<(BaseStack, keyword_source)>
+        // Build a map: keyword (lowercase) -> Vec<(protocol_name, keyword_source)>
         // keyword_source is either "keyword" or "stack_name"
-        let mut keyword_to_protocols: HashMap<String, Vec<(BaseStack, String)>> = HashMap::new();
+        let mut keyword_to_protocols: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
-        for (base_stack, protocol) in &self.protocols {
+        for (protocol_name, protocol) in &self.protocols {
             // Collect all keywords from keywords()
             for keyword in protocol.keywords() {
                 let key = keyword.to_lowercase();
                 keyword_to_protocols
                     .entry(key)
                     .or_insert_with(Vec::new)
-                    .push((*base_stack, format!("keyword '{}'", keyword)));
+                    .push((protocol_name.clone(), format!("keyword '{}'", keyword)));
             }
 
             // Also collect the stack name as a keyword
@@ -315,7 +295,7 @@ impl ProtocolRegistry {
             keyword_to_protocols
                 .entry(key)
                 .or_insert_with(Vec::new)
-                .push((*base_stack, format!("stack_name '{}'", stack_name)));
+                .push((protocol_name.clone(), format!("stack_name '{}'", stack_name)));
         }
 
         // Find all keywords that are claimed by multiple protocols
@@ -332,8 +312,8 @@ impl ProtocolRegistry {
 
             for (keyword, protocols) in overlaps {
                 error_msg.push_str(&format!("\n  Keyword '{}' is used by:\n", keyword));
-                for (stack, source) in protocols {
-                    error_msg.push_str(&format!("    - {:?} ({})\n", stack, source));
+                for (protocol_name, source) in protocols {
+                    error_msg.push_str(&format!("    - {} ({})\n", protocol_name, source));
                 }
             }
 
@@ -343,26 +323,27 @@ impl ProtocolRegistry {
     }
 
     /// Register a protocol implementation
-    fn register(&mut self, stack: BaseStack, protocol: Arc<dyn ProtocolActions>) {
-        self.protocols.insert(stack, protocol);
+    fn register(&mut self, protocol: Arc<dyn Server>) {
+        let protocol_name = protocol.protocol_name().to_string();
+        self.protocols.insert(protocol_name, protocol);
     }
 
-    /// Get protocol implementation for a BaseStack
-    pub fn get(&self, stack: &BaseStack) -> Option<Arc<dyn ProtocolActions>> {
-        self.protocols.get(stack).cloned()
+    /// Get protocol implementation by protocol name
+    pub fn get(&self, protocol_name: &str) -> Option<Arc<dyn Server>> {
+        self.protocols.get(protocol_name).cloned()
     }
 
     /// Parse protocol from user input string
     ///
     /// Attempts to match keywords from registered protocols.
-    /// Returns None if no match found.
-    pub fn parse_from_str(&self, input: &str) -> Option<BaseStack> {
+    /// Returns protocol name if match found, None otherwise.
+    pub fn parse_from_str(&self, input: &str) -> Option<String> {
         let input_lower = input.to_lowercase();
 
         // First, try exact match with stack names (for LLM-generated responses)
-        for (stack, protocol) in &self.protocols {
+        for (protocol_name, protocol) in &self.protocols {
             if input_lower == protocol.stack_name().to_lowercase() {
-                return Some(*stack);
+                return Some(protocol_name.clone());
             }
         }
 
@@ -413,10 +394,10 @@ impl ProtocolRegistry {
         }
 
         // For all other protocols, check keywords in registration order
-        for (stack, protocol) in &self.protocols {
+        for (protocol_name, protocol) in &self.protocols {
             for keyword in protocol.keywords() {
                 if input_lower.contains(&keyword.to_lowercase()) {
-                    return Some(*stack);
+                    return Some(protocol_name.clone());
                 }
             }
         }
@@ -428,20 +409,20 @@ impl ProtocolRegistry {
             || input_lower.contains("ftp")
             || input_lower.contains("custom")
         {
-            return Some(BaseStack::Tcp);
+            return Some("TCP".to_string());
         }
 
         None
     }
 
     /// Try to match any of the given keywords in the input
-    fn try_keyword_match(&self, input_lower: &str, keywords: &[&str]) -> Option<BaseStack> {
+    fn try_keyword_match(&self, input_lower: &str, keywords: &[&str]) -> Option<String> {
         for keyword in keywords {
             if input_lower.contains(keyword) {
                 // Find which protocol has this keyword
-                for (stack, protocol) in &self.protocols {
+                for (protocol_name, protocol) in &self.protocols {
                     if protocol.keywords().contains(keyword) {
-                        return Some(*stack);
+                        return Some(protocol_name.clone());
                     }
                 }
             }
@@ -457,21 +438,21 @@ impl ProtocolRegistry {
             .collect()
     }
 
-    /// Get stack name for a BaseStack
-    pub fn stack_name(&self, stack: &BaseStack) -> Option<&'static str> {
-        self.get(stack).map(|p| p.stack_name())
+    /// Get stack name by protocol name (e.g., "HTTP" -> "ETH>IP>TCP>HTTP")
+    pub fn stack_name_by_protocol(&self, protocol_name: &str) -> Option<&'static str> {
+        self.get(protocol_name).map(|p| p.stack_name())
     }
 
-    /// Get metadata for a BaseStack
-    pub fn metadata(&self, stack: &BaseStack) -> Option<ProtocolMetadata> {
-        self.get(stack).map(|p| p.metadata())
+    /// Get metadata for a protocol by name
+    pub fn metadata(&self, protocol_name: &str) -> Option<ProtocolMetadata> {
+        self.get(protocol_name).map(|p| p.metadata())
     }
 
     /// Get all registered protocols with their metadata
-    pub fn all_protocols(&self) -> Vec<(BaseStack, Arc<dyn ProtocolActions>)> {
+    pub fn all_protocols(&self) -> Vec<(String, Arc<dyn Server>)> {
         self.protocols
             .iter()
-            .map(|(stack, protocol)| (*stack, Arc::clone(protocol)))
+            .map(|(name, protocol)| (name.clone(), Arc::clone(protocol)))
             .collect()
     }
 }

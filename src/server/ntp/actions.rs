@@ -1,7 +1,7 @@
 //! NTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,7 +19,25 @@ impl NtpProtocol {
     }
 }
 
-impl ProtocolActions for NtpProtocol {
+impl Server for NtpProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::ntp::NtpServer;
+            NtpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new()
     }
@@ -62,9 +80,9 @@ impl ProtocolActions for NtpProtocol {
         vec!["ntp", "time"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Beta
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Beta
         )
     }
 }

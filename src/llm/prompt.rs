@@ -62,7 +62,7 @@ impl PromptBuilder {
 
         let (base_stack, port, instruction, memory) = if let Some(server) = server {
             (
-                server.base_stack.to_string(),
+                server.protocol_name,
                 server.port,
                 server.instruction,
                 server.memory,
@@ -162,7 +162,7 @@ Response (JSON only):"#,
 - Memory: {}
 "#,
                     server.id.as_u32(),
-                    server.base_stack,
+                    server.protocol_name,
                     server.port,
                     server.status,
                     if server.memory.is_empty() {
@@ -181,7 +181,7 @@ Response (JSON only):"#,
                 state_text.push_str(&format!(
                     "- Server #{}: {} on port {} ({})\n",
                     server.id.as_u32(),
-                    server.base_stack,
+                    server.protocol_name,
                     server.port,
                     server.status
                 ));

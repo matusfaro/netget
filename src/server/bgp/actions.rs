@@ -1,7 +1,7 @@
 //! BGP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -277,7 +277,26 @@ pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventT
     parameters: vec![],
 });
 
-impl ProtocolActions for BgpProtocol {
+impl Server for BgpProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::bgp::BgpServer;
+            BgpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
@@ -489,9 +508,9 @@ impl ProtocolActions for BgpProtocol {
         vec!["bgp", "border gateway"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Alpha
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
 }

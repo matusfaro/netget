@@ -3,7 +3,7 @@
 //! Reuses DNS actions since DoT is just DNS delivered over TLS.
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -66,7 +66,28 @@ impl DotProtocol {
     }
 }
 
-impl ProtocolActions for DotProtocol {
+impl Server for DotProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::dot::DotServer;
+            // DoT spawn returns JoinHandle, but we need to return the socket address
+            // The server binds before spawning, so we can return listen_addr
+            let _ = DotServer::spawn(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            ).await?;
+            Ok(ctx.listen_addr)
+        })
+    }
+
     fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition> {
         self.dns_protocol.get_async_actions(state)
     }
@@ -95,9 +116,9 @@ impl ProtocolActions for DotProtocol {
         vec!["dot", "dns-over-tls", "dns over tls"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Beta
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Beta
         )
     }
 }

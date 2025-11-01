@@ -110,6 +110,7 @@ impl ScriptManager {
                 super::types::ScriptLanguage::JavaScript
             }
             crate::state::app_state::ScriptingMode::Go => super::types::ScriptLanguage::Go,
+            crate::state::app_state::ScriptingMode::Perl => super::types::ScriptLanguage::Perl,
         };
 
         // Use inline source

@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
 use std::future::Future;
-use netget::protocol::{base_stack::BaseStack, registry};
+use netget::protocol::registry;
 
 /// Result type for e2e tests
 pub type E2EResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -469,10 +469,10 @@ fn extract_port_from_prompt(prompt: &str) -> u16 {
 async fn wait_for_server_startup_with_capture(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
-) -> E2EResult<(u16, BaseStack)> {
+) -> E2EResult<(u16, String)> {
     let wait_future = async {
         let mut port = 0u16;
-        let mut base_stack: Option<BaseStack> = None;
+        let mut protocol_name: Option<String> = None;
         let mut found_starting_message = false;
 
         while let Some(line) = reader.next_line().await? {
@@ -490,9 +490,9 @@ async fn wait_for_server_startup_with_capture(
                             println!("[DEBUG] Extracted stack string from server output: '{}'", stack_str);
 
                             // Parse using the protocol registry
-                            if let Some(parsed_stack) = registry::registry().parse_from_str(stack_str) {
-                                base_stack = Some(parsed_stack);
-                                println!("[DEBUG] Parsed stack: {:?}", parsed_stack);
+                            if let Some(parsed_protocol) = registry::registry().parse_from_str(stack_str) {
+                                protocol_name = Some(parsed_protocol.clone());
+                                println!("[DEBUG] Parsed protocol: {}", parsed_protocol);
                             } else {
                                 return Err(format!(
                                     "Failed to parse stack from server output: '{}'. This stack is not recognized by the registry.",
@@ -517,9 +517,9 @@ async fn wait_for_server_startup_with_capture(
                     }
                 }
 
-                // Set found_starting_message if we successfully parsed the stack
-                if base_stack.is_some() {
-                    println!("[DEBUG] Server starting: {:?} stack (requested port: {})", base_stack, port);
+                // Set found_starting_message if we successfully parsed the protocol
+                if protocol_name.is_some() {
+                    println!("[DEBUG] Server starting: {} protocol (requested port: {})", protocol_name.as_ref().unwrap(), port);
                     found_starting_message = true;
                     // Don't return yet - wait for "listening on" message
                 }
@@ -540,7 +540,7 @@ async fn wait_for_server_startup_with_capture(
                         if let Ok(actual_port) = port_str.parse::<u16>() {
                             port = actual_port;
                             println!("[DEBUG] Server is now listening and ready for connections on port {}", port);
-                            return Ok((port, base_stack.unwrap()));
+                            return Ok((port, protocol_name.unwrap()));
                         }
                     }
                 }

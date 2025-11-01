@@ -20,7 +20,7 @@ pub use actions::{
         CommonAction,
     },
     executor::{execute_actions, ExecutionResult},
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, ActionResponse, Parameter,
 };
 

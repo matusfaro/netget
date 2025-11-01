@@ -60,6 +60,7 @@ pub async fn run() -> Result<()> {
                 crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
                 crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
                 crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
+                crate::state::app_state::ScriptingMode::Perl => scripting_env.perl.is_some(),
             };
 
             if !available {

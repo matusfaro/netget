@@ -75,7 +75,7 @@ impl TorTestNetwork {
 
         // 5. Start NetGet Tor Directory
         let directory_prompt = format!(
-            "Start a Tor directory server on port 0. When clients request /tor/status-vote/current/consensus, \
+            "open_server port 0 base_stack ETH>IP>TCP>HTTP>TorDirectory. When clients request /tor/status-vote/current/consensus, \
              respond with this document:\n\n{}\n\nFor microdescriptor requests, return appropriate microdescriptors.",
             consensus
         );
@@ -87,6 +87,9 @@ impl TorTestNetwork {
         let directory_port = directory_server.port;
         helpers::assert_stack_name(&directory_server, "ETH>IP>TCP>HTTP>TorDirectory");
         println!("✓ Tor directory started on port {}", directory_port);
+
+        // Wait a moment for authority key log messages to be captured
+        sleep(Duration::from_millis(500)).await;
 
         // 6. Extract authority keys from directory output
         let authority_keys = extract_authority_keys(&directory_server).await?;

@@ -1,10 +1,10 @@
 //! OpenAPI protocol actions for LLM integration
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
-use crate::protocol::base_stack::{ProtocolMetadata, ProtocolState};
+use crate::protocol::metadata::{ProtocolMetadata, DevelopmentState};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -80,7 +80,26 @@ impl Default for OpenApiProtocol {
     }
 }
 
-impl ProtocolActions for OpenApiProtocol {
+impl Server for OpenApiProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::openapi::OpenApiServer;
+            OpenApiServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            ).await
+        })
+    }
+
     fn protocol_name(&self) -> &'static str {
         "OpenAPI"
     }
@@ -95,7 +114,7 @@ impl ProtocolActions for OpenApiProtocol {
 
     fn metadata(&self) -> ProtocolMetadata {
         ProtocolMetadata::with_notes(
-            ProtocolState::Alpha,
+            DevelopmentState::Alpha,
             "OpenAPI 3.1 spec-driven HTTP server with runtime request validation"
         )
     }

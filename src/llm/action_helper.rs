@@ -12,7 +12,7 @@
 use crate::llm::actions::{
     executor::{execute_actions, ExecutionResult},
     get_network_event_common_actions,
-    protocol_trait::ProtocolActions,
+    protocol_trait::Server,
     ActionDefinition, ActionResponse,
 };
 use crate::llm::ollama_client::OllamaClient;
@@ -73,7 +73,7 @@ pub async fn call_llm_with_actions(
     connection_id: Option<crate::server::connection::ConnectionId>,
     event_description: &str,
     context_json: serde_json::Value,
-    protocol: Option<&dyn ProtocolActions>,
+    protocol: Option<&dyn Server>,
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
 ) -> Result<ExecutionResult> {
@@ -115,7 +115,7 @@ pub async fn call_llm_with_actions(
                         id: server.id.as_u32(),
                         port: server.port,
                         stack: crate::protocol::registry::registry()
-                            .stack_name(&server.base_stack)
+                            .stack_name_by_protocol(&server.protocol_name)
                             .unwrap_or("UNKNOWN")
                             .to_string(),
                         memory: server.memory.clone(),
@@ -254,7 +254,7 @@ pub async fn call_llm_with_protocol(
     server_id: ServerId,
     connection_id: Option<crate::server::connection::ConnectionId>,
     event_description: &str,
-    protocol: &dyn ProtocolActions,
+    protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
     call_llm_with_actions(
         llm_client,
@@ -340,7 +340,7 @@ pub async fn call_llm(
     server_id: ServerId,
     connection_id: Option<crate::server::connection::ConnectionId>,
     event: &Event,
-    protocol: &dyn ProtocolActions,
+    protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
     // TRY SCRIPT FIRST if configured
     let script_config = state.get_script_config(server_id).await;
@@ -376,7 +376,7 @@ pub async fn call_llm(
                         id: server.id.as_u32(),
                         port: server.port,
                         stack: crate::protocol::registry::registry()
-                            .stack_name(&server.base_stack)
+                            .stack_name_by_protocol(&server.protocol_name)
                             .unwrap_or("UNKNOWN")
                             .to_string(),
                         memory: server.memory.clone(),

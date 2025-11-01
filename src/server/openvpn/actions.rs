@@ -3,7 +3,7 @@
 //! Defines LLM-controllable actions for OpenVPN honeypot
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -41,7 +41,26 @@ impl OpenvpnProtocol {
     }
 }
 
-impl ProtocolActions for OpenvpnProtocol {
+impl Server for OpenvpnProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::openvpn::OpenvpnServer;
+            use std::sync::Arc;
+            OpenvpnServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                Arc::new(ctx.llm_client),
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_connections_action(), close_connection_action()]
     }
@@ -90,9 +109,9 @@ impl ProtocolActions for OpenvpnProtocol {
         vec!["openvpn"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::with_notes(
-            crate::protocol::base_stack::ProtocolState::Disabled,
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::with_notes(
+            crate::protocol::metadata::DevelopmentState::Disabled,
             "No actual VPN tunnels. Full OpenVPN implementation is infeasible: no viable Rust library exists, protocol is extremely complex (500K+ lines in C++). Use WireGuard for production VPN. OpenVPN honeypot sufficient for detection/logging reconnaissance attempts."
         )
     }

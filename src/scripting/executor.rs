@@ -69,6 +69,7 @@ pub fn execute_script(config: &ScriptConfig, input: &ScriptInput) -> Result<Scri
         ScriptLanguage::Python => execute_python(&code, &input_json)?,
         ScriptLanguage::JavaScript => execute_javascript(&code, &input_json)?,
         ScriptLanguage::Go => execute_go(&code, &input_json)?,
+        ScriptLanguage::Perl => execute_perl(&code, &input_json)?,
     };
 
     trace!("─────────────────────────────────────────────");
@@ -128,6 +129,13 @@ const input = JSON.parse(inputJson);
     );
 
     execute_with_command("node", &wrapped_code, input_json, &["-e"])
+}
+
+/// Execute Perl script with stdin/stdout
+///
+/// Returns (stdout, stderr) tuple
+fn execute_perl(code: &str, input_json: &str) -> Result<(String, String)> {
+    execute_with_command("perl", code, input_json, &["-e"])
 }
 
 /// Execute Go script with stdin/stdout

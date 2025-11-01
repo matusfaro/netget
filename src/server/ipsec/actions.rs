@@ -3,7 +3,7 @@
 //! Defines LLM-controllable actions for IPSec/IKEv2 honeypot
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -41,7 +41,26 @@ impl IpsecProtocol {
     }
 }
 
-impl ProtocolActions for IpsecProtocol {
+impl Server for IpsecProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::ipsec::IpsecServer;
+            use std::sync::Arc;
+            IpsecServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                Arc::new(ctx.llm_client),
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            ).await
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![list_connections_action(), close_connection_action()]
     }
@@ -90,9 +109,9 @@ impl ProtocolActions for IpsecProtocol {
         vec!["ipsec", "ikev2", "ike"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::with_notes(
-            crate::protocol::base_stack::ProtocolState::Disabled,
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::with_notes(
+            crate::protocol::metadata::DevelopmentState::Disabled,
             "No actual VPN tunnels. Full IPSec/IKEv2 implementation is infeasible: no viable Rust library (ipsec-parser is parse-only), protocol requires deep OS integration (XFRM policy), extremely complex (hundreds of thousands of lines in strongSwan). Use WireGuard for production VPN."
         )
     }

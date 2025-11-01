@@ -11,7 +11,6 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::server::connection::ConnectionId;
-use crate::protocol::BaseStack;
 
 /// Unique identifier for a server instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -416,8 +415,8 @@ pub struct ServerInstance {
     pub id: ServerId,
     /// Listening port
     pub port: u16,
-    /// Base protocol stack
-    pub base_stack: BaseStack,
+    /// Protocol name (e.g., "TCP", "HTTP", "SSH")
+    pub protocol_name: String,
     /// User instructions for this server
     pub instruction: String,
     /// LLM memory for this server
@@ -450,12 +449,12 @@ pub struct ServerInstance {
 
 impl ServerInstance {
     /// Create a new server instance
-    pub fn new(id: ServerId, port: u16, base_stack: BaseStack, instruction: String) -> Self {
+    pub fn new(id: ServerId, port: u16, protocol_name: String, instruction: String) -> Self {
         let now = Instant::now();
         Self {
             id,
             port,
-            base_stack,
+            protocol_name,
             instruction,
             memory: String::new(),
             status: ServerStatus::Starting,
@@ -504,7 +503,7 @@ impl ServerInstance {
         format!(
             "#{} {} on port {} ({}) - {} connections",
             self.id.as_u32(),
-            self.base_stack,
+            self.protocol_name,
             self.port,
             self.status.as_str(),
             self.connections.len()

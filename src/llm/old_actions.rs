@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 use crate::server::ConnectionId;
-use crate::protocol::BaseStack;
 
 /// Response from LLM when interpreting a user command
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +26,7 @@ pub enum Action {
     /// Open a server connection
     OpenServer {
         port: u16,
-        base_stack: String, // Will be parsed to BaseStack
+        base_stack: String, // Will be parsed to protocol name
         #[serde(default)]
         protocol: Option<String>, // For TcpRaw stack
         #[serde(default)]
@@ -66,11 +65,6 @@ impl CommandInterpretation {
 }
 
 impl Action {
-    /// Parse base stack string to BaseStack enum
-    pub fn parse_base_stack(s: &str) -> Option<BaseStack> {
-        crate::protocol::registry::registry().parse_from_str(s)
-    }
-
     /// Parse address string to SocketAddr
     pub fn parse_socket_addr(s: &str) -> Option<SocketAddr> {
         s.parse().ok()

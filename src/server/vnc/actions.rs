@@ -1,10 +1,10 @@
 //! VNC protocol actions for LLM integration
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
-use crate::protocol::base_stack::{ProtocolMetadata, ProtocolState};
+use crate::protocol::metadata::{ProtocolMetadata, DevelopmentState};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
@@ -32,7 +32,25 @@ impl Default for VncProtocol {
     }
 }
 
-impl ProtocolActions for VncProtocol {
+impl Server for VncProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::vnc::VncServer;
+            VncServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
+    }
+
     fn protocol_name(&self) -> &'static str {
         "VNC"
     }
@@ -46,7 +64,7 @@ impl ProtocolActions for VncProtocol {
     }
 
     fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::new(ProtocolState::Alpha)
+        ProtocolMetadata::new(DevelopmentState::Alpha)
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {

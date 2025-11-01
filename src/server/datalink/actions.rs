@@ -1,7 +1,7 @@
 //! DataLink protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, ProtocolActions},
+    protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,7 +19,47 @@ impl DataLinkProtocol {
     }
 }
 
-impl ProtocolActions for DataLinkProtocol {
+impl Server for DataLinkProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::datalink::DataLinkServer;
+
+            // DataLink doesn't use SocketAddr, it uses interface name
+            // Extract interface and filter from startup_params
+            let interface = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get("interface"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("DataLink requires 'interface' parameter"))?
+                .to_string();
+
+            let filter = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get("filter"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            // Spawn the datalink server
+            let _interface_name = DataLinkServer::spawn_with_llm(
+                interface,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                filter,
+                ctx.server_id,
+            ).await?;
+
+            // DataLink doesn't bind to a socket, so return a dummy address
+            // The listen_addr from context is just a placeholder
+            Ok(ctx.listen_addr)
+        })
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![]
     }
@@ -67,9 +107,9 @@ impl ProtocolActions for DataLinkProtocol {
         vec!["datalink", "data link", "layer 2", "layer2", "l2", "ethernet", "arp", "pcap"]
     }
 
-    fn metadata(&self) -> crate::protocol::base_stack::ProtocolMetadata {
-        crate::protocol::base_stack::ProtocolMetadata::new(
-            crate::protocol::base_stack::ProtocolState::Beta
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
+        crate::protocol::metadata::ProtocolMetadata::new(
+            crate::protocol::metadata::DevelopmentState::Beta
         )
     }
 }

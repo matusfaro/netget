@@ -9,6 +9,7 @@ pub enum ScriptLanguage {
     Python,
     JavaScript,
     Go,
+    Perl,
 }
 
 impl ScriptLanguage {
@@ -18,6 +19,7 @@ impl ScriptLanguage {
             ScriptLanguage::Python => "python3",
             ScriptLanguage::JavaScript => "node",
             ScriptLanguage::Go => "go",
+            ScriptLanguage::Perl => "perl",
         }
     }
 
@@ -27,6 +29,7 @@ impl ScriptLanguage {
             "python" | "python3" => Some(ScriptLanguage::Python),
             "javascript" | "js" | "node" => Some(ScriptLanguage::JavaScript),
             "go" | "golang" => Some(ScriptLanguage::Go),
+            "perl" => Some(ScriptLanguage::Perl),
             _ => None,
         }
     }
@@ -37,6 +40,7 @@ impl ScriptLanguage {
             ScriptLanguage::Python => "python",
             ScriptLanguage::JavaScript => "javascript",
             ScriptLanguage::Go => "go",
+            ScriptLanguage::Perl => "perl",
         }
     }
 
@@ -46,6 +50,7 @@ impl ScriptLanguage {
             ScriptLanguage::Python,
             ScriptLanguage::JavaScript,
             ScriptLanguage::Go,
+            ScriptLanguage::Perl,
         ]
     }
 
