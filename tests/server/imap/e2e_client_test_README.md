@@ -58,13 +58,13 @@ The test dependencies are automatically installed when running tests:
 ### Run All IMAP async-imap Tests
 
 ```bash
-./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test
+./cargo-isolated.sh test --features imap --test e2e_imap_client_test
 ```
 
 ### Run with Parallelization (Faster)
 
 ```bash
-./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test -- --test-threads=3
+./cargo-isolated.sh test --features imap --test e2e_imap_client_test -- --test-threads=3
 ```
 
 **Expected runtime**: ~40-60 seconds with 3 threads (vs ~2+ minutes serial)
@@ -72,13 +72,13 @@ The test dependencies are automatically installed when running tests:
 ### Run a Specific Test
 
 ```bash
-./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test test_imap_login_success
+./cargo-isolated.sh test --features imap --test e2e_imap_client_test test_imap_login_success
 ```
 
 ### Debug Output
 
 ```bash
-./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test -- --nocapture
+./cargo-isolated.sh test --features imap --test e2e_imap_client_test -- --nocapture
 ```
 
 ## Test Structure

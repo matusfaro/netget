@@ -8,7 +8,7 @@
 //!
 //! The test validates that all components work together correctly.
 
-#[cfg(all(test, feature = "e2e-tests"))]
+#[cfg(all(test, feature = "tor_integration"))]
 mod tests {
     use super::super::helpers::{self, TorTestNetwork};
     use super::super::tor_client::TorClient;

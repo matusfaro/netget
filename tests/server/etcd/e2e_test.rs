@@ -2,8 +2,7 @@
 
 #![cfg(feature = "etcd")]
 
-use super::super::helpers::start_server_with_prompt;
-use super::super::helpers::assert_stack_name;
+use super::super::helpers::{start_netget_server, assert_stack_name, ServerConfig};
 use etcd_client::Client;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -19,7 +18,7 @@ use tokio::time::sleep;
 ///
 /// Target: < 10 total LLM calls (1 startup + ~6 operations)
 #[tokio::test]
-#[cfg_attr(not(feature = "e2e-tests"), ignore)]
+#[cfg_attr(not(feature = "etcd"), ignore)]
 async fn test_etcd_kv_operations() -> Result<(), Box<dyn std::error::Error>> {
     // Start etcd server with comprehensive prompt
     let prompt = r#"
@@ -49,13 +48,14 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
 "#;
 
     // Use test helpers to start server
-    let (state, port, _handle) = start_server_with_prompt(prompt).await?;
+    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let port = server.port;
 
     // Wait for server to be fully ready
     sleep(Duration::from_secs(2)).await;
 
     // Verify server started with etcd stack
-    assert_stack_name(&state, "ETH>IP>TCP>GRPC>ETCD").await;
+    assert_stack_name(&server, "ETH>IP>TCP>GRPC>ETCD");
 
     // Connect etcd client
     let endpoint = format!("http://localhost:{}", port);

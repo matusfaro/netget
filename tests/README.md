@@ -48,7 +48,7 @@ This directory contains comprehensive end-to-end tests for all NetGet protocols.
 Most tests can run without elevated privileges:
 
 ```bash
-./cargo-isolated.sh test --features e2e-tests
+./cargo-isolated.sh test --features <protocol>
 ```
 
 ### Running Privileged Tests (DataLink)
@@ -59,7 +59,7 @@ DataLink tests require raw packet capture access. There are several approaches:
 
 ```bash
 # Run only DataLink tests with sudo
-sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
+sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 
 # The -E flag preserves environment variables (like PATH, CARGO_HOME)
 ```
@@ -89,7 +89,7 @@ sudo dseditgroup -o edit -a $USER -t user access_bpf
 
 # Log out and back in for group changes to take effect
 # Then run tests normally - no sudo needed!
-./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 ```
 
 **Pros:**
@@ -108,7 +108,7 @@ Grant specific capabilities to the test binary without full root:
 
 ```bash
 # Build the test binary first
-./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests --no-run
+./cargo-isolated.sh test --test e2e_datalink_test --features <protocol> --no-run
 
 # Find the test binary
 TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
@@ -117,7 +117,7 @@ TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111
 sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
 
 # Now run without sudo
-./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 ```
 
 **Pros:**
@@ -141,7 +141,7 @@ Create a helper script for privileged tests:
 set -e
 
 echo "Building test binary..."
-./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests --no-run
+./cargo-isolated.sh test --test e2e_datalink_test --features <protocol> --no-run
 
 # Linux: Use capabilities
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -150,12 +150,12 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
 
     echo "Running privileged tests without sudo..."
-    ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
+    ./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 
 # macOS: Use sudo
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Running with sudo (macOS)..."
-    sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
+    sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 
 else
     echo "Unsupported OS: $OSTYPE"
@@ -199,10 +199,10 @@ jobs:
 
       - name: Run privileged tests
         run: |
-          ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests --no-run
+          ./cargo-isolated.sh test --test e2e_datalink_test --features <protocol> --no-run
           TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
           sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
-          ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
+          ./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 ```
 
 ### Running Individual Protocol Tests
@@ -211,16 +211,16 @@ Run tests for specific protocols:
 
 ```bash
 # DNS tests
-./cargo-isolated.sh test --test e2e_dns_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_dns_test --features <protocol>
 
 # HTTP tests
-./cargo-isolated.sh test --test e2e_http_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_http_test --features <protocol>
 
 # SSH tests
-./cargo-isolated.sh test --test e2e_ssh_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_ssh_test --features <protocol>
 
 # IRC tests
-./cargo-isolated.sh test --test e2e_irc_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_irc_test --features <protocol>
 
 # etc.
 ```
@@ -230,8 +230,8 @@ Run tests for specific protocols:
 Run individual test functions:
 
 ```bash
-./cargo-isolated.sh test --test e2e_dns_test --features e2e-tests test_dns_a_record_query
-./cargo-isolated.sh test --test e2e_http_test --features e2e-tests test_http_json_api
+./cargo-isolated.sh test --test e2e_dns_test --features <protocol> test_dns_a_record_query
+./cargo-isolated.sh test --test e2e_http_test --features <protocol> test_http_json_api
 ```
 
 ## Test Structure

@@ -133,25 +133,25 @@ assert!(output_str.contains("IKE"));  // Works on String
 ### Run All E2E Tests
 ```bash
 # Sequential execution (required for LLM-based tests)
-./cargo-isolated.sh test --features e2e-tests --test server -- --test-threads=1
+./cargo-isolated.sh test --features <protocol> --test server -- --test-threads=1
 ```
 
 ### Run Specific Protocol Tests
 ```bash
 # Example: Test IMAP
-./cargo-isolated.sh test --features e2e-tests --test server imap
+./cargo-isolated.sh test --features <protocol> --test server imap
 
 # Example: Test IPSec honeypot
-./cargo-isolated.sh test --features e2e-tests --test server ipsec
+./cargo-isolated.sh test --features <protocol> --test server ipsec
 
 # Example: Test BGP
-./cargo-isolated.sh test --features e2e-tests,bgp --test server bgp
+./cargo-isolated.sh test --features <protocol>,bgp --test server bgp
 ```
 
 ### Run With Output
 ```bash
 # Show test output including LLM interactions
-./cargo-isolated.sh test --features e2e-tests --test server -- --nocapture --test-threads=1
+./cargo-isolated.sh test --features <protocol> --test server -- --nocapture --test-threads=1
 ```
 
 ---
@@ -199,7 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Build tests
-        run: ./cargo-isolated.sh test --features e2e-tests --no-run
+        run: ./cargo-isolated.sh test --features <protocol> --no-run
 ```
 
 #### 2. Document Test Patterns
@@ -213,7 +213,7 @@ Create `tests/README.md` with:
 ```bash
 #!/bin/bash
 # .git/hooks/pre-commit
-./cargo-isolated.sh test --features e2e-tests --no-run || exit 1
+./cargo-isolated.sh test --features <protocol> --no-run || exit 1
 ```
 
 #### 4. Test Template

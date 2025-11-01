@@ -11,7 +11,6 @@
 //!
 //! These tests ensure the fix remains effective.
 
-#![cfg(feature = "e2e-tests")]
 
 #[path = "server/helpers.rs"]
 mod helpers;

@@ -3,7 +3,7 @@
 //! These tests spawn the NetGet binary and test SMB2 protocol operations
 //! using raw TCP socket communication to send SMB2 packets.
 
-#![cfg(all(test, feature = "e2e-tests", feature = "smb"))]
+#![cfg(all(test, feature = "smb", feature = "smb"))]
 
 use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
 

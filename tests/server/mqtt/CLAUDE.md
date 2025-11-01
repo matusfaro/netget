@@ -261,19 +261,19 @@ Without this, E2E tests will fail with "Server did not output startup informatio
 ./cargo-isolated.sh build --release --all-features
 
 # Run current placeholder tests
-./cargo-isolated.sh test --features e2e-tests,mqtt --test server test_mqtt_placeholder
+./cargo-isolated.sh test --features mqtt --test server test_mqtt_placeholder
 
 # Run all MQTT tests when implemented
-./cargo-isolated.sh test --features e2e-tests,mqtt --test server mqtt
+./cargo-isolated.sh test --features mqtt --test server mqtt
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,mqtt --test server test_mqtt_basic_connect
+./cargo-isolated.sh test --features mqtt --test server test_mqtt_basic_connect
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,mqtt --test server mqtt -- --nocapture
+./cargo-isolated.sh test --features mqtt --test server mqtt -- --nocapture
 
 # Run ignored tests (future, when MQTT is implemented)
-./cargo-isolated.sh test --features e2e-tests,mqtt --test server mqtt -- --ignored
+./cargo-isolated.sh test --features mqtt --test server mqtt -- --ignored
 ```
 
 ## Future Test Additions

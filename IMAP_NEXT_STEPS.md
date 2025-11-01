@@ -87,12 +87,12 @@ This will compile NetGet with all protocols including IMAP.
 ### 3. Run E2E Tests
 ```bash
 # Run all IMAP E2E tests with parallelization
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test -- --test-threads=3
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test -- --test-threads=3
 
 # Or run individual tests:
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_greeting
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_login
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_greeting
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_login
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_select_mailbox
 ```
 
 **Expected Runtime**: ~35-50 seconds for the full suite with `--test-threads=3`
@@ -184,11 +184,11 @@ After applying the patch and building:
 
 - [ ] `./cargo-isolated.sh build --release --all-features` completes without errors
 - [ ] `./cargo-isolated.sh test --lib test_parse_imap_stack` passes
-- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_greeting` passes
-- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_login` passes
-- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox` passes
-- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_list_mailboxes` passes
-- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_fetch_message` passes
+- [ ] `./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_greeting` passes
+- [ ] `./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_login` passes
+- [ ] `./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_select_mailbox` passes
+- [ ] `./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_list_mailboxes` passes
+- [ ] `./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_fetch_message` passes
 - [ ] All 10 IMAP E2E tests pass
 - [ ] Manual telnet connection works
 - [ ] Real email client can connect

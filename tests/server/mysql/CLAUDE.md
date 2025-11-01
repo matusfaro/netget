@@ -129,13 +129,13 @@ let mut conn = pool.get_conn().await?;
 ./cargo-isolated.sh build --release --all-features
 
 # Run all MySQL tests
-./cargo-isolated.sh test --features e2e-tests,mysql --test server::mysql::test
+./cargo-isolated.sh test --features mysql --test server::mysql::test
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,mysql --test server::mysql::test test_mysql_simple_query
+./cargo-isolated.sh test --features mysql --test server::mysql::test test_mysql_simple_query
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,mysql --test server::mysql::test -- --nocapture
+./cargo-isolated.sh test --features mysql --test server::mysql::test -- --nocapture
 ```
 
 ## Test Output Example

@@ -217,13 +217,13 @@ sudo wg-quick up /path/to/client.conf
 
 ```bash
 # Run WireGuard E2E tests
-./cargo-isolated.sh test --features e2e-tests --test server::wireguard::e2e_test
+./cargo-isolated.sh test --features wireguard --test server::wireguard::e2e_test
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests --test server::wireguard::e2e_test -- --nocapture
+./cargo-isolated.sh test --features wireguard --test server::wireguard::e2e_test -- --nocapture
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests --test server::wireguard::e2e_test -- test_wireguard_handshake_detection
+./cargo-isolated.sh test --features wireguard --test server::wireguard::e2e_test -- test_wireguard_handshake_detection
 ```
 
 ### Expected Output
@@ -243,7 +243,7 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 Create separate test suite for full VPN testing:
 ```rust
-#[cfg(all(feature = "e2e-tests", feature = "privileged-tests"))]
+#[cfg(all(feature = "wireguard", feature = "privileged-tests"))]
 mod privileged {
     #[tokio::test]
     async fn test_wireguard_full_tunnel() {

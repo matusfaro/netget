@@ -2,7 +2,7 @@
 //!
 //! These tests verify the Kafka broker functionality using real rdkafka client.
 //!
-//! To run: cargo test --features e2e-tests,kafka --test server::kafka::e2e_test
+//! To run: cargo test --features kafka,kafka --test server::kafka::e2e_test
 
 use crate::server::helpers::{start_netget_server, wait_for_server_startup, ServerConfig};
 use rdkafka::admin::AdminClient;
@@ -16,7 +16,7 @@ use tokio::time::sleep;
 
 /// Test basic Kafka broker startup and ApiVersions handshake
 #[tokio::test]
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "kafka")]
 async fn test_kafka_broker_startup() {
     // Comprehensive prompt covering basic broker functionality
     let prompt = r#"
@@ -75,7 +75,7 @@ Log all requests at DEBUG level.
 
 /// Test Kafka produce and fetch operations
 #[tokio::test]
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "kafka")]
 async fn test_kafka_produce_fetch() {
     let prompt = r#"
 Start a Kafka broker on port 0.
@@ -187,7 +187,7 @@ Log all produce and fetch requests at DEBUG level.
 
 /// Test Kafka metadata requests
 #[tokio::test]
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "kafka")]
 async fn test_kafka_metadata() {
     let prompt = r#"
 Start a Kafka broker on port 0.

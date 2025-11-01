@@ -261,13 +261,13 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 
 ```bash
 # Run IPSec E2E tests
-./cargo-isolated.sh test --features e2e-tests --test server::ipsec::e2e_test
+./cargo-isolated.sh test --features ipsec --test server::ipsec::e2e_test
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests --test server::ipsec::e2e_test -- --nocapture
+./cargo-isolated.sh test --features ipsec --test server::ipsec::e2e_test -- --nocapture
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests --test server::ipsec::e2e_test -- test_ipsec_ikev2_sa_init_detection
+./cargo-isolated.sh test --features ipsec --test server::ipsec::e2e_test -- test_ipsec_ikev2_sa_init_detection
 ```
 
 ### Expected Output

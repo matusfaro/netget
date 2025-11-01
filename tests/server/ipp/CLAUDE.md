@@ -179,10 +179,10 @@ IPP operations currently require LLM call per request. Action-based responses us
 ./cargo-isolated.sh build --release --all-features
 
 # Run IPP E2E tests
-./cargo-isolated.sh test --features e2e-tests,ipp --test server::ipp::test
+./cargo-isolated.sh test --features ipp --test server::ipp::test
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,ipp --test server::ipp::test test_ipp_get_printer_attributes
+./cargo-isolated.sh test --features ipp --test server::ipp::test test_ipp_get_printer_attributes
 ```
 
 **IMPORTANT**: Always build release binary before running tests.

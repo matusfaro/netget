@@ -3,7 +3,7 @@
 //! These tests spawn the NetGet binary and test BGP protocol operations
 //! using raw TCP clients to send/receive BGP messages.
 
-#[cfg(all(test, feature = "e2e-tests", feature = "bgp"))]
+#[cfg(all(test, feature = "bgp", feature = "bgp"))]
 mod e2e_bgp {
     use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

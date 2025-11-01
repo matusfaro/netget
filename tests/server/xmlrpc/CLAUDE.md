@@ -121,7 +121,7 @@ Tests use **action-based mode** to ensure LLM interprets XML-RPC semantics.
 
 ```bash
 ./cargo-isolated.sh build --release --all-features
-./cargo-isolated.sh test --features e2e-tests,xmlrpc --test server::xmlrpc::test
+./cargo-isolated.sh test --features xmlrpc --test server::xmlrpc::test
 ```
 
 ## Key Test Patterns

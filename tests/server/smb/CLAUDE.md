@@ -263,10 +263,10 @@ SMB2 operations currently require LLM call per request. Action-based responses u
 ./cargo-isolated.sh build --release --all-features
 
 # Run SMB E2E tests
-./cargo-isolated.sh test --features e2e-tests,smb --test server::smb::e2e_test
+./cargo-isolated.sh test --features smb --test server::smb::e2e_test
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,smb --test server::smb::e2e_test test_smb_negotiate
+./cargo-isolated.sh test --features smb --test server::smb::e2e_test test_smb_negotiate
 ```
 
 **IMPORTANT**: Always build release binary before running tests.

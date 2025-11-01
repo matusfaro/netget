@@ -180,18 +180,18 @@ Tests IMAP stack parsing from strings.
 ./cargo-isolated.sh build --release --all-features
 
 # Run all IMAP E2E tests with parallelization
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test -- --test-threads=3
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test -- --test-threads=3
 ```
 
 Expected runtime: 35-50 seconds with `--test-threads=3`
 
 Individual tests:
 ```bash
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_greeting
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_login
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_list_mailboxes
-./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_fetch_message
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_greeting
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_login
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_select_mailbox
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_list_mailboxes
+./cargo-isolated.sh test --features <protocol> --test e2e_imap_test test_imap_fetch_message
 # ... 5 more tests
 ```
 

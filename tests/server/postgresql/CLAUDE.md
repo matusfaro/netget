@@ -164,13 +164,13 @@ tokio::spawn(async move {
 ./cargo-isolated.sh build --release --all-features
 
 # Run all PostgreSQL tests
-./cargo-isolated.sh test --features e2e-tests,postgresql --test server::postgresql::test
+./cargo-isolated.sh test --features postgresql --test server::postgresql::test
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,postgresql --test server::postgresql::test test_postgresql_simple_query
+./cargo-isolated.sh test --features postgresql --test server::postgresql::test test_postgresql_simple_query
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,postgresql --test server::postgresql::test -- --nocapture
+./cargo-isolated.sh test --features postgresql --test server::postgresql::test -- --nocapture
 ```
 
 ## Test Output Example

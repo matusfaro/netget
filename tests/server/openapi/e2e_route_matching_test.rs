@@ -9,7 +9,7 @@ use crate::server::helpers::{
 
 /// Test comprehensive route matching with file-based OpenAPI spec
 #[tokio::test]
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "openapi")]
 async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
     // Get path to test spec file
     let spec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -170,7 +170,7 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
 
 /// Test llm_on_invalid configuration
 #[tokio::test]
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "openapi")]
 async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
     let spec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/server/openapi/test_spec.yaml");
