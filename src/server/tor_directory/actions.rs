@@ -206,6 +206,14 @@ impl Server for TorDirectoryProtocol {
         "ETH>IP>TCP>HTTP>TorDirectory"
     }
 
+    fn description(&self) -> &'static str {
+        "Tor directory server serving consensus documents"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a Tor directory on port 9030 serving fake consensus documents"
+    }
+
     fn keywords(&self) -> Vec<&'static str> {
         vec!["directory", "consensus", "tor_directory", "tor-directory", "directory authority"]
     }

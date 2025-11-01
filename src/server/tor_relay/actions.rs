@@ -147,6 +147,14 @@ impl Server for TorRelayProtocol {
         "ETH>IP>TCP>TLS>TorRelay"
     }
 
+    fn description(&self) -> &'static str {
+        "Tor relay server for anonymous communication"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a Tor exit relay on port 9001 allowing connections to localhost"
+    }
+
     fn keywords(&self) -> Vec<&'static str> {
         vec!["tor_relay", "tor-relay", "onion router", "guard", "exit", "middle", "circuit"]
     }

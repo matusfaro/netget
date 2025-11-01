@@ -100,6 +100,14 @@ impl Server for McpProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "Model Context Protocol server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an MCP (Model Context Protocol) server on port 8000"
+    }
 }
 
 impl McpProtocol {

@@ -199,6 +199,11 @@ async fn execute_common_action(
                 }
             }
         }
+        CommonAction::ScheduleTask { .. }
+        | CommonAction::CancelTask { .. }
+        | CommonAction::ListTasks => {
+            // Task scheduling handled by event handler, not executor
+        }
     }
 
     Ok(())

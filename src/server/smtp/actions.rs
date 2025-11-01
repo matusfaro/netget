@@ -205,6 +205,14 @@ impl Server for SmtpProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "SMTP mail server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an SMTP mail server on port 25"
+    }
 }
 
 // Action definitions

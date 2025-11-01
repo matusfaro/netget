@@ -60,6 +60,58 @@ NetGet is a Rust CLI application where an LLM (via Ollama) controls network prot
 
 ## Architecture
 
+### Decentralization Principle - **CRITICAL**
+
+**NEVER create centralized protocol registries or lists**. The codebase must remain decentralized with respect to protocol implementations.
+
+**Anti-Pattern** (DO NOT DO THIS):
+```rust
+// ❌ WRONG - Centralized list of all protocols
+fn get_all_protocol_metadata() -> Vec<ProtocolMetadata> {
+    vec![
+        ProtocolMetadata { name: "DNS", port: 53, ... },
+        ProtocolMetadata { name: "HTTP", port: 80, ... },
+        ProtocolMetadata { name: "SMTP", port: 25, ... },
+        // ... requires updating this central list for every new protocol
+    ]
+}
+```
+
+**Correct Pattern** (DO THIS):
+```rust
+// ✅ CORRECT - Trait-based, decentralized
+pub trait ProtocolServer {
+    fn protocol_name(&self) -> &str;
+    fn default_port(&self) -> u16;
+    fn description(&self) -> &str;
+    fn startup_params(&self) -> Vec<ActionDefinition>;
+}
+
+// Each protocol implements the trait independently
+impl ProtocolServer for DnsServer {
+    fn protocol_name(&self) -> &str { "DNS" }
+    fn default_port(&self) -> u16 { 53 }
+    // ...
+}
+```
+
+**Why This Matters**:
+- **Extensibility**: New protocols don't require modifying central lists
+- **Maintainability**: Protocol metadata lives with the protocol implementation
+- **Feature Gates**: Protocols can be compiled conditionally without breaking shared code
+- **Plugin Architecture**: External protocols can be added without core changes
+
+**Allowed Exceptions**:
+- `BaseStack` enum in `src/protocol/base_stack.rs` - This is the protocol identifier, not metadata
+- Feature flags in `Cargo.toml` - Build system requires this
+- Match statements in `server_startup.rs` - Dispatching requires knowing which protocol to spawn
+
+**When adding functionality across protocols**:
+1. Define a trait in a shared location (e.g., `src/protocol/`)
+2. Have each protocol implement the trait independently
+3. Use trait bounds to access functionality generically
+4. Never maintain a hardcoded list of all protocols
+
 ### Key Modules
 
 - **`cli/`** - Rolling terminal TUI (like `tail -f`) with sticky footer showing input, model, scripting mode, and packet stats
@@ -305,84 +357,21 @@ cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2
 - Provide comprehensive instructions in a single prompt covering all test scenarios
 - Test multiple operations against the same server instance
 
-**Bad Example** (3 server setups, 3+ LLM calls):
-```rust
-#[tokio::test]
-async fn test_dns_a_record() {
-    let prompt = "Listen on port 0 via DNS. For A record queries, return 93.184.216.34";
-    let server = start_server_with_prompt(prompt).await;
-    // Test A record...
-}
-
-#[tokio::test]
-async fn test_dns_mx_record() {
-    let prompt = "Listen on port 0 via DNS. For MX record queries, return mail.example.com";
-    let server = start_server_with_prompt(prompt).await;
-    // Test MX record...
-}
-```
-
-**Good Example** (1 server setup, 3 LLM calls total):
-```rust
-#[tokio::test]
-async fn test_dns_records() {
-    let prompt = r#"Listen on port 0 via DNS.
-    - For A record queries on example.com, return 93.184.216.34
-    - For MX record queries on example.com, return mail.example.com with priority 10
-    - For AAAA record queries on example.com, return 2606:2800:220:1:248:1893:25c8:1946"#;
-
-    let server = start_server_with_prompt(prompt).await;
-
-    // Test A record
-    // Test MX record
-    // Test AAAA record
-    // All against same server instance
-}
-```
+**❌ Bad**: Separate servers for each test case (3+ server setups = 3+ startup LLM calls)
+**✅ Good**: One server with comprehensive prompt covering all test cases (1 server setup = 1 startup LLM call)
 
 **2. Target < 10 Total LLM Calls Per Protocol Test Suite**
-- Count LLM calls carefully: 1 server startup + N requests (unless scripted)
-- Prefer scripting mode when protocol supports it (0 LLM calls per request)
-- Consolidate test cases to share server instances
-- Example budget for a protocol:
-  - 2-3 comprehensive server setups
-  - 2-3 requests per server (if not scripted)
-  - Total: 6-9 LLM calls
+- Count: 1 server startup + N requests (unless scripted)
+- Prefer scripting mode (0 LLM calls per request)
+- Example budget: 2-3 comprehensive server setups, 2-3 requests per server = 6-9 total LLM calls
 
 **3. Use Scripting Mode When Available**
-- For protocols with repetitive request/response patterns, use scripting
 - Server startup generates script (1 LLM call), all subsequent requests use script (0 LLM calls)
-- Example: DNS, HTTP, DHCP are excellent candidates for scripting
-- Allows testing many scenarios with only 1 LLM call per server
+- Good candidates: DNS, HTTP, DHCP
 
 **4. Group Related Test Scenarios**
-- Bundle all CRUD operations into one test with one server
-- Bundle all error cases into one test with comprehensive error instructions
-- Bundle all edge cases into one test
-
-**Example Test Structure**:
-```rust
-#[tokio::test]
-async fn test_protocol_basic_operations() {
-    // 1 server setup with comprehensive instructions
-    // Tests: create, read, update, delete
-    // LLM calls: 1 startup + 4 requests = 5 total
-}
-
-#[tokio::test]
-async fn test_protocol_error_handling() {
-    // 1 server setup with error handling instructions
-    // Tests: invalid input, missing fields, timeouts
-    // LLM calls: 1 startup + 3 requests = 4 total
-}
-
-// Total for protocol: 9 LLM calls (within budget)
-```
-
-**Anti-Pattern to Avoid**:
-- Spinning up 10+ servers for 10+ test cases (10+ startup calls + N request calls = 20+ total LLM calls)
-- Testing each protocol feature in isolation (wastes server setup overhead)
-- Ignoring scripting mode when protocol supports it
+- Bundle CRUD operations, error cases, and edge cases into comprehensive tests
+- Avoid: 10+ servers for 10+ test cases, testing each feature in isolation, ignoring scripting mode
 
 ### Privacy and Network Isolation Policy
 
@@ -481,95 +470,35 @@ Test infrastructure automatically uses process-specific temp file names:
 
 ### Build Directory Management for Multiple Claude Instances
 
-**IMPORTANT**: When running multiple Claude instances against the same repository, each instance MUST use a separate build directory to avoid conflicts.
+**IMPORTANT**: When running multiple Claude instances, each MUST use a separate build directory.
 
-#### Session Setup
-
-At the **start of each session** working on netget, run this once:
-
+**At session start**, run once:
 ```bash
 export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
 ```
 
-This sets a session-specific build directory that:
-- Uses the shell PID (`$$`) - unique per Claude session, not per command
-- Persists for all commands in this session
-- Prevents Cargo lock contention between concurrent Claude instances
-
-**You only need to run this once per session.** All subsequent `cargo` commands will automatically use this directory.
-
-#### Alternative: Automatic Setup
-
-If you want this to happen automatically, add to `~/.bashrc` or `~/.zshrc`:
-
+**Alternative - Automatic Setup**:
+Add to `~/.bashrc`/`~/.zshrc`:
 ```bash
-# Auto-detect netget project and set isolated build directory
 if [[ "$PWD" == *"/netget"* ]] && [ -f "Cargo.toml" ]; then
   export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
 fi
 ```
 
-Or use a project-specific `.envrc` file (if you have direnv installed):
-
+Or use `.envrc` (direnv):
 ```bash
-# .envrc in netget root
 export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
 ```
 
-Then run `direnv allow` once.
-
-#### What This Does
-
-1. **Creates isolated builds**: Each Claude session gets `target-claude/claude-{shell_pid}/`
-2. **Prevents lock contention**: No more "Blocking waiting for file lock" errors
-3. **Stays in repo**: All build dirs under `target-claude/` (already gitignored)
-4. **No per-command overhead**: Set once, applies to entire session
-5. **No approval prompts**: Avoids prefixing every cargo command with export
-
-#### Maintenance - Cleaning Old Build Directories
-
-Build directories accumulate over time. Clean them manually when needed:
-
-**Option 1: Unified `cargo clean` (Recommended)**
-
-Create a shell alias that cleans both `target/` and `target-claude/`:
-
+**Cleanup** (builds accumulate ~2-5 GB each):
 ```bash
-# Add to ~/.bashrc or ~/.zshrc
+# Recommended: alias in ~/.bashrc or ~/.zshrc
 alias cargo-clean-all='cargo clean && rm -rf target-claude/'
+
+# Or manual cleanup
+rm -rf target-claude/  # Safe, rebuilds on next compile
+find target-claude/ -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;  # Old builds
 ```
-
-Usage: `cargo-clean-all` (cleans standard target and all Claude instance builds)
-
-**Option 2: Periodic Manual Cleanup**
-
-```bash
-# Remove build directories older than 10 days
-find target-claude/ -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
-
-# Or keep only the 3 most recent builds
-ls -t target-claude/ | tail -n +4 | xargs -I {} rm -rf target-claude/{}
-
-# Or nuke everything (safe - will rebuild on next build)
-rm -rf target-claude/
-```
-
-**Option 3: Weekly Cron Job**
-
-```bash
-# Add to crontab for weekly cleanup (every Sunday at 2am)
-0 2 * * 0 cd ~/dev/netget && find target-claude/ -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null
-```
-
-**DO NOT clean on every `cd`** - This is slow and disruptive. Clean manually when disk space becomes an issue.
-
-#### Disk Space Considerations
-
-- Each build directory: ~2-5 GB (full build with all features)
-- After 10 concurrent sessions: ~20-50 GB
-- Cleanup recommendation: Use `cargo-clean-all` alias or clean manually when disk space is low
-- Monitor disk usage: `du -sh target-claude/` to see total size
-- Safe to delete: Old build directories don't affect current sessions (they rebuild on next compile)
 
 ## Logging (CRITICAL)
 
@@ -627,6 +556,58 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}", len, conn_id))
 7. **Status messages**: Async tasks update UI via unbounded channel
 8. **Concurrent connections**: Each has own state, multiple can process simultaneously
 9. **Action execution**: Sequential, in-order from action array
+
+## Protocol Planning Phase
+
+**CRITICAL**: Before implementing a new protocol, complete this planning phase to ensure a smooth implementation.
+
+### Planning Checklist
+
+When planning to create a new protocol server, you MUST research and document the following:
+
+#### 1. Server Library Research
+- Research suitable Rust server crates for the protocol
+- Evaluate: protocol compliance, maturity, API flexibility (LLM control?), documentation, dependencies
+- Consider manual implementation if no suitable library exists
+- Document chosen library with rationale (see protocol CLAUDE.md files for examples)
+
+#### 2. Client Library Research (for E2E Testing)
+- Research Rust client crates for E2E tests
+- Prefer well-maintained libraries with good documentation
+- Ensure library can test the specific protocol features you plan to implement
+- Consider cross-language clients if no good Rust option exists
+- Document chosen client with rationale
+
+#### 3. LLM Control Points (Actions)
+- List all points where the LLM will make decisions
+- Distinguish between:
+  - **Async Actions**: User-triggered, no network context
+  - **Sync Actions**: Network event triggered, with context
+- Define action names, parameters, and examples
+- Consider startup parameters (ports, paths, behavior flags) and runtime reconfiguration actions
+- See protocol CLAUDE.md files for detailed examples
+
+#### 4. Logging Strategy
+- Define what will be logged at each level (ERROR/WARN/INFO/DEBUG/TRACE)
+- Follow the dual logging pattern (tracing macros + status_tx)
+- See "Logging (CRITICAL)" section below and protocol CLAUDE.md files for examples
+
+#### 5. Example Prompt
+- Write a comprehensive prompt that would be used to start the server
+- Include all key behaviors and scenarios (will be used as basis for E2E tests)
+- Cover the main protocol features you plan to implement
+- See protocol CLAUDE.md files for examples
+
+### Planning Deliverables
+
+Before starting implementation, you should have:
+- [x] Chosen server library with clear rationale
+- [x] Chosen client library for E2E testing
+- [x] Documented all LLM control points (actions) with parameters and examples
+- [x] Defined logging strategy for ERROR/WARN/INFO/DEBUG/TRACE levels
+- [x] Written example prompts covering main protocol features
+
+**Why This Matters**: This planning phase prevents mid-implementation surprises, ensures the library choices support LLM control, and provides clear documentation for future maintainers.
 
 ## Protocol Implementation Checklist
 
@@ -713,111 +694,40 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Export server and protocol structs
 - Example: `#[cfg(feature = "imap")] pub mod imap;`
 
-### 6. Server Startup (`src/cli/server_startup.rs`)
+### 7. Server Startup (`src/cli/server_startup.rs`)
 - Add match arm for new `BaseStack` variant
 - Implement feature-gated server spawning
 - Update server status on success/failure
 - Send status updates to UI
 
-### 7. Connection Info (`src/state/server.rs`)
+### 8. Connection Info (`src/state/server.rs`)
 - Add variant to `ProtocolConnectionInfo` enum
 - Include protocol-specific state (write_half, queued_data, etc.)
 
-### 8. Feature Flag (`Cargo.toml`) - **MANDATORY**
+### 9. Feature Flag (`Cargo.toml`) - **MANDATORY**
 - **CRITICAL**: Every protocol MUST have a feature flag - no exceptions
 - Add feature flag for protocol (use lowercase name matching the protocol)
 - Add protocol-specific dependencies with `optional = true`
 - Include in `all-protocols` feature
 - Example: `myprotocol = ["dep:myprotocol-lib", "async-trait"]`
 
-### 9. E2E Test (`tests/server/<protocol>/e2e_test.rs`) - **CRITICAL: Follow Efficiency Guidelines**
-- **Must create protocol directory** `tests/server/<protocol>/`
-- **Must create mod.rs** with `pub mod e2e_test;` (add feature flag `#[cfg(feature = "e2e-tests")]`)
-- **Must add to `tests/server/mod.rs`** with `pub mod <protocol>;`
-- **Must start NetGet in non-interactive mode** with a prompt
-- **Must assert server started with correct stack** using helpers
-- **Must use real client** or emulated client (only if no library available)
-- **CRITICAL: Follow E2E Test Efficiency Guidelines** (see section above):
-  - **Minimize server setups** - Reuse servers across multiple test cases
-  - **Target < 10 total LLM calls** for entire protocol test suite
-  - **Use scripting mode** when protocol supports it
-  - **Consolidate test cases** - Don't create separate servers for each scenario
-  - Example: One DNS server handles A, MX, AAAA records; don't create 3 servers
-- Test multiple scenarios:
-  - Basic functionality (connect, send, receive)
-  - Protocol-specific commands
-  - Error handling
-  - Concurrent connections (if applicable)
-- **Before running tests, MUST build release binary**:
-  ```bash
-  cargo build --release --all-features
-  ```
-- **Run tests** (concurrent execution supported with Ollama lock):
-  ```bash
-  cargo test --features e2e-tests --test server::<protocol>::e2e_test
-  ```
-- **Fix any issues before considering protocol complete**
+### 10. E2E Test (`tests/server/<protocol>/e2e_test.rs`) - **CRITICAL: Follow Efficiency Guidelines**
+- **Must create**: `tests/server/<protocol>/` directory, `mod.rs` with `pub mod e2e_test;`, add to `tests/server/mod.rs`
+- **Must**: Start NetGet non-interactively, assert correct stack, use real client
+- **CRITICAL**: Follow efficiency guidelines (see section above):
+  - Minimize server setups - reuse across test cases
+  - Target < 10 total LLM calls for entire suite
+  - Use scripting mode when protocol supports it
+  - Consolidate test cases
+- **Before running**: `cargo build --release --all-features`
+- **Run**: `cargo test --features e2e-tests --test server::<protocol>::e2e_test`
 
-### 10. Test Documentation (`tests/server/<protocol>/CLAUDE.md`) - **MANDATORY**
-- **CRITICAL**: Every protocol MUST have a test CLAUDE.md file documenting test details
+### 11. Test Documentation (`tests/server/<protocol>/CLAUDE.md`) - **MANDATORY**
 - **Location**: `tests/server/<protocol>/CLAUDE.md`
-- **Required Content**:
-  - **Test Overview**: What aspects of the protocol are tested
-  - **Test Strategy**: How tests are structured (consolidated vs isolated)
-  - **LLM Call Budget**: Total LLM calls for entire test suite (target: < 10)
-    - Count server startups + network requests (unless scripted)
-    - Show breakdown per test function
-  - **Scripting Usage**: Whether tests use scripting mode or action-based
-  - **Client Library**: Actual client library used (e.g., hickory-client for DNS) or manual/emulated client
-  - **Expected Runtime**: Typical runtime for full test suite (with specified model)
-  - **Failure Rate**: Historical failure/flakiness rate (if any)
-  - **Test Cases**: List of test scenarios covered
-  - **Known Issues**: Flaky tests, timing issues, or environment dependencies
-- **Example Structure**:
-  ```markdown
-  # DNS Protocol E2E Tests
+- **Required Content**: Test overview, strategy, LLM call budget (target < 10), scripting usage, client library, expected runtime, failure rate, test cases, known issues
+- See existing protocol test CLAUDE.md files for examples
 
-  ## Test Overview
-  Tests DNS server with A, MX, AAAA, TXT, NXDOMAIN record types
-
-  ## Test Strategy
-  - Single consolidated test with one server handling all record types
-  - Reuses server instance across multiple queries
-  - Uses scripting mode for fast, deterministic responses
-
-  ## LLM Call Budget
-  - `test_dns_records_comprehensive()`: 1 startup call (scripted mode)
-  - `test_dns_error_handling()`: 1 startup call (scripted mode)
-  - **Total: 2 LLM calls** (well under 10 limit)
-
-  ## Scripting Usage
-  ✅ **Scripting Enabled** - All responses generated by script, no LLM calls per request
-
-  ## Client Library
-  - `hickory-client` v0.24 with UDP transport
-  - Uses real DNS client for protocol correctness
-
-  ## Expected Runtime
-  - Model: qwen3-coder:30b
-  - Runtime: ~25 seconds for full test suite
-  - Fast due to scripting (no LLM calls per query)
-
-  ## Failure Rate
-  - **Low** (<1%) - Occasional timeout if Ollama is slow on startup
-  - No flakiness - scripted responses are deterministic
-
-  ## Test Cases
-  1. A record resolution (IPv4)
-  2. MX record with priority
-  3. AAAA record (IPv6)
-  4. TXT record
-  5. NXDOMAIN for non-existent domains
-
-  ## Known Issues
-  - None - tests are stable and deterministic
-  ```
-
-### 11. Test Helpers (`tests/server/helpers.rs`)
+### 12. Test Helpers (`tests/server/helpers.rs`)
 - Update `extract_stack_from_prompt()` if needed
 - Update `wait_for_server_startup()` to detect new protocol
 - Handle protocol-specific stack validation

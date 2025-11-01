@@ -186,4 +186,12 @@ impl Server for DynamoProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "DynamoDB-compatible database server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a DynamoDB-compatible server on port 8000"
+    }
 }

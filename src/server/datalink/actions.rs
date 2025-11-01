@@ -31,18 +31,12 @@ impl Server for DataLinkProtocol {
 
             // DataLink doesn't use SocketAddr, it uses interface name
             // Extract interface and filter from startup_params
-            let interface = ctx.startup_params
+            let params = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("interface"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("DataLink requires 'interface' parameter"))?
-                .to_string();
+                .ok_or_else(|| anyhow::anyhow!("DataLink requires startup parameters (interface)"))?;
 
-            let filter = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get("filter"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let interface = params.get_string("interface");
+            let filter = params.get_optional_string("filter");
 
             // Spawn the datalink server
             let _interface_name = DataLinkServer::spawn_with_llm(
@@ -58,6 +52,25 @@ impl Server for DataLinkProtocol {
             // The listen_addr from context is just a placeholder
             Ok(ctx.listen_addr)
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "interface".to_string(),
+                type_hint: "string".to_string(),
+                description: "Network interface name to capture packets from (e.g., 'eth0', 'en0', 'wlan0')".to_string(),
+                required: true,
+                example: json!("eth0"),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "filter".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional BPF (Berkeley Packet Filter) expression to filter captured packets (e.g., 'arp', 'tcp port 80')".to_string(),
+                required: false,
+                example: json!("arp"),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -111,6 +124,14 @@ impl Server for DataLinkProtocol {
         crate::protocol::metadata::ProtocolMetadata::new(
             crate::protocol::metadata::DevelopmentState::Beta
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "Layer 2 Ethernet frame server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Listen on eth0 via Ethernet"
     }
 }
 

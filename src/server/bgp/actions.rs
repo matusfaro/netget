@@ -513,4 +513,32 @@ impl Server for BgpProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "BGP routing server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a BGP routing server on port 179"
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "as_number".to_string(),
+                type_hint: "integer".to_string(),
+                description: "BGP Autonomous System Number (1-4294967295). Use private ASNs (64512-65534) for testing.".to_string(),
+                required: false,
+                example: json!(65001),
+            },
+            ParameterDefinition {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "BGP router ID in IPv4 address format (e.g., 192.168.1.1)".to_string(),
+                required: false,
+                example: json!("192.168.1.1"),
+            },
+        ]
+    }
 }

@@ -115,6 +115,14 @@ impl Server for IpsecProtocol {
             "No actual VPN tunnels. Full IPSec/IKEv2 implementation is infeasible: no viable Rust library (ipsec-parser is parse-only), protocol requires deep OS integration (XFRM policy), extremely complex (hundreds of thousands of lines in strongSwan). Use WireGuard for production VPN."
         )
     }
+
+    fn description(&self) -> &'static str {
+        "IPSec/IKEv2 VPN honeypot server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an IPSec VPN honeypot on port 500"
+    }
 }
 
 impl IpsecProtocol {

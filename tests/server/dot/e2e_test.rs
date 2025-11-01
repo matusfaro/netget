@@ -120,7 +120,7 @@ async fn test_dot_server() -> E2EResult<()> {
 
     // Create a prompt with a simple Python script
     // Keep it short to avoid LLM confusion with long prompts
-    let prompt = r#"listen on port {AVAILABLE_PORT} via dot. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300. Use scripting."#;
+    let prompt = r#"listen on port {AVAILABLE_PORT} via dot. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300."#;
 
     // Start server (LLM will parse the prompt and create the script)
     let server = helpers::start_netget_server(

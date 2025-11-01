@@ -87,6 +87,14 @@ impl Server for SnmpProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "SNMP agent for network monitoring"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'"
+    }
 }
 
 impl SnmpProtocol {

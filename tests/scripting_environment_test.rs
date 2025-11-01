@@ -14,6 +14,7 @@ fn test_format_available() {
         python: Some("Python 3.11.0".to_string()),
         javascript: Some("v20.0.0".to_string()),
         go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.34.0".to_string()),
     };
     let formatted = env.format_available();
     assert!(formatted.contains("Python"));
@@ -27,6 +28,7 @@ fn test_format_available_none() {
         python: None,
         javascript: None,
         go: None,
+        perl: None,
     };
     assert_eq!(env.format_available(), "None");
 }

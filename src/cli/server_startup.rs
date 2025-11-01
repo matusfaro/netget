@@ -47,6 +47,16 @@ pub async fn start_server_by_id(
         .get(&protocol_name)
         .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol_name))?;
 
+    // Build type-safe startup params if provided
+    let startup_params = if let Some(params_json) = server.startup_params.clone() {
+        // Get the parameter schema from the protocol
+        let schema = protocol.get_startup_parameters();
+        // Create validated StartupParams
+        Some(crate::protocol::StartupParams::new(params_json, schema))
+    } else {
+        None
+    };
+
     // Build spawn context
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
@@ -54,7 +64,7 @@ pub async fn start_server_by_id(
         state: Arc::new(state.clone()),
         status_tx: status_tx.clone(),
         server_id,
-        startup_params: server.startup_params.clone(),
+        startup_params,
     };
 
     // Spawn the server using the protocol's spawn method

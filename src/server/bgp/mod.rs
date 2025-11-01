@@ -54,7 +54,7 @@ impl BgpServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        startup_params: Option<serde_json::Value>,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
@@ -63,14 +63,10 @@ impl BgpServer {
 
         // Extract AS number and router ID from startup params
         let (local_as, router_id) = if let Some(ref params) = startup_params {
-            let as_num = params.get("as_number")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as u32)
+            let as_num = params.get_optional_u32("as_number")
                 .unwrap_or(65000); // Default private ASN
-            let router_id_str = params.get("router_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("192.168.1.1")
-                .to_string();
+            let router_id_str = params.get_optional_string("router_id")
+                .unwrap_or_else(|| "192.168.1.1".to_string());
             info!("BGP configured with AS {} and router ID {}", as_num, router_id_str);
             let _ = status_tx.send(format!("[INFO] BGP configured with AS {} and router ID {}", as_num, router_id_str));
             (as_num, router_id_str)

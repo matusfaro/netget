@@ -68,10 +68,9 @@ impl Server for TelnetProtocol {
     > {
         Box::pin(async move {
             use crate::server::telnet::TelnetServer;
-            let send_first = ctx.startup_params
+            let _send_first = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("send_first"))
-                .and_then(|v| v.as_bool())
+                .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
             TelnetServer::spawn_with_llm_actions(
@@ -84,6 +83,18 @@ impl Server for TelnetProtocol {
         })
     }
 
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                required: false,
+                example: serde_json::json!(false),
+            },
+        ]
+    }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // Telnet doesn't need async actions for now
         Vec::new()
@@ -135,6 +146,14 @@ impl Server for TelnetProtocol {
         crate::protocol::metadata::ProtocolMetadata::new(
             crate::protocol::metadata::DevelopmentState::Alpha
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "Telnet terminal server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a telnet server on port 23 that echoes commands"
     }
 }
 

@@ -24,6 +24,7 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
         python: None,
         javascript: None,
         go: None,
+        perl: None,
     };
     state.set_scripting_env(scripting_env).await;
     // Also set the mode to LLM (no scripting)
@@ -108,6 +109,7 @@ async fn test_user_input_prompt() {
         python: Some("Python 3.11.0".to_string()),
         javascript: Some("v20.0.0".to_string()),
         go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.38.0".to_string()),
     };
     state.set_scripting_env(scripting_env).await;
 
@@ -138,6 +140,7 @@ async fn test_user_input_prompt_no_scripting() {
         python: None,
         javascript: None,
         go: None,
+        perl: None,
     };
     state.set_scripting_env(scripting_env).await;
     // Also set the mode to LLM (no scripting)
@@ -180,6 +183,7 @@ async fn test_user_input_prompt_without_web_search() {
         python: Some("Python 3.11.0".to_string()),
         javascript: Some("v20.0.0".to_string()),
         go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.38.0".to_string()),
     };
     state.set_scripting_env(scripting_env).await;
 
@@ -266,20 +270,24 @@ fn test_base_stack_documentation_includes_all_stacks() {
 
     let docs = generate_base_stack_documentation(false);
 
-    // Should include all base stacks with their full names
-    assert!(docs.contains("### ETH>IP>TCP"));
-    assert!(docs.contains("### ETH>IP>TCP>HTTP"));
-    assert!(docs.contains("### ETH>IP>UDP"));
-    assert!(docs.contains("### ETH>IP>UDP>DNS"));
-    assert!(docs.contains("### ETH>IP>TCP>HTTP>PROXY"));
-    assert!(docs.contains("### ETH>IP>TCP>SSH"));
+    // Should include protocol headers and their stack names
+    assert!(docs.contains("### HTTP"));
+    assert!(docs.contains("Full name: \"ETH>IP>TCP>HTTP\""));
+    assert!(docs.contains("### UDP"));
+    assert!(docs.contains("Full name: \"ETH>IP>UDP\""));
+    assert!(docs.contains("### DNS"));
+    assert!(docs.contains("Full name: \"ETH>IP>UDP>DNS\""));
+    assert!(docs.contains("### Proxy"));
+    assert!(docs.contains("Full name: \"ETH>IP>TCP>HTTP>PROXY\""));
+    assert!(docs.contains("### SSH"));
+    assert!(docs.contains("Full name: \"ETH>IP>TCP>SSH\""));
 
     // Should show proxy startup parameters
     assert!(docs.contains("certificate_mode"));
     assert!(docs.contains("request_filter_mode"));
 
     // Should indicate when protocols have no startup params
-    assert!(docs.contains("No startup parameters"));
+    assert!(docs.contains("Startup parameters: None"));
 }
 
 #[test]

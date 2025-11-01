@@ -105,6 +105,21 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("append_to_log: {} \"{}\"", output_name, preview)
         }
+        CommonAction::ScheduleTask { task_id, recurring, delay_secs, interval_secs, .. } => {
+            if *recurring {
+                let interval = interval_secs.or(*delay_secs).unwrap_or(0);
+                format!("schedule_task: {} (recurring, interval: {}s)", task_id, interval)
+            } else {
+                let delay = delay_secs.unwrap_or(0);
+                format!("schedule_task: {} (one-shot, delay: {}s)", task_id, delay)
+            }
+        }
+        CommonAction::CancelTask { task_id } => {
+            format!("cancel_task: {}", task_id)
+        }
+        CommonAction::ListTasks => {
+            "list_tasks".to_string()
+        }
     }
 }
 

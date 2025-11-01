@@ -86,6 +86,14 @@ impl Server for MdnsProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "Multicast DNS service discovery server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Advertise a web service via mDNS on port 8080"
+    }
 }
 
 // Action definitions

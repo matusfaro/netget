@@ -446,40 +446,26 @@ impl OpenApiServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        startup_params: Option<serde_json::Value>,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> anyhow::Result<SocketAddr> {
         // Create shared OpenAPI state
         let openapi_state = Arc::new(RwLock::new(OpenApiState::new()));
         let protocol = Arc::new(OpenApiProtocol::new());
 
-        // Check if spec is provided via startup_params
+        // Check if spec is provided via startup_params (REQUIRED)
         let spec_loaded = if let Some(ref params) = startup_params {
-            // Try to extract spec (either inline or file path)
-            let spec_content = if let Some(spec_str) = params.get("spec").and_then(|s| s.as_str()) {
-                // Inline spec provided
-                info!("OpenAPI spec provided inline via startup_params");
-                let _ = status_tx.send("[INFO] OpenAPI spec provided inline via startup_params".to_string());
-                Some(spec_str.to_string())
-            } else if let Some(spec_file) = params.get("spec_file").and_then(|s| s.as_str()) {
-                // Spec file path provided - read it
-                info!("OpenAPI spec file path provided: {}", spec_file);
-                let _ = status_tx.send(format!("[INFO] Reading OpenAPI spec from: {}", spec_file));
-
-                match tokio::fs::read_to_string(spec_file).await {
-                    Ok(content) => {
-                        info!("Successfully read spec file ({} bytes)", content.len());
-                        let _ = status_tx.send(format!("[INFO] Read spec file ({} bytes)", content.len()));
-                        Some(content)
-                    }
-                    Err(e) => {
-                        let msg = format!("Failed to read spec file {}: {}", spec_file, e);
-                        error!("{}", msg);
-                        let _ = status_tx.send(format!("[ERROR] {}", msg));
-                        return Err(anyhow::anyhow!(msg));
-                    }
-                }
+            // Extract required spec parameter
+            let spec_content = if let Some(spec_str) = params.get_optional_string("spec") {
+                // Spec provided (LLM must read file and provide content)
+                info!("OpenAPI spec provided via startup_params ({} bytes)", spec_str.len());
+                let _ = status_tx.send(format!("[INFO] OpenAPI spec provided ({} bytes)", spec_str.len()));
+                Some(spec_str)
             } else {
-                None
+                // spec parameter is required
+                let msg = "OpenAPI server requires 'spec' parameter in startup_params. LLM must read the spec file and provide content.";
+                error!("{}", msg);
+                let _ = status_tx.send(format!("[ERROR] {}", msg));
+                return Err(anyhow::anyhow!(msg));
             };
 
             // If we have spec content, parse and build router

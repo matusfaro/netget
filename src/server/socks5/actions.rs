@@ -100,6 +100,51 @@ impl Server for Socks5Protocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "SOCKS5 proxy server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a SOCKS5 proxy on port 1080 that asks before connecting"
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "auth_methods".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of allowed authentication methods: 'none' (no auth) or 'username_password' (RFC 1929)".to_string(),
+                required: false,
+                example: json!(["none", "username_password"]),
+            },
+            ParameterDefinition {
+                name: "default_action".to_string(),
+                type_hint: "string".to_string(),
+                description: "Default action when no filter matches: 'allow' or 'deny'".to_string(),
+                required: false,
+                example: json!("allow"),
+            },
+            ParameterDefinition {
+                name: "filter_mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Filter mode: 'allow_all', 'deny_all', 'ask_llm', or 'selective'".to_string(),
+                required: false,
+                example: json!("selective"),
+            },
+            ParameterDefinition {
+                name: "filter".to_string(),
+                type_hint: "object".to_string(),
+                description: "Filter configuration object with 'target_host_patterns' (array of regex) and 'target_port_ranges' (array of [start, end])".to_string(),
+                required: false,
+                example: json!({
+                    "target_host_patterns": [".*\\.example\\.com"],
+                    "target_port_ranges": [[80, 80], [443, 443]]
+                }),
+            },
+        ]
+    }
 }
 
 impl Socks5Protocol {

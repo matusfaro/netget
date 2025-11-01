@@ -238,6 +238,24 @@ impl DotServer {
                     for protocol_result in &execution_result.protocol_results {
                         use crate::llm::actions::protocol_trait::ActionResult;
                         match protocol_result {
+                            ActionResult::Output(bytes) => {
+                                // DNS action returned binary response directly
+                                // Send length-prefixed response
+                                let len = bytes.len() as u16;
+                                let mut response = len.to_be_bytes().to_vec();
+                                response.extend_from_slice(bytes);
+
+                                if let Err(e) = tls_stream.write_all(&response).await {
+                                    error!("Failed to send DoT response: {}", e);
+                                    let _ = status_tx.send(format!("[ERROR] Failed to send DoT response: {}", e));
+                                } else {
+                                    debug!("DoT sent {} bytes to {}", bytes.len(), peer_addr);
+                                    let _ = status_tx.send(format!("[DEBUG] DoT sent {} bytes", bytes.len()));
+
+                                    trace!("DoT response hex: {}", hex::encode(bytes));
+                                    let _ = status_tx.send(format!("[TRACE] DoT response hex: {}", hex::encode(bytes)));
+                                }
+                            }
                             ActionResult::Custom { data, .. } => {
                                 if let Some(output_data) = data.get("output_data").and_then(|v| v.as_str()) {
                                     // Decode hex DNS response

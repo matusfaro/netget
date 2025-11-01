@@ -179,6 +179,14 @@ impl Server for ProxyProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "HTTP/HTTPS proxy server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an HTTP proxy on port 8080"
+    }
 }
 
 impl ProxyProtocol {

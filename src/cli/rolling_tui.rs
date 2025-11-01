@@ -41,7 +41,7 @@ pub async fn run_rolling_tui(
     state: AppState,
     mut app: App,
     mut event_handler: EventHandler,
-    _llm_client: OllamaClient, // Kept for API compatibility
+    llm_client: OllamaClient,
     settings: Settings,
     args: &super::Args,
 ) -> Result<()> {
@@ -138,6 +138,10 @@ pub async fn run_rolling_tui(
 
     // Create cleanup interval
     let mut cleanup_interval = interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+
+    // Create task execution interval (check every 1 second)
+    let mut task_execution_interval = interval(Duration::from_secs(1));
+    task_execution_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Create test interval for debugging footer behavior (disabled for stable snapshots)
     // Set to a very long duration so it doesn't fire during tests
@@ -244,6 +248,11 @@ pub async fn run_rolling_tui(
                 ui_needs_update = false; // Already rendered
             }
 
+            // Execute due tasks
+            _ = task_execution_interval.tick() => {
+                execute_due_tasks(&state, &llm_client, &status_tx).await;
+            }
+
             // Periodic cleanup of old servers and connections
             _ = cleanup_interval.tick() => {
                 state.cleanup_old_servers(SERVER_CLEANUP_TIMEOUT_SECS).await;
@@ -278,59 +287,6 @@ pub async fn run_rolling_tui(
 fn print_welcome_messages(footer: &mut StickyFooter) -> Result<()> {
     let messages = vec![
         "NetGet - LLM-Controlled Server",
-        "",
-        "Supported protocol stacks:",
-        "  TCP (Beta): \"Pretend to be FTP server on port 2121; serve file accounts.csv with 'balance,0'\"",
-        "  HTTP (Beta): \"Pretend to be a sassy HTTP server on port 8080 serving cooking recipes\"",
-        "  SSH/SFTP (Beta): \"Pretent to be a shell via SSH on port 2222\"",
-        "  DNS (Beta): \"DNS server on port 5252 and resolve everything to 1.2.3.4\"",
-        "  DoT (Beta): \"Start a DNS-over-TLS server on port 853\"",
-        "  DoH (Beta): \"Start a DNS-over-HTTPS server on port 443\"",
-        "  NTP (Beta; root-only): \"pretend to be a ntp server on port 123\"",
-        "  SNMP (Alpha): \"SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'\"",
-        "  IRC (Alpha): \"Start an IRC server\"",
-        "  Telnet (Alpha): \"Start a telnet server on port 23 that echoes commands\"",
-        "  SMTP (Alpha): \"Start an SMTP mail server on port 25\"",
-        "  mDNS (Alpha): \"Advertise a web service via mDNS on port 8080\"",
-        "  Ethernet (Alpha; root-only)",
-        "  UDP (Alpha)",
-        "  DHCP (Alpha)",
-        "  NFS (Alpha)",
-        "  SMB (Alpha): \"Start an SMB/CIFS file server on port 8445\"",
-        "  LDAP (Alpha): \"Start an LDAP directory server on port 389\"",
-        "  IMAP (Alpha): \"Start an IMAP mail server on port 143\" (or port 993 for IMAPS/TLS)",
-        "  MySQL (Alpha)",
-        "  WebDAV (Alpha)",
-        "  IPP (Alpha)",
-        "  PostgreSQL (Alpha)",
-        "  Redis (Alpha)",
-        "  Cassandra (Alpha): \"Start a Cassandra/CQL database server on port 9042\"",
-        "  Elasticsearch (Alpha): \"Start an Elasticsearch server on port 9200\"",
-        "  DynamoDB (Alpha): \"Start a DynamoDB-compatible server on port 8000\"",
-        "  OpenAI API (Alpha): \"Start an OpenAI-compatible API server on port 11435\"",
-        "  JSON-RPC (Alpha): \"Start a JSON-RPC 2.0 server on port 8000\"",
-        "  HTTP Proxy (Alpha)",
-        "  SOCKS5 (Alpha): \"Start a SOCKS5 proxy on port 1080 that asks before connecting\"",
-        "  WireGuard VPN: \"Start a WireGuard VPN server on port 51820\"",
-        "  OpenVPN (Alpha): \"Start an OpenVPN honeypot on port 1194\"",
-        "  IPSec/IKEv2 (Alpha): \"Start an IPSec VPN honeypot on port 500\"",
-        "  BGP (Alpha): \"Start a BGP routing server on port 179\"",
-        "  MCP (Alpha): \"Start an MCP (Model Context Protocol) server on port 8000\"",
-        "  gRPC (Alpha): \"Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }\"",
-        "  XML-RPC (Beta): \"Start an XML-RPC server on port 8080 with methods add(a,b) and greet(name)\"",
-        "  Tor Directory (Alpha): \"Start a Tor directory mirror on port 9030 serving consensus and relay descriptors\"",
-        "  Tor Relay (Beta): \"Start a Tor relay (OR protocol) on port 9001 with full circuit and crypto support\"",
-        "  VNC (Alpha): \"Start a VNC server on port 5900 showing an ASCII art login screen\"",
-        "  OpenAPI (Alpha): \"Start an OpenAPI server for a TODO API on port 8080\"",
-        "  STUN (Alpha): \"Start a STUN server for NAT traversal on port 3478\"",
-        "  TURN (Alpha): \"Start a TURN relay server on port 3478 with 10 minute allocations\"",
-        "",
-        "Features:",
-        "  Scripting: LLM may produce on-the-fly code to reduce invoking LLM",
-        "  Web Search: LLM may perform web searches (e.g. fetch protocol RFC)",
-        "  Read file: Ask LLM to read a local file (e.g. load SQL schema, prompt)",
-        "  Logging: LLM can log data into a file (e.g. web server access logs)",
-        "",
     ];
 
     for msg in messages {
@@ -432,6 +388,256 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     footer.decrement_blank_lines_buffer();
 
     Ok(())
+}
+
+/// Execute all tasks that are due
+async fn execute_due_tasks(
+    state: &AppState,
+    llm_client: &OllamaClient,
+    status_tx: &mpsc::UnboundedSender<String>,
+) {
+    use crate::state::task::TaskStatus;
+    use std::time::Instant;
+
+    let now = Instant::now();
+    let tasks = state.get_all_tasks().await;
+
+    for task in tasks {
+        // Skip if not scheduled or not yet due
+        if task.status != TaskStatus::Scheduled {
+            continue;
+        }
+
+        if task.next_execution > now {
+            continue;
+        }
+
+        // Mark as executing
+        state
+            .update_task_status(task.id, TaskStatus::Executing)
+            .await;
+
+        // Spawn task execution to avoid blocking
+        let state_clone = state.clone();
+        let llm_clone = llm_client.clone();
+        let status_tx_clone = status_tx.clone();
+        let task_clone = task.clone();
+
+        tokio::spawn(async move {
+            execute_single_task(state_clone, llm_clone, status_tx_clone, task_clone).await
+        });
+    }
+}
+
+/// Execute a single task
+async fn execute_single_task(
+    state: AppState,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+    task: crate::state::ScheduledTask,
+) {
+    use crate::llm::actions::ActionResponse;
+    use crate::llm::prompt::PromptBuilder;
+    use crate::state::task::{TaskExecutionResult, TaskScope};
+
+    let _ = status_tx.send(format!("[TASK] Executing task '{}'", task.name));
+
+    // Get protocol actions if server-scoped
+    let protocol_actions = if let TaskScope::Server(server_id) = task.scope {
+        if let Some(protocol_name) = state.get_protocol_name(server_id).await {
+            if let Some(protocol) = crate::protocol::registry::registry().get(&protocol_name) {
+                protocol.get_sync_actions()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Build prompt
+    let prompt = PromptBuilder::build_task_execution_prompt(&state, &task, protocol_actions).await;
+
+    // Get current model
+    let model = state.get_ollama_model().await;
+
+    // Call LLM
+    let response_text = match llm_client.generate(&model, &prompt).await {
+        Ok(text) => text,
+        Err(e) => {
+            // Execution failed
+            let error = format!("LLM call failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
+
+            let result = TaskExecutionResult {
+                success: false,
+                actions: Vec::new(),
+                error: Some(error),
+            };
+
+            handle_task_failure(&state, &status_tx, task, result).await;
+            return;
+        }
+    };
+
+    // Parse response
+    let action_response = match ActionResponse::from_str(&response_text) {
+        Ok(resp) => resp,
+        Err(e) => {
+            let error = format!("Failed to parse LLM response: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
+
+            let result = TaskExecutionResult {
+                success: false,
+                actions: Vec::new(),
+                error: Some(error),
+            };
+
+            handle_task_failure(&state, &status_tx, task, result).await;
+            return;
+        }
+    };
+
+    // Get protocol for execution (if server-scoped)
+    let protocol = if let TaskScope::Server(server_id) = task.scope {
+        state
+            .get_protocol_name(server_id)
+            .await
+            .and_then(|name| crate::protocol::registry::registry().get(&name))
+    } else {
+        None
+    };
+
+    // Execute actions
+    match crate::llm::execute_actions(action_response.actions.clone(), &state, protocol.as_deref())
+        .await
+    {
+        Ok(_exec_result) => {
+            // Success
+            let _ = status_tx.send(format!(
+                "[TASK] Task '{}' completed successfully",
+                task.name
+            ));
+
+            let result = TaskExecutionResult {
+                success: true,
+                actions: action_response.actions,
+                error: None,
+            };
+
+            handle_task_success(&state, &status_tx, task, result).await;
+        }
+        Err(e) => {
+            // Execution failed
+            let error = format!("Action execution failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
+
+            let result = TaskExecutionResult {
+                success: false,
+                actions: action_response.actions,
+                error: Some(error),
+            };
+
+            handle_task_failure(&state, &status_tx, task, result).await;
+        }
+    }
+}
+
+/// Handle task success
+async fn handle_task_success(
+    state: &AppState,
+    status_tx: &mpsc::UnboundedSender<String>,
+    task: crate::state::ScheduledTask,
+    result: crate::state::TaskExecutionResult,
+) {
+    use crate::state::task::{TaskStatus, TaskType};
+    use std::time::{Duration, Instant};
+
+    // Record execution
+    state.record_task_execution(task.id, &result).await;
+
+    match &task.task_type {
+        TaskType::OneShot { .. } => {
+            // One-shot task completed
+            state.update_task_status(task.id, TaskStatus::Completed).await;
+            state.remove_task(task.id).await;
+            let _ = status_tx.send(format!(
+                "[TASK] One-shot task '{}' completed and removed",
+                task.name
+            ));
+        }
+        TaskType::Recurring {
+            interval_secs,
+            max_executions,
+            executions_count,
+        } => {
+            // Check if max executions reached
+            if let Some(max) = max_executions {
+                if *executions_count >= *max {
+                    state.update_task_status(task.id, TaskStatus::Completed).await;
+                    state.remove_task(task.id).await;
+                    let _ = status_tx.send(format!(
+                        "[TASK] Recurring task '{}' reached max executions ({}) and removed",
+                        task.name, max
+                    ));
+                    return;
+                }
+            }
+
+            // Schedule next execution
+            let next = Instant::now() + Duration::from_secs(*interval_secs);
+            state.update_task_next_execution(task.id, next).await;
+            state.update_task_status(task.id, TaskStatus::Scheduled).await;
+        }
+    }
+}
+
+/// Handle task failure with exponential backoff retry
+async fn handle_task_failure(
+    state: &AppState,
+    status_tx: &mpsc::UnboundedSender<String>,
+    task: crate::state::ScheduledTask,
+    result: crate::state::TaskExecutionResult,
+) {
+    use crate::state::task::TaskStatus;
+    use std::time::{Duration, Instant};
+
+    const MAX_FAILURES: u64 = 5;
+    const BACKOFF_BASE_SECS: u64 = 60; // 1 minute base backoff
+
+    // Record execution
+    state.record_task_execution(task.id, &result).await;
+
+    let failure_count = task.failure_count + 1;
+
+    if failure_count >= MAX_FAILURES {
+        // Too many failures, disable task
+        state
+            .update_task_status(
+                task.id,
+                TaskStatus::Failed(result.error.unwrap_or_else(|| "Unknown error".to_string())),
+            )
+            .await;
+        state.remove_task(task.id).await;
+        let _ = status_tx.send(format!(
+            "[ERROR] Task '{}' failed {} times, removing from schedule",
+            task.name, MAX_FAILURES
+        ));
+    } else {
+        // Retry with exponential backoff
+        let backoff_secs = BACKOFF_BASE_SECS * 2u64.pow((failure_count - 1) as u32);
+        let next = Instant::now() + Duration::from_secs(backoff_secs);
+
+        state.update_task_next_execution(task.id, next).await;
+        state.update_task_status(task.id, TaskStatus::Scheduled).await;
+
+        let _ = status_tx.send(format!(
+            "[WARN] Task '{}' failed (attempt {}/{}), retrying in {} seconds",
+            task.name, failure_count, MAX_FAILURES, backoff_secs
+        ));
+    }
 }
 
 /// Clear the sticky footer area

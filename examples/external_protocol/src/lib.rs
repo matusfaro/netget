@@ -6,7 +6,7 @@
 use anyhow::Result;
 use netget::llm::actions::{ActionDefinition, Parameter, Server};
 use netget::llm::actions::protocol_trait::ActionResult;
-use netget::protocol::metadata::{ProtocolMetadata, ProtocolState};
+use netget::protocol::metadata::{ProtocolMetadata, DevelopmentState};
 use netget::protocol::SpawnContext;
 use netget::state::app_state::AppState;
 use serde_json::Value as JsonValue;
@@ -102,9 +102,17 @@ impl Server for EchoProtocol {
 
     fn metadata(&self) -> ProtocolMetadata {
         ProtocolMetadata::with_notes(
-            ProtocolState::Beta,
+            DevelopmentState::Beta,
             "Simple echo server that returns all received data"
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "Simple echo server that returns all received data"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an echo server on port 7777"
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {

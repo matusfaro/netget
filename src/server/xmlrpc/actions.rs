@@ -267,6 +267,14 @@ impl Server for XmlRpcProtocol {
     fn metadata(&self) -> ProtocolMetadata {
         ProtocolMetadata::new(DevelopmentState::Beta)
     }
+
+    fn description(&self) -> &'static str {
+        "XML-RPC server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an XML-RPC server on port 8080 with methods add(a,b) and greet(name)"
+    }
 }
 
 // Action definitions

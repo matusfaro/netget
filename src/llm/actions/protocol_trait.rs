@@ -189,4 +189,38 @@ pub trait Server: Send + Sync {
     /// Returns the current implementation state (Beta, Alpha, Implemented, Abandoned)
     /// and optional notes explaining limitations or status.
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata;
+
+    /// Get a short description of this protocol
+    ///
+    /// This should be a concise, one-line description of what this protocol does.
+    /// Examples:
+    /// - HTTP: "Web server serving HTTP traffic"
+    /// - SSH: "Secure shell server for remote access"
+    /// - DNS: "Domain name resolution server"
+    fn description(&self) -> &'static str;
+
+    /// Get an example prompt that would trigger this protocol
+    ///
+    /// This should be a realistic, engaging example that demonstrates
+    /// how a user would ask the LLM to start this protocol.
+    /// Examples:
+    /// - HTTP: "Pretend to be a sassy HTTP server on port 8080 serving cooking recipes"
+    /// - SSH: "Pretend to be a shell via SSH on port 2222"
+    /// - DNS: "DNS server on port 5252 and resolve everything to 1.2.3.4"
+    fn example_prompt(&self) -> &'static str;
+
+    /// Get the group name for categorizing this protocol
+    ///
+    /// Protocols are grouped in documentation by category. Examples:
+    /// - "Core" - Stable, well-tested protocols (TCP, HTTP, UDP, DNS, etc.)
+    /// - "Application" - IRC, Telnet, SMTP, IMAP, etc.
+    /// - "Database" - MySQL, PostgreSQL, Redis, etc.
+    /// - "Web & File" - WebDAV, NFS, SMB, IPP
+    /// - "Proxy & Network" - HTTP Proxy, SOCKS5, VPN, etc.
+    /// - "AI & API" - OpenAI, gRPC, JSON-RPC, etc.
+    ///
+    /// Default implementation returns "Other" if not specified.
+    fn group_name(&self) -> &'static str {
+        "Other"
+    }
 }

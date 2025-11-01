@@ -87,6 +87,14 @@ impl Server for SmbProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "SMB/CIFS file server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an SMB/CIFS file server on port 8445"
+    }
 }
 
 // Event type for SMB operations

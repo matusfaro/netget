@@ -15,7 +15,7 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
     println!("\n=== E2E Test: IPP Get-Printer-Attributes ===");
 
     // PROMPT: Tell the LLM to act as an IPP printer
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack ipp. When clients send Get-Printer-Attributes IPP requests, \
+    let prompt = "Open IPP on port {AVAILABLE_PORT}. When clients send Get-Printer-Attributes IPP requests, \
         use ipp_printer_attributes action with attributes={\"printer-name\":\"NetGet Printer\",\
         \"printer-state\":\"idle\",\"printer-uri-supported\":\"ipp://localhost:{AVAILABLE_PORT}/printers/netget\"}.";
 
@@ -117,7 +117,7 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
 async fn test_ipp_print_job() -> E2EResult<()> {
     println!("\n=== E2E Test: IPP Print-Job ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack ipp. When clients send Print-Job IPP requests, \
+    let prompt = "Open IPP on port {AVAILABLE_PORT}. When clients send Print-Job IPP requests, \
         use ipp_job_attributes action with attributes={\"job-id\":1,\"job-state\":\"processing\",\
         \"job-name\":\"test\"}.";
 
@@ -199,7 +199,7 @@ async fn test_ipp_print_job() -> E2EResult<()> {
 async fn test_ipp_basic_http() -> E2EResult<()> {
     println!("\n=== E2E Test: IPP Basic HTTP Communication ===");
 
-    let prompt = "open_server port {AVAILABLE_PORT} base_stack ipp. For all IPP requests, use ipp_response action with status=200.";
+    let prompt = "Open IPP on port {AVAILABLE_PORT}. For all IPP requests, use ipp_response action with status=200.";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);

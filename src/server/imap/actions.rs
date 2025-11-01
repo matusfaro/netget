@@ -425,6 +425,14 @@ impl Server for ImapProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn description(&self) -> &'static str {
+        "IMAP mail server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an IMAP mail server on port 143"
+    }
 }
 
 // ============================================================================

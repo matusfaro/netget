@@ -85,6 +85,14 @@ impl Server for NtpProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "Network Time Protocol server for time synchronization"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "pretend to be a ntp server on port 123"
+    }
 }
 
 impl NtpProtocol {

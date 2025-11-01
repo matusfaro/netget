@@ -113,6 +113,14 @@ impl Server for DhcpProtocol {
             crate::protocol::metadata::DevelopmentState::Beta
         )
     }
+
+    fn description(&self) -> &'static str {
+        "DHCP server for IP address assignment"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a DHCP server on interface eth0"
+    }
 }
 
 impl DhcpProtocol {

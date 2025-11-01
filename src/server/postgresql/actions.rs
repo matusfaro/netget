@@ -47,8 +47,7 @@ impl Server for PostgresqlProtocol {
             use crate::server::postgresql::PostgresqlServer;
             let send_first = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get("send_first"))
-                .and_then(|v| v.as_bool())
+                .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
             PostgresqlServer::spawn_with_llm_actions(
@@ -60,6 +59,18 @@ impl Server for PostgresqlProtocol {
                 ctx.server_id,
             ).await
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the server should send the first message after connection (not typically needed for PostgreSQL)".to_string(),
+                required: false,
+                example: json!(false),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -114,6 +125,14 @@ impl Server for PostgresqlProtocol {
         crate::protocol::metadata::ProtocolMetadata::new(
             crate::protocol::metadata::DevelopmentState::Alpha
         )
+    }
+
+    fn description(&self) -> &'static str {
+        "PostgreSQL database server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start a PostgreSQL server on port 5432"
     }
 }
 
