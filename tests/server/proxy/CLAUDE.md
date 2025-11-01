@@ -227,16 +227,16 @@ server.stop().await?;
 
 ```bash
 # Run all proxy tests (requires Ollama + model)
-./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::test
+./cargo-isolated.sh test --features proxy --test server::proxy::test
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::test test_proxy_http_passthrough
+./cargo-isolated.sh test --features proxy --test server::proxy::test test_proxy_http_passthrough
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::test -- --nocapture
+./cargo-isolated.sh test --features proxy --test server::proxy::test -- --nocapture
 
 # Run with concurrency (uses Ollama lock)
-./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::test -- --test-threads=4
+./cargo-isolated.sh test --features proxy --test server::proxy::test -- --test-threads=4
 ```
 
 ## Future Test Additions

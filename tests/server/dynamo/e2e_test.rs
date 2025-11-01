@@ -4,9 +4,9 @@
 //! to validate DynamoDB API functionality.
 //!
 //! MUST build release binary before running: `cargo build --release --all-features`
-//! Run with: `cargo test --features e2e-tests --test e2e_dynamo_test -- --test-threads=3`
+//! Run with: `cargo test --features dynamo --test e2e_dynamo_test -- --test-threads=3`
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "dynamo")]
 mod tests {
     use crate::server::helpers::{start_netget_server, retry, ServerConfig, E2EResult};
     use reqwest::Client;

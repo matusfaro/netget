@@ -179,19 +179,19 @@ client.delete("foo", None).await?;
 ### Run Tests
 ```bash
 # Run etcd E2E tests only
-./cargo-isolated.sh test --features e2e-tests,etcd --test server::etcd::e2e_test
+./cargo-isolated.sh test --features etcd --test server::etcd::e2e_test
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,etcd --test server::etcd::e2e_test -- --nocapture
+./cargo-isolated.sh test --features etcd --test server::etcd::e2e_test -- --nocapture
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,etcd --test server::etcd::e2e_test test_etcd_kv_operations
+./cargo-isolated.sh test --features etcd --test server::etcd::e2e_test test_etcd_kv_operations
 ```
 
 ### Debug Mode
 ```bash
 # Enable trace logging
-RUST_LOG=trace ./cargo-isolated.sh test --features e2e-tests,etcd --test server::etcd::e2e_test -- --nocapture
+RUST_LOG=trace ./cargo-isolated.sh test --features etcd --test server::etcd::e2e_test -- --nocapture
 ```
 
 ## Example Test Prompt

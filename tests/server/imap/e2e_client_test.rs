@@ -8,7 +8,7 @@
 //! This complements the raw TCP tests in tests/server/imap/test.rs
 //! by using an actual IMAP client implementation.
 
-#[cfg(all(test, feature = "e2e-tests", feature = "imap"))]
+#[cfg(all(test, feature = "imap", feature = "imap"))]
 mod e2e_imap_client {
     use crate::server::helpers::*;
     use async_imap::types::Mailbox;

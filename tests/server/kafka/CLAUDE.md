@@ -99,12 +99,12 @@ rdkafka = "0.36"
 ./cargo-isolated.sh build --release --all-features
 
 # Run basic connectivity test
-./cargo-isolated.sh test --features e2e-tests,kafka --test server::kafka::e2e_test -- test_kafka_broker_startup
+./cargo-isolated.sh test --features kafka --test server::kafka::e2e_test -- test_kafka_broker_startup
 ```
 
 ### Run All Tests (When rdkafka Added)
 ```bash
-./cargo-isolated.sh test --features e2e-tests,kafka --test server::kafka::e2e_test
+./cargo-isolated.sh test --features kafka --test server::kafka::e2e_test
 ```
 
 ### Expected Runtime

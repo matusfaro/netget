@@ -174,13 +174,13 @@ let mut con = client.get_multiplexed_async_connection().await?;
 ./cargo-isolated.sh build --release --all-features
 
 # Run all Redis tests
-./cargo-isolated.sh test --features e2e-tests,redis --test server::redis::test
+./cargo-isolated.sh test --features redis --test server::redis::test
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,redis --test server::redis::test test_redis_ping
+./cargo-isolated.sh test --features redis --test server::redis::test test_redis_ping
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,redis --test server::redis::test -- --nocapture
+./cargo-isolated.sh test --features redis --test server::redis::test -- --nocapture
 ```
 
 ## Test Output Example

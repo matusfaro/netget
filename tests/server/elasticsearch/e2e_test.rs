@@ -4,9 +4,9 @@
 //! to validate Elasticsearch API functionality.
 //!
 //! MUST build release binary before running: `cargo build --release --all-features`
-//! Run with: `cargo test --features e2e-tests --test e2e_elasticsearch_test -- --test-threads=3`
+//! Run with: `cargo test --features elasticsearch --test e2e_elasticsearch_test -- --test-threads=3`
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "elasticsearch")]
 mod tests {
     use crate::server::helpers::{start_netget_server, retry, ServerConfig, E2EResult};
     use reqwest::Client;

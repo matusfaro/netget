@@ -4,9 +4,9 @@
 //! to validate S3 API functionality.
 //!
 //! MUST build release binary before running: `cargo build --release --all-features`
-//! Run with: `cargo test --features e2e-tests,s3 --test server::s3::e2e_test`
+//! Run with: `cargo test --features s3,s3 --test server::s3::e2e_test`
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(feature = "s3")]
 mod tests {
     use crate::server::helpers::{start_netget_server, retry, ServerConfig, E2EResult};
     use s3::bucket::Bucket;

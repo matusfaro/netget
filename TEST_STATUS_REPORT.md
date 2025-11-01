@@ -298,7 +298,7 @@ Once infrastructure is fixed, confidence levels should be assessed based on:
 ./cargo-isolated.sh test --lib
 
 # Run E2E tests (currently blocked)
-./cargo-isolated.sh test --features e2e-tests --test server
+./cargo-isolated.sh test --features <protocol> --test server
 ```
 
 ### Known Constraints

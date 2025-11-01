@@ -6,16 +6,14 @@
 //! - Uses scripting mode to minimize calls for repetitive operations
 //! - Consolidates test cases into comprehensive server setups
 
-#![cfg(all(test, feature = "e2e-tests", feature = "sqs"))]
+#![cfg(all(test, feature = "sqs", feature = "sqs"))]
 
 use aws_config::BehaviorVersion;
 use aws_sdk_sqs::Client;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::server::helpers::{
-    start_netget_non_interactive, wait_for_server_startup, ServerConfig,
-};
+use super::super::helpers::{start_netget_server, ServerConfig};
 
 /// Test basic SQS queue operations: CreateQueue, SendMessage, ReceiveMessage, DeleteMessage
 ///
@@ -74,12 +72,8 @@ Remember messages across operations: when a message is sent, it should be retrie
 "#;
 
     let config = ServerConfig::new(prompt);
-    let (child, port) = start_netget_non_interactive(config).await;
-
-    // Wait for server to start
-    wait_for_server_startup(&child, Duration::from_secs(30), "SQS")
-        .await
-        .expect("Server failed to start");
+    let server = start_netget_server(config).await.expect("Failed to start server");
+    let port = server.port;
 
     // Configure AWS SDK to use local endpoint
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
@@ -239,11 +233,8 @@ Remember: Once a message is received, it should not appear in subsequent Receive
 "#;
 
     let config = ServerConfig::new(prompt);
-    let (child, port) = start_netget_non_interactive(config).await;
-
-    wait_for_server_startup(&child, Duration::from_secs(30), "SQS")
-        .await
-        .expect("Server failed to start");
+    let server = start_netget_server(config).await.expect("Failed to start server");
+    let port = server.port;
 
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
         .endpoint_url(format!("http://127.0.0.1:{}", port))
@@ -342,11 +333,8 @@ Do not create any queues automatically - all queues must be explicitly created v
 "#;
 
     let config = ServerConfig::new(prompt);
-    let (child, port) = start_netget_non_interactive(config).await;
-
-    wait_for_server_startup(&child, Duration::from_secs(30), "SQS")
-        .await
-        .expect("Server failed to start");
+    let server = start_netget_server(config).await.expect("Failed to start server");
+    let port = server.port;
 
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
         .endpoint_url(format!("http://127.0.0.1:{}", port))

@@ -186,16 +186,16 @@ let bucket = Bucket::new("test-bucket", region, credentials).unwrap();
 ./cargo-isolated.sh build --release --all-features
 
 # Run all S3 tests
-./cargo-isolated.sh test --features e2e-tests,s3 --test server::s3::e2e_test
+./cargo-isolated.sh test --features s3 --test server::s3::e2e_test
 
 # Run only comprehensive test (best coverage, 7 LLM calls)
-./cargo-isolated.sh test --features e2e-tests,s3 --test server::s3::e2e_test test_s3_comprehensive
+./cargo-isolated.sh test --features s3 --test server::s3::e2e_test test_s3_comprehensive
 
 # Run specific test
-./cargo-isolated.sh test --features e2e-tests,s3 --test server::s3::e2e_test test_s3_get_object
+./cargo-isolated.sh test --features s3 --test server::s3::e2e_test test_s3_get_object
 
 # Run with output
-./cargo-isolated.sh test --features e2e-tests,s3 --test server::s3::e2e_test -- --nocapture
+./cargo-isolated.sh test --features s3 --test server::s3::e2e_test -- --nocapture
 ```
 
 **Important**: Must use `--test server::s3::e2e_test` (with module path) not `--test e2e_s3_test`.
