@@ -41,14 +41,14 @@ The Echo protocol in this example:
 
 ```bash
 cd examples/external_protocol
-cargo build
+./cargo-isolated.sh build
 ```
 
 ## Testing
 
 ```bash
 # Run tests
-cargo test
+./cargo-isolated.sh test
 
 # Integration test with netcat
 # (Assuming NetGet supports loading external protocols)

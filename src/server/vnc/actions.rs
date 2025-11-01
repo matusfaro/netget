@@ -75,6 +75,10 @@ impl Server for VncProtocol {
         ProtocolMetadata::new(DevelopmentState::Alpha)
     }
 
+    fn group_name(&self) -> &'static str {
+        "Network Services"
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {

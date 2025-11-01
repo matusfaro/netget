@@ -254,20 +254,20 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 ### Run Tests
 
 ```bash
 # Run IPSec E2E tests
-cargo test --features e2e-tests --test server::ipsec::e2e_test
+./cargo-isolated.sh test --features e2e-tests --test server::ipsec::e2e_test
 
 # Run with output
-cargo test --features e2e-tests --test server::ipsec::e2e_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests --test server::ipsec::e2e_test -- --nocapture
 
 # Run specific test
-cargo test --features e2e-tests --test server::ipsec::e2e_test -- test_ipsec_ikev2_sa_init_detection
+./cargo-isolated.sh test --features e2e-tests --test server::ipsec::e2e_test -- test_ipsec_ikev2_sa_init_detection
 ```
 
 ### Expected Output
@@ -292,7 +292,7 @@ assertion failed: Expected stack name to contain "IPSEC", but got "UDP"
 ```
 
 **Debug**:
-1. Check server output: `cargo test ... -- --nocapture`
+1. Check server output: `./cargo-isolated.sh test ... -- --nocapture`
 2. Verify LLM saw "via ipsec" keyword
 3. Try different prompt phrasing
 4. Check if IPSec protocol is enabled in build

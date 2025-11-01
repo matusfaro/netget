@@ -243,14 +243,14 @@ WireGuard has become the **only fully-functional VPN** in NetGet because:
 
 ```bash
 # WireGuard (requires all features built)
-cargo build --release --all-features
-cargo test --features e2e-tests --test e2e_wireguard_test -- --test-threads=3
+./cargo-isolated.sh build --release --all-features
+./cargo-isolated.sh test --features e2e-tests --test e2e_wireguard_test -- --test-threads=3
 
 # OpenVPN honeypot
-cargo test --features e2e-tests --test e2e_openvpn_test -- --test-threads=3
+./cargo-isolated.sh test --features e2e-tests --test e2e_openvpn_test -- --test-threads=3
 
 # IPSec honeypot
-cargo test --features e2e-tests --test e2e_ipsec_test -- --test-threads=3
+./cargo-isolated.sh test --features e2e-tests --test e2e_ipsec_test -- --test-threads=3
 ```
 
 ---

@@ -269,6 +269,10 @@ impl Server for LdapProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an LDAP directory server on port 389"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Application Protocols"
+    }
 }
 
 // ============================================================================

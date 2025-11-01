@@ -94,6 +94,10 @@ impl Server for WebDavProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a WebDAV server on port 8080"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Web & File Protocols"
+    }
 }
 
 impl WebDavProtocol {

@@ -362,7 +362,7 @@ Example with tools:
 Example with server:
 {{
   "actions": [
-    {{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Act as REST API"}},
+    {{"type": "open_server", "port": 8080, "base_stack": "tcp", "instruction": "Echo server"}},
     {{"type": "show_message", "message": "Server started"}}
   ]
 }}

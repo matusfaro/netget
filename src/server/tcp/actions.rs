@@ -193,6 +193,10 @@ impl Server for TcpProtocol {
     fn example_prompt(&self) -> &'static str {
         "Pretend to be FTP server on port 2121; serve file accounts.csv with 'balance,0'"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl TcpProtocol {

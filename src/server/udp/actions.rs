@@ -101,6 +101,10 @@ impl Server for UdpProtocol {
     fn example_prompt(&self) -> &'static str {
         "Listen on port 5000 via UDP"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl UdpProtocol {

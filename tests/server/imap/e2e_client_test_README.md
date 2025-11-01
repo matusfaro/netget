@@ -32,7 +32,7 @@ These tests complement the raw TCP tests in `tests/server/imap/test.rs` by using
 ### 1. Build NetGet with IMAP Feature
 
 ```bash
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 This creates the binary at `target/release/netget` that the tests will spawn.
@@ -58,13 +58,13 @@ The test dependencies are automatically installed when running tests:
 ### Run All IMAP async-imap Tests
 
 ```bash
-cargo test --features e2e-tests,imap --test e2e_imap_client_test
+./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test
 ```
 
 ### Run with Parallelization (Faster)
 
 ```bash
-cargo test --features e2e-tests,imap --test e2e_imap_client_test -- --test-threads=3
+./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test -- --test-threads=3
 ```
 
 **Expected runtime**: ~40-60 seconds with 3 threads (vs ~2+ minutes serial)
@@ -72,13 +72,13 @@ cargo test --features e2e-tests,imap --test e2e_imap_client_test -- --test-threa
 ### Run a Specific Test
 
 ```bash
-cargo test --features e2e-tests,imap --test e2e_imap_client_test test_imap_login_success
+./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test test_imap_login_success
 ```
 
 ### Debug Output
 
 ```bash
-cargo test --features e2e-tests,imap --test e2e_imap_client_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests,imap --test e2e_imap_client_test -- --nocapture
 ```
 
 ## Test Structure
@@ -160,7 +160,7 @@ If tests timeout after 30 seconds:
 ### Connection Refused
 
 If tests fail with "connection refused":
-- Ensure the release binary was built: `cargo build --release --all-features`
+- Ensure the release binary was built: `./cargo-isolated.sh build --release --all-features`
 - Check no other process is using the dynamic port
 - Look for server startup errors in test output
 

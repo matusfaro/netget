@@ -187,6 +187,10 @@ impl Server for ProxyProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an HTTP proxy on port 8080"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Proxy & Network Protocols"
+    }
 }
 
 impl ProxyProtocol {

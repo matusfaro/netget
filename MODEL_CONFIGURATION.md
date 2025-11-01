@@ -134,7 +134,7 @@ ollama_model: "llama3.2:latest".to_string(),
 ### 2. Rebuild
 
 ```bash
-cargo build --release
+./cargo-isolated.sh build --release
 ```
 
 ### 3. Run
@@ -246,7 +246,7 @@ You can quickly test different models:
 
 ```bash
 # Terminal 1: Run NetGet
-cargo run
+./cargo-isolated.sh run
 
 # In NetGet:
 > model llama3.2:1b

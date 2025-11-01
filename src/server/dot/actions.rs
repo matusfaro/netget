@@ -129,4 +129,8 @@ impl Server for DotProtocol {
     fn example_prompt(&self) -> &'static str {
         "DNS-over-TLS server on port 853 resolving all queries to 93.184.216.34"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }

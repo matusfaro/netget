@@ -167,11 +167,11 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 ## Test Execution
 
 ```bash
-cargo build --release --all-features
-cargo test --features e2e-tests,mcp --test server::mcp::e2e_test
+./cargo-isolated.sh build --release --all-features
+./cargo-isolated.sh test --features e2e-tests,mcp --test server::mcp::e2e_test
 
 # Run specific capability test
-cargo test --features e2e-tests,mcp --test server::mcp::e2e_test test_mcp_tools_list
+./cargo-isolated.sh test --features e2e-tests,mcp --test server::mcp::e2e_test test_mcp_tools_list
 ```
 
 ## Key Test Patterns

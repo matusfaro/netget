@@ -240,16 +240,16 @@ These tests have skeleton implementations with TODOs.
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run NFS E2E tests (only connectivity tests, ignores NFS protocol tests)
-cargo test --features e2e-tests,nfs --test server::nfs::test
+./cargo-isolated.sh test --features e2e-tests,nfs --test server::nfs::test
 
 # Run specific test
-cargo test --features e2e-tests,nfs --test server::nfs::test test_nfs_tcp_connection
+./cargo-isolated.sh test --features e2e-tests,nfs --test server::nfs::test test_nfs_tcp_connection
 
 # Run ignored tests (will fail - not implemented)
-cargo test --features e2e-tests,nfs --test server::nfs::test -- --ignored
+./cargo-isolated.sh test --features e2e-tests,nfs --test server::nfs::test -- --ignored
 ```
 
 **IMPORTANT**: Always build release binary before running tests.

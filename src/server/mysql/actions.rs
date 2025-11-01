@@ -134,6 +134,10 @@ impl Server for MysqlProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a MySQL server on port 3306"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Database Protocols"
+    }
 }
 
 impl MysqlProtocol {

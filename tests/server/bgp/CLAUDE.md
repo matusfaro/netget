@@ -336,20 +336,20 @@ async fn test_bgp_hold_timer_expiration() {
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 ### Run Tests
 
 ```bash
 # Run BGP E2E tests
-cargo test --features e2e-tests,bgp --test server::bgp::e2e_test
+./cargo-isolated.sh test --features e2e-tests,bgp --test server::bgp::e2e_test
 
 # Run with output
-cargo test --features e2e-tests,bgp --test server::bgp::e2e_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests,bgp --test server::bgp::e2e_test -- --nocapture
 
 # Run specific test
-cargo test --features e2e-tests,bgp --test server::bgp::e2e_test -- test_bgp_peering_establishment
+./cargo-isolated.sh test --features e2e-tests,bgp --test server::bgp::e2e_test -- test_bgp_peering_establishment
 ```
 
 ### Expected Output

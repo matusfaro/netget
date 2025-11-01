@@ -196,13 +196,13 @@ All tests are stable and deterministic.
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run WebDAV E2E tests
-cargo test --features e2e-tests,webdav --test server::webdav::test
+./cargo-isolated.sh test --features e2e-tests,webdav --test server::webdav::test
 
 # Run specific test
-cargo test --features e2e-tests,webdav --test server::webdav::test test_webdav_propfind
+./cargo-isolated.sh test --features e2e-tests,webdav --test server::webdav::test test_webdav_propfind
 ```
 
 **IMPORTANT**: Always build release binary before running tests.

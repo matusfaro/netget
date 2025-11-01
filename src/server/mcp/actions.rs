@@ -108,6 +108,10 @@ impl Server for McpProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an MCP (Model Context Protocol) server on port 8000"
     }
+
+    fn group_name(&self) -> &'static str {
+        "AI & API Protocols"
+    }
 }
 
 impl McpProtocol {

@@ -142,10 +142,10 @@ tail -f netget.log | grep -E "Executing tool|Tool Result"
 
 ```bash
 # Run tool call tests
-cargo test --test tool_calls_test
+./cargo-isolated.sh test --test tool_calls_test
 
 # Test with real protocol
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ./target/release/netget "mysql server, read schema.json" &
 mysql -h 127.0.0.1 -P 3306 -e "SHOW TABLES;"
 ```

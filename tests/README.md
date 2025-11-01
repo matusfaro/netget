@@ -25,7 +25,7 @@ This directory contains comprehensive end-to-end tests for all NetGet protocols.
 
 1. **Build the release binary** (required for all tests):
    ```bash
-   cargo build --release
+   ./cargo-isolated.sh build --release
    ```
 
 2. **Start Ollama with a model**:
@@ -48,7 +48,7 @@ This directory contains comprehensive end-to-end tests for all NetGet protocols.
 Most tests can run without elevated privileges:
 
 ```bash
-cargo test --features e2e-tests
+./cargo-isolated.sh test --features e2e-tests
 ```
 
 ### Running Privileged Tests (DataLink)
@@ -59,7 +59,7 @@ DataLink tests require raw packet capture access. There are several approaches:
 
 ```bash
 # Run only DataLink tests with sudo
-sudo -E cargo test --test e2e_datalink_test --features e2e-tests
+sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
 
 # The -E flag preserves environment variables (like PATH, CARGO_HOME)
 ```
@@ -89,7 +89,7 @@ sudo dseditgroup -o edit -a $USER -t user access_bpf
 
 # Log out and back in for group changes to take effect
 # Then run tests normally - no sudo needed!
-cargo test --test e2e_datalink_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
 ```
 
 **Pros:**
@@ -108,7 +108,7 @@ Grant specific capabilities to the test binary without full root:
 
 ```bash
 # Build the test binary first
-cargo test --test e2e_datalink_test --features e2e-tests --no-run
+./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests --no-run
 
 # Find the test binary
 TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
@@ -117,7 +117,7 @@ TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111
 sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
 
 # Now run without sudo
-cargo test --test e2e_datalink_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
 ```
 
 **Pros:**
@@ -141,7 +141,7 @@ Create a helper script for privileged tests:
 set -e
 
 echo "Building test binary..."
-cargo test --test e2e_datalink_test --features e2e-tests --no-run
+./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests --no-run
 
 # Linux: Use capabilities
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -150,12 +150,12 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
 
     echo "Running privileged tests without sudo..."
-    cargo test --test e2e_datalink_test --features e2e-tests
+    ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
 
 # macOS: Use sudo
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Running with sudo (macOS)..."
-    sudo -E cargo test --test e2e_datalink_test --features e2e-tests
+    sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
 
 else
     echo "Unsupported OS: $OSTYPE"
@@ -188,7 +188,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Build binary
-        run: cargo build --release
+        run: ./cargo-isolated.sh build --release
 
       - name: Start Ollama
         run: |
@@ -199,10 +199,10 @@ jobs:
 
       - name: Run privileged tests
         run: |
-          cargo test --test e2e_datalink_test --features e2e-tests --no-run
+          ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests --no-run
           TEST_BIN=$(find target/debug/deps -name 'e2e_datalink_test-*' -type f -perm -111 | head -1)
           sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
-          cargo test --test e2e_datalink_test --features e2e-tests
+          ./cargo-isolated.sh test --test e2e_datalink_test --features e2e-tests
 ```
 
 ### Running Individual Protocol Tests
@@ -211,16 +211,16 @@ Run tests for specific protocols:
 
 ```bash
 # DNS tests
-cargo test --test e2e_dns_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_dns_test --features e2e-tests
 
 # HTTP tests
-cargo test --test e2e_http_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_http_test --features e2e-tests
 
 # SSH tests
-cargo test --test e2e_ssh_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_ssh_test --features e2e-tests
 
 # IRC tests
-cargo test --test e2e_irc_test --features e2e-tests
+./cargo-isolated.sh test --test e2e_irc_test --features e2e-tests
 
 # etc.
 ```
@@ -230,8 +230,8 @@ cargo test --test e2e_irc_test --features e2e-tests
 Run individual test functions:
 
 ```bash
-cargo test --test e2e_dns_test --features e2e-tests test_dns_a_record_query
-cargo test --test e2e_http_test --features e2e-tests test_http_json_api
+./cargo-isolated.sh test --test e2e_dns_test --features e2e-tests test_dns_a_record_query
+./cargo-isolated.sh test --test e2e_http_test --features e2e-tests test_http_json_api
 ```
 
 ## Test Structure
@@ -281,12 +281,12 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
 - If still failing, check for zombie processes: `pkill netget`
 
 ### Test fails with "binary not found"
-- Build the release binary first: `cargo build --release`
+- Build the release binary first: `./cargo-isolated.sh build --release`
 - Check it exists: `ls -la target/release/netget`
 
 ### Capability persists after rebuild (Linux)
 - Capabilities are removed when binary is modified
-- Re-run `setcap` command after each `cargo build`
+- Re-run `setcap` command after each `./cargo-isolated.sh build`
 - Use the automation script to handle this automatically
 
 ## Best Practices

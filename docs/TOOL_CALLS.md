@@ -248,7 +248,7 @@ Tool functionality is tested in `tests/tool_calls_test.rs`:
 
 ```bash
 # Run tool tests
-cargo test --test tool_calls_test
+./cargo-isolated.sh test --test tool_calls_test
 
 # Tests cover:
 # - Full file reading
@@ -264,7 +264,7 @@ To test tool calls with real protocols:
 
 ```bash
 # 1. Build release binary
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # 2. Start server with tool-using prompt
 ./target/release/netget "mysql server, read schema.json for table structure"

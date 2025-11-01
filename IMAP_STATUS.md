@@ -109,9 +109,9 @@ The IMAP code itself is **correct and complete**, but the project cannot build d
 ### Total Compilation Errors: 224+
 
 These errors prevent building with ANY feature combination, including:
-- `cargo build --release --all-features`
-- `cargo build --release --features imap`
-- `cargo test --lib test_parse_imap_stack`
+- `./cargo-isolated.sh build --release --all-features`
+- `./cargo-isolated.sh build --release --features imap`
+- `./cargo-isolated.sh test --lib test_parse_imap_stack`
 
 ## 🎯 Recommendations
 
@@ -143,7 +143,7 @@ all-protocols = [
 
 Then build:
 ```bash
-cargo build --release --features "tcp,http,udp,dns,dhcp,ntp,snmp,ssh,irc,telnet,smtp,mdns,mysql,ipp,postgresql,redis,proxy,webdav,nfs,ldap,imap"
+./cargo-isolated.sh build --release --features "tcp,http,udp,dns,dhcp,ntp,snmp,ssh,irc,telnet,smtp,mdns,mysql,ipp,postgresql,redis,proxy,webdav,nfs,ldap,imap"
 ```
 
 #### Option 2: Fix Dependencies
@@ -170,28 +170,28 @@ This prevents them from being compiled when their features aren't enabled.
 
 ### 1. Unit Tests
 ```bash
-cargo test --lib test_parse_imap_stack
+./cargo-isolated.sh test --lib test_parse_imap_stack
 ```
 Tests IMAP stack parsing from strings.
 
 ### 2. E2E Tests (Requires Ollama)
 ```bash
 # Build release binary first
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run all IMAP E2E tests with parallelization
-cargo test --features e2e-tests --test e2e_imap_test -- --test-threads=3
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test -- --test-threads=3
 ```
 
 Expected runtime: 35-50 seconds with `--test-threads=3`
 
 Individual tests:
 ```bash
-cargo test --features e2e-tests --test e2e_imap_test test_imap_greeting
-cargo test --features e2e-tests --test e2e_imap_test test_imap_login
-cargo test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox
-cargo test --features e2e-tests --test e2e_imap_test test_imap_list_mailboxes
-cargo test --features e2e-tests --test e2e_imap_test test_imap_fetch_message
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_greeting
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_login
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_list_mailboxes
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_fetch_message
 # ... 5 more tests
 ```
 

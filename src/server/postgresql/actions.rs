@@ -134,6 +134,10 @@ impl Server for PostgresqlProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a PostgreSQL server on port 5432"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Database Protocols"
+    }
 }
 
 impl PostgresqlProtocol {

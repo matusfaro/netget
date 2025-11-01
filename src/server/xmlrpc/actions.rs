@@ -275,6 +275,10 @@ impl Server for XmlRpcProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an XML-RPC server on port 8080 with methods add(a,b) and greet(name)"
     }
+
+    fn group_name(&self) -> &'static str {
+        "AI & API Protocols"
+    }
 }
 
 // Action definitions

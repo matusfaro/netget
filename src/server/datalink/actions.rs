@@ -133,6 +133,10 @@ impl Server for DataLinkProtocol {
     fn example_prompt(&self) -> &'static str {
         "Listen on eth0 via Ethernet"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 /// Action definition for show_message

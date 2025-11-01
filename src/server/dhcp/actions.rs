@@ -121,6 +121,10 @@ impl Server for DhcpProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a DHCP server on interface eth0"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl DhcpProtocol {

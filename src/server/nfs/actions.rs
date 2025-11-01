@@ -110,6 +110,10 @@ impl Server for NfsProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an NFS file server on port 2049"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Web & File Protocols"
+    }
 }
 
 impl NfsProtocol {

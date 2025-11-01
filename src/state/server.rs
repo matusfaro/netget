@@ -246,6 +246,11 @@ pub enum ProtocolConnectionInfo {
         selected_mailbox: Option<String>,
         mailbox_read_only: bool,
     },
+    /// MQTT connection (client session)
+    Mqtt {
+        client_id: String,
+        subscriptions: Vec<String>, // Subscribed topic filters
+    },
     /// SOCKS5 proxy connection
     Socks5 {
         target_addr: Option<String>,       // Target address being proxied to
@@ -261,6 +266,14 @@ pub enum ProtocolConnectionInfo {
     /// DynamoDB connection (recent operations)
     Dynamo {
         recent_operations: Vec<(String, String, Instant)>, // operation, table, time
+    },
+    /// S3 connection (recent operations)
+    S3 {
+        recent_operations: Vec<(String, Option<String>, Option<String>, Instant)>, // operation, bucket, key, time
+    },
+    /// SQS connection (recent operations)
+    Sqs {
+        recent_operations: Vec<(String, String, Instant)>, // operation, queue_url, time
     },
     /// OpenAI API connection (recent requests)
     OpenAi {
@@ -313,6 +326,12 @@ pub enum ProtocolConnectionInfo {
         method_name: String,               // Method being called
         metadata: std::collections::HashMap<String, String>,  // gRPC metadata (headers)
     },
+    /// etcd connection (gRPC-based distributed KV store)
+    Etcd {
+        cluster_name: String,              // Cluster name
+        last_operation: String,            // Last RPC operation (Range, Put, etc.)
+        operations_count: u64,             // Total RPC calls made
+    },
     /// XML-RPC connection (HTTP-based RPC)
     XmlRpc {
         recent_methods: Vec<(String, Instant)>,  // method_name, time
@@ -354,6 +373,14 @@ pub enum ProtocolConnectionInfo {
         method: Option<String>,        // HTTP method (GET, POST, etc.)
         path: Option<String>,          // Request path
         validated: bool,               // Whether request was successfully validated
+    },
+    /// Git Smart HTTP connection
+    Git {
+        recent_repos: Vec<String>,  // Recently accessed repositories
+    },
+    /// Kafka connection (recent requests)
+    Kafka {
+        recent_requests: Vec<(String, Instant)>, // API type, time
     },
 }
 

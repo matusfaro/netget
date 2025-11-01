@@ -223,6 +223,10 @@ impl Server for TorDirectoryProtocol {
             crate::protocol::metadata::DevelopmentState::Alpha
         )
     }
+
+    fn group_name(&self) -> &'static str {
+        "Network Services"
+    }
 }
 
 // ============================================================================

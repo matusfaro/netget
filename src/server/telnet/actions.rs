@@ -155,6 +155,10 @@ impl Server for TelnetProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a telnet server on port 23 that echoes commands"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Application Protocols"
+    }
 }
 
 // Action definitions

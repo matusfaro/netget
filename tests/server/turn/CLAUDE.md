@@ -334,16 +334,16 @@ test_state.stop().await?;
 
 ```bash
 # Run all TURN tests (requires Ollama + model)
-cargo test --features e2e-tests,turn --test server::turn::e2e_test
+./cargo-isolated.sh test --features e2e-tests,turn --test server::turn::e2e_test
 
 # Run specific test
-cargo test --features e2e-tests,turn --test server::turn::e2e_test test_turn_basic_allocation
+./cargo-isolated.sh test --features e2e-tests,turn --test server::turn::e2e_test test_turn_basic_allocation
 
 # Run with output
-cargo test --features e2e-tests,turn --test server::turn::e2e_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests,turn --test server::turn::e2e_test -- --nocapture
 
 # Run with concurrency (uses Ollama lock)
-cargo test --features e2e-tests,turn --test server::turn::e2e_test -- --test-threads=4
+./cargo-isolated.sh test --features e2e-tests,turn --test server::turn::e2e_test -- --test-threads=4
 ```
 
 ## Future Test Additions

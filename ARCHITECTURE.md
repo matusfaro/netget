@@ -581,10 +581,10 @@ impl LLMBackend for OpenAIClient { ... }
 
 ```bash
 # Enable debug logs
-RUST_LOG=debug cargo run
+RUST_LOG=debug ./cargo-isolated.sh run
 
 # Specific module
-RUST_LOG=netget::events=trace cargo run
+RUST_LOG=netget::events=trace ./cargo-isolated.sh run
 ```
 
 ### Network Debugging
@@ -609,12 +609,12 @@ debug!("Response: {}", response);
 
 ### Development
 ```bash
-cargo run
+./cargo-isolated.sh run
 ```
 
 ### Production
 ```bash
-cargo build --release
+./cargo-isolated.sh build --release
 ./target/release/netget
 ```
 
@@ -623,7 +623,7 @@ cargo build --release
 FROM rust:latest
 WORKDIR /app
 COPY . .
-RUN cargo build --release
+RUN ./cargo-isolated.sh build --release
 CMD ["./target/release/netget"]
 ```
 

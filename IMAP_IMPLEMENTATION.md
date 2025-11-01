@@ -134,8 +134,8 @@ This document summarizes the comprehensive IMAP (Internet Message Access Protoco
   9. `test_imap_append()` - Message addition
   10. `test_imaps_tls()` - TLS connection (port 993)
 - **Test Pattern**: Must use non-interactive mode with prompts, real TCP clients
-- **Before Running**: `cargo build --release --all-features`
-- **Run Command**: `cargo test --features e2e-tests --test e2e_imap_test -- --test-threads=3`
+- **Before Running**: `./cargo-isolated.sh build --release --all-features`
+- **Run Command**: `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test -- --test-threads=3`
 
 #### 3. Test Helper Updates
 - **File**: `tests/server/helpers.rs`
@@ -291,8 +291,8 @@ Mailboxes and messages are stored in LLM memory as JSON:
 
 4. **Build and test**:
    ```bash
-   cargo build --release --all-features
-   cargo test --features e2e-tests --test e2e_imap_test -- --test-threads=3
+   ./cargo-isolated.sh build --release --all-features
+   ./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test -- --test-threads=3
    ```
 
 5. **Manual testing**: Test with real IMAP clients (Thunderbird, mutt, telnet)

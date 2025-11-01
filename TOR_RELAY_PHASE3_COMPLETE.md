@@ -236,7 +236,7 @@ These are **advanced features** not required for basic exit relay operation.
 - **Manual Testing**: Requires real Tor client configuration
 
 **To test manually**:
-1. Start relay: `cargo run --features tor-relay --release`
+1. Start relay: `./cargo-isolated.sh run --features tor-relay --release`
 2. Configure Tor client to use relay as exit
 3. Make requests through Tor → Relay → Destination
 4. Verify data flows correctly

@@ -121,7 +121,7 @@ assert!(output_str.contains("IKE"));  // Works on String
 - **All protocols:** Can now be tested
 
 ### Prerequisites for Running E2E Tests
-1. **Build release binary:** `cargo build --release --all-features` ✅ DONE
+1. **Build release binary:** `./cargo-isolated.sh build --release --all-features` ✅ DONE
 2. **Ollama running:** Must have Ollama with model (e.g., `qwen3-coder:30b`)
 3. **Network access:** Localhost only, dynamic ports
 4. **Sequential execution:** Do NOT use parallel test execution
@@ -133,25 +133,25 @@ assert!(output_str.contains("IKE"));  // Works on String
 ### Run All E2E Tests
 ```bash
 # Sequential execution (required for LLM-based tests)
-cargo test --features e2e-tests --test server -- --test-threads=1
+./cargo-isolated.sh test --features e2e-tests --test server -- --test-threads=1
 ```
 
 ### Run Specific Protocol Tests
 ```bash
 # Example: Test IMAP
-cargo test --features e2e-tests --test server imap
+./cargo-isolated.sh test --features e2e-tests --test server imap
 
 # Example: Test IPSec honeypot
-cargo test --features e2e-tests --test server ipsec
+./cargo-isolated.sh test --features e2e-tests --test server ipsec
 
 # Example: Test BGP
-cargo test --features e2e-tests,bgp --test server bgp
+./cargo-isolated.sh test --features e2e-tests,bgp --test server bgp
 ```
 
 ### Run With Output
 ```bash
 # Show test output including LLM interactions
-cargo test --features e2e-tests --test server -- --nocapture --test-threads=1
+./cargo-isolated.sh test --features e2e-tests --test server -- --nocapture --test-threads=1
 ```
 
 ---
@@ -199,7 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Build tests
-        run: cargo test --features e2e-tests --no-run
+        run: ./cargo-isolated.sh test --features e2e-tests --no-run
 ```
 
 #### 2. Document Test Patterns
@@ -213,7 +213,7 @@ Create `tests/README.md` with:
 ```bash
 #!/bin/bash
 # .git/hooks/pre-commit
-cargo test --features e2e-tests --no-run || exit 1
+./cargo-isolated.sh test --features e2e-tests --no-run || exit 1
 ```
 
 #### 4. Test Template

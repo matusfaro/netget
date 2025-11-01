@@ -94,6 +94,10 @@ impl Server for MdnsProtocol {
     fn example_prompt(&self) -> &'static str {
         "Advertise a web service via mDNS on port 8080"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Application Protocols"
+    }
 }
 
 // Action definitions

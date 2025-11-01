@@ -271,7 +271,7 @@ let config = ServerConfig::new("Start IPSec honeypot on port 0");
 **Action:** Execute full suite with sequential execution
 **Command:**
 ```bash
-cargo test --features e2e-tests --test server -- --test-threads=1 --nocapture > test_results.log 2>&1
+./cargo-isolated.sh test --features e2e-tests --test server -- --test-threads=1 --nocapture > test_results.log 2>&1
 ```
 **Duration:** 1-3 hours
 **Output:** Complete pass/fail status for all 35+ protocols
@@ -295,7 +295,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Compile tests
-        run: cargo test --features e2e-tests --no-run
+        run: ./cargo-isolated.sh test --features e2e-tests --no-run
 ```
 
 #### 5. Create Test Dashboard (MEDIUM PRIORITY)
@@ -364,31 +364,31 @@ Based on test infrastructure quality and observed functionality:
 ### Run Full Suite (Sequential, Required)
 ```bash
 # MUST run sequentially due to LLM load
-cargo test --features e2e-tests --test server -- --test-threads=1 --nocapture
+./cargo-isolated.sh test --features e2e-tests --test server -- --test-threads=1 --nocapture
 ```
 
 ### Run Specific Protocol
 ```bash
 # SSH
-cargo test --features e2e-tests --test server ssh -- --nocapture
+./cargo-isolated.sh test --features e2e-tests --test server ssh -- --nocapture
 
 # HTTP
-cargo test --features e2e-tests --test server http -- --nocapture
+./cargo-isolated.sh test --features e2e-tests --test server http -- --nocapture
 
 # Database protocol (example: MySQL)
-cargo test --features e2e-tests,mysql --test server mysql -- --nocapture
+./cargo-isolated.sh test --features e2e-tests,mysql --test server mysql -- --nocapture
 ```
 
 ### Run Without Privileged Ports
 ```bash
 # Skip IPSec, DHCP, and other privileged port tests
-cargo test --features e2e-tests --test server -- --test-threads=1 --skip ipsec --skip dhcp
+./cargo-isolated.sh test --features e2e-tests --test server -- --test-threads=1 --skip ipsec --skip dhcp
 ```
 
 ### Save Results
 ```bash
 # Capture all output
-cargo test --features e2e-tests --test server -- --test-threads=1 --nocapture | tee test_results_$(date +%Y%m%d_%H%M%S).log
+./cargo-isolated.sh test --features e2e-tests --test server -- --test-threads=1 --nocapture | tee test_results_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ---

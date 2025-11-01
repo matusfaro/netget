@@ -123,6 +123,10 @@ impl Server for IpsecProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an IPSec VPN honeypot on port 500"
     }
+
+    fn group_name(&self) -> &'static str {
+        "VPN & Routing Protocols"
+    }
 }
 
 impl IpsecProtocol {

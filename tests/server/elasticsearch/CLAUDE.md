@@ -206,16 +206,16 @@ let response = client
 
 ```bash
 # Build release binary first (REQUIRED)
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run all Elasticsearch tests
-cargo test --features e2e-tests,elasticsearch --test server::elasticsearch::e2e_test
+./cargo-isolated.sh test --features e2e-tests,elasticsearch --test server::elasticsearch::e2e_test
 
 # Run specific test
-cargo test --features e2e-tests,elasticsearch --test server::elasticsearch::e2e_test test_elasticsearch_search
+./cargo-isolated.sh test --features e2e-tests,elasticsearch --test server::elasticsearch::e2e_test test_elasticsearch_search
 
 # Run with output
-cargo test --features e2e-tests,elasticsearch --test server::elasticsearch::e2e_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests,elasticsearch --test server::elasticsearch::e2e_test -- --nocapture
 ```
 
 ## Test Output Example

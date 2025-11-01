@@ -336,7 +336,7 @@ To test VNC server manually with real VNC client:
 
 1. **Start Server**:
    ```bash
-   cargo run --features vnc --release
+   ./cargo-isolated.sh run --features vnc --release
    # Prompt: "listen on port 5900 via vnc"
    ```
 

@@ -135,6 +135,10 @@ impl Server for CassandraProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a Cassandra/CQL database server on port 9042"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Database Protocols"
+    }
 }
 
 impl CassandraProtocol {

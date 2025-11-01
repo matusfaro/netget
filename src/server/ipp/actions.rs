@@ -113,6 +113,10 @@ impl Server for IppProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an IPP server on port 631"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Web & File Protocols"
+    }
 }
 
 impl IppProtocol {

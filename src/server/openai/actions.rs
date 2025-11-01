@@ -95,6 +95,10 @@ impl Server for OpenAiProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an OpenAI-compatible API server on port 11435"
     }
+
+    fn group_name(&self) -> &'static str {
+        "AI & API Protocols"
+    }
 }
 
 impl OpenAiProtocol {

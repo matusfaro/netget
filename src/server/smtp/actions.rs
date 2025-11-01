@@ -213,6 +213,10 @@ impl Server for SmtpProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an SMTP mail server on port 25"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Application Protocols"
+    }
 }
 
 // Action definitions

@@ -137,6 +137,10 @@ impl Server for RedisProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a Redis server on port 6379"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Database Protocols"
+    }
 }
 
 impl RedisProtocol {

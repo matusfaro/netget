@@ -123,6 +123,10 @@ impl Server for OpenvpnProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an OpenVPN honeypot on port 1194"
     }
+
+    fn group_name(&self) -> &'static str {
+        "VPN & Routing Protocols"
+    }
 }
 
 impl OpenvpnProtocol {
