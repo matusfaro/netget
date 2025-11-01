@@ -15,7 +15,7 @@ Available actions:
 1. open_server. Start a new server
 Parameters:
   • port: number (required) - Port number to listen on
-  • base_stack: string (required) - Stack: BGP, Cassandra, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, HTTP, IMAP, IPP, IRC, JSON-RPC, LDAP, MCP, MySQL, NFS, NTP, OpenAI, OpenAPI, PostgreSQL, Proxy, Redis, SMB, SMTP, SNMP, SOCKS5, SSH, STUN, TCP, TURN, Telnet, Tor Directory, Tor Relay, UDP, VNC, WebDAV, WireGuard, XML-RPC, gRPC, mDNS
+  • base_stack: string (required) - Protocol stack to use. Choose the best stack for the task. Available: BGP, Cassandra, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, IMAP, IPP, IRC, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MySQL, NFS, NTP, OpenAI, OpenAPI, PostgreSQL, Proxy, Redis, S3, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, STUN, TCP, TURN, Telnet, Tor Directory, Tor Relay, UDP, VNC, WebDAV, WireGuard, XML-RPC, etcd, gRPC, mDNS
   • send_first: boolean (optional) - True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
   • initial_memory: string (optional) - Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
   • instruction: string (required) - Detailed instructions for handling network events
@@ -26,15 +26,15 @@ Example:
 {
   "type": "open_server",
   "port": 8080,
-  "base_stack": "http",
-  "instruction": "HTTP server with SSE support",
+  "base_stack": "tcp",
+  "instruction": "Echo server that returns all received data",
   "startup_params": {},
   "scheduled_tasks": [
     {
-      "task_id": "sse_heartbeat",
+      "task_id": "status_report",
       "recurring": true,
       "interval_secs": 30,
-      "instruction": "Send SSE heartbeat to all active connections"
+      "instruction": "Send status report to all active connections"
     },
     {
       "task_id": "cleanup",
@@ -252,7 +252,7 @@ Example:
 
 
 
-Available protocol stacks: BGP, Cassandra, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, HTTP, IMAP, IPP, IPSec/IKEv2, IRC, JSON-RPC, LDAP, MCP, MySQL, NFS, NTP, OpenAI, OpenAPI, OpenVPN, PostgreSQL, Proxy, Redis, SMB, SMTP, SNMP, SOCKS5, SSH, STUN, TCP, TURN, Telnet, Tor Directory, Tor Relay, UDP, VNC, WebDAV, WireGuard, XML-RPC, gRPC, mDNS
+Available protocol stacks: BGP, Cassandra, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, IMAP, IPP, IPSec/IKEv2, IRC, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MySQL, NFS, NTP, OpenAI, OpenAPI, OpenVPN, PostgreSQL, Proxy, Redis, S3, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, STUN, TCP, TURN, Telnet, Tor Directory, Tor Relay, UDP, VNC, WebDAV, WireGuard, XML-RPC, etcd, gRPC, mDNS
 
 
 RESPONSE FORMAT:
@@ -271,7 +271,7 @@ Example with tools:
 Example with server:
 {
   "actions": [
-    {"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Act as REST API"},
+    {"type": "open_server", "port": 8080, "base_stack": "tcp", "instruction": "Echo server"},
     {"type": "show_message", "message": "Server started"}
   ]
 }

@@ -22,8 +22,12 @@ export CARGO_TARGET_DIR="${PROJECT_ROOT}/target-claude/claude-$$"
 # Create directory if it doesn't exist
 mkdir -p "$CARGO_TARGET_DIR"
 
-# Echo the target directory for visibility
-echo "Using isolated build directory: $CARGO_TARGET_DIR" >&2
+# Echo the target directory and session info for visibility
+echo "=== Cargo Isolated Build ===" >&2
+echo "Session PID: $$" >&2
+echo "Target directory: $CARGO_TARGET_DIR" >&2
+echo "Command: cargo $*" >&2
+echo "============================" >&2
 
 # Forward all arguments to cargo
 exec cargo "$@"

@@ -5,16 +5,10 @@
 
 pub mod actions;
 
-use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::KafkaProtocol;
 use crate::state::app_state::AppState;
-use actions::{
-    FETCH_REQUEST_EVENT, METADATA_REQUEST_EVENT, OFFSET_COMMIT_REQUEST_EVENT,
-    PRODUCE_REQUEST_EVENT,
-};
 use anyhow::Result;
 use kafka_protocol::messages::{
     ApiKey, ApiVersionsResponse, FetchRequest, FetchResponse,
@@ -39,11 +33,11 @@ pub struct KafkaServer {
     /// Broker ID
     broker_id: i32,
     /// Auto-create topics on first produce
-    auto_create_topics: bool,
+    _auto_create_topics: bool,
     /// Default partition count
     default_partitions: i32,
     /// Log retention hours
-    log_retention_hours: i64,
+    _log_retention_hours: i64,
     /// Topic storage: topic_name -> partitions -> (offset, Vec<records>)
     topics: Arc<RwLock<HashMap<String, Vec<Vec<KafkaRecord>>>>>,
     /// Consumer group offsets: group_id -> topic -> partition -> offset
@@ -105,9 +99,9 @@ impl KafkaServer {
         let server = Arc::new(KafkaServer {
             cluster_id,
             broker_id,
-            auto_create_topics,
+            _auto_create_topics: auto_create_topics,
             default_partitions,
-            log_retention_hours,
+            _log_retention_hours: log_retention_hours,
             topics: Arc::new(RwLock::new(HashMap::new())),
             consumer_offsets: Arc::new(RwLock::new(HashMap::new())),
         });
@@ -189,7 +183,7 @@ impl KafkaServer {
         mut stream: TcpStream,
         peer_addr: SocketAddr,
         local_addr: SocketAddr,
-        connection_id: ConnectionId,
+        _connection_id: ConnectionId,
         server: Arc<KafkaServer>,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -354,16 +348,16 @@ impl KafkaServer {
         header: &RequestHeader,
         message: &[u8],
         server: &Arc<KafkaServer>,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
+        _llm_client: &OllamaClient,
+        _app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        server_id: crate::state::ServerId,
-        protocol: &Arc<KafkaProtocol>,
+        _server_id: crate::state::ServerId,
+        _protocol: &Arc<KafkaProtocol>,
         _peer_addr: SocketAddr,
         local_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
         use kafka_protocol::messages::metadata_response::{MetadataResponseBroker, MetadataResponseTopic, MetadataResponsePartition};
-        use kafka_protocol::messages::{BrokerId, TopicName};
+        use kafka_protocol::messages::BrokerId;
         use kafka_protocol::protocol::StrBytes;
 
         debug!("Handling Metadata request");
@@ -656,7 +650,7 @@ impl KafkaServer {
                             .collect();
 
                         if !matching_records.is_empty() {
-                            let base_offset = matching_records[0].offset;
+                            let _base_offset = matching_records[0].offset;
 
                             // Convert stored records to kafka-protocol Record format
                             let kafka_records: Vec<Record> = matching_records

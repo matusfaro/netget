@@ -38,10 +38,10 @@ mod tests {
         println!("\n=== Test: S3 Comprehensive Operations ===");
 
         // Single comprehensive prompt covering all test scenarios
-        let prompt = r#"Start an S3-compatible server on port 0.
+        let prompt = r#"Start an S3-compatible server on port {AVAILABLE_PORT}.
 Create a bucket called 'test-bucket' with the following objects:
-- hello.txt containing "Hello, World!"
-- data.json containing {"message": "test data"}
+- hello.txt containing 'Hello, World!'
+- data.json containing '{"message": "test data"}'
 
 When clients:
 1. List buckets: return test-bucket
@@ -49,9 +49,7 @@ When clients:
 3. Get hello.txt: return "Hello, World!" with content-type text/plain
 4. Get data.json: return the JSON content with content-type application/json
 5. Put new objects: acknowledge and add them to the listing
-6. Delete objects: acknowledge and remove them from the listing
-
-Support HeadObject to check if files exist."#;
+6. Delete objects: acknowledge and remove them from the listing"#;
 
         let config = ServerConfig::new(prompt)
             .with_log_level("off");
@@ -155,7 +153,7 @@ Support HeadObject to check if files exist."#;
     async fn test_s3_get_object() -> E2EResult<()> {
         println!("\n=== Test: S3 GetObject ===");
 
-        let prompt = "Start an S3 server on port 0 with bucket 'my-bucket' containing file 'data.txt' with content 'S3 Test Data'";
+        let prompt = "Start an S3 server on port {AVAILABLE_PORT} with bucket 'my-bucket' containing file 'data.txt' with content 'S3 Test Data'";
         let config = ServerConfig::new(prompt)
             .with_log_level("off");
 
@@ -192,7 +190,7 @@ Support HeadObject to check if files exist."#;
     async fn test_s3_put_and_list() -> E2EResult<()> {
         println!("\n=== Test: S3 PutObject and ListObjects ===");
 
-        let prompt = "Start an S3 server on port 0 with empty bucket 'uploads'. Accept any file uploads and list them when requested.";
+        let prompt = "Start an S3 server on port {AVAILABLE_PORT} with empty bucket 'uploads'. Accept any file uploads and list them when requested.";
         let config = ServerConfig::new(prompt)
             .with_log_level("off");
 

@@ -73,7 +73,7 @@ mod tests {
 
     /// Start NetGet Tor relay server
     async fn start_netget_relay() -> E2EResult<(u16, helpers::NetGetServer)> {
-        let prompt = "Start a Tor exit relay on port 0 that allows connections to localhost";
+        let prompt = "listen on port {AVAILABLE_PORT} via tor-relay. Handle TLS connections and Tor cells. Allow exit connections to localhost for testing.";
         let config = ServerConfig::new_no_scripts(prompt).with_log_level("info");
 
         let server = helpers::start_netget_server(config).await?;

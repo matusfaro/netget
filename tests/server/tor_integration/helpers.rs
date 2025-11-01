@@ -51,7 +51,7 @@ impl TorTestNetwork {
         println!("✓ HTTP server started on port {}", http_port);
 
         // 2. Start NetGet Tor Relay
-        let relay_prompt = "Start a Tor exit relay on port 0 that allows connections to localhost";
+        let relay_prompt = "listen on port {AVAILABLE_PORT} via tor-relay. Handle TLS connections and Tor cells. Allow exit connections to localhost for testing.";
         let relay_config = ServerConfig::new_no_scripts(relay_prompt).with_log_level("info");
         let relay_server = helpers::start_netget_server(relay_config)
             .await
@@ -75,7 +75,7 @@ impl TorTestNetwork {
 
         // 5. Start NetGet Tor Directory
         let directory_prompt = format!(
-            "open_server port 0 base_stack ETH>IP>TCP>HTTP>TorDirectory. When clients request /tor/status-vote/current/consensus, \
+            "listen on port {{AVAILABLE_PORT}} via tor-directory. When clients request /tor/status-vote/current/consensus, \
              respond with this document:\n\n{}\n\nFor microdescriptor requests, return appropriate microdescriptors.",
             consensus
         );

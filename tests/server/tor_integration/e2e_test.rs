@@ -8,7 +8,7 @@
 //!
 //! The test validates that all components work together correctly.
 
-#[cfg(all(test, feature = "tor_integration"))]
+#[cfg(all(test, feature = "tor-directory", feature = "tor-relay"))]
 mod tests {
     use super::super::helpers::{self, TorTestNetwork};
     use super::super::tor_client::TorClient;
