@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with mDNS prompts
 //! and validate service advertisements using mDNS-SD clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "mdns")]
 
 // Helper module imported from parent
 

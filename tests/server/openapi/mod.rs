@@ -1,7 +1,7 @@
 //! OpenAPI server E2E tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "openapi"))]
 pub mod e2e_test;
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "openapi"))]
 pub mod e2e_route_matching_test;

@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with OpenAI API prompts
 //! and validate the responses using HTTP clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "openai")]
 
 use crate::server::helpers::{self, ServerConfig, E2EResult};
 use serde_json::Value;

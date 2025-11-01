@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with OpenAPI prompts
 //! and validate that the server provides OpenAPI specs and handles requests.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "openapi")]
 
 use crate::server::helpers::{self, ServerConfig, E2EResult};
 use serde_json::Value;

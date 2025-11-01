@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with Redis prompts
 //! and validate the responses using Redis protocol clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "redis")]
 
 // Helper module imported from parent
 

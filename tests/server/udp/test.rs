@@ -6,7 +6,7 @@
 //! Note: DNS, DHCP, NTP, and SNMP tests are in their own dedicated test files
 //! with proper protocol client libraries.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "udp")]
 
 // Helper module imported from parent
 

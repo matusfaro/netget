@@ -1,5 +1,5 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 mod test;
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "http"))]
 mod e2e_scheduled_tasks_test;

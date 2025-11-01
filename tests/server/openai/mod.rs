@@ -1,5 +1,5 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "openai"))]
 pub mod test;
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "openai"))]
 pub mod e2e_test;

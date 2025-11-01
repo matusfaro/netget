@@ -3,7 +3,7 @@
 //! These tests verify STUN server functionality by starting NetGet with STUN prompts
 //! and using raw UDP sockets to send STUN binding requests.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "stun")]
 
 use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};

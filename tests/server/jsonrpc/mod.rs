@@ -1,4 +1,4 @@
 //! JSON-RPC protocol tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "jsonrpc"))]
 pub mod e2e_test;

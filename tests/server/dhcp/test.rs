@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with DHCP prompts
 //! and validate the responses using the dhcproto library for proper DHCP message construction.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "dhcp")]
 
 // Helper module imported from parent
 

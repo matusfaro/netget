@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with XML-RPC prompts
 //! and validate the responses using real HTTP clients to send XML-RPC requests.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "xmlrpc")]
 
 use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use quick_xml::events::Event;

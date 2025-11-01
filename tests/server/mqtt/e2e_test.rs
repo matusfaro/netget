@@ -8,7 +8,7 @@
 //! Once full broker implementation is complete, these tests will be updated to
 //! validate actual MQTT functionality.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "mqtt")]
 
 use crate::server::helpers::*;
 use std::time::Duration;

@@ -1,5 +1,5 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "socks5"))]
 pub mod test;
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "socks5"))]
 pub mod e2e_test;

@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with gRPC prompts
 //! and validate the responses using real gRPC clients (tonic).
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "grpc")]
 
 use super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;

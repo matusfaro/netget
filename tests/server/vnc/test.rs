@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with VNC prompts
 //! and validate the RFB protocol implementation using a simple VNC client.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "vnc")]
 
 use super::super::helpers::{self, ServerConfig, E2EResult};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

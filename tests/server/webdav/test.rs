@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with WebDAV prompts
 //! and validate file operations using real WebDAV clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "webdav")]
 
 // Helper module imported from parent
 

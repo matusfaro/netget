@@ -1,6 +1,7 @@
 use netget::server::datalink::DataLinkServer;
 
 #[test]
+#[cfg(feature = "datalink")]
 fn test_list_devices() {
     // This should work on any system with pcap installed
     let devices = DataLinkServer::list_devices();

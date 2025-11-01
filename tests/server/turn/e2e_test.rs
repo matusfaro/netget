@@ -3,7 +3,7 @@
 //! These tests verify TURN server functionality by starting NetGet with TURN prompts
 //! and using raw UDP sockets to send TURN allocate/refresh/permission requests.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "turn")]
 
 use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};

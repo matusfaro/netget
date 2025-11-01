@@ -10,7 +10,7 @@
 //! 2. Different prompting strategy
 //! 3. Or these tests should use --no-scripts mode with direct stack specification
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "ipsec")]
 
 use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};

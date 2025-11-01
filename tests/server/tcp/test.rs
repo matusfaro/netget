@@ -7,7 +7,7 @@
 //! due to multiple LLM round-trips required for each FTP command.
 //! Instead, we test individual FTP protocol commands with raw TCP.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "tcp")]
 
 // Helper module imported from parent
 

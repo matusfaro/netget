@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with Tor Directory prompts
 //! and validate the responses using HTTP clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "tor_directory")]
 
 use crate::server::helpers::{self, ServerConfig, E2EResult};
 use std::time::Duration;

@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with MySQL prompts
 //! and validate the responses using MySQL protocol clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "mysql")]
 
 // Helper module imported from parent
 

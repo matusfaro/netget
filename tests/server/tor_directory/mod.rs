@@ -1,4 +1,4 @@
 //! Tor Directory server tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "tor-directory"))]
 pub mod e2e_test;

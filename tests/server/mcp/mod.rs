@@ -1,4 +1,4 @@
 //! MCP (Model Context Protocol) tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "mcp"))]
 pub mod e2e_test;

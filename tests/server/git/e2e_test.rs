@@ -3,7 +3,7 @@
 //! This test spawns a NetGet Git server and validates clone operations
 //! using both git2-rs (programmatic) and system git command (realistic).
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "git")]
 
 use super::super::super::helpers::{self, ServerConfig, E2EResult};
 use std::path::PathBuf;
@@ -45,9 +45,9 @@ async fn test_git_clone_with_system_git() -> E2EResult<()> {
 Create virtual repository 'test-repo' with main branch.
 
 Repository contents:
-- README.md: "# Test Repository\nThis is a test repository served by NetGet!"
-- src/main.rs: "fn main() { println!(\"Hello from NetGet Git!\"); }"
-- Cargo.toml: "[package]\nname = \"test-repo\"\nversion = \"0.1.0\""
+- README.md: # Test Repository / This is a test repository served by NetGet!
+- src/main.rs: fn main() { println!("Hello from NetGet Git!"); }
+- Cargo.toml: [package] / name = "test-repo" / version = "0.1.0"
 
 When clients request references (/info/refs?service=git-upload-pack):
 1. Return refs/heads/main with SHA: 1234567890abcdef1234567890abcdef12345678
@@ -61,7 +61,7 @@ When clients request pack file (/git-upload-pack):
 2. Encode the pack as base64
 
 Note: For this MVP, you can provide a simplified pack that allows git clone to succeed.
-If you're unsure about pack format, provide minimal pack data and we'll test protocol flow."#;
+If you are unsure about pack format, provide minimal pack data and we will test protocol flow."#;
 
     // Start server without scripting (pure LLM mode)
     let server = helpers::start_netget_server(

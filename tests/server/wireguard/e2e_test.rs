@@ -3,7 +3,7 @@
 //! These tests verify WireGuard honeypot functionality by starting NetGet with WireGuard prompts
 //! and sending crafted WireGuard handshake packets to detect reconnaissance attempts.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "wireguard")]
 
 use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};

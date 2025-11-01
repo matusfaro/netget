@@ -3,7 +3,7 @@
 //! This test spawns a single NetGet DoT server with a Python script
 //! and validates multiple query types against the same server instance.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "dot")]
 
 use super::super::super::helpers::{self, ServerConfig, E2EResult};
 use hickory_proto::op::{Message as DnsMessage, Query};

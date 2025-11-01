@@ -1,5 +1,9 @@
 //! etcd E2E tests using real etcd-client
 
+#![cfg(feature = "etcd")]
+
+use super::super::helpers::start_server_with_prompt;
+use super::super::helpers::assert_stack_name;
 use etcd_client::Client;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -45,7 +49,6 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
 "#;
 
     // Use test helpers to start server
-    use crate::server::helpers::*;
     let (state, port, _handle) = start_server_with_prompt(prompt).await?;
 
     // Wait for server to be fully ready
