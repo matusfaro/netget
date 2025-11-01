@@ -124,6 +124,10 @@ impl Server for WireguardProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a WireGuard VPN server on port 51820"
     }
+
+    fn group_name(&self) -> &'static str {
+        "VPN & Routing Protocols"
+    }
 }
 
 impl WireguardProtocol {

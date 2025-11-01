@@ -132,13 +132,13 @@ Tests use **action-based mode** (no scripting) to ensure LLM interprets each req
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run JSON-RPC tests
-cargo test --features e2e-tests,jsonrpc --test server::jsonrpc::e2e_test
+./cargo-isolated.sh test --features e2e-tests,jsonrpc --test server::jsonrpc::e2e_test
 
 # Run specific test
-cargo test --features e2e-tests,jsonrpc --test server::jsonrpc::e2e_test test_jsonrpc_basic_method_call
+./cargo-isolated.sh test --features e2e-tests,jsonrpc --test server::jsonrpc::e2e_test test_jsonrpc_basic_method_call
 ```
 
 ## Key Test Patterns

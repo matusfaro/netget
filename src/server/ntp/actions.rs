@@ -93,6 +93,10 @@ impl Server for NtpProtocol {
     fn example_prompt(&self) -> &'static str {
         "pretend to be a ntp server on port 123"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl NtpProtocol {

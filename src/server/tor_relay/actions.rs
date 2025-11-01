@@ -165,6 +165,10 @@ impl Server for TorRelayProtocol {
             "Full exit relay - ntor handshake, circuit crypto, bidirectional stream forwarding"
         )
     }
+
+    fn group_name(&self) -> &'static str {
+        "Network Services"
+    }
 }
 
 // ============================================================================

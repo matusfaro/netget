@@ -148,11 +148,11 @@ Integration test file with:
 
 ```bash
 # Run helper tests (fast, no LLM required)
-cargo test --test tool_call_integration_test --features mysql
+./cargo-isolated.sh test --test tool_call_integration_test --features mysql
 
 # Run integration tests (requires Ollama)
 # IMPORTANT: Use --test-threads=1 to avoid race conditions with Ollama
-cargo test --test tool_call_integration_test --features mysql -- --nocapture --test-threads=1
+./cargo-isolated.sh test --test tool_call_integration_test --features mysql -- --nocapture --test-threads=1
 ```
 
 **Note on Parallelization**: These tests must be run sequentially (`--test-threads=1`) because:
@@ -164,11 +164,11 @@ cargo test --test tool_call_integration_test --features mysql -- --nocapture --t
 
 ```bash
 # Schema reading test (COUNT query)
-cargo test --test tool_call_integration_test test_mysql_reads_schema_and_counts_records \
+./cargo-isolated.sh test --test tool_call_integration_test test_mysql_reads_schema_and_counts_records \
     --features mysql -- --nocapture
 
 # Meta-prompt test
-cargo test --test tool_call_integration_test test_mysql_reads_instructions_from_file \
+./cargo-isolated.sh test --test tool_call_integration_test test_mysql_reads_instructions_from_file \
     --features mysql -- --nocapture
 ```
 
@@ -176,7 +176,7 @@ cargo test --test tool_call_integration_test test_mysql_reads_instructions_from_
 
 1. **Ollama running**: `curl http://localhost:11434/api/tags`
 2. **Model available**: Default is `qwen3-coder:30b`
-3. **Release binary built**: `cargo build --release --all-features`
+3. **Release binary built**: `./cargo-isolated.sh build --release --all-features`
 4. **No port conflicts**: Ports 3306 and 3307 must be available
 
 ---
@@ -397,7 +397,7 @@ curl http://localhost:11434/api/tags
 ollama list | grep qwen3-coder
 
 # Rebuild release binary
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 ### Test Fails: "Can't connect to MySQL server"

@@ -226,6 +226,13 @@ pub use imap::ImapServer;
 #[cfg(feature = "imap")]
 pub use imap::actions::ImapProtocol;
 
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
+#[cfg(feature = "mqtt")]
+pub use mqtt::MqttServer;
+#[cfg(feature = "mqtt")]
+pub use mqtt::actions::MqttProtocol;
+
 #[cfg(feature = "elasticsearch")]
 pub mod elasticsearch;
 #[cfg(feature = "elasticsearch")]
@@ -239,6 +246,20 @@ pub mod dynamo;
 pub use dynamo::DynamoServer;
 #[cfg(feature = "dynamo")]
 pub use dynamo::actions::DynamoProtocol;
+
+#[cfg(feature = "s3")]
+pub mod s3;
+#[cfg(feature = "s3")]
+pub use s3::S3Server;
+#[cfg(feature = "s3")]
+pub use s3::actions::S3Protocol;
+
+#[cfg(feature = "sqs")]
+pub mod sqs;
+#[cfg(feature = "sqs")]
+pub use sqs::SqsServer;
+#[cfg(feature = "sqs")]
+pub use sqs::actions::SqsProtocol;
 
 #[cfg(feature = "openai")]
 pub mod openai;
@@ -299,6 +320,13 @@ pub use grpc::GrpcServer;
 #[cfg(feature = "grpc")]
 pub use grpc::actions::GrpcProtocol;
 
+#[cfg(feature = "etcd")]
+pub mod etcd;
+#[cfg(feature = "etcd")]
+pub use etcd::EtcdServer;
+#[cfg(feature = "etcd")]
+pub use etcd::actions::EtcdProtocol;
+
 #[cfg(feature = "xmlrpc")]
 pub mod xmlrpc;
 #[cfg(feature = "xmlrpc")]
@@ -333,6 +361,20 @@ pub mod openapi;
 pub use openapi::OpenApiServer;
 #[cfg(feature = "openapi")]
 pub use openapi::actions::OpenApiProtocol;
+
+#[cfg(feature = "git")]
+pub mod git;
+#[cfg(feature = "git")]
+pub use git::GitServer;
+#[cfg(feature = "git")]
+pub use git::actions::GitProtocol;
+
+#[cfg(feature = "kafka")]
+pub mod kafka;
+#[cfg(feature = "kafka")]
+pub use kafka::KafkaServer;
+#[cfg(feature = "kafka")]
+pub use kafka::actions::KafkaProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

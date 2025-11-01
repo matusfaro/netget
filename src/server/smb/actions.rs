@@ -95,6 +95,10 @@ impl Server for SmbProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an SMB/CIFS file server on port 8445"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Web & File Protocols"
+    }
 }
 
 // Event type for SMB operations

@@ -92,6 +92,10 @@ impl Server for StunProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a STUN server for NAT traversal on port 3478"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Proxy & Network Protocols"
+    }
 }
 
 impl StunProtocol {

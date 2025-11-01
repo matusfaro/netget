@@ -133,7 +133,7 @@ Tests Layer 2 packet capture functionality with ARP monitoring and interface det
 sudo setcap cap_net_raw+ep target/release/netget
 
 # macOS/Linux: Run with sudo
-sudo cargo test --features e2e-tests --test server::datalink::test_arp_responder
+sudo ./cargo-isolated.sh test --features e2e-tests --test server::datalink::test_arp_responder
 
 # Windows: Run as Administrator
 ```
@@ -296,7 +296,7 @@ DataLink tests are challenging for CI:
 
 **Recommendation**: Mark DataLink tests as `#[ignore]` by default, run manually:
 ```bash
-cargo test --features e2e-tests --test server::datalink --ignored
+./cargo-isolated.sh test --features e2e-tests --test server::datalink --ignored
 ```
 
 Or create separate test feature:
@@ -306,7 +306,7 @@ e2e-tests-privileged = ["e2e-tests"]
 ```
 
 ```bash
-cargo test --features e2e-tests-privileged --test server::datalink
+./cargo-isolated.sh test --features e2e-tests-privileged --test server::datalink
 ```
 
 ## Manual Testing Guide

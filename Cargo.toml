@@ -33,9 +33,12 @@ stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
+mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
+s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
+sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
@@ -44,12 +47,15 @@ ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
+etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
 xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
 tor-directory = ["dep:tor-netdoc", "dep:tor-cert", "dep:ed25519-dalek", "dep:sha2"]  # Tor directory mirror serving consensus and descriptors
 tor-relay = ["dep:tor-cell", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
-all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "ldap", "imap", "socks5", "elasticsearch", "dynamo", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor-directory", "tor-relay", "vnc", "openapi"]
+git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
+kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
+all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor-directory", "tor-relay", "vnc", "openapi", "git"]  # Temporarily removed etcd and kafka due to compilation errors
 # E2E testing feature - marker to enable end-to-end black-box tests
 e2e-tests = []
 
@@ -195,6 +201,9 @@ ldap3_proto = { version = "0.3", optional = true }
 # IMAP server (IMAP protocol parsing)
 imap-codec = { version = "2.0.0-alpha.6", optional = true }
 
+# MQTT broker (IoT messaging)
+rumqttd = { version = "0.20", optional = true }
+
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
 
@@ -246,6 +255,9 @@ rfb = { version = "0.1", optional = true }
 openapi-rs = { git = "https://github.com/baerwang/openapi-rs", optional = true }
 matchit = { version = "0.8", optional = true }  # High-performance path router for OpenAPI
 
+# Kafka broker (wire protocol parsing and serialization)
+kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -296,6 +308,10 @@ async-native-tls = "0.5"
 # AWS SDK for DynamoDB e2e integration tests
 aws-config = { version = "1.5", features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = "1.52"
+# AWS SDK for SQS e2e integration tests
+aws-sdk-sqs = "1.86"
+# rust-s3 client for S3 e2e integration tests
+rust-s3 = "0.37"
 # Axum for creating test HTTP servers in proxy e2e tests
 axum = "0.7"
 # Axum server with TLS support for HTTPS test servers
@@ -306,6 +322,18 @@ async-openai = "0.26"
 prost = "0.13"
 prost-reflect = "0.14"
 prost-types = "0.13"
+# etcd client for e2e integration tests
+etcd-client = "0.15"
 # Tor client for e2e integration tests (Tor relay + directory)
 arti-client = "0.36"
 tor-rtcompat = "0.36"
+# Git client for e2e integration tests
+git2 = "0.19"
+# AMQP 1.0 client for e2e integration tests
+rumqttc = "0.24"
+# Kafka client for e2e integration tests
+rdkafka = "0.36"
+
+[build-dependencies]
+# Protocol buffer compiler for etcd gRPC service
+tonic-build = "0.12"

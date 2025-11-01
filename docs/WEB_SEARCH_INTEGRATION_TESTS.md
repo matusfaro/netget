@@ -73,17 +73,17 @@ These integration tests demonstrate the LLM using the `web_search` tool to read 
 
 1. **Ollama running**: `curl http://localhost:11434/api/tags`
 2. **Internet connection**: Required for web_search (DuckDuckGo)
-3. **Release binary built**: `cargo build --release --all-features`
+3. **Release binary built**: `./cargo-isolated.sh build --release --all-features`
 
 ### Individual Tests
 
 ```bash
 # Test 1: RFC 7168 accepts message/teapot
-cargo test --test toolcall_web_search_integration_test test_htcpcp_tea_accepts_message_teapot \
+./cargo-isolated.sh test --test toolcall_web_search_integration_test test_htcpcp_tea_accepts_message_teapot \
     -- --ignored --nocapture
 
 # Test 2: RFC 2324 rejects message/teapot
-cargo test --test toolcall_web_search_integration_test test_htcpcp_coffeepot_rejects_message_teapot \
+./cargo-isolated.sh test --test toolcall_web_search_integration_test test_htcpcp_coffeepot_rejects_message_teapot \
     -- --ignored --nocapture
 ```
 
@@ -91,7 +91,7 @@ cargo test --test toolcall_web_search_integration_test test_htcpcp_coffeepot_rej
 
 ```bash
 # Run both tests sequentially (recommended)
-cargo test --test toolcall_web_search_integration_test -- --ignored --nocapture --test-threads=1
+./cargo-isolated.sh test --test toolcall_web_search_integration_test -- --ignored --nocapture --test-threads=1
 ```
 
 **Note**: Use `--test-threads=1` to avoid race conditions with Ollama and web searches.
@@ -185,7 +185,7 @@ curl http://localhost:11434/api/tags
 ollama list | grep qwen3-coder
 
 # Rebuild release binary
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 ### Test Fails: "Connection refused"
@@ -213,7 +213,7 @@ sleep(Duration::from_secs(40)).await;
 **Debug**:
 ```bash
 # Run with RUST_LOG to see LLM responses
-RUST_LOG=debug cargo test --test toolcall_web_search_integration_test \
+RUST_LOG=debug ./cargo-isolated.sh test --test toolcall_web_search_integration_test \
     test_htcpcp_tea_accepts_message_teapot -- --ignored --nocapture
 ```
 

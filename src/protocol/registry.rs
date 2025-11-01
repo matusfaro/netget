@@ -88,6 +88,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "imap")]
         self.register(Arc::new(crate::server::ImapProtocol::new()));
 
+        #[cfg(feature = "mqtt")]
+        self.register(Arc::new(crate::server::MqttProtocol::new()));
+
         #[cfg(feature = "mdns")]
         self.register(Arc::new(crate::server::MdnsProtocol::new()));
 
@@ -154,6 +157,16 @@ impl ProtocolRegistry {
         #[cfg(feature = "dynamo")]
         self.register(
             Arc::new(crate::server::DynamoProtocol::new()),
+        );
+
+        #[cfg(feature = "s3")]
+        self.register(
+            Arc::new(crate::server::S3Protocol::new()),
+        );
+
+        #[cfg(feature = "sqs")]
+        self.register(
+            Arc::new(crate::server::SqsProtocol::new()),
         );
 
         #[cfg(feature = "elasticsearch")]
@@ -233,6 +246,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "grpc")]
         self.register(Arc::new(crate::server::GrpcProtocol::new()));
 
+        #[cfg(feature = "etcd")]
+        self.register(Arc::new(crate::server::EtcdProtocol::new()));
+
         #[cfg(feature = "tor-directory")]
         self.register(
             Arc::new(crate::server::TorDirectoryProtocol::new()),
@@ -250,6 +266,12 @@ impl ProtocolRegistry {
         self.register(
             Arc::new(crate::server::OpenApiProtocol::new()),
         );
+
+        #[cfg(feature = "git")]
+        self.register(Arc::new(crate::server::GitProtocol::new()));
+
+        #[cfg(feature = "kafka")]
+        self.register(Arc::new(crate::server::KafkaProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

@@ -292,13 +292,13 @@ Once infrastructure is fixed, confidence levels should be assessed based on:
 ### Environment Setup
 ```bash
 # Build release binary with all features (REQUIRED)
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run unit tests (currently working)
-cargo test --lib
+./cargo-isolated.sh test --lib
 
 # Run E2E tests (currently blocked)
-cargo test --features e2e-tests --test server
+./cargo-isolated.sh test --features e2e-tests --test server
 ```
 
 ### Known Constraints

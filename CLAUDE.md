@@ -297,11 +297,11 @@ tests/
 
 **Running tests**:
 ```bash
-cargo test --lib                                              # Unit tests
-cargo test --features e2e-tests --test server::tcp::e2e_test  # TCP E2E tests
-cargo test --features e2e-tests --test server::http::e2e_test # HTTP E2E tests
-cargo test --features e2e-tests --test server::ssh::e2e_test  # SSH E2E tests
-cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2E tests
+./cargo-isolated.sh test --lib                                              # Unit tests
+./cargo-isolated.sh test --features e2e-tests --test server::tcp::e2e_test  # TCP E2E tests
+./cargo-isolated.sh test --features e2e-tests --test server::http::e2e_test # HTTP E2E tests
+./cargo-isolated.sh test --features e2e-tests --test server::ssh::e2e_test  # SSH E2E tests
+./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2E tests
 ```
 
 **IMPORTANT - Protocol-Specific Testing**:
@@ -310,10 +310,10 @@ cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2
 - Running all tests can take 30+ minutes
 - **Always use protocol-specific test command**:
   ```bash
-  cargo test --features e2e-tests,<protocol> --test server::<protocol>::e2e_test
+  ./cargo-isolated.sh test --features e2e-tests,<protocol> --test server::<protocol>::e2e_test
   ```
-- Example for SSH: `cargo test --features e2e-tests,ssh --test server::ssh::e2e_test`
-- Example for HTTP Proxy: `cargo test --features e2e-tests,proxy --test server::proxy::e2e_test`
+- Example for SSH: `./cargo-isolated.sh test --features e2e-tests,ssh --test server::ssh::e2e_test`
+- Example for HTTP Proxy: `./cargo-isolated.sh test --features e2e-tests,proxy --test server::proxy::e2e_test`
 
 ### E2E Test Performance
 
@@ -323,15 +323,15 @@ cargo test --features e2e-tests,proxy --test server::proxy::e2e_test  # Proxy E2
 - **Tests can run concurrently** (Ollama lock enabled by default in tests)
 - The `--ollama-lock` flag serializes LLM API access, preventing overload
 - Each test runs in isolation with dynamic port allocation
-- Example: `cargo test --features e2e-tests --test server::http::e2e_test`
+- Example: `./cargo-isolated.sh test --features e2e-tests --test server::http::e2e_test`
 - See "Multi-Instance Concurrency Support" section for details
 
 **Critical setup requirement**:
 - **MUST build release binary with all features before running tests**:
   ```bash
-  cargo build --release --all-features
+  ./cargo-isolated.sh build --release --all-features
   ```
-- E2E tests spawn the release binary from `target/release/netget`
+- E2E tests spawn the release binary from session-specific `target-claude/claude-$$/release/netget`
 - If the binary wasn't built with all features, protocol tests will fail
 - Symptom: Server starts as TCP stack instead of protocol-specific stack
 
@@ -409,7 +409,7 @@ This policy ensures NetGet respects user privacy and works in isolated/air-gappe
 netget --ollama-lock "listen on port 80 via http"
 
 # Run E2E tests concurrently (locking enabled by default in tests)
-cargo test --features e2e-tests --test server::http::e2e_test
+./cargo-isolated.sh test --features e2e-tests --test server::http::e2e_test
 ```
 
 ### E2E Test Concurrency
@@ -419,10 +419,10 @@ cargo test --features e2e-tests --test server::http::e2e_test
 **Running tests in parallel**:
 ```bash
 # Run all protocol tests concurrently (uses available CPU cores)
-cargo test --features e2e-tests
+./cargo-isolated.sh test --features e2e-tests
 
 # Run specific protocol tests concurrently
-cargo test --features e2e-tests,http,tcp,ssh
+./cargo-isolated.sh test --features e2e-tests,http,tcp,ssh
 
 # Disable locking for serial execution (legacy behavior)
 # Not recommended - modify ServerConfig::new() to set ollama_lock: false
@@ -470,34 +470,38 @@ Test infrastructure automatically uses process-specific temp file names:
 
 ### Build Directory Management for Multiple Claude Instances
 
-**IMPORTANT**: When running multiple Claude instances, each MUST use a separate build directory.
+**CRITICAL**: When running multiple Claude instances, each MUST use a separate build directory to avoid build conflicts.
 
-**At session start**, run once:
+**Solution**: Use the `cargo-isolated.sh` wrapper script for ALL cargo commands.
+
+**Usage**:
 ```bash
-export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
+# Instead of: ./cargo-isolated.sh build --release --all-features
+./cargo-isolated.sh build --release --all-features
+
+# Instead of: ./cargo-isolated.sh test --features e2e-tests
+./cargo-isolated.sh test --features e2e-tests
+
+# Instead of: ./cargo-isolated.sh check
+./cargo-isolated.sh check
 ```
 
-**Alternative - Automatic Setup**:
-Add to `~/.bashrc`/`~/.zshrc`:
-```bash
-if [[ "$PWD" == *"/netget"* ]] && [ -f "Cargo.toml" ]; then
-  export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
-fi
-```
+**How it works**:
+- Script automatically sets `CARGO_TARGET_DIR` to `target-claude/claude-$$` (uses shell PID)
+- **Session-level isolation**: All cargo commands in the same terminal session share one build directory
+- **Cross-session isolation**: Different terminal sessions (different Claude instances) get separate directories
+- No manual environment variable setup required
+- Example: Terminal session with PID 12345 uses `target-claude/claude-12345/`
 
-Or use `.envrc` (direnv):
-```bash
-export CARGO_TARGET_DIR="$(pwd)/target-claude/claude-$$"
-```
+**IMPORTANT**: Always use `./cargo-isolated.sh` instead of direct `cargo` commands in this codebase.
 
 **Cleanup** (builds accumulate ~2-5 GB each):
 ```bash
-# Recommended: alias in ~/.bashrc or ~/.zshrc
-alias cargo-clean-all='cargo clean && rm -rf target-claude/'
+# Remove all isolated build directories
+rm -rf target-claude/
 
-# Or manual cleanup
-rm -rf target-claude/  # Safe, rebuilds on next compile
-find target-claude/ -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;  # Old builds
+# Remove old builds (10+ days)
+find target-claude/ -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
 ```
 
 ## Logging (CRITICAL)
@@ -719,8 +723,8 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
   - Target < 10 total LLM calls for entire suite
   - Use scripting mode when protocol supports it
   - Consolidate test cases
-- **Before running**: `cargo build --release --all-features`
-- **Run**: `cargo test --features e2e-tests --test server::<protocol>::e2e_test`
+- **Before running**: `./cargo-isolated.sh build --release --all-features`
+- **Run**: `./cargo-isolated.sh test --features e2e-tests --test server::<protocol>::e2e_test`
 
 ### 11. Test Documentation (`tests/server/<protocol>/CLAUDE.md`) - **MANDATORY**
 - **Location**: `tests/server/<protocol>/CLAUDE.md`
@@ -758,6 +762,33 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Forgetting to update base_stack.rs parsing
 - Not creating tests/server/<protocol>/ directory structure
 - Not adding protocol to tests/server/mod.rs
+
+## Multi-Instance Collaboration (CRITICAL)
+
+**IMPORTANT**: When multiple Claude instances are working on the codebase simultaneously, follow these rules to avoid conflicts:
+
+### Compilation Error Protocol
+- **PAUSE and notify the user** if you encounter a compilation error in code you did not modify
+- **DO NOT attempt to fix** compilation errors in other parts of the codebase - another Claude instance may be working on it
+- **Exception**: Only fix errors in code sections you directly edited in the current session
+- Let the user coordinate between instances if conflicts arise
+
+### Shared File Editing (Cargo.toml, etc.)
+- **NEVER overwrite entire shared files** like `Cargo.toml`, `base_stack.rs`, `server/mod.rs`
+- **ALWAYS use Edit tool to patch changes** - insert/modify only your specific sections
+- **Check for concurrent edits** - if you see multiple recent changes in a shared file, use extra caution
+- **Examples of shared files requiring patching**:
+  - `Cargo.toml` - Multiple instances adding different protocol features/dependencies
+  - `src/protocol/base_stack.rs` - Multiple instances adding protocol variants
+  - `src/server/mod.rs` - Multiple instances adding module declarations
+  - `src/cli/server_startup.rs` - Multiple instances adding match arms
+  - `src/state/server.rs` - Multiple instances adding connection info variants
+
+### Collaboration Best Practices
+- Use `Edit` tool for surgical changes to shared files
+- Add your changes incrementally without removing others' work
+- If you see unfamiliar recent changes in a file, assume another instance made them
+- Focus on your assigned protocol/feature, avoid touching unrelated code
 
 ## Git Commit Instructions
 

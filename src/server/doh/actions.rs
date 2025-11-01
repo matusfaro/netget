@@ -135,4 +135,8 @@ impl Server for DohProtocol {
     fn example_prompt(&self) -> &'static str {
         "DNS-over-HTTPS server on port 443 resolving all queries to 93.184.216.34"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }

@@ -179,6 +179,10 @@ impl Server for SshProtocol {
     fn example_prompt(&self) -> &'static str {
         "Pretent to be a shell via SSH on port 2222"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl SshProtocol {

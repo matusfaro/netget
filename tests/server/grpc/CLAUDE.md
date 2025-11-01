@@ -166,16 +166,16 @@ Tests use **no scripting** (action-based mode) to ensure LLM interprets each req
 # Ubuntu: apt-get install protobuf-compiler
 
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run gRPC tests
-cargo test --features e2e-tests,grpc --test server::grpc::e2e_test
+./cargo-isolated.sh test --features e2e-tests,grpc --test server::grpc::e2e_test
 
 # Run specific test
-cargo test --features e2e-tests,grpc --test server::grpc::e2e_test test_grpc_unary_rpc_basic
+./cargo-isolated.sh test --features e2e-tests,grpc --test server::grpc::e2e_test test_grpc_unary_rpc_basic
 
 # Skip tests if protoc not available (tests auto-skip)
-cargo test --features e2e-tests,grpc --test server::grpc::e2e_test
+./cargo-isolated.sh test --features e2e-tests,grpc --test server::grpc::e2e_test
 ```
 
 ## Key Test Patterns

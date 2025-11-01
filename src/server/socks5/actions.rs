@@ -145,6 +145,10 @@ impl Server for Socks5Protocol {
             },
         ]
     }
+
+    fn group_name(&self) -> &'static str {
+        "Proxy & Network Protocols"
+    }
 }
 
 impl Socks5Protocol {

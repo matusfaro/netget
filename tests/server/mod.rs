@@ -18,8 +18,12 @@ pub mod doh;
 pub mod dynamo;
 #[cfg(feature = "elasticsearch")]
 pub mod elasticsearch;
+#[cfg(feature = "git")]
+pub mod git;
 #[cfg(feature = "grpc")]
 pub mod grpc;
+#[cfg(feature = "etcd")]
+pub mod etcd;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "imap")]
@@ -36,6 +40,8 @@ pub mod ldap;
 pub mod mcp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
 #[cfg(feature = "nfs")]
@@ -48,6 +54,8 @@ pub mod openai;
 pub mod openapi;
 #[cfg(feature = "jsonrpc")]
 pub mod jsonrpc;
+#[cfg(feature = "kafka")]
+pub mod kafka;
 #[cfg(feature = "openvpn")]
 pub mod openvpn;
 #[cfg(feature = "postgresql")]
@@ -64,6 +72,10 @@ pub mod smtp;
 pub mod snmp;
 #[cfg(feature = "socks5")]
 pub mod socks5;
+#[cfg(feature = "s3")]
+pub mod s3;
+#[cfg(feature = "sqs")]
+pub mod sqs;
 #[cfg(feature = "ssh")]
 pub mod ssh;
 #[cfg(feature = "stun")]

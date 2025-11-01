@@ -588,4 +588,8 @@ impl Server for ElasticsearchProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start an Elasticsearch server on port 9200"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Database Protocols"
+    }
 }

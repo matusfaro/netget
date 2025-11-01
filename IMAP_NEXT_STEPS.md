@@ -74,25 +74,25 @@ After the broken protocols are fixed:
 
 ### 1. Build the Release Binary
 ```bash
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 This will compile NetGet with all protocols including IMAP.
 
 ### 2. Run Unit Tests
 ```bash
-cargo test --lib test_parse_imap_stack
+./cargo-isolated.sh test --lib test_parse_imap_stack
 ```
 
 ### 3. Run E2E Tests
 ```bash
 # Run all IMAP E2E tests with parallelization
-cargo test --features e2e-tests --test e2e_imap_test -- --test-threads=3
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test -- --test-threads=3
 
 # Or run individual tests:
-cargo test --features e2e-tests --test e2e_imap_test test_imap_greeting
-cargo test --features e2e-tests --test e2e_imap_test test_imap_login
-cargo test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_greeting
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_login
+./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox
 ```
 
 **Expected Runtime**: ~35-50 seconds for the full suite with `--test-threads=3`
@@ -182,13 +182,13 @@ openssl s_client -connect localhost:993 -quiet
 
 After applying the patch and building:
 
-- [ ] `cargo build --release --all-features` completes without errors
-- [ ] `cargo test --lib test_parse_imap_stack` passes
-- [ ] `cargo test --features e2e-tests --test e2e_imap_test test_imap_greeting` passes
-- [ ] `cargo test --features e2e-tests --test e2e_imap_test test_imap_login` passes
-- [ ] `cargo test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox` passes
-- [ ] `cargo test --features e2e-tests --test e2e_imap_test test_imap_list_mailboxes` passes
-- [ ] `cargo test --features e2e-tests --test e2e_imap_test test_imap_fetch_message` passes
+- [ ] `./cargo-isolated.sh build --release --all-features` completes without errors
+- [ ] `./cargo-isolated.sh test --lib test_parse_imap_stack` passes
+- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_greeting` passes
+- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_login` passes
+- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_select_mailbox` passes
+- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_list_mailboxes` passes
+- [ ] `./cargo-isolated.sh test --features e2e-tests --test e2e_imap_test test_imap_fetch_message` passes
 - [ ] All 10 IMAP E2E tests pass
 - [ ] Manual telnet connection works
 - [ ] Real email client can connect
@@ -219,7 +219,7 @@ After applying the patch and building:
 
 **E2E tests fail to start server**
 - **Cause**: Release binary not built or built without features
-- **Fix**: Run `cargo build --release --all-features` first
+- **Fix**: Run `./cargo-isolated.sh build --release --all-features` first
 
 **E2E tests timeout**
 - **Cause**: LLM not responding or server not starting

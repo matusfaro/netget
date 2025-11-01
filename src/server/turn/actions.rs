@@ -101,6 +101,10 @@ impl Server for TurnProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a TURN relay server on port 3478 with 10 minute allocations"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Proxy & Network Protocols"
+    }
 }
 
 impl TurnProtocol {

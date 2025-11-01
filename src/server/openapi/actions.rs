@@ -361,4 +361,8 @@ impl Server for OpenApiProtocol {
             },
         ]
     }
+
+    fn group_name(&self) -> &'static str {
+        "AI & API Protocols"
+    }
 }

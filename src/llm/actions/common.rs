@@ -702,18 +702,19 @@ pub fn get_open_server_action_with_params(selected_mode: crate::state::app_state
     let mut base_action = open_server_action(selected_mode);
 
     // Use example that shows startup_params and scheduled_tasks usage
+    // NOTE: Example uses TCP to avoid biasing the LLM toward any specific application protocol
     base_action.example = json!({
         "type": "open_server",
         "port": 8080,
-        "base_stack": "http",
-        "instruction": "HTTP server with SSE support",
+        "base_stack": "tcp",
+        "instruction": "Echo server that returns all received data",
         "startup_params": {},
         "scheduled_tasks": [
             {
-                "task_id": "sse_heartbeat",
+                "task_id": "status_report",
                 "recurring": true,
                 "interval_secs": 30,
-                "instruction": "Send SSE heartbeat to all active connections"
+                "instruction": "Send status report to all active connections"
             },
             {
                 "task_id": "cleanup",

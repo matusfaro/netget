@@ -107,6 +107,10 @@ impl Server for DnsProtocol {
     fn example_prompt(&self) -> &'static str {
         "DNS server on port 53 and resolve everything to 93.184.216.34"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl DnsProtocol {

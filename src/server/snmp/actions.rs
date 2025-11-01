@@ -95,6 +95,10 @@ impl Server for SnmpProtocol {
     fn example_prompt(&self) -> &'static str {
         "SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Core Protocols"
+    }
 }
 
 impl SnmpProtocol {

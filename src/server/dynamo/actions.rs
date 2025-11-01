@@ -194,4 +194,8 @@ impl Server for DynamoProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a DynamoDB-compatible server on port 8000"
     }
+
+    fn group_name(&self) -> &'static str {
+        "Database Protocols"
+    }
 }

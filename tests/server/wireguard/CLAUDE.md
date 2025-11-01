@@ -178,7 +178,7 @@ assert!(has_wireguard, "Server output should contain WireGuard handshake detecti
 **Solution**: Tests focus on packet detection. Manual testing for full VPN:
 ```bash
 # Manual testing workflow (requires root):
-sudo cargo run --release --all-features -- "start wireguard vpn on port 51820"
+sudo ./cargo-isolated.sh run --release --all-features -- "start wireguard vpn on port 51820"
 
 # In separate terminal, configure WireGuard client:
 sudo wg-quick up /path/to/client.conf
@@ -210,20 +210,20 @@ sudo wg-quick up /path/to/client.conf
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 ### Run Tests
 
 ```bash
 # Run WireGuard E2E tests
-cargo test --features e2e-tests --test server::wireguard::e2e_test
+./cargo-isolated.sh test --features e2e-tests --test server::wireguard::e2e_test
 
 # Run with output
-cargo test --features e2e-tests --test server::wireguard::e2e_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests --test server::wireguard::e2e_test -- --nocapture
 
 # Run specific test
-cargo test --features e2e-tests --test server::wireguard::e2e_test -- test_wireguard_handshake_detection
+./cargo-isolated.sh test --features e2e-tests --test server::wireguard::e2e_test -- test_wireguard_handshake_detection
 ```
 
 ### Expected Output

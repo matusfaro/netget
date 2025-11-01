@@ -110,6 +110,10 @@ impl Server for JsonRpcProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a JSON-RPC 2.0 server on port 8000"
     }
+
+    fn group_name(&self) -> &'static str {
+        "AI & API Protocols"
+    }
 }
 
 impl JsonRpcProtocol {

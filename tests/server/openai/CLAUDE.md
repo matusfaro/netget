@@ -108,13 +108,13 @@ The hardcoded implementation eliminates most sources of flakiness found in LLM-d
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 
 # Run OpenAI tests
-cargo test --features e2e-tests --test server::openai::e2e_test
+./cargo-isolated.sh test --features e2e-tests --test server::openai::e2e_test
 
 # Run specific test
-cargo test --features e2e-tests --test server::openai::e2e_test test_openai_list_models
+./cargo-isolated.sh test --features e2e-tests --test server::openai::e2e_test test_openai_list_models
 ```
 
 ## Key Test Patterns

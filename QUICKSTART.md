@@ -19,7 +19,7 @@ ollama pull llama3.2:latest
 
 ```bash
 cd /Users/matus/dev/netget
-cargo build --release
+./cargo-isolated.sh build --release
 ```
 
 ## Running
@@ -33,7 +33,7 @@ ollama serve
 ### Start NetGet
 
 ```bash
-cargo run
+./cargo-isolated.sh run
 ```
 
 You'll see a full-screen terminal UI with 4 panels.
@@ -259,7 +259,7 @@ ollama_model: "llama3:70b".to_string(),
 Then rebuild:
 
 ```bash
-cargo build --release
+./cargo-isolated.sh build --release
 ```
 
 ### Custom Ollama URL
@@ -275,7 +275,7 @@ pub fn default() -> Self {
 ### Enable Debug Logging
 
 ```bash
-RUST_LOG=debug cargo run 2>debug.log
+RUST_LOG=debug ./cargo-isolated.sh run 2>debug.log
 ```
 
 ### Test with Real Clients
@@ -303,7 +303,7 @@ nc localhost 9000
 ## Example Session
 
 ```
-> cargo run
+> ./cargo-isolated.sh run
 
 [UI appears]
 

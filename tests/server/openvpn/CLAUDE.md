@@ -223,20 +223,20 @@ assert!(output.contains("OpenVPN") || output.contains("handshake"));
 
 ```bash
 # Build release binary with all features
-cargo build --release --all-features
+./cargo-isolated.sh build --release --all-features
 ```
 
 ### Run Tests
 
 ```bash
 # Run OpenVPN E2E tests
-cargo test --features e2e-tests --test server::openvpn::e2e_test
+./cargo-isolated.sh test --features e2e-tests --test server::openvpn::e2e_test
 
 # Run with output
-cargo test --features e2e-tests --test server::openvpn::e2e_test -- --nocapture
+./cargo-isolated.sh test --features e2e-tests --test server::openvpn::e2e_test -- --nocapture
 
 # Run specific test
-cargo test --features e2e-tests --test server::openvpn::e2e_test -- test_openvpn_handshake_detection_v2
+./cargo-isolated.sh test --features e2e-tests --test server::openvpn::e2e_test -- test_openvpn_handshake_detection_v2
 ```
 
 ### Expected Output

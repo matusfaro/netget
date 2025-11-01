@@ -120,8 +120,8 @@ Tests use **no scripting** to ensure LLM interprets OpenAPI operations.
 ## Test Execution
 
 ```bash
-cargo build --release --all-features
-cargo test --features e2e-tests,openapi --test server::openapi::e2e_test
+./cargo-isolated.sh build --release --all-features
+./cargo-isolated.sh test --features e2e-tests,openapi --test server::openapi::e2e_test
 ```
 
 ## Key Test Patterns

@@ -205,6 +205,10 @@ impl Server for GrpcProtocol {
     fn example_prompt(&self) -> &'static str {
         "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
     }
+
+    fn group_name(&self) -> &'static str {
+        "AI & API"
+    }
 }
 
 // ============================================================================

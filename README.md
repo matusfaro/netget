@@ -119,7 +119,7 @@ ollama pull llama3.2:latest
 ## Building
 
 ```bash
-cargo build --release
+./cargo-isolated.sh build --release
 ```
 
 ## Testing
@@ -128,7 +128,7 @@ NetGet has both **unit tests** and **integration tests**:
 
 ### Unit Tests (no Ollama required)
 ```bash
-cargo test --lib
+./cargo-isolated.sh test --lib
 ```
 
 ### Integration Tests (requires Ollama)
@@ -141,10 +141,10 @@ ollama serve
 ollama pull deepseek-coder:latest
 
 # In another terminal, run all tests
-cargo test
+./cargo-isolated.sh test
 
 # Or run only integration tests
-cargo test --test ftp_integration_test
+./cargo-isolated.sh test --test ftp_integration_test
 ```
 
 **Note**: Integration tests will fail if Ollama is not running. This is expected behavior.
@@ -158,16 +158,16 @@ See [`tests/README.md`](tests/README.md) for detailed testing documentation.
 ollama serve
 
 # Run NetGet interactively
-cargo run
+./cargo-isolated.sh run
 
 # Run with debug logging enabled
-cargo run -- --debug
+./cargo-isolated.sh run -- --debug
 
 # Pass a command directly (executes before entering TUI)
-cargo run -- "listen on port 21 via ftp"
+./cargo-isolated.sh run -- "listen on port 21 via ftp"
 
 # Combine flags
-cargo run -- --debug "listen on port 21 via ftp"
+./cargo-isolated.sh run -- --debug "listen on port 21 via ftp"
 ```
 
 ### UI Architecture
@@ -309,7 +309,7 @@ Prompts include:
 
 ```bash
 # Terminal 1: Start NetGet
-cargo run
+./cargo-isolated.sh run
 
 # Enter in NetGet UI:
 listen on port 2121 via ftp
@@ -434,7 +434,7 @@ By default, NetGet runs without logging to keep things clean. To enable debug lo
 netget --debug
 
 # Or with cargo
-cargo run -- --debug
+./cargo-isolated.sh run -- --debug
 ```
 
 Logs are written to `netget.log` in the current directory. This prevents log messages from garbling the TUI.
