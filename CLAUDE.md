@@ -545,6 +545,29 @@ cargo test
 
 **IMPORTANT**: Always use `./cargo-isolated.sh` instead of direct `cargo` commands in this codebase.
 
+**CRITICAL - Killing Build Processes Safely**:
+- **NEVER use `pkill cargo` or `killall cargo`** - This kills ALL cargo processes, including those from other Claude instances
+- **ALWAYS use the safe kill script** `./cargo-isolated-kill.sh` which only kills processes from YOUR session
+- The script detects your session-specific build directory and only terminates associated processes
+- Other Claude instances' builds will continue unaffected
+
+**Usage**:
+```bash
+# ✅ SAFE - Only kills processes from your session (target-claude/claude-$$)
+./cargo-isolated-kill.sh
+
+# ❌ DANGEROUS - Kills ALL cargo processes (breaks other Claude instances)
+pkill cargo
+killall cargo
+pkill rustc
+```
+
+**How it works**:
+- Finds cargo/rustc processes using your session's build directory path
+- Shows you which processes will be killed and asks for confirmation
+- Only terminates processes specific to `target-claude/claude-{your-shell-pid}/`
+- Safe to use even when multiple Claude instances are running
+
 **CRITICAL - Feature Flags for Fast Compilation**:
 - **ALWAYS use specific feature flags when working on a single protocol** to avoid compiling all protocols
 - Compiling with `--all-features` takes 1-2 minutes and compiles 40+ protocols
@@ -883,6 +906,12 @@ When creating new protocols in NetGet, ensure ALL of these steps are completed:
 - Add your changes incrementally without removing others' work
 - If you see unfamiliar recent changes in a file, assume another instance made them
 - Focus on your assigned protocol/feature, avoid touching unrelated code
+
+### Killing Build Processes (CRITICAL)
+- **NEVER use `pkill cargo`, `killall cargo`, or `pkill rustc`** - This terminates builds from ALL Claude instances
+- **ALWAYS use `./cargo-isolated-kill.sh`** - Safely kills only YOUR session's processes
+- The wrapper script uses your shell PID to target only processes from `target-claude/claude-{your-pid}/`
+- See "Build Directory Management" section for detailed usage
 
 ## Git Commit Instructions
 
