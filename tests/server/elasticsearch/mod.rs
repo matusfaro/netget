@@ -1,2 +1,2 @@
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "elasticsearch"))]
 pub mod e2e_test;

@@ -3,7 +3,7 @@
 //! These tests validate that the LLM can create and execute scheduled tasks
 //! (both one-shot and recurring) in the context of an HTTP server.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "http")]
 
 use super::super::super::helpers::{self, ServerConfig, E2EResult};
 use std::time::Duration;

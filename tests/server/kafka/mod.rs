@@ -1,4 +1,4 @@
 //! Kafka protocol E2E tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "kafka"))]
 pub mod e2e_test;

@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with NTP prompts
 //! and validate the responses using the rsntp client library.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "ntp")]
 
 // Helper module imported from parent
 

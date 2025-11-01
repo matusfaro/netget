@@ -1,4 +1,4 @@
 //! S3 protocol tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "s3"))]
 pub mod e2e_test;

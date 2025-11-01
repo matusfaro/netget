@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with JSON-RPC prompts
 //! and validate the responses using HTTP clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "jsonrpc")]
 
 use crate::server::helpers::{self, ServerConfig, E2EResult};
 use serde_json::{json, Value};

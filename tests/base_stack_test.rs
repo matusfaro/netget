@@ -1,6 +1,7 @@
 use netget::protocol::registry::registry;
 
 #[test]
+#[cfg(feature = "http")]
 fn test_parse_http_stack() {
     assert_eq!(registry().parse_from_str("http stack"), Some("HTTP".to_string()));
     assert_eq!(registry().parse_from_str("http server"), Some("HTTP".to_string()));
@@ -8,6 +9,7 @@ fn test_parse_http_stack() {
 }
 
 #[test]
+#[cfg(feature = "tcp")]
 fn test_parse_tcp_stack() {
     assert_eq!(registry().parse_from_str("tcp"), Some("TCP".to_string()));
     assert_eq!(registry().parse_from_str("raw tcp"), Some("TCP".to_string()));
@@ -15,12 +17,14 @@ fn test_parse_tcp_stack() {
 }
 
 #[test]
+#[cfg(feature = "udp")]
 fn test_parse_udp_stack() {
     assert_eq!(registry().parse_from_str("udp"), Some("UDP".to_string()));
     assert_eq!(registry().parse_from_str("via udp"), Some("UDP".to_string()));
 }
 
 #[test]
+#[cfg(feature = "dns")]
 fn test_parse_dns_stack() {
     assert_eq!(registry().parse_from_str("dns"), Some("DNS".to_string()));
     assert_eq!(registry().parse_from_str("via dns"), Some("DNS".to_string()));
@@ -28,24 +32,28 @@ fn test_parse_dns_stack() {
 }
 
 #[test]
+#[cfg(feature = "dhcp")]
 fn test_parse_dhcp_stack() {
     assert_eq!(registry().parse_from_str("dhcp"), Some("DHCP".to_string()));
     assert_eq!(registry().parse_from_str("dhcp server"), Some("DHCP".to_string()));
 }
 
 #[test]
+#[cfg(feature = "ntp")]
 fn test_parse_ntp_stack() {
     assert_eq!(registry().parse_from_str("ntp"), Some("NTP".to_string()));
     assert_eq!(registry().parse_from_str("time server"), Some("NTP".to_string()));
 }
 
 #[test]
+#[cfg(feature = "snmp")]
 fn test_parse_snmp_stack() {
     assert_eq!(registry().parse_from_str("snmp"), Some("SNMP".to_string()));
     assert_eq!(registry().parse_from_str("snmp agent"), Some("SNMP".to_string()));
 }
 
 #[test]
+#[cfg(feature = "ssh")]
 fn test_parse_ssh_stack() {
     assert_eq!(registry().parse_from_str("ssh"), Some("SSH".to_string()));
     assert_eq!(registry().parse_from_str("ssh server"), Some("SSH".to_string()));
@@ -53,6 +61,7 @@ fn test_parse_ssh_stack() {
 }
 
 #[test]
+#[cfg(feature = "irc")]
 fn test_parse_irc_stack() {
     assert_eq!(registry().parse_from_str("irc"), Some("IRC".to_string()));
     assert_eq!(registry().parse_from_str("chat server"), Some("IRC".to_string()));
@@ -60,6 +69,7 @@ fn test_parse_irc_stack() {
 }
 
 #[test]
+#[cfg(feature = "telnet")]
 fn test_parse_telnet_stack() {
     assert_eq!(registry().parse_from_str("telnet"), Some("Telnet".to_string()));
     assert_eq!(
@@ -69,6 +79,7 @@ fn test_parse_telnet_stack() {
 }
 
 #[test]
+#[cfg(feature = "smtp")]
 fn test_parse_smtp_stack() {
     assert_eq!(registry().parse_from_str("smtp"), Some("SMTP".to_string()));
     assert_eq!(registry().parse_from_str("mail server"), Some("SMTP".to_string()));
@@ -76,6 +87,7 @@ fn test_parse_smtp_stack() {
 }
 
 #[test]
+#[cfg(feature = "mdns")]
 fn test_parse_mdns_stack() {
     assert_eq!(registry().parse_from_str("mdns"), Some("mDNS".to_string()));
     assert_eq!(registry().parse_from_str("bonjour"), Some("mDNS".to_string()));
@@ -83,6 +95,7 @@ fn test_parse_mdns_stack() {
 }
 
 #[test]
+#[cfg(feature = "proxy")]
 fn test_parse_proxy_stack() {
     assert_eq!(registry().parse_from_str("proxy"), Some("Proxy".to_string()));
     assert_eq!(registry().parse_from_str("http proxy"), Some("Proxy".to_string()));
@@ -90,6 +103,7 @@ fn test_parse_proxy_stack() {
 }
 
 #[test]
+#[cfg(feature = "webdav")]
 fn test_parse_webdav_stack() {
     assert_eq!(registry().parse_from_str("webdav"), Some("WebDAV".to_string()));
     assert_eq!(registry().parse_from_str("dav server"), Some("WebDAV".to_string()));
@@ -97,6 +111,7 @@ fn test_parse_webdav_stack() {
 }
 
 #[test]
+#[cfg(feature = "nfs")]
 fn test_parse_nfs_stack() {
     assert_eq!(registry().parse_from_str("nfs"), Some("NFS".to_string()));
     assert_eq!(registry().parse_from_str("file server"), Some("NFS".to_string()));

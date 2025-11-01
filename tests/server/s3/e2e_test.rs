@@ -14,7 +14,7 @@ mod tests {
     use s3::region::Region;
 
     /// Helper to create S3 bucket client
-    fn create_s3_bucket(port: u16, bucket_name: &str) -> Bucket {
+    fn create_s3_bucket(port: u16, bucket_name: &str) -> Box<Bucket> {
         let endpoint = format!("http://127.0.0.1:{}", port);
         let region = Region::Custom {
             region: "us-east-1".to_string(),

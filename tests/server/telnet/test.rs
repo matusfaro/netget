@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with Telnet prompts
 //! and validate the responses using raw TCP clients.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "telnet")]
 
 // Helper module imported from parent
 

@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with SNMP prompts
 //! and validate the responses using the snmp Rust client library.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "snmp")]
 
 // Helper module imported from parent
 

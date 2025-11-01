@@ -3,7 +3,7 @@
 //! These tests spawn the actual NetGet binary with DataLink prompts.
 //! Note: DataLink tests require root/admin privileges for packet capture.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "datalink")]
 
 // Helper module imported from parent
 

@@ -1,2 +1,2 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "ssh"))]
 mod test;

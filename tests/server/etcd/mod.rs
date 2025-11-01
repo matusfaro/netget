@@ -1,4 +1,4 @@
 //! etcd E2E tests
 
-#[cfg(feature = "e2e-tests")]
+#[cfg(all(test, feature = "etcd"))]
 pub mod e2e_test;

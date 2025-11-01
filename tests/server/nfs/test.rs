@@ -16,7 +16,7 @@
 //!
 //! These tests validate server startup, connection handling, and basic NFS protocol.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "nfs")]
 
 // Helper module imported from parent
 

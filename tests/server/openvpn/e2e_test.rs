@@ -3,7 +3,7 @@
 //! These tests verify OpenVPN honeypot functionality by starting NetGet with OpenVPN prompts
 //! and sending crafted OpenVPN handshake packets to detect reconnaissance attempts.
 
-#![cfg(feature = "e2e-tests")]
+#![cfg(feature = "openvpn")]
 
 use crate::server::helpers::*;
 use std::net::{SocketAddr, UdpSocket};

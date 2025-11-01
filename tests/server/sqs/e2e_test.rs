@@ -77,7 +77,9 @@ Remember messages across operations: when a message is sent, it should be retrie
     let (child, port) = start_netget_non_interactive(config).await;
 
     // Wait for server to start
-    wait_for_server_startup(&child, "SQS", port).await;
+    wait_for_server_startup(&child, Duration::from_secs(30), "SQS")
+        .await
+        .expect("Server failed to start");
 
     // Configure AWS SDK to use local endpoint
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
@@ -155,19 +157,20 @@ Remember messages across operations: when a message is sent, it should be retrie
     );
 
     let receive_output = receive_result.unwrap();
+    let messages = receive_output.messages.unwrap_or_default();
     assert!(
-        !receive_output.messages.is_empty(),
+        !messages.is_empty(),
         "Should receive messages"
     );
     assert!(
-        receive_output.messages.len() <= 3,
+        messages.len() <= 3,
         "Should not exceed max messages"
     );
 
     sleep(Duration::from_millis(500)).await;
 
     // Test 4: DeleteMessage (delete first message)
-    if let Some(first_message) = receive_output.messages.first() {
+    if let Some(first_message) = messages.first() {
         let receipt_handle = first_message.receipt_handle.as_ref().unwrap();
 
         let delete_result = client
@@ -238,7 +241,9 @@ Remember: Once a message is received, it should not appear in subsequent Receive
     let config = ServerConfig::new(prompt);
     let (child, port) = start_netget_non_interactive(config).await;
 
-    wait_for_server_startup(&child, "SQS", port).await;
+    wait_for_server_startup(&child, Duration::from_secs(30), "SQS")
+        .await
+        .expect("Server failed to start");
 
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
         .endpoint_url(format!("http://127.0.0.1:{}", port))
@@ -281,7 +286,7 @@ Remember: Once a message is received, it should not appear in subsequent Receive
         .send()
         .await;
     assert!(receive1.is_ok());
-    let messages1 = receive1.unwrap().messages;
+    let messages1 = receive1.unwrap().messages.unwrap_or_default();
     assert_eq!(messages1.len(), 1, "Should receive one message");
 
     let receipt_handle = messages1[0].receipt_handle.as_ref().unwrap();
@@ -296,7 +301,7 @@ Remember: Once a message is received, it should not appear in subsequent Receive
         .send()
         .await;
     assert!(receive2.is_ok());
-    let messages2 = receive2.unwrap().messages;
+    let messages2 = receive2.unwrap().messages.unwrap_or_default();
     // Note: This test may be flaky depending on LLM understanding of visibility timeout
 
     sleep(Duration::from_millis(500)).await;
@@ -339,7 +344,9 @@ Do not create any queues automatically - all queues must be explicitly created v
     let config = ServerConfig::new(prompt);
     let (child, port) = start_netget_non_interactive(config).await;
 
-    wait_for_server_startup(&child, "SQS", port).await;
+    wait_for_server_startup(&child, Duration::from_secs(30), "SQS")
+        .await
+        .expect("Server failed to start");
 
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
         .endpoint_url(format!("http://127.0.0.1:{}", port))
