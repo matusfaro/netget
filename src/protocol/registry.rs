@@ -4,7 +4,7 @@
 //! to their protocol implementations. It enables trait-based protocol lookup
 //! and keyword-based parsing.
 
-use super::metadata::ProtocolMetadata;
+use super::metadata::ProtocolMetadataV2;
 use crate::llm::actions::Server;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -249,12 +249,12 @@ impl ProtocolRegistry {
         #[cfg(feature = "etcd")]
         self.register(Arc::new(crate::server::EtcdProtocol::new()));
 
-        #[cfg(feature = "tor-directory")]
+        #[cfg(feature = "tor")]
         self.register(
             Arc::new(crate::server::TorDirectoryProtocol::new()),
         );
 
-        #[cfg(feature = "tor-relay")]
+        #[cfg(feature = "tor")]
         self.register(
             Arc::new(crate::server::TorRelayProtocol::new()),
         );
@@ -477,7 +477,7 @@ impl ProtocolRegistry {
     }
 
     /// Get metadata for a protocol by name
-    pub fn metadata(&self, protocol_name: &str) -> Option<ProtocolMetadata> {
+    pub fn metadata(&self, protocol_name: &str) -> Option<ProtocolMetadataV2> {
         self.get(protocol_name).map(|p| p.metadata())
     }
 

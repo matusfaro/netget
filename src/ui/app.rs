@@ -25,7 +25,7 @@ pub enum LogLevel {
 
 impl Default for LogLevel {
     fn default() -> Self {
-        LogLevel::Info
+        LogLevel::Trace
     }
 }
 
@@ -34,9 +34,9 @@ impl LogLevel {
         match s.to_lowercase().as_str() {
             "error" => Some(LogLevel::Error),
             "warn" => Some(LogLevel::Warn),
-            "info" => Some(LogLevel::Info),
+            "info" | "transactional" => Some(LogLevel::Info),
             "debug" => Some(LogLevel::Debug),
-            "trace" => Some(LogLevel::Trace),
+            "trace" | "verbose" => Some(LogLevel::Trace),
             _ => None,
         }
     }
@@ -45,20 +45,21 @@ impl LogLevel {
         match self {
             LogLevel::Error => "ERROR",
             LogLevel::Warn => "WARN",
-            LogLevel::Info => "INFO",
+            LogLevel::Info => "TRANSACTIONAL",
             LogLevel::Debug => "DEBUG",
-            LogLevel::Trace => "TRACE",
+            LogLevel::Trace => "VERBOSE",
         }
     }
 
-    /// Cycle to the next log level
+    /// Cycle to the next log level (only cycles through main 3 levels)
     pub fn cycle(&self) -> Self {
         match self {
-            LogLevel::Error => LogLevel::Warn,
-            LogLevel::Warn => LogLevel::Info,
-            LogLevel::Info => LogLevel::Debug,
-            LogLevel::Debug => LogLevel::Trace,
+            LogLevel::Error => LogLevel::Info,
+            LogLevel::Info => LogLevel::Trace,
             LogLevel::Trace => LogLevel::Error,
+            // If currently on granular levels (set via CLI/slash), cycle to next main level
+            LogLevel::Warn => LogLevel::Info,
+            LogLevel::Debug => LogLevel::Trace,
         }
     }
 
@@ -69,7 +70,7 @@ impl LogLevel {
             LogLevel::Warn => crossterm::style::Color::Yellow,
             LogLevel::Info => crossterm::style::Color::Blue,
             LogLevel::Debug => crossterm::style::Color::Cyan,
-            LogLevel::Trace => crossterm::style::Color::DarkGrey,
+            LogLevel::Trace => crossterm::style::Color::White,
         }
     }
 }
@@ -137,6 +138,8 @@ pub struct App {
     pub next_global_connection_id: u32,
     /// Mapping from network ConnectionId to global UI ID
     pub connection_id_map: std::collections::HashMap<String, u32>,
+    /// System capabilities (for privilege warnings in status bar)
+    pub system_capabilities: crate::privilege::SystemCapabilities,
 }
 
 impl Default for App {
@@ -147,18 +150,29 @@ impl Default for App {
             history_temp_input: None,
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
-            log_level: LogLevel::Info, // Interactive mode defaults to INFO
+            log_level: LogLevel::default(), // Defaults to VERBOSE
             slash_suggestions: Vec::new(),
             servers: Vec::new(),
             connections: Vec::new(),
             expand_all_connections: false,
             next_global_connection_id: 1,
             connection_id_map: std::collections::HashMap::new(),
+            system_capabilities: crate::privilege::SystemCapabilities::detect(),
         }
     }
 }
 
 impl App {
+    /// Create a new App with system capabilities (loads history from ~/.netget_history)
+    pub fn new(system_capabilities: crate::privilege::SystemCapabilities) -> Self {
+        let mut app = Self {
+            system_capabilities,
+            ..Default::default()
+        };
+        app.command_history = Self::load_history();
+        app
+    }
+
     /// Get the path to the history file
     fn history_file_path() -> Option<PathBuf> {
         dirs::home_dir().map(|mut path| {
@@ -252,13 +266,6 @@ impl App {
         Ok(())
     }
 
-    /// Create a new App instance (loads history from ~/.netget_history)
-    pub fn new() -> Self {
-        let mut app = Self::default();
-        app.command_history = Self::load_history();
-        app
-    }
-
     /// Add command to history (deduplicates)
     pub fn add_to_history(&mut self, command: String) {
         if !command.trim().is_empty()
@@ -298,7 +305,7 @@ impl App {
         let all_commands = vec![
             "/exit - Exit the application",
             "/model [<name>] - List/select a model",
-            "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
+            "/log [<level>] - Show/set log level (VERBOSE=trace, TRANSACTIONAL=info, ERROR=error, or debug, warn)",
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
             "/web [on/off/ask] - Show/set web search mode",
             "/test_ask - Test web search approval prompt",

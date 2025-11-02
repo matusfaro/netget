@@ -1,6 +1,6 @@
 //! Script execution engine
 
-use super::types::{ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse};
+use super::types::{parse_script_response, ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse};
 use anyhow::{Context as AnyhowContext, Result};
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -85,17 +85,16 @@ pub fn execute_script(config: &ScriptConfig, input: &ScriptInput) -> Result<Scri
     trace!("─────────────────────────────────────────────");
 
     // Parse the response
-    let response = ScriptResponse::from_str(&output).with_context(|| {
+    let response = parse_script_response(&output).with_context(|| {
         format!(
-            "Failed to parse script response as JSON. Output was: {}",
+            "Failed to parse script response as JSON object with actions array. Output was: {}",
             output
         )
     })?;
 
     debug!(
-        "Script executed successfully: {} actions, fallback={}",
-        response.actions.len(),
-        response.fallback_to_llm
+        "Script executed successfully: {} actions",
+        response.actions.len()
     );
 
     Ok(response)

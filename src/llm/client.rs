@@ -12,6 +12,47 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
+/// Message in a conversation with role (system/user/assistant/tool)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+impl Message {
+    /// Create a system message
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create a user message
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create an assistant message
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create a tool message
+    pub fn tool(content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+        }
+    }
+}
+
 /// RAII guard for Ollama lock file
 ///
 /// Automatically releases the lock when dropped.
@@ -33,10 +74,6 @@ impl Drop for OllamaLockGuard {
 }
 
 /// Structured response from the LLM
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/llm_response.json
-/// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
@@ -115,10 +152,6 @@ impl LlmResponse {
 }
 
 /// Structured HTTP response from the LLM
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/http_response.json
-/// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HttpLlmResponse {
     /// HTTP status code
@@ -175,10 +208,32 @@ impl HttpLlmResponse {
     }
 }
 
+/// Chat API request
+#[derive(Debug, Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<Message>,
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
+}
+
+/// Chat API response
+#[derive(Debug, Deserialize)]
+struct ChatResponse {
+    message: Message,
+    #[allow(dead_code)]
+    done: bool,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    prompt_eval_count: Option<u64>,
+}
+
 /// Action types for command interpretation
 ///
 /// WARNING: If you modify this enum, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/command_interpretation.json
 /// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -212,10 +267,6 @@ pub enum CommandAction {
 }
 
 /// Structured response for command interpretation
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/command_interpretation.json
-/// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CommandInterpretation {
     /// List of actions to take
@@ -421,6 +472,94 @@ impl OllamaClient {
         debug!("Response: {}", response.response);
 
         Ok(response.response)
+    }
+
+    /// Chat completion using conversation messages
+    ///
+    /// Uses Ollama's /api/chat endpoint which supports conversation history.
+    ///
+    /// # Arguments
+    /// * `model` - Model name (e.g., "qwen3-coder:30b")
+    /// * `messages` - Conversation history with roles (system/user/assistant/tool)
+    /// * `format` - Optional JSON schema for structured outputs
+    ///
+    /// # Returns
+    /// * `Ok(String)` - The assistant's response content
+    pub async fn chat(
+        &self,
+        model: &str,
+        messages: Vec<Message>,
+        format: Option<serde_json::Value>,
+    ) -> Result<String> {
+        // Acquire Ollama lock if enabled (blocks until available)
+        let _lock_guard = self.acquire_ollama_lock()?;
+
+        // TEST-ONLY: Check for mock response environment variable
+        match std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
+            Ok(mock_response) => {
+                info!("🔧 TEST MODE: Using mock LLM response (length: {} chars)", mock_response.len());
+                debug!("Mock response: {}", mock_response);
+                return Ok(mock_response);
+            }
+            Err(_) => {
+                // Not in test mode, proceed normally
+            }
+        }
+
+        let url = format!("{}/api/chat", self.base_url);
+
+        debug!("Sending chat request to Ollama (model: {}, {} messages)", model, messages.len());
+        if let Some(ref schema) = format {
+            debug!("Using structured output with JSON schema");
+            debug!(
+                "Schema: {}",
+                serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
+            );
+        }
+        for (i, msg) in messages.iter().enumerate() {
+            debug!("Message {}: [{}] {}", i + 1, msg.role,
+                if msg.content.len() > 200 {
+                    format!("{}...", &msg.content[..200])
+                } else {
+                    msg.content.clone()
+                }
+            );
+        }
+
+        let request = ChatRequest {
+            model: model.to_string(),
+            messages,
+            stream: false,
+            format,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send chat request to Ollama")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            error!("Ollama chat request failed: {} - {}", status, text);
+            anyhow::bail!("Ollama chat request failed: {} - {}", status, text);
+        }
+
+        let response: ChatResponse = response
+            .json()
+            .await
+            .context("Failed to parse Ollama chat response")?;
+
+        info!(
+            "Received chat response from Ollama ({} tokens)",
+            response.eval_count.unwrap_or(0)
+        );
+        debug!("Response: {}", response.message.content);
+
+        Ok(response.message.content)
     }
 
     /// Generate a structured LlmResponse for data/connection events

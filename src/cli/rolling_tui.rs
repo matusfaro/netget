@@ -73,8 +73,9 @@ pub async fn run_rolling_tui(
         _ => (80, 24), // Default to 80x24 if size detection fails or returns 0
     };
 
-    // Create sticky footer
-    let mut footer = StickyFooter::new(width, height)?;
+    // Create sticky footer with system capabilities
+    let system_capabilities = state.get_system_capabilities().await;
+    let mut footer = StickyFooter::new(width, height, system_capabilities)?;
     let scroll_height = footer.scroll_region_height();
     let footer_height = height.saturating_sub(scroll_height);
 
@@ -344,13 +345,60 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             Print(line.strip_prefix("[DEBUG]").unwrap()),
         )?;
     } else if line.starts_with("[TRACE]") {
-        execute!(
-            stdout,
-            SetForegroundColor(Color::DarkGrey),
-            Print("· "),
-            Print(line.strip_prefix("[TRACE]").unwrap()),
-            ResetColor,
-        )?;
+        let content = line.strip_prefix("[TRACE]").unwrap();
+
+        // Special handling for LLM request/response/prompt headers and conversation messages
+        if content.trim_start().starts_with("LLM request:")
+            || content.trim_start().starts_with("LLM response")
+            || content.trim_start().starts_with("LLM prompt:")
+            || content.trim_start().starts_with("JSON schema:")
+            || content.trim_start().starts_with("Initial conversation:")
+            || content.trim_start().starts_with("Conversation updated:")
+        {
+            // LLM headers: grey bullet, grey text
+            execute!(
+                stdout,
+                SetForegroundColor(Color::DarkGrey),
+                Print("· "),
+                Print(content),
+                ResetColor,
+            )?;
+        } else if content.trim_start().starts_with("Message ") {
+            // Conversation messages: split at colon to show prefix in white, content in grey
+            if let Some(colon_pos) = content.find(':') {
+                let prefix = &content[..=colon_pos]; // Include the colon
+                let message_content = &content[colon_pos + 1..];
+                execute!(
+                    stdout,
+                    SetForegroundColor(Color::DarkGrey),
+                    Print("· "),
+                    ResetColor,
+                    Print(prefix),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(message_content),
+                    ResetColor,
+                )?;
+            } else {
+                // No colon found, just print normally
+                execute!(
+                    stdout,
+                    SetForegroundColor(Color::DarkGrey),
+                    Print("· "),
+                    ResetColor,
+                    Print(content),
+                )?;
+            }
+        } else {
+            // For all other TRACE content (including multi-line LLM output), keep grey
+            execute!(
+                stdout,
+                SetForegroundColor(Color::DarkGrey),
+                Print("· "),
+                Print(content),
+                ResetColor,
+            )?;
+        }
+
     } else if line.starts_with("[USER]") {
         execute!(
             stdout,
@@ -751,26 +799,29 @@ async fn handle_key_event(
             return Ok(true);
         }
 
-        // Ctrl+E to cycle scripting environment
+        // Ctrl+E to toggle scripting ON/OFF
         KeyCode::Char('e') | KeyCode::Char('E') if modifiers.contains(KeyModifiers::CONTROL) => {
             let (new_mode, switched) = state.cycle_scripting_mode().await;
 
             if switched {
                 let message = match new_mode {
-                    crate::state::app_state::ScriptingMode::Llm => {
-                        "LLM will handle all requests directly"
+                    crate::state::app_state::ScriptingMode::On => {
+                        "Scripting enabled: LLM will choose runtime for each script"
+                    }
+                    crate::state::app_state::ScriptingMode::Off => {
+                        "Scripting disabled: LLM will handle all requests directly"
                     }
                     crate::state::app_state::ScriptingMode::Python => {
-                        "LLM will produce Python code to handle simple requests"
+                        "Scripting mode: Python (use /env to change)"
                     }
                     crate::state::app_state::ScriptingMode::JavaScript => {
-                        "LLM will produce JavaScript code to handle simple requests"
+                        "Scripting mode: JavaScript (use /env to change)"
                     }
                     crate::state::app_state::ScriptingMode::Go => {
-                        "LLM will produce Go code to handle simple requests"
+                        "Scripting mode: Go (use /env to change)"
                     }
                     crate::state::app_state::ScriptingMode::Perl => {
-                        "LLM will produce Perl code to handle simple requests"
+                        "Scripting mode: Perl (use /env to change)"
                     }
                 };
                 print_output_line(message, footer)?;
@@ -783,8 +834,6 @@ async fn handle_key_event(
 
                 update_ui_from_state(app, state, footer).await;
                 footer.render(&mut stdout())?;
-            } else {
-                print_output_line("No other scripting environments available (only LLM)", footer)?;
             }
 
             return Ok(false);
@@ -1088,7 +1137,8 @@ async fn handle_key_event(
                     UserCommand::ChangeScriptingEnv { env } => {
                         // Parse the scripting environment
                         let mode = match env.to_lowercase().as_str() {
-                            "llm" => Some(crate::state::app_state::ScriptingMode::Llm),
+                            "on" | "auto" => Some(crate::state::app_state::ScriptingMode::On),
+                            "off" | "llm" => Some(crate::state::app_state::ScriptingMode::Off),
                             "python" | "py" => Some(crate::state::app_state::ScriptingMode::Python),
                             "javascript" | "js" | "node" => Some(crate::state::app_state::ScriptingMode::JavaScript),
                             "go" | "golang" => Some(crate::state::app_state::ScriptingMode::Go),
@@ -1100,7 +1150,8 @@ async fn handle_key_event(
                             // Check if the environment is available
                             let scripting_env = state.get_scripting_env().await;
                             let available = match new_mode {
-                                crate::state::app_state::ScriptingMode::Llm => true,
+                                crate::state::app_state::ScriptingMode::On => true,
+                                crate::state::app_state::ScriptingMode::Off => true,
                                 crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
                                 crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
                                 crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
@@ -1110,8 +1161,11 @@ async fn handle_key_event(
                             if available {
                                 state.set_selected_scripting_mode(new_mode).await;
                                 let message = match new_mode {
-                                    crate::state::app_state::ScriptingMode::Llm => {
-                                        "Scripting environment set to: LLM (LLM will handle all requests directly)"
+                                    crate::state::app_state::ScriptingMode::On => {
+                                        "Scripting environment set to: ON (LLM will choose runtime for each script)"
+                                    }
+                                    crate::state::app_state::ScriptingMode::Off => {
+                                        "Scripting environment set to: OFF (LLM will handle all requests directly)"
                                     }
                                     crate::state::app_state::ScriptingMode::Python => {
                                         "Scripting environment set to: Python (LLM will produce Python code)"
@@ -1140,7 +1194,7 @@ async fn handle_key_event(
                                 print_output_line(&format!("{} environment is not available on this system", new_mode), footer)?;
                             }
                         } else {
-                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: llm, python, javascript, go, perl", env), footer)?;
+                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: on (auto), off (llm), python, javascript, go, perl", env), footer)?;
                         }
                     }
                     UserCommand::SetWebSearch { mode } => {

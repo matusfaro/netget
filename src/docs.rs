@@ -3,7 +3,7 @@
 //! Provides functionality to generate documentation for all protocols
 //! including their event types, actions, and parameters.
 
-use crate::protocol::{ProtocolMetadata, DevelopmentState};
+use crate::protocol::metadata::ProtocolState;
 
 /// ANSI color codes for terminal output
 mod colors {
@@ -84,18 +84,11 @@ pub fn list_all_protocols() -> String {
         groups.entry(group).or_insert_with(Vec::new).push(protocol_name.clone());
     }
 
-    // Sort groups by a predefined order
-    let group_order = vec![
-        "Core",
-        "Application",
-        "Database",
-        "Web & File",
-        "Proxy & Network",
-        "AI & API",
-        "Other"
-    ];
+    // Sort groups alphabetically
+    let mut sorted_group_names: Vec<&'static str> = groups.keys().copied().collect();
+    sorted_group_names.sort();
 
-    for group_name in group_order {
+    for group_name in sorted_group_names {
         if let Some(protocols) = groups.get(group_name) {
             if protocols.is_empty() {
                 continue;
@@ -119,30 +112,6 @@ pub fn list_all_protocols() -> String {
     output
 }
 
-/// Add a single protocol entry to the list
-fn add_protocol_entry(output: &mut String, protocol_name: &str, description: &str) {
-    let registry = crate::protocol::registry::registry();
-    let metadata = registry.metadata(protocol_name).unwrap_or(ProtocolMetadata::new(DevelopmentState::Alpha));
-    let stack_name = registry.stack_name_by_protocol(protocol_name).unwrap_or("UNKNOWN");
-
-    let (state_color, state_symbol, state_text) = match metadata.state {
-        DevelopmentState::Implemented => (colors::BRIGHT_GREEN, "✓", "Implemented"),
-        DevelopmentState::Beta => (colors::BRIGHT_YELLOW, "β", "Beta"),
-        DevelopmentState::Alpha => (colors::YELLOW, "α", "Alpha"),
-        DevelopmentState::Disabled => (colors::RED, "✗", "Disabled"),
-    };
-
-    output.push_str(&format!("{}•{} {}{}{} {}{} {}{} - {}{}{} {}[Stack: {}{}{}]{}\n",
-        colors::BLUE, colors::RESET,
-        colors::BOLD, protocol_name.to_lowercase(), colors::RESET,
-        state_color, state_symbol, state_text, colors::RESET,
-        colors::DIM, description, colors::RESET,
-        colors::GREY,
-        colors::GREEN, stack_name, colors::RESET,
-        colors::RESET
-    ));
-}
-
 /// Generate detailed documentation for a specific protocol
 pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
     let registry = crate::protocol::registry::registry();
@@ -152,7 +121,11 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{}Unknown protocol: {}{}. Use /docs to see all protocols.",
             colors::RED, protocol_name, colors::RESET))?;
 
-    let metadata = registry.metadata(&parsed_protocol_name).unwrap_or(ProtocolMetadata::new(DevelopmentState::Alpha));
+    let protocol = registry.get(&parsed_protocol_name)
+        .ok_or_else(|| format!("{}Protocol {} not found in registry{}",
+            colors::RED, parsed_protocol_name, colors::RESET))?;
+
+    let metadata = protocol.metadata();
     let stack_name = registry.stack_name_by_protocol(&parsed_protocol_name).unwrap_or("UNKNOWN");
 
     let mut output = String::new();
@@ -174,14 +147,35 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
 
     // Status badge with color
     let (status_color, status_symbol) = match metadata.state {
-        DevelopmentState::Implemented => (colors::BRIGHT_GREEN, "✓"),
-        DevelopmentState::Beta => (colors::BRIGHT_YELLOW, "β"),
-        DevelopmentState::Alpha => (colors::YELLOW, "α"),
-        DevelopmentState::Disabled => (colors::RED, "✗"),
+        ProtocolState::Stable => (colors::BRIGHT_GREEN, "✓"),
+        ProtocolState::Beta => (colors::BRIGHT_YELLOW, "β"),
+        ProtocolState::Experimental => (colors::YELLOW, "α"),
+        ProtocolState::Incomplete => (colors::RED, "✗"),
     };
     output.push_str(&format!("{}▸ Status:{} {}{} {}{}\n",
         colors::BRIGHT_CYAN, colors::RESET,
         status_color, status_symbol, metadata.state.as_str(), colors::RESET));
+
+    // Show implementation details
+    if !metadata.implementation.is_empty() {
+        output.push_str(&format!("{}▸ Implementation:{} {}{}{}\n",
+            colors::BRIGHT_CYAN, colors::RESET,
+            colors::DIM, metadata.implementation, colors::RESET));
+    }
+
+    // Show LLM control scope
+    if !metadata.llm_control.is_empty() {
+        output.push_str(&format!("{}▸ LLM Control:{} {}{}{}\n",
+            colors::BRIGHT_CYAN, colors::RESET,
+            colors::DIM, metadata.llm_control, colors::RESET));
+    }
+
+    // Show E2E testing approach
+    if !metadata.e2e_testing.is_empty() {
+        output.push_str(&format!("{}▸ E2E Testing:{} {}{}{}\n",
+            colors::BRIGHT_CYAN, colors::RESET,
+            colors::DIM, metadata.e2e_testing, colors::RESET));
+    }
 
     // Show notes if present
     if let Some(notes) = metadata.notes {
@@ -189,6 +183,24 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
             colors::BRIGHT_CYAN, colors::RESET,
             colors::YELLOW, notes, colors::RESET));
     }
+
+    // Show privilege requirement
+    use crate::protocol::metadata::PrivilegeRequirement;
+    let (priv_color, priv_text) = match &metadata.privilege_requirement {
+        PrivilegeRequirement::None => (colors::GREEN, "None".to_string()),
+        PrivilegeRequirement::PrivilegedPort(port) => {
+            (colors::YELLOW, format!("Privileged port {} (requires root or capabilities)", port))
+        }
+        PrivilegeRequirement::RawSockets => {
+            (colors::YELLOW, "Raw socket access (requires root or CAP_NET_RAW)".to_string())
+        }
+        PrivilegeRequirement::Root => {
+            (colors::RED, "Root/Administrator access required".to_string())
+        }
+    };
+    output.push_str(&format!("{}▸ Privilege Required:{} {}{}{}\n",
+        colors::BRIGHT_CYAN, colors::RESET,
+        priv_color, priv_text, colors::RESET));
 
     output.push_str(&format!("\n{}▸ Description:{}\n  {}{}{}\n\n",
         colors::BRIGHT_CYAN, colors::RESET,

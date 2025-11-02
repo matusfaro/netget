@@ -84,11 +84,11 @@ pub mod stun;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 pub mod tor_directory;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 pub mod tor_relay;
-#[cfg(all(feature = "tor-relay", feature = "tor-directory"))]
+#[cfg(feature = "tor")]
 pub mod tor_integration;
 #[cfg(feature = "turn")]
 pub mod turn;

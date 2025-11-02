@@ -192,10 +192,16 @@ impl Server for GrpcProtocol {
         vec!["grpc", "grpcserver", "protobuf"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("prost-reflect dynamic schema, tonic, hyper HTTP/2")
+            .llm_control("All RPC request/response handling, dynamic schema loading")
+            .e2e_testing("grpcurl / gRPC clients")
+            .notes("Unary RPCs only, no streaming, dynamic protobuf via prost-reflect")
+            .build()
     }
 
     fn description(&self) -> &'static str {

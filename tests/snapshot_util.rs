@@ -66,11 +66,3 @@ pub fn assert_snapshot(test_name: &str, snapshot_dir: &str, actual: &str) {
         let _ = fs::remove_file(&actual_path);
     }
 }
-/// Delete a snapshot file (useful for cleanup in tests)
-#[allow(dead_code)]
-pub fn delete_snapshot(test_name: &str, snapshot_dir: &str) {
-    let snapshot_path = format!("{}/{}.snap", snapshot_dir, test_name);
-    let actual_path = format!("{}/{}.actual.snap", snapshot_dir, test_name);
-    let _ = fs::remove_file(&snapshot_path);
-    let _ = fs::remove_file(&actual_path);
-}

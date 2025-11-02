@@ -381,10 +381,16 @@ impl Server for S3Protocol {
         vec!["s3", "object storage", "minio"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("hyper v1.5 HTTP with manual S3 REST API")
+            .llm_control("All S3 operations (GetObject, PutObject, ListBuckets)")
+            .e2e_testing("aws-sdk-s3 / rust-s3 client")
+            .notes("Virtual objects (no persistence)")
+            .build()
     }
 
     fn description(&self) -> &'static str {

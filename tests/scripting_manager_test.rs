@@ -40,6 +40,7 @@ fn test_extract_context_type_unknown() {
 fn test_build_config_python_inline() {
     let result = ScriptManager::build_config(
         ScriptingMode::Python,
+        None,
         Some("print('hello')"),
         Some(vec!["ssh_auth".to_string()]),
     );
@@ -57,7 +58,7 @@ fn test_build_config_python_inline() {
 #[test]
 fn test_build_config_no_language() {
     let result =
-        ScriptManager::build_config(ScriptingMode::Llm, Some("print('hello')"), None);
+        ScriptManager::build_config(ScriptingMode::Off, None, Some("print('hello')"), None);
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
@@ -66,7 +67,7 @@ fn test_build_config_no_language() {
 #[test]
 fn test_build_config_no_source() {
     let result =
-        ScriptManager::build_config(ScriptingMode::Python, None, Some(vec!["ssh_auth".to_string()]));
+        ScriptManager::build_config(ScriptingMode::Python, None, None, Some(vec!["ssh_auth".to_string()]));
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());

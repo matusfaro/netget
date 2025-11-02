@@ -1,8 +1,7 @@
 //! MQTT protocol action definitions and implementations
 
-use crate::llm::actions::{ActionDefinition, Server};
 use crate::llm::actions::protocol_trait::ActionResult;
-use crate::protocol::{metadata::ProtocolMetadata, metadata::DevelopmentState};
+use crate::llm::actions::{ActionDefinition, Server};
 use crate::state::app_state::AppState;
 use anyhow::Result;
 
@@ -37,11 +36,11 @@ impl Server for MqttProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![]  // No async actions for placeholder
+        vec![] // No async actions for placeholder
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]  // No sync actions for placeholder
+        vec![] // No sync actions for placeholder
     }
 
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -61,7 +60,7 @@ impl Server for MqttProtocol {
     }
 
     fn get_event_types(&self) -> Vec<crate::protocol::EventType> {
-        vec![]  // No events for placeholder
+        vec![] // No events for placeholder
     }
 
     fn stack_name(&self) -> &'static str {
@@ -72,11 +71,16 @@ impl Server for MqttProtocol {
         vec!["mqtt", "mosquitto", "iot messaging"]
     }
 
-    fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::with_notes(
-            DevelopmentState::Beta,
-            "Basic MQTT v3.1.1 broker. Accepts connections and handles CONNECT/CONNACK/PINGREQ/DISCONNECT packets.",
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("rumqttd or manual")
+            .llm_control("Pub/sub message routing")
+            .e2e_testing("rumqttc")
+            .notes("IoT messaging")
+            .build()
     }
 
     fn description(&self) -> &'static str {

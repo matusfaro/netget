@@ -6,6 +6,7 @@ use tracing::info;
 
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
+use crate::llm::actions::{get_all_tool_actions, get_user_input_common_actions};
 use crate::llm::OllamaClient;
 use crate::llm::{execute_actions, CommonAction, Server};
 use crate::state::app_state::{AppState, Mode};
@@ -172,7 +173,7 @@ impl EventHandler {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Option<Box<dyn Server + Send>>,
     ) -> Result<()> {
-        use crate::llm::PromptBuilder;
+        use crate::llm::{ConversationHandler, PromptBuilder};
 
         let _ = status_tx.send(format!("[INFO] Interpreting: {input}"));
 
@@ -188,71 +189,118 @@ impl EventHandler {
         // Create LLM client with status channel for trace logs
         let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());
 
-        // Use multi-turn loop with tools
-        let state_clone = self.state.clone();
-        let input_clone = input.clone();
-        let actions_clone = protocol_async_actions.clone();
-
         // Get web search mode and approval channel
         let web_search_mode = self.state.get_web_search_mode().await;
         let approval_tx = self.state.get_web_approval_channel().await;
 
-        let actions = llm_with_status
-            .generate_with_tools(
-                &model,
-                || {
-                    let state = state_clone.clone();
-                    let input = input_clone.clone();
-                    let protocol_actions = actions_clone.clone();
-                    async move {
-                        PromptBuilder::build_user_input_action_prompt(
-                            &state,
-                            &input,
-                            protocol_actions,
-                        )
-                        .await
-                    }
-                },
-                5, // max 5 iterations
-                approval_tx,
-                web_search_mode,
-            )
-            .await;
+        // Build system prompt (without user input - that's added as a message)
+        let system_prompt = PromptBuilder::build_user_input_system_prompt(
+            &self.state,
+            protocol_async_actions.clone(),
+        )
+        .await;
 
-        match actions {
-            Ok(action_values) => {
-                // Handle server management actions FIRST (they need to be executed before other actions)
-                for action_value in &action_values {
-                    if let Ok(common_action) = CommonAction::from_json(action_value) {
-                        if let Err(e) = self
-                            .execute_server_management_action(common_action, &status_tx)
-                            .await
-                        {
-                            let _ = status_tx
-                                .send(format!("[ERROR] Error executing action: {e}"));
+        // Get available actions for retry correction messages
+        let selected_mode = self.state.get_selected_scripting_mode().await;
+        let scripting_env = self.state.get_scripting_env().await;
+        let mut available_actions = get_user_input_common_actions(selected_mode, &scripting_env);
+        available_actions.extend(get_all_tool_actions(web_search_mode));
+        available_actions.extend(protocol_async_actions);
+
+        // Create conversation handler
+        let mut conversation = ConversationHandler::new(
+            system_prompt,
+            std::sync::Arc::new(llm_with_status),
+            model,
+        )
+        .with_status_tx(status_tx.clone());
+
+        // Add user input as a separate user message
+        conversation.add_user_message(input.clone());
+
+        // Retry loop for execution-time errors (e.g., port conflicts)
+        const MAX_EXECUTION_RETRIES: usize = 1;
+        let mut execution_attempts = 0;
+
+        loop {
+            // Generate actions with tool calling and retry
+            let actions = conversation
+                .generate_with_tools_and_retry(
+                    approval_tx.clone(),
+                    web_search_mode,
+                    available_actions.clone(),
+                )
+                .await;
+
+            match actions {
+                Ok(action_values) => {
+                    let mut should_retry = false;
+                    let mut retry_error: Option<crate::events::ActionExecutionError> = None;
+
+                    // Handle server management actions FIRST (they need to be executed before other actions)
+                    for action_value in &action_values {
+                        if let Ok(common_action) = CommonAction::from_json(action_value) {
+                            match self.execute_server_management_action(common_action, &status_tx).await {
+                                Ok(_) => {
+                                    // Action executed successfully
+                                }
+                                Err(e) if e.is_retryable() && execution_attempts < MAX_EXECUTION_RETRIES => {
+                                    // Retryable error (e.g., port conflict) - prepare to retry
+                                    should_retry = true;
+                                    retry_error = Some(e);
+                                    break; // Stop processing actions, we'll retry
+                                }
+                                Err(e) => {
+                                    // Non-retryable error or max retries exceeded
+                                    let _ = status_tx.send(format!("[ERROR] Error executing action: {e}"));
+                                }
+                            }
                         }
                     }
-                }
 
-                // Then execute all other actions (including append_to_log)
-                let protocol_ref: Option<&dyn Server> = protocol
-                    .as_ref()
-                    .map(|p| p.as_ref() as &dyn Server);
+                    // If we should retry, add error to conversation and retry
+                    if should_retry {
+                        if let Some(error) = retry_error {
+                            execution_attempts += 1;
+                            let _ = status_tx.send(format!(
+                                "[INFO] Execution error (attempt {}/{}), retrying with LLM feedback...",
+                                execution_attempts,
+                                MAX_EXECUTION_RETRIES + 1
+                            ));
 
-                match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
-                    Ok(result) => {
-                        // Display messages
-                        for msg in result.messages {
-                            let _ = status_tx.send(msg);
+                            // Add error correction to conversation
+                            let correction = error.build_correction_message();
+                            conversation.add_user_message(correction);
+
+                            // Continue loop to retry
+                            continue;
                         }
                     }
-                    Err(e) => {
-                        let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
+
+                    // Then execute all other actions (including append_to_log)
+                    let protocol_ref: Option<&dyn Server> = protocol
+                        .as_ref()
+                        .map(|p| p.as_ref() as &dyn Server);
+
+                    match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
+                        Ok(result) => {
+                            // Display messages
+                            for msg in result.messages {
+                                let _ = status_tx.send(msg);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
+                        }
                     }
+
+                    // Success - break out of retry loop
+                    break;
                 }
-            }
-            Err(e) => {
-                let _ = status_tx.send(format!("[ERROR] LLM error: {e}"));
+                Err(e) => {
+                    let _ = status_tx.send(format!("[ERROR] LLM error: {e}"));
+                    break; // LLM errors don't retry at this level
+                }
             }
         }
 
@@ -264,7 +312,7 @@ impl EventHandler {
         &mut self,
         action: CommonAction,
         status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<(), crate::events::ActionExecutionError> {
         match action {
             CommonAction::OpenServer {
                 port,
@@ -273,6 +321,7 @@ impl EventHandler {
                 initial_memory,
                 instruction,
                 startup_params,
+                runtime_choice,
                 script_language: _,
                 script_path: _,
                 script_inline,
@@ -312,6 +361,7 @@ impl EventHandler {
                     let selected_mode = self.state.get_selected_scripting_mode().await;
                     match crate::scripting::ScriptManager::build_config(
                         selected_mode,
+                        runtime_choice.as_deref(),
                         script_inline.as_deref(),
                         script_handles,
                     ) {
@@ -342,15 +392,23 @@ impl EventHandler {
                 ));
 
                 // Spawn the server directly (no more message passing!)
-                if let Err(e) =
-                    server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx)
-                        .await
-                {
-                    let _ = status_tx.send(format!(
-                        "[ERROR] Failed to start server #{}: {}",
-                        server_id.as_u32(),
-                        e
-                    ));
+                // Propagate port conflict errors for retry, but continue for other errors
+                match server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx).await {
+                    Ok(_) => {
+                        // Server started successfully
+                    }
+                    Err(e) if e.is_retryable() => {
+                        // Port conflict or other retryable error - propagate for retry
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        // Fatal error - log and continue (don't fail entire action execution)
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start server #{}: {}",
+                            server_id.as_u32(),
+                            e
+                        ));
+                    }
                 }
 
                 // Create tasks attached to this server if provided
@@ -481,6 +539,7 @@ impl EventHandler {
             CommonAction::UpdateScript {
                 server_id,
                 operation,
+                runtime_choice,
                 script_language: _,
                 script_path: _,
                 script_inline,
@@ -508,6 +567,7 @@ impl EventHandler {
                         let selected_mode = self.state.get_selected_scripting_mode().await;
                         match crate::scripting::ScriptManager::build_config(
                             selected_mode,
+                            runtime_choice.as_deref(),
                             script_inline.as_deref(),
                             script_handles,
                         ) {
@@ -604,6 +664,7 @@ impl EventHandler {
                 server_id,
                 instruction,
                 context,
+                runtime_choice,
                 script_language: _,
                 script_path: _,
                 script_inline,
@@ -650,6 +711,7 @@ impl EventHandler {
 
                 // TODO: Add script configuration support for standalone scheduled tasks
                 // For now, tasks use LLM by default. Script support will be added in a future iteration.
+                let _ = runtime_choice; // Silence unused variable warning
                 let _ = script_inline; // Silence unused variable warning
                 let _ = script_handles; // Silence unused variable warning
 

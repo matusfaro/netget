@@ -256,10 +256,16 @@ impl Server for LdapProtocol {
         vec!["ldap", "directory server"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual ASN.1 BER encoding/decoding")
+            .llm_control("Directory queries + authentication")
+            .e2e_testing("ldap3 client")
+            .notes("Lightweight directory")
+            .build()
     }
 
     fn description(&self) -> &'static str {

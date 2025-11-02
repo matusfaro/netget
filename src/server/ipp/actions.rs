@@ -100,10 +100,16 @@ impl Server for IppProtocol {
         vec!["ipp", "printer", "print"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual IPP binary parsing, hyper HTTP")
+            .llm_control("Printer attributes, job handling, IPP responses")
+            .e2e_testing("ipp-client / curl")
+            .notes("IPP/1.1 and 2.0, no CUPS extensions")
+            .build()
     }
 
     fn description(&self) -> &'static str {

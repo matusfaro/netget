@@ -420,10 +420,16 @@ impl Server for ImapProtocol {
         vec!["imap"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual IMAP4rev1 parsing")
+            .llm_control("Authentication + mailbox ops + FETCH")
+            .e2e_testing("async-imap client")
+            .notes("Session state machine, no persistence")
+            .build()
     }
 
     fn description(&self) -> &'static str {

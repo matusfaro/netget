@@ -4,7 +4,6 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
-use crate::protocol::metadata::{ProtocolMetadata, DevelopmentState};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -96,7 +95,8 @@ impl Server for OpenApiProtocol {
                 ctx.status_tx,
                 ctx.server_id,
                 ctx.startup_params,
-            ).await
+            )
+            .await
         })
     }
 
@@ -112,11 +112,16 @@ impl Server for OpenApiProtocol {
         vec!["openapi", "rest", "rest api", "api", "swagger"]
     }
 
-    fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::with_notes(
-            DevelopmentState::Alpha,
-            "OpenAPI 3.1 spec-driven HTTP server with runtime request validation"
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("openapi-rs parser, matchit router, hyper HTTP")
+            .llm_control("All API responses, spec compliance/violations")
+            .e2e_testing("reqwest HTTP client")
+            .notes("Dynamic spec loading, intentional violations for testing")
+            .build()
     }
 
     fn description(&self) -> &'static str {
@@ -249,23 +254,20 @@ impl Server for OpenApiProtocol {
             "send_openapi_response" => {
                 let status_code = action["status_code"]
                     .as_i64()
-                    .ok_or_else(|| anyhow!("Missing status_code parameter"))? as u16;
+                    .ok_or_else(|| anyhow!("Missing status_code parameter"))?
+                    as u16;
 
-                let headers = action["headers"]
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                let headers = action["headers"].as_object().cloned().unwrap_or_default();
 
-                let body = action["body"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let body = action["body"].as_str().unwrap_or("").to_string();
 
-                let spec_compliant = action["spec_compliant"]
-                    .as_bool()
-                    .unwrap_or(true);
+                let spec_compliant = action["spec_compliant"].as_bool().unwrap_or(true);
 
-                let compliance_status = if spec_compliant { "compliant" } else { "non-compliant (intentional)" };
+                let compliance_status = if spec_compliant {
+                    "compliant"
+                } else {
+                    "non-compliant (intentional)"
+                };
                 debug!(
                     "OpenAPI response: {} {} bytes, spec: {}",
                     status_code,
@@ -286,7 +288,8 @@ impl Server for OpenApiProtocol {
             "send_validation_error" => {
                 let status_code = action["status_code"]
                     .as_i64()
-                    .ok_or_else(|| anyhow!("Missing status_code parameter"))? as u16;
+                    .ok_or_else(|| anyhow!("Missing status_code parameter"))?
+                    as u16;
 
                 let message = action["message"]
                     .as_str()
@@ -326,7 +329,10 @@ impl Server for OpenApiProtocol {
                     .as_bool()
                     .ok_or_else(|| anyhow!("Missing llm_on_invalid parameter"))?;
 
-                debug!("OpenAPI error handling configured: llm_on_invalid={}", llm_on_invalid);
+                debug!(
+                    "OpenAPI error handling configured: llm_on_invalid={}",
+                    llm_on_invalid
+                );
 
                 Ok(ActionResult::Custom {
                     name: "configure_error_handling".to_string(),
@@ -348,9 +354,12 @@ impl Server for OpenApiProtocol {
             ParameterDefinition {
                 name: "spec".to_string(),
                 type_hint: "string".to_string(),
-                description: "OpenAPI 3.x specification in YAML or JSON format (inline)".to_string(),
+                description: "OpenAPI 3.x specification in YAML or JSON format (inline)"
+                    .to_string(),
                 required: false,
-                example: serde_json::json!("openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"),
+                example: serde_json::json!(
+                    "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
+                ),
             },
             ParameterDefinition {
                 name: "spec_file".to_string(),

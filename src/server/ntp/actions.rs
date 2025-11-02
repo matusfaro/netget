@@ -80,10 +80,17 @@ impl Server for NtpProtocol {
         vec!["ntp", "time"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(123))
+            .implementation("Manual 48-byte NTP packet construction")
+            .llm_control("Time responses (stratum, timestamps)")
+            .e2e_testing("Manual NTP packet construction")
+            .notes("Sub-ms with scripting, simple protocol")
+            .build()
     }
 
     fn description(&self) -> &'static str {

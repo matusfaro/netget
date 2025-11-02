@@ -8,16 +8,66 @@ use crate::llm::actions::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ollama_rs::generation::completion::request::GenerationRequest;
+use ollama_rs::generation::chat::request::ChatMessageRequest;
+use ollama_rs::generation::chat::{ChatMessage, MessageRole};
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
+/// Message in a conversation with role (system/user/assistant/tool)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+impl Message {
+    /// Create a system message
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create a user message
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create an assistant message
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create a tool message
+    pub fn tool(content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Convert to ollama-rs ChatMessage
+    fn to_ollama_message(&self) -> ChatMessage {
+        let role = match self.role.as_str() {
+            "system" => MessageRole::System,
+            "assistant" => MessageRole::Assistant,
+            "tool" => MessageRole::Tool,
+            _ => MessageRole::User,
+        };
+        ChatMessage::new(role, self.content.clone())
+    }
+}
+
 /// Structured response from the LLM
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/llm_response.json
-/// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
@@ -96,10 +146,6 @@ impl LlmResponse {
 }
 
 /// Structured HTTP response from the LLM
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/http_response.json
-/// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HttpLlmResponse {
     /// HTTP status code
@@ -159,7 +205,6 @@ impl HttpLlmResponse {
 /// Action types for command interpretation
 ///
 /// WARNING: If you modify this enum, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/command_interpretation.json
 /// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -195,10 +240,6 @@ pub enum CommandAction {
 }
 
 /// Structured response for command interpretation
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/command_interpretation.json
-/// The schema file is used for Ollama's structured output feature.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CommandInterpretation {
     /// List of actions to take
@@ -332,11 +373,13 @@ impl OllamaClient {
             request = request.format(FormatType::Json);
         }
 
-        let response = self
-            .ollama
-            .generate(request)
-            .await
-            .map_err(|e| anyhow::anyhow!("Ollama request failed: {}", e))?;
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            self.ollama.generate(request),
+        )
+        .await
+        .context("Ollama API call timed out after 120 seconds - check if Ollama is running and model is loaded")?
+        .map_err(|e| anyhow::anyhow!("Ollama request failed: {}", e))?;
 
         // DEBUG: Summary
         debug!(
@@ -431,6 +474,136 @@ impl OllamaClient {
     ///
     /// # Returns
     /// * `Vec<serde_json::Value>` - All non-tool actions collected across conversation turns
+
+    /// Chat completion using conversation messages
+    ///
+    /// Uses ollama-rs chat API which supports conversation history.
+    ///
+    /// # Arguments
+    /// * `model` - Model name (e.g., "qwen3-coder:30b")
+    /// * `messages` - Conversation history with roles (system/user/assistant/tool)
+    /// * `format` - Optional JSON schema for structured outputs (not currently supported via ollama-rs)
+    ///
+    /// # Returns
+    /// * `Ok(String)` - The assistant's response content
+    pub async fn chat(
+        &self,
+        model: &str,
+        messages: Vec<Message>,
+        _format: Option<serde_json::Value>,
+    ) -> Result<String> {
+        debug!("Sending chat request (model: {}, {} messages)", model, messages.len());
+        for (i, msg) in messages.iter().enumerate() {
+            debug!("Message {}: [{}] {}",  i + 1, msg.role,
+                if msg.content.len() > 200 {
+                    format!("{}...", &msg.content[..200])
+                } else {
+                    msg.content.clone()
+                }
+            );
+        }
+
+        // Convert our messages to ollama-rs ChatMessage format
+        let ollama_messages: Vec<ChatMessage> = messages
+            .iter()
+            .map(|m| m.to_ollama_message())
+            .collect();
+
+        // Create chat request
+        let request = ChatMessageRequest::new(model.to_string(), ollama_messages);
+
+        // Send request with timeout (2 minutes for large models)
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            self.ollama.send_chat_messages(request),
+        )
+        .await
+        .context("Ollama API call timed out after 120 seconds - check if Ollama is running and model is loaded")?
+        .context("Failed to send chat request to Ollama")?;
+
+        let content = response.message.content;
+
+        debug!("Received chat response from Ollama ({} chars)", content.len());
+        trace!("Full response: {}", content);
+
+        Ok(content)
+    }
+
+    /// Generate with automatic retry on parse errors (for legacy protocols)
+    ///
+    /// This is a simpler retry wrapper for protocols that don't use the action system.
+    /// It retries if the response doesn't parse as ActionResponse.
+    ///
+    /// # Arguments
+    /// * `model` - Model name
+    /// * `prompt` - The prompt string
+    /// * `expected_format` - Description of expected format for error message
+    ///
+    /// # Returns
+    /// * `Ok(String)` - The LLM response (may be after retry)
+    pub async fn generate_with_retry(
+        &self,
+        model: &str,
+        prompt: &str,
+        expected_format: &str,
+    ) -> Result<String> {
+        const MAX_RETRIES: usize = 1;
+
+        for attempt in 1..=MAX_RETRIES + 1 {
+            debug!("Generate attempt {}/{}", attempt, MAX_RETRIES + 1);
+
+            // Generate response
+            let response = self.generate(model, prompt).await?;
+
+            // Try to parse as ActionResponse to check format
+            match ActionResponse::from_str(&response) {
+                Ok(_) => {
+                    // Valid format!
+                    if attempt > 1 {
+                        info!("Retry successful on attempt {}", attempt);
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    if attempt <= MAX_RETRIES {
+                        // We have retries left
+                        warn!("Parse error on attempt {}: {}", attempt, e);
+                        warn!(
+                            "Malformed response: {}",
+                            if response.len() > 500 {
+                                format!("{}...", &response[..500])
+                            } else {
+                                response.clone()
+                            }
+                        );
+
+                        // Build retry prompt with correction
+                        let retry_prompt = format!(
+                            "{}\n\n---\n\nYour previous response was invalid and could not be parsed.\n\nError: {}\n\nRequired format: {}\n\nPlease provide your response again in the correct format.",
+                            prompt,
+                            e,
+                            expected_format
+                        );
+
+                        // Try again with corrected prompt (will happen in next loop iteration)
+                        // Update the prompt variable for next attempt
+                        if attempt < MAX_RETRIES + 1 {
+                            info!("Retrying with corrective feedback...");
+                            // Recursive call with corrected prompt (needs Box::pin for recursion)
+                            return Box::pin(self.generate_with_retry(model, &retry_prompt, expected_format)).await;
+                        }
+                    } else {
+                        // No more retries
+                        error!("Failed to get valid response after {} attempts", attempt);
+                        return Err(e).context("LLM failed to provide valid format after retry");
+                    }
+                }
+            }
+        }
+
+        unreachable!("Loop should always return or error")
+    }
+
     pub async fn generate_with_tools<F, Fut>(
         &self,
         model: &str,

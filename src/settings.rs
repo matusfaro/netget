@@ -152,7 +152,7 @@ impl Settings {
     pub fn parse_scripting_mode(&self) -> Option<crate::state::app_state::ScriptingMode> {
         self.scripting_mode.as_ref().and_then(|mode_str| {
             match mode_str.to_lowercase().as_str() {
-                "llm" => Some(crate::state::app_state::ScriptingMode::Llm),
+                "llm" => Some(crate::state::app_state::ScriptingMode::Off),
                 "python" => Some(crate::state::app_state::ScriptingMode::Python),
                 "javascript" => Some(crate::state::app_state::ScriptingMode::JavaScript),
                 "go" => Some(crate::state::app_state::ScriptingMode::Go),

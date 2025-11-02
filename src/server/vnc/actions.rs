@@ -4,7 +4,6 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
-use crate::protocol::metadata::{ProtocolMetadata, DevelopmentState};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
@@ -47,7 +46,8 @@ impl Server for VncProtocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-            ).await
+            )
+            .await
         })
     }
 
@@ -71,8 +71,16 @@ impl Server for VncProtocol {
         vec!["vnc", "rfb", "remote desktop", "framebuffer"]
     }
 
-    fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::new(DevelopmentState::Alpha)
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual RFB protocol, custom display canvas")
+            .llm_control("Framebuffer content, authentication, input events")
+            .e2e_testing("VNC client / vncviewer")
+            .notes("RFB 3.8, Raw encoding only, no compression")
+            .build()
     }
 
     fn group_name(&self) -> &'static str {

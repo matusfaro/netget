@@ -39,8 +39,6 @@ const BGP_MSG_OPEN: u8 = 1;
 const BGP_MSG_UPDATE: u8 = 2;
 const BGP_MSG_NOTIFICATION: u8 = 3;
 const BGP_MSG_KEEPALIVE: u8 = 4;
-#[allow(dead_code)]
-const BGP_MSG_ROUTE_REFRESH: u8 = 5;
 
 /// BGP server that handles routing protocol operations with LLM
 pub struct BgpServer;

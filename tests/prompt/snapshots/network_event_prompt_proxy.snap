@@ -8,6 +8,9 @@ Current server state:
 - Memory: connections: 0
 requests_intercepted: 5
 
+System capabilities:
+- Privileged ports (<1024): Not available
+- Raw socket access: Not available
 
 Trigger: Event: Intercepted HTTP request:
 GET https://example.com/api/data
@@ -16,6 +19,34 @@ Headers:
   Accept: application/json
 
 Instructions: Act as HTTP proxy
+
+Available tools (these return information and trigger LLM re-invocation):
+
+1. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
+Parameters:
+  • path: string (required) - Path to the file (relative to current directory or absolute)
+  • mode: string (optional) - Read mode: 'full' (default), 'head', 'tail', or 'grep'
+  • lines: number (optional) - Number of lines for head/tail mode (default: 50)
+  • pattern: string (optional) - Regex pattern for grep mode (required for grep)
+  • context_before: number (optional) - Lines of context before match in grep mode (like grep -B)
+  • context_after: number (optional) - Lines of context after match in grep mode (like grep -A)
+
+Example:
+{
+  "type": "read_file",
+  "path": "schema.json",
+  "mode": "full"
+}
+
+2. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
+Parameters:
+  • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
+
+Example:
+{
+  "type": "web_search",
+  "query": "https://datatracker.ietf.org/doc/html/rfc7168"
+}
 
 Available actions:
 
@@ -162,30 +193,14 @@ Example:
   "reason": "Destination blocked by security policy"
 }
 
-13. read_file. Read the contents of a file from the local filesystem. Supports multiple read modes: full (entire file), head (first N lines), tail (last N lines), or grep (search with regex pattern). Use this to access configuration files, schemas, RFCs, or other reference documents.
+13. read_base_stack_docs. Get detailed documentation for a specific network protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before starting a server to understand protocol configuration options.
 Parameters:
-  • path: string (required) - Path to the file (relative to current directory or absolute)
-  • mode: string (optional) - Read mode: 'full' (default), 'head', 'tail', or 'grep'
-  • lines: number (optional) - Number of lines for head/tail mode (default: 50)
-  • pattern: string (optional) - Regex pattern for grep mode (required for grep)
-  • context_before: number (optional) - Lines of context before match in grep mode (like grep -B)
-  • context_after: number (optional) - Lines of context after match in grep mode (like grep -A)
+  • protocol: string (required) - Protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
 
 Example:
 {
-  "type": "read_file",
-  "path": "schema.json",
-  "mode": "full"
-}
-
-14. web_search. Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
-Parameters:
-  • query: string (required) - URL to fetch (e.g., 'https://datatracker.ietf.org/doc/html/rfc7168') or search query (e.g., 'RFC 959 FTP protocol specification')
-
-Example:
-{
-  "type": "web_search",
-  "query": "https://datatracker.ietf.org/doc/html/rfc7168"
+  "type": "read_base_stack_docs",
+  "protocol": "tor"
 }
 
 

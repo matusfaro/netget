@@ -184,11 +184,16 @@ pub trait Server: Send + Sync {
     /// Keywords are matched case-insensitively as substrings.
     fn keywords(&self) -> Vec<&'static str>;
 
-    /// Get protocol metadata (state and notes)
+    /// Get protocol metadata with implementation details
     ///
-    /// Returns the current implementation state (Beta, Alpha, Implemented, Abandoned)
-    /// and optional notes explaining limitations or status.
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata;
+    /// Returns detailed metadata including:
+    /// - Protocol state (Incomplete, Experimental, Beta, Stable)
+    /// - Implementation approach description
+    /// - LLM control scope description
+    /// - E2E testing approach description
+    /// - Privilege requirements
+    /// - Optional notes
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2;
 
     /// Get a short description of this protocol
     ///

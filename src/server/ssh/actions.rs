@@ -166,10 +166,17 @@ impl Server for SshProtocol {
         vec!["ssh"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(22))
+            .implementation("russh v0.40 with SFTP support")
+            .llm_control("Authentication decisions + shell responses + SFTP operations")
+            .e2e_testing("ssh2 crate (libssh2 bindings)")
+            .notes("Supports scripting for auth (0 LLM calls after setup)")
+            .build()
     }
 
     fn description(&self) -> &'static str {
@@ -497,60 +504,4 @@ pub fn get_ssh_event_types() -> Vec<EventType> {
         SSH_SHELL_COMMAND_EVENT.clone(),
         SFTP_OPERATION_EVENT.clone(),
     ]
-}
-
-// ============================================================================
-// Legacy action builder functions (for backward compatibility)
-// ============================================================================
-// These are kept for places that need dynamic descriptions
-
-/// Custom action for SSH authentication decisions (with context)
-///
-/// This is a legacy function kept for backward compatibility where dynamic
-/// descriptions are needed. For new code, use SSH_AUTH_DECISION_ACTION constant.
-#[allow(dead_code)]
-pub fn ssh_auth_decision_action(username: &str, auth_type: &str) -> ActionDefinition {
-    ActionDefinition {
-        name: "ssh_auth_decision".to_string(),
-        description: format!(
-            "Decide whether to allow SSH authentication for user '{}' using method '{}'. \
-            Consider the user instruction to determine if this user should be allowed. \
-            Common scenarios: allow all users, allow specific usernames, deny all.",
-            username, auth_type
-        ),
-        parameters: SSH_AUTH_DECISION_ACTION.parameters.clone(),
-        example: SSH_AUTH_DECISION_ACTION.example.clone(),
-    }
-}
-
-/// Custom action for SSH shell command responses (with context)
-///
-/// This is a legacy function kept for backward compatibility where dynamic
-/// descriptions are needed. For new code, use SSH_SHELL_RESPONSE_ACTION constant.
-#[allow(dead_code)]
-pub fn ssh_shell_response_action(command: &str) -> ActionDefinition {
-    ActionDefinition {
-        name: "ssh_shell_response".to_string(),
-        description: format!(
-            "Respond to the SSH shell command: '{}'. \
-            Parse the command and generate appropriate output. \
-            Common commands: pwd, ls, cd, cat, echo, help, exit, logout. \
-            Use memory (set_memory/append_memory) to track state like current directory or session variables.",
-            command
-        ),
-        parameters: SSH_SHELL_RESPONSE_ACTION.parameters.clone(),
-        example: SSH_SHELL_RESPONSE_ACTION.example.clone(),
-    }
-}
-
-/// Legacy wrapper for SSH banner action
-#[allow(dead_code)]
-pub fn ssh_send_banner_action() -> ActionDefinition {
-    SSH_SEND_BANNER_ACTION.clone()
-}
-
-/// Legacy wrapper for SSH close connection action
-#[allow(dead_code)]
-pub fn ssh_close_connection_action() -> ActionDefinition {
-    SSH_CLOSE_CONNECTION_ACTION.clone()
 }

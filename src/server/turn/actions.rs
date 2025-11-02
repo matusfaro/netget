@@ -88,10 +88,16 @@ impl Server for TurnProtocol {
         vec!["turn"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual TURN protocol (RFC 8656)")
+            .llm_control("Allocations, permissions, relay decisions")
+            .e2e_testing("turnutils_uclient / WebRTC")
+            .notes("Allocation tracking works, data relay pending")
+            .build()
     }
 
     fn description(&self) -> &'static str {

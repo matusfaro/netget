@@ -142,10 +142,17 @@ impl Server for TelnetProtocol {
         vec!["telnet"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(23))
+            .implementation("Simplified line-based (no IAC negotiation)")
+            .llm_control("Terminal responses")
+            .e2e_testing("telnet CLI / raw TCP")
+            .notes("Telnet-lite, no option negotiation")
+            .build()
     }
 
     fn description(&self) -> &'static str {

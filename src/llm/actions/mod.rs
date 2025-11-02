@@ -81,6 +81,11 @@ pub struct ActionDefinition {
 }
 
 impl ActionDefinition {
+    /// Check if this is a tool action (returns information and triggers LLM re-invocation)
+    pub fn is_tool(&self) -> bool {
+        matches!(self.name.as_str(), "read_file" | "web_search" | "get_protocol_docs")
+    }
+
     /// Convert to prompt text format for LLM
     pub fn to_prompt_text(&self) -> String {
         let mut text = format!("{}. {}\n", self.name, self.description);
@@ -125,9 +130,6 @@ pub struct Parameter {
 }
 
 /// Response from LLM containing array of actions
-///
-/// WARNING: If you modify this struct, you MUST also update the corresponding
-/// JSON schema file at: src/llm/schemas/action_response.json
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ActionResponse {
     /// Array of actions to execute in order

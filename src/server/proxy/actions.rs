@@ -174,10 +174,16 @@ impl Server for ProxyProtocol {
         vec!["proxy", "mitm"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual HTTP/1.1 with rcgen v0.13")
+            .llm_control("Request/response filtering, HTTPS allow/block")
+            .e2e_testing("curl / HTTP clients")
+            .notes("MITM cert gen works, TLS interception pending")
+            .build()
     }
 
     fn description(&self) -> &'static str {

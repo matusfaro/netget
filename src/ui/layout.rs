@@ -76,17 +76,30 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw(msg.strip_prefix("[INFO]").unwrap()),
             ])
         } else if msg.starts_with("[DEBUG]") {
+            let content = msg.strip_prefix("[DEBUG]").unwrap();
             Line::from(vec![
                 Span::styled("○ ", Style::default().fg(Color::LightBlue)),
-                Span::raw(msg.strip_prefix("[DEBUG]").unwrap()),
+                Span::raw(content),
             ])
         } else if msg.starts_with("[TRACE]") {
+            let content = msg.strip_prefix("[TRACE]").unwrap();
+            // Check if this is a continuation of LLM JSON/text output
+            // The header lines end with ":" and should stay regular grey
+            // The actual JSON/text content lines should be extra dimmed
+            let is_json_content = !content.trim_start().ends_with("JSON):")
+                && !content.trim_start().ends_with("text):")
+                && !content.trim_start().starts_with("LLM prompt:")
+                && !content.trim_start().starts_with("JSON schema:");
+
+            let content_color = if is_json_content {
+                Color::Rgb(80, 80, 80) // Extra dimmed for JSON content
+            } else {
+                Color::DarkGray // Regular grey for headers
+            };
+
             Line::from(vec![
                 Span::styled("· ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    msg.strip_prefix("[TRACE]").unwrap(),
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Span::styled(content, Style::default().fg(content_color)),
             ])
         } else if msg.starts_with("[USER]") {
             Line::from(vec![
@@ -239,7 +252,7 @@ fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// Render the status bar
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
-    let status_text = format!(
+    let mut status_text = format!(
         " {} | {} | {} | {} | ↑{} ↓{} ",
         if app.connection_info.mode.is_empty() {
             "Idle"
@@ -260,6 +273,15 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         app.packet_stats.bytes_received,
         app.packet_stats.bytes_sent,
     );
+
+    // Add privilege warnings if capabilities are unavailable
+    if !app.system_capabilities.can_bind_privileged_ports {
+        status_text.push_str("| Ports<1024 denied ");
+    }
+
+    if !app.system_capabilities.has_raw_socket_access {
+        status_text.push_str("| PCAP denied ");
+    }
 
     let status = Paragraph::new(status_text).style(
         Style::default()

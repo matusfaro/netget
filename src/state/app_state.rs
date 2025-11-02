@@ -38,8 +38,10 @@ impl std::fmt::Display for Mode {
 /// Selected scripting mode - which environment is active for the LLM
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptingMode {
-    /// LLM only - no scripting available
-    Llm,
+    /// LLM chooses runtime for each script
+    On,
+    /// Scripting disabled - LLM only mode
+    Off,
     /// Python scripting enabled
     Python,
     /// JavaScript scripting enabled
@@ -53,7 +55,8 @@ pub enum ScriptingMode {
 impl ScriptingMode {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Llm => "LLM",
+            Self::On => "On",
+            Self::Off => "Off",
             Self::Python => "Python",
             Self::JavaScript => "JavaScript",
             Self::Go => "Go",
@@ -166,6 +169,8 @@ struct AppStateInner {
     next_task_id: u64,
     /// Task name to ID mapping (for user-friendly task_id strings)
     task_names: HashMap<String, TaskId>,
+    /// System capabilities detected at startup
+    system_capabilities: crate::privilege::SystemCapabilities,
 }
 
 impl AppState {
@@ -179,19 +184,11 @@ impl AppState {
         // Detect scripting environments at startup
         let scripting_env = crate::scripting::ScriptingEnvironment::detect();
 
-        // Select default scripting mode based on availability
-        // Priority: Python > JavaScript > Go > Perl > LLM
-        let selected_scripting_mode = if scripting_env.python.is_some() {
-            ScriptingMode::Python
-        } else if scripting_env.javascript.is_some() {
-            ScriptingMode::JavaScript
-        } else if scripting_env.go.is_some() {
-            ScriptingMode::Go
-        } else if scripting_env.perl.is_some() {
-            ScriptingMode::Perl
-        } else {
-            ScriptingMode::Llm
-        };
+        // Detect system capabilities at startup
+        let system_capabilities = crate::privilege::SystemCapabilities::detect();
+
+        // Default to ON mode - LLM chooses runtime dynamically
+        let selected_scripting_mode = ScriptingMode::On;
 
         // Generate unique instance ID: process_id + timestamp + random bytes
         let instance_id = Self::generate_instance_id();
@@ -212,6 +209,7 @@ impl AppState {
                 tasks: HashMap::new(),
                 next_task_id: 1,
                 task_names: HashMap::new(),
+                system_capabilities,
             })),
         }
     }
@@ -429,71 +427,24 @@ impl AppState {
         self.inner.write().await.selected_scripting_mode = mode;
     }
 
-    /// Cycle to the next available scripting mode
+    /// Cycle between ON and OFF scripting modes
     /// Returns the new mode and whether any switch occurred
     pub async fn cycle_scripting_mode(&self) -> (ScriptingMode, bool) {
-        let inner = self.inner.read().await;
+        let mut inner = self.inner.write().await;
         let current = inner.selected_scripting_mode;
-        let env = &inner.scripting_env;
 
-        // Determine available modes
-        let has_python = env.python.is_some();
-        let has_javascript = env.javascript.is_some();
-        let has_go = env.go.is_some();
-        let has_perl = env.perl.is_some();
-
-        // If no languages are available, we can't cycle
-        if !has_python && !has_javascript && !has_go && !has_perl {
-            return (current, false);
-        }
-
-        // Cycle through: LLM -> Python (if available) -> JavaScript (if available) -> Go (if available) -> Perl (if available) -> LLM
+        // Toggle between ON and OFF only
+        // If currently on a specific language, treat as ON and toggle to OFF
         let next = match current {
-            ScriptingMode::Llm => {
-                if has_python {
-                    ScriptingMode::Python
-                } else if has_javascript {
-                    ScriptingMode::JavaScript
-                } else if has_go {
-                    ScriptingMode::Go
-                } else if has_perl {
-                    ScriptingMode::Perl
-                } else {
-                    ScriptingMode::Llm
-                }
+            ScriptingMode::On | ScriptingMode::Python | ScriptingMode::JavaScript | ScriptingMode::Go | ScriptingMode::Perl => {
+                ScriptingMode::Off
             }
-            ScriptingMode::Python => {
-                if has_javascript {
-                    ScriptingMode::JavaScript
-                } else if has_go {
-                    ScriptingMode::Go
-                } else if has_perl {
-                    ScriptingMode::Perl
-                } else {
-                    ScriptingMode::Llm
-                }
+            ScriptingMode::Off => {
+                ScriptingMode::On
             }
-            ScriptingMode::JavaScript => {
-                if has_go {
-                    ScriptingMode::Go
-                } else if has_perl {
-                    ScriptingMode::Perl
-                } else {
-                    ScriptingMode::Llm
-                }
-            }
-            ScriptingMode::Go => {
-                if has_perl {
-                    ScriptingMode::Perl
-                } else {
-                    ScriptingMode::Llm
-                }
-            }
-            ScriptingMode::Perl => ScriptingMode::Llm,
         };
 
-        drop(inner); // Release read lock before acquiring write lock
-        self.inner.write().await.selected_scripting_mode = next;
+        inner.selected_scripting_mode = next;
         (next, true)
     }
 
@@ -541,6 +492,11 @@ impl AppState {
     /// Get the unique instance ID for this NetGet process
     pub async fn get_instance_id(&self) -> String {
         self.inner.read().await.instance_id.clone()
+    }
+
+    /// Get system capabilities detected at startup
+    pub async fn get_system_capabilities(&self) -> crate::privilege::SystemCapabilities {
+        self.inner.read().await.system_capabilities.clone()
     }
 
     /// Update script configuration for a server

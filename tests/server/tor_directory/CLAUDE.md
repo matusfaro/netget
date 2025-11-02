@@ -268,7 +268,7 @@ To test Tor Directory server manually:
 
 1. **Start Server**:
    ```bash
-   ./cargo-isolated.sh run --features tor-directory --release
+   ./cargo-isolated.sh run --features tor --release
    # Prompt: "open_server port 9030 base_stack tor_directory. Serve test consensus."
    ```
 

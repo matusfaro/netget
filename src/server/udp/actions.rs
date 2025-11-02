@@ -88,10 +88,16 @@ impl Server for UdpProtocol {
         vec!["udp"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .implementation("Manual UDP socket handling with tokio")
+            .llm_control("Full datagram control - all sent/received data")
+            .e2e_testing("std::net::UdpSocket")
+            .notes("Stateless, used by DNS/DHCP/NTP")
+            .build()
     }
 
     fn description(&self) -> &'static str {

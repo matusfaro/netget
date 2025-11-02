@@ -5,7 +5,7 @@
 
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, Server};
-use crate::protocol::{DevelopmentState, EventType, ProtocolMetadata};
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
@@ -177,7 +177,8 @@ fn publish_message_action() -> ActionDefinition {
             Parameter {
                 name: "partition".to_string(),
                 type_hint: "number".to_string(),
-                description: "Target partition (optional, defaults to key-based routing)".to_string(),
+                description: "Target partition (optional, defaults to key-based routing)"
+                    .to_string(),
                 required: false,
             },
         ],
@@ -357,8 +358,9 @@ fn metadata_response_action() -> ActionDefinition {
             Parameter {
                 name: "topics".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of topics [{name, partitions: [{partition, leader, replicas}]}]"
-                    .to_string(),
+                description:
+                    "Array of topics [{name, partitions: [{partition, leader, replicas}]}]"
+                        .to_string(),
                 required: true,
             },
         ],
@@ -438,9 +440,8 @@ impl Server for KafkaProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
             use crate::server::kafka::KafkaServer;
             KafkaServer::spawn_with_llm_actions(
@@ -529,13 +530,14 @@ impl Server for KafkaProtocol {
                 })
             }
             // Sync actions - return Custom result for protocol handler
-            "produce_response" | "fetch_response" | "metadata_response"
-            | "offset_commit_response" | "error_response" => {
-                Ok(ActionResult::Custom {
-                    name: action_type.to_string(),
-                    data: action,
-                })
-            }
+            "produce_response"
+            | "fetch_response"
+            | "metadata_response"
+            | "offset_commit_response"
+            | "error_response" => Ok(ActionResult::Custom {
+                name: action_type.to_string(),
+                data: action,
+            }),
             _ => Err(anyhow!("Unknown Kafka action type: {}", action_type)),
         }
     }
@@ -561,11 +563,16 @@ impl Server for KafkaProtocol {
         vec!["kafka", "kafka broker", "via kafka"]
     }
 
-    fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::with_notes(
-            DevelopmentState::Alpha,
-            "Kafka broker with core produce/fetch/metadata APIs. No replication or transactions."
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("kafka-protocol v0.13 wire format, manual broker logic")
+            .llm_control("Message routing, topic management, consumer offsets")
+            .e2e_testing("kafka-client / rdkafka")
+            .notes("Core APIs only, in-memory storage, no replication")
+            .build()
     }
 
     fn description(&self) -> &'static str {

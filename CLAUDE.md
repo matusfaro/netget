@@ -2,10 +2,14 @@
 
 Rust CLI where an LLM (via Ollama) controls 40+ network protocols. The LLM constructs raw protocol datagrams or high-level responses.
 
-## Protocols (40+)
+## Protocols (50+)
 
-**Beta**: TCP, HTTP, UDP, DataLink, DNS, DoT, DoH, DHCP, NTP, SNMP, SSH
-**Alpha**: IRC, Telnet, SMTP, IMAP, mDNS, LDAP, MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch, IPP, WebDAV, NFS, SMB, HTTP Proxy, SOCKS5, STUN, TURN, WireGuard (full VPN), OpenVPN (honeypot), IPSec (honeypot), BGP, OpenAI
+**Beta**: TCP, HTTP, UDP, DataLink, DNS, DoT, DoH, DHCP, NTP, SNMP, SSH, OpenAI
+**Experimental**: IRC, Telnet, SMTP, IMAP, mDNS, LDAP, MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch, IPP, WebDAV, NFS, SMB, HTTP Proxy, SOCKS5, STUN, TURN, Tor Directory, gRPC, MCP, JSON-RPC, XML-RPC, VNC, etcd, Kafka, MQTT, Git, S3, SQS
+**Stable**: WireGuard (full VPN), Tor Relay
+**Incomplete**: OpenVPN (honeypot), IPSec (honeypot), BGP
+
+See `/docs` command for protocol details and metadata. Use `METADATA_EXAMPLES.md` for classification reference.
 
 See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<protocol>/CLAUDE.md`
 
@@ -18,8 +22,6 @@ See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<pr
 **Connection**: TcpStream split with `tokio::io::split()`. Never hold Mutex during I/O (deadlock risk).
 
 **Data Queueing**: Per-connection state machine (Idle → Processing → Accumulating) prevents concurrent LLM calls.
-
-**LLM Responses**: Action-based JSON format: `{"actions": [{"type": "send_tcp_data", "data": "..."}, ...]}`
 
 **Actions**: Protocols implement `ProtocolActions` trait with async (user-triggered) and sync (network event) actions. Files: `src/server/<protocol>/actions.rs`
 
@@ -119,7 +121,7 @@ Before implementing, research and document:
 
 **12-Step Implementation**:
 1. **base_stack.rs**: Add `BaseStack` variant, parsing, unit tests
-2. **rolling_tui.rs**: Add welcome message, mark Alpha/Beta
+2. **rolling_tui.rs**: Add welcome message (state will be Experimental by default)
 3. **src/server/<protocol>/mod.rs**: Implement server with dual logging, track connections
 4. **src/server/<protocol>/actions.rs**: Implement `ProtocolActions` trait (async/sync actions)
 5. **src/server/<protocol>/CLAUDE.md** (MANDATORY): Document implementation, libraries, LLM integration, limitations

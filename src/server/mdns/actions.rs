@@ -81,10 +81,16 @@ impl Server for MdnsProtocol {
         vec!["mdns", "bonjour", "dns-sd", "zeroconf"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("hickory-proto for multicast DNS")
+            .llm_control("Service announcements + responses")
+            .e2e_testing("mdns-sd or avahi")
+            .notes("Multicast service discovery")
+            .build()
     }
 
     fn description(&self) -> &'static str {

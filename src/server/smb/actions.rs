@@ -82,10 +82,16 @@ impl Server for SmbProtocol {
         vec!["smb", "cifs"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual SMB2 protocol (0x0210 dialect)")
+            .llm_control("Filesystem operations, authentication, directory listings")
+            .e2e_testing("smbclient / Windows Explorer")
+            .notes("SMB 2.1 only, guest auth only, no signing/encryption")
+            .build()
     }
 
     fn description(&self) -> &'static str {

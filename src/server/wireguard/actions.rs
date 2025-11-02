@@ -110,11 +110,17 @@ impl Server for WireguardProtocol {
         vec!["wireguard", "wg"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::with_notes(
-            crate::protocol::metadata::DevelopmentState::Implemented,
-            "Full VPN server with actual tunnel support using defguard_wireguard_rs. Creates TUN interface and supports peer connections."
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Stable)
+            .privilege_requirement(PrivilegeRequirement::Root)
+            .implementation("defguard_wireguard_rs v0.7 - creates real TUN interfaces")
+            .llm_control("Peer authorization + allowed IPs configuration")
+            .e2e_testing("wg CLI or WireGuard client libraries")
+            .notes("ONLY functional VPN - production-ready")
+            .build()
     }
 
     fn description(&self) -> &'static str {
@@ -230,11 +236,6 @@ impl WireguardProtocol {
             }))?
         ))
     }
-}
-
-#[allow(dead_code)]
-fn min(a: usize, b: usize) -> usize {
-    if a < b { a } else { b }
 }
 
 /// Action: Authorize peer to connect

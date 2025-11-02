@@ -10,7 +10,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
-use crate::protocol::{Event, EventType, metadata::ProtocolMetadata, metadata::DevelopmentState};
+use crate::protocol::{Event, EventType};
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -264,8 +264,16 @@ impl Server for XmlRpcProtocol {
         vec!["xmlrpc", "xml-rpc", "xml rpc"]
     }
 
-    fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::new(DevelopmentState::Beta)
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual XML-RPC parsing")
+            .llm_control("Method responses")
+            .e2e_testing("XML-RPC client libs")
+            .notes("Legacy RPC format")
+            .build()
     }
 
     fn description(&self) -> &'static str {

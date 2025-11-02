@@ -51,31 +51,6 @@ impl VncPixelFormat {
     }
 }
 
-/// Client-to-server message types
-#[derive(Debug)]
-#[allow(dead_code)] // Protocol specification - for future implementation
-enum ClientMessage {
-    SetPixelFormat,
-    SetEncodings,
-    FramebufferUpdateRequest {
-        incremental: bool,
-        x: u16,
-        y: u16,
-        width: u16,
-        height: u16,
-    },
-    KeyEvent {
-        down: bool,
-        key: u32,
-    },
-    PointerEvent {
-        button_mask: u8,
-        x: u16,
-        y: u16,
-    },
-    ClientCutText,
-}
-
 impl VncServer {
     /// Spawn VNC server with LLM integration
     pub async fn spawn_with_llm_actions(

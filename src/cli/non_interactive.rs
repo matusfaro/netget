@@ -38,7 +38,7 @@ pub async fn run_non_interactive(
     // Determine scripting mode with priority: no-scripts flag > CLI arg > saved setting > auto-detected
     let mode_to_set = if args.no_scripts {
         // Force LLM-only mode (no script generation)
-        Some(crate::state::app_state::ScriptingMode::Llm)
+        Some(crate::state::app_state::ScriptingMode::Off)
     } else if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
     } else if let Some(mode) = settings.parse_scripting_mode() {
@@ -51,7 +51,8 @@ pub async fn run_non_interactive(
         // Validate that the requested environment is available
         let scripting_env = state.get_scripting_env().await;
         let available = match mode {
-            crate::state::app_state::ScriptingMode::Llm => true, // Always available
+            crate::state::app_state::ScriptingMode::On => true, // LLM chooses runtime
+            crate::state::app_state::ScriptingMode::Off => true, // Always available
             crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
             crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
             crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),

@@ -94,10 +94,17 @@ impl Server for DnsProtocol {
         vec!["dns"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(53))
+            .implementation("hickory-proto for parsing and construction")
+            .llm_control("Response records (A, AAAA, MX, TXT, CNAME, NXDOMAIN)")
+            .e2e_testing("hickory-client AsyncClient - 5 LLM calls")
+            .notes("Excellent scripting candidate")
+            .build()
     }
 
     fn description(&self) -> &'static str {

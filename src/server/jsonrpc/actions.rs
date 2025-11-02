@@ -97,10 +97,16 @@ impl Server for JsonRpcProtocol {
         vec!["jsonrpc", "json-rpc", "json rpc", "rpc"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual JSON-RPC 2.0")
+            .llm_control("Method responses")
+            .e2e_testing("JSON-RPC client libs")
+            .notes("RPC over JSON")
+            .build()
     }
 
     fn description(&self) -> &'static str {

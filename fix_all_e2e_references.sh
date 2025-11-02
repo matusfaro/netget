@@ -65,13 +65,13 @@ fi
 
 echo ""
 echo "=== Phase 6: Special cases ==="
-# tor_integration and tor_relay - these don't have single protocol names
-for file in /Users/matus/dev/netget/tests/server/tor_integration/*.rs /Users/matus/dev/netget/tests/server/tor_relay/*.rs; do
+# tor_integration, tor_relay, and tor_directory - all use single "tor" feature
+for file in /Users/matus/dev/netget/tests/server/tor_integration/*.rs /Users/matus/dev/netget/tests/server/tor_relay/*.rs /Users/matus/dev/netget/tests/server/tor_directory/*.rs; do
   if [ -f "$file" ] && grep -q '#\[cfg.*e2e-tests' "$file"; then
     echo "Processing: $file"
-    # These use multiple tor features, replace with tor-relay
-    sed -i '' 's|feature = "e2e-tests"|feature = "tor-relay"|g' "$file"
-    echo "  ✓ Updated to use tor-relay"
+    # These use tor feature
+    sed -i '' 's|feature = "e2e-tests"|feature = "tor"|g' "$file"
+    echo "  ✓ Updated to use tor"
   fi
 done
 

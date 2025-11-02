@@ -3,6 +3,7 @@
 //! These tests snapshot the generated prompts to detect changes.
 //! When prompts change, review the diff to ensure it's intentional.
 
+use netget::llm::actions::protocol_trait::Server;
 use netget::llm::PromptBuilder;
 use netget::state::app_state::AppState;
 use netget::state::server::{ServerInstance, ServerStatus};
@@ -27,9 +28,9 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
         perl: None,
     };
     state.set_scripting_env(scripting_env).await;
-    // Also set the mode to LLM (no scripting)
+    // Also set the mode to Off (no scripting)
     state
-        .set_selected_scripting_mode(netget::state::app_state::ScriptingMode::Llm)
+        .set_selected_scripting_mode(netget::state::app_state::ScriptingMode::Off)
         .await;
 
     // Create a proxy server instance
@@ -67,8 +68,8 @@ async fn test_user_input_prompt_proxy_server() {
     #[cfg(not(feature = "proxy"))]
     let protocol_actions = vec![];
 
-    let prompt =
-        PromptBuilder::build_user_input_action_prompt(&state, user_input, protocol_actions).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, protocol_actions).await;
+    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt_proxy_server", SNAPSHOT_DIR, &prompt);
@@ -115,8 +116,8 @@ async fn test_user_input_prompt() {
 
     let user_input = "start a DNS server on port 53";
 
-    let prompt =
-        PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![]).await;
+    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
@@ -143,15 +144,15 @@ async fn test_user_input_prompt_no_scripting() {
         perl: None,
     };
     state.set_scripting_env(scripting_env).await;
-    // Also set the mode to LLM (no scripting)
+    // Also set the mode to Off (no scripting)
     state
-        .set_selected_scripting_mode(netget::state::app_state::ScriptingMode::Llm)
+        .set_selected_scripting_mode(netget::state::app_state::ScriptingMode::Off)
         .await;
 
     let user_input = "start a DNS server on port 53";
 
-    let prompt =
-        PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![]).await;
+    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt_without_scripting", SNAPSHOT_DIR, &prompt);
@@ -192,8 +193,8 @@ async fn test_user_input_prompt_without_web_search() {
 
     let user_input = "start a DNS server on port 53";
 
-    let prompt =
-        PromptBuilder::build_user_input_action_prompt(&state, user_input, vec![]).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![]).await;
+    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt_without_web_search", SNAPSHOT_DIR, &prompt);
@@ -298,4 +299,118 @@ fn test_base_stack_documentation_snapshot() {
 
     // Assert snapshot
     snapshot_util::assert_snapshot("base_stack_documentation", SNAPSHOT_DIR, &docs);
+}
+
+#[tokio::test]
+async fn test_retry_mechanism_prompt() {
+    // Test that retry mechanism includes previous error in prompt
+    let state = Arc::new(AppState::new());
+
+    // Create a scheduled task with a previous error
+    use netget::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus};
+    use std::time::Duration;
+
+    let task = ScheduledTask {
+        id: netget::state::TaskId::new(1),
+        name: "periodic_backup".to_string(),
+        instruction: "Create a backup of server memory".to_string(),
+        scope: TaskScope::Global,
+        task_type: TaskType::Recurring {
+            interval_secs: 3600,
+            max_executions: None,
+            executions_count: 1,
+        },
+        created_at: std::time::Instant::now() - Duration::from_secs(60),
+        next_execution: std::time::Instant::now(),
+        context: None,
+        status: TaskStatus::Failed("Failed to write file: Permission denied".to_string()),
+        last_error: Some("Failed to write file: Permission denied".to_string()),
+        failure_count: 1,
+    };
+
+    // Set up scripting environment
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+        go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.38.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    let prompt = netget::llm::PromptBuilder::build_task_execution_prompt(&state, &task, vec![]).await;
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("retry_mechanism_prompt", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks
+    assert!(prompt.contains("PREVIOUS EXECUTION ERROR"));
+    assert!(prompt.contains("Failed to write file: Permission denied"));
+    assert!(prompt.contains("periodic_backup"));
+    assert!(prompt.contains("Create a backup of server memory"));
+    assert!(prompt.contains("Attempt to handle or resolve this issue"));
+}
+
+#[tokio::test]
+async fn test_protocol_documentation_prompt() {
+    // Test protocol-specific metadata documentation
+    let _state = Arc::new(AppState::new());
+
+    // Create an HTTP server to get protocol-specific documentation
+    #[cfg(feature = "http")]
+    {
+        use netget::server::HttpProtocol;
+
+        let protocol = HttpProtocol::new();
+        let metadata = protocol.metadata();
+
+        // Build a simple documentation string showing protocol metadata
+        let doc = format!(
+            "Protocol: {}\nState: {}\nImplementation: {}\nLLM Control: {}\nE2E Testing: {}{}",
+            protocol.protocol_name(),
+            metadata.state.as_str(),
+            metadata.implementation,
+            metadata.llm_control,
+            metadata.e2e_testing,
+            metadata.notes.map(|n| format!("\nNotes: {}", n)).unwrap_or_default()
+        );
+
+        // Assert snapshot
+        snapshot_util::assert_snapshot("protocol_http_documentation", SNAPSHOT_DIR, &doc);
+
+        // Sanity checks
+        assert!(doc.contains("HTTP"));
+        assert!(doc.contains("State:"));
+        assert!(doc.contains("Implementation:"));
+        assert!(doc.contains("LLM Control:"));
+        assert!(doc.contains("E2E Testing:"));
+    }
+
+    #[cfg(feature = "ssh")]
+    {
+        use netget::server::SshProtocol;
+
+        let protocol = SshProtocol::new();
+        let metadata = protocol.metadata();
+
+        // Build a simple documentation string showing protocol metadata
+        let doc = format!(
+            "Protocol: {}\nState: {}\nImplementation: {}\nLLM Control: {}\nE2E Testing: {}{}",
+            protocol.protocol_name(),
+            metadata.state.as_str(),
+            metadata.implementation,
+            metadata.llm_control,
+            metadata.e2e_testing,
+            metadata.notes.map(|n| format!("\nNotes: {}", n)).unwrap_or_default()
+        );
+
+        // Assert snapshot
+        snapshot_util::assert_snapshot("protocol_ssh_documentation", SNAPSHOT_DIR, &doc);
+
+        // Sanity checks
+        assert!(doc.contains("SSH"));
+        assert!(doc.contains("State:"));
+        assert!(doc.contains("Implementation:"));
+        assert!(doc.contains("LLM Control:"));
+        assert!(doc.contains("E2E Testing:"));
+    }
 }

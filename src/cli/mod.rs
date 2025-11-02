@@ -56,7 +56,8 @@ pub async fn run() -> Result<()> {
             // Validate that the requested environment is available
             let scripting_env = state.get_scripting_env().await;
             let available = match mode {
-                crate::state::app_state::ScriptingMode::Llm => true, // Always available
+                crate::state::app_state::ScriptingMode::On => true, // LLM chooses runtime
+                crate::state::app_state::ScriptingMode::Off => true, // Always available
                 crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
                 crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
                 crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
@@ -73,7 +74,9 @@ pub async fn run() -> Result<()> {
             state.set_selected_scripting_mode(mode).await;
         }
 
-        let app = App::new();
+        // Get system capabilities for UI display
+        let system_capabilities = state.get_system_capabilities().await;
+        let app = App::new(system_capabilities);
         let lock_enabled = state.get_ollama_lock_enabled().await;
         let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
         let event_handler = EventHandler::new(state.clone(), llm.clone());

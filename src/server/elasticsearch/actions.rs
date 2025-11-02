@@ -575,10 +575,16 @@ impl Server for ElasticsearchProtocol {
         vec!["elasticsearch", "opensearch"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("hyper v1.5 HTTP server with manual ES API")
+            .llm_control("Search, index, cluster operations")
+            .e2e_testing("curl / elasticsearch client")
+            .notes("Virtual data (no persistence)")
+            .build()
     }
 
     fn description(&self) -> &'static str {
