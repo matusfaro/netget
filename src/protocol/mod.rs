@@ -8,7 +8,7 @@ pub mod metadata;
 pub mod registry;
 pub mod spawn_context;
 
-pub use metadata::{ProtocolMetadata, DevelopmentState};
+pub use metadata::{ProtocolMetadata, ProtocolMetadataV2, DevelopmentState};
 pub use event_type::{Event, EventType};
 pub use registry::registry;
 pub use spawn_context::{SpawnContext, StartupParams};

@@ -24,7 +24,7 @@ pub struct ServerTaskDefinition {
     pub context: Option<serde_json::Value>,
     // Script configuration fields
     #[serde(default)]
-    pub runtime_choice: Option<String>,
+    pub script_runtime: Option<String>,
     #[serde(default)]
     pub script_language: Option<String>,
     #[serde(default)]
@@ -55,7 +55,7 @@ pub enum CommonAction {
         startup_params: Option<serde_json::Value>,
         // Script configuration fields
         #[serde(default)]
-        runtime_choice: Option<String>,
+        script_runtime: Option<String>,
         #[serde(default)]
         script_language: Option<String>,
         #[serde(default)]
@@ -93,7 +93,7 @@ pub enum CommonAction {
         server_id: Option<u32>,
         operation: String,
         #[serde(default)]
-        runtime_choice: Option<String>,
+        script_runtime: Option<String>,
         #[serde(default)]
         script_language: Option<String>,
         #[serde(default)]
@@ -129,7 +129,7 @@ pub enum CommonAction {
         context: Option<serde_json::Value>,
         // Script configuration fields
         #[serde(default)]
-        runtime_choice: Option<String>,
+        script_runtime: Option<String>,
         #[serde(default)]
         script_language: Option<String>,
         #[serde(default)]
@@ -217,7 +217,7 @@ pub fn open_server_action(
         Parameter {
             name: "scheduled_tasks".to_string(),
             type_hint: "array".to_string(),
-            description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (runtime_choice, script_inline, script_handles).".to_string(),
+            description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_runtime, script_inline, script_handles). When script_inline is provided, script_runtime MUST also be specified.".to_string(),
             required: false,
         },
     ];
@@ -229,10 +229,10 @@ pub fn open_server_action(
             let available_runtimes = env.format_available();
             parameters.extend(vec![
                 Parameter {
-                    name: "runtime_choice".to_string(),
+                    name: "script_runtime".to_string(),
                     type_hint: "string".to_string(),
                     description: format!(
-                        "REQUIRED when using scripts: Choose runtime for script execution. Available: {}. Choose the best runtime for the task.",
+                        "REQUIRED when script_inline is provided: Choose runtime for script execution. Available: {}. Choose the best runtime for the task.",
                         available_runtimes
                     ),
                     required: false,
@@ -240,7 +240,7 @@ pub fn open_server_action(
                 Parameter {
                     name: "script_inline".to_string(),
                     type_hint: "string".to_string(),
-                    description: "Optional: Inline script code to handle deterministic responses instead of LLM. Must match the runtime_choice language. If provided, the script will be executed for network events.".to_string(),
+                    description: "Optional: Inline script code to handle deterministic responses instead of LLM. Must match the script_runtime language. If provided, the script will be executed for network events and script_runtime MUST be specified.".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -411,10 +411,10 @@ pub fn update_script_action(
             let available_runtimes = env.format_available();
             parameters.extend(vec![
                 Parameter {
-                    name: "runtime_choice".to_string(),
+                    name: "script_runtime".to_string(),
                     type_hint: "string".to_string(),
                     description: format!(
-                        "Required for 'set' operation: Choose runtime for script execution. Available: {}",
+                        "Required when script_inline is provided: Choose runtime for script execution. Available: {}",
                         available_runtimes
                     ),
                     required: false,
@@ -422,7 +422,7 @@ pub fn update_script_action(
                 Parameter {
                     name: "script_inline".to_string(),
                     type_hint: "string".to_string(),
-                    description: "Inline script code (required for 'set' operation). Must match the runtime_choice language.".to_string(),
+                    description: "Inline script code (required for 'set' operation). Must match the script_runtime language. When provided, script_runtime MUST also be specified.".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -568,10 +568,10 @@ pub fn schedule_task_action(
             let available_runtimes = env.format_available();
             parameters.extend(vec![
                 Parameter {
-                    name: "runtime_choice".to_string(),
+                    name: "script_runtime".to_string(),
                     type_hint: "string".to_string(),
                     description: format!(
-                        "Required when using scripts: Choose runtime for script execution. Available: {}",
+                        "Required when script_inline is provided: Choose runtime for script execution. Available: {}",
                         available_runtimes
                     ),
                     required: false,
@@ -579,7 +579,7 @@ pub fn schedule_task_action(
                 Parameter {
                     name: "script_inline".to_string(),
                     type_hint: "string".to_string(),
-                    description: "Optional: Inline script code to handle task execution instead of LLM. Must match the runtime_choice language. If provided, the script will be executed for each task trigger.".to_string(),
+                    description: "Optional: Inline script code to handle task execution instead of LLM. Must match the script_runtime language. If provided, script_runtime MUST also be specified.".to_string(),
                     required: false,
                 },
                 Parameter {

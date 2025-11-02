@@ -80,10 +80,10 @@ impl Server for StunProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual STUN protocol (RFC 8489)")
             .llm_control("Binding responses with XOR-MAPPED-ADDRESS")
             .e2e_testing("stuntman-client / WebRTC")

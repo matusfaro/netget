@@ -3,7 +3,7 @@
 //! Provides functionality to generate documentation for all protocols
 //! including their event types, actions, and parameters.
 
-use crate::protocol::metadata::ProtocolState;
+use crate::protocol::metadata::DevelopmentState;
 
 /// ANSI color codes for terminal output
 mod colors {
@@ -76,12 +76,13 @@ pub fn list_all_protocols() -> String {
     let registry = crate::protocol::registry::registry();
     let all_protocols = registry.all_protocols();
 
-    // Group protocols by their group_name
-    let mut groups: std::collections::HashMap<&'static str, Vec<String>> = std::collections::HashMap::new();
+    // Group protocols by their group_name with their state
+    let mut groups: std::collections::HashMap<&'static str, Vec<(String, DevelopmentState)>> = std::collections::HashMap::new();
 
     for (protocol_name, protocol) in &all_protocols {
         let group = protocol.group_name();
-        groups.entry(group).or_insert_with(Vec::new).push(protocol_name.clone());
+        let state = protocol.metadata().state;
+        groups.entry(group).or_insert_with(Vec::new).push((protocol_name.clone(), state));
     }
 
     // Sort groups alphabetically
@@ -100,12 +101,22 @@ pub fn list_all_protocols() -> String {
 
             // Sort protocols alphabetically within group
             let mut sorted_protocols = protocols.clone();
-            sorted_protocols.sort();
+            sorted_protocols.sort_by(|a, b| a.0.cmp(&b.0));
 
-            // Output protocol names as comma-separated list
-            let protocol_list = sorted_protocols.join(", ");
-            output.push_str(&format!("  {}{}{}\n\n",
-                colors::DIM, protocol_list, colors::RESET));
+            // Output protocol names with color coding based on state
+            let colored_protocols: Vec<String> = sorted_protocols.iter().map(|(name, state)| {
+                let color = match state {
+                    DevelopmentState::Stable => colors::GREEN,
+                    DevelopmentState::Beta => colors::BLUE,
+                    DevelopmentState::Experimental => colors::YELLOW,
+                    DevelopmentState::Incomplete => colors::RED,
+                };
+                format!("{}{}{}", color, name, colors::RESET)
+            }).collect();
+
+            let protocol_list = colored_protocols.join(&format!("{}, {}", colors::RESET, colors::DIM));
+            output.push_str(&format!("  {}{}\n\n",
+                colors::DIM, protocol_list));
         }
     }
 
@@ -147,10 +158,10 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
 
     // Status badge with color
     let (status_color, status_symbol) = match metadata.state {
-        ProtocolState::Stable => (colors::BRIGHT_GREEN, "✓"),
-        ProtocolState::Beta => (colors::BRIGHT_YELLOW, "β"),
-        ProtocolState::Experimental => (colors::YELLOW, "α"),
-        ProtocolState::Incomplete => (colors::RED, "✗"),
+        DevelopmentState::Stable => (colors::BRIGHT_GREEN, "✓"),
+        DevelopmentState::Beta => (colors::BRIGHT_YELLOW, "β"),
+        DevelopmentState::Experimental => (colors::YELLOW, "α"),
+        DevelopmentState::Incomplete => (colors::RED, "✗"),
     };
     output.push_str(&format!("{}▸ Status:{} {}{} {}{}\n",
         colors::BRIGHT_CYAN, colors::RESET,

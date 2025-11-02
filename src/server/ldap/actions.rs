@@ -257,10 +257,10 @@ impl Server for LdapProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual ASN.1 BER encoding/decoding")
             .llm_control("Directory queries + authentication")
             .e2e_testing("ldap3 client")

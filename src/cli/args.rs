@@ -5,6 +5,17 @@ use clap::Parser;
 use std::io::{self, IsTerminal, Read};
 use tracing::Level;
 
+/// Get default log level based on build type
+/// Development builds (debug_assertions) default to "trace"
+/// Release builds default to "info"
+fn default_log_level() -> String {
+    if cfg!(debug_assertions) {
+        "trace".to_string()
+    } else {
+        "info".to_string()
+    }
+}
+
 /// NetGet - LLM-Controlled Network Application
 #[derive(Parser, Debug)]
 #[clap(
@@ -44,11 +55,12 @@ pub struct Args {
     pub model: Option<String>,
 
     /// Log level (off, error, warn, info, debug, trace)
+    /// Development builds default to 'trace', release builds default to 'info'
     #[clap(
         short = 'l',
         long = "log-level",
         value_name = "LEVEL",
-        default_value = "info"
+        default_value_t = default_log_level()
     )]
     pub log_level: String,
 

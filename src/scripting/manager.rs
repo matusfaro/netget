@@ -69,8 +69,8 @@ impl ScriptManager {
     /// Build script configuration from action parameters
     ///
     /// # Arguments
-    /// * `language` - Language name ("python", "javascript", etc.)
-    /// * `script_path` - Optional path to script file
+    /// * `selected_mode` - Scripting mode (On, Off, Python, JavaScript, Go, Perl)
+    /// * `script_runtime` - Runtime choice (required in ON mode when script_inline is provided)
     /// * `script_inline` - Optional inline script code
     /// * `handles` - Context types this script handles
     ///
@@ -80,7 +80,7 @@ impl ScriptManager {
     /// * `Err(_)` - Invalid configuration
     pub fn build_config(
         selected_mode: crate::state::app_state::ScriptingMode,
-        runtime_choice: Option<&str>,
+        script_runtime: Option<&str>,
         script_inline: Option<&str>,
         handles: Option<Vec<String>>,
     ) -> Result<Option<ScriptConfig>> {
@@ -90,12 +90,12 @@ impl ScriptManager {
             None => return Ok(None),
         };
 
-        // Get language from runtime_choice (ON mode) or selected mode (specific language mode)
+        // Get language from script_runtime (ON mode) or selected mode (specific language mode)
         let language = match selected_mode {
             crate::state::app_state::ScriptingMode::On => {
-                // In ON mode, runtime_choice is required
-                let runtime = runtime_choice.ok_or_else(|| {
-                    anyhow::anyhow!("runtime_choice is required when scripting mode is ON")
+                // In ON mode, script_runtime is required when script_inline is provided
+                let runtime = script_runtime.ok_or_else(|| {
+                    anyhow::anyhow!("script_runtime is required when script_inline is provided")
                 })?;
 
                 // Parse runtime choice
@@ -104,7 +104,7 @@ impl ScriptManager {
                     "javascript" | "js" | "node" => super::types::ScriptLanguage::JavaScript,
                     "go" | "golang" => super::types::ScriptLanguage::Go,
                     "perl" => super::types::ScriptLanguage::Perl,
-                    _ => anyhow::bail!("Invalid runtime_choice: '{}'. Valid options: python, javascript, go, perl", runtime),
+                    _ => anyhow::bail!("Invalid script_runtime: '{}'. Valid options: python, javascript, go, perl", runtime),
                 }
             }
             crate::state::app_state::ScriptingMode::Off => return Ok(None),

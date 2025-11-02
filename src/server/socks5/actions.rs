@@ -96,10 +96,10 @@ impl Server for Socks5Protocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual SOCKS5 protocol (RFC 1928)")
             .llm_control("Auth, connection allow/deny, MITM data inspection")
             .e2e_testing("curl --socks5 / SOCKS5 clients")

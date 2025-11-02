@@ -110,10 +110,10 @@ impl Server for OpenvpnProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Incomplete)
+            .state(DevelopmentState::Incomplete)
             .implementation("Manual packet opcode parsing, honeypot only")
             .llm_control("Handshake logging")
             .e2e_testing("OpenVPN client (detection only)")

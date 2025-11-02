@@ -113,10 +113,10 @@ impl Server for OpenApiProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("openapi-rs parser, matchit router, hyper HTTP")
             .llm_control("All API responses, spec compliance/violations")
             .e2e_testing("reqwest HTTP client")

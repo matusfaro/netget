@@ -576,10 +576,10 @@ impl Server for ElasticsearchProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("hyper v1.5 HTTP server with manual ES API")
             .llm_control("Search, index, cluster operations")
             .e2e_testing("curl / elasticsearch client")

@@ -95,10 +95,10 @@ impl Server for DnsProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Beta)
+            .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(53))
             .implementation("hickory-proto for parsing and construction")
             .llm_control("Response records (A, AAAA, MX, TXT, CNAME, NXDOMAIN)")

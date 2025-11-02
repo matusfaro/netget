@@ -196,10 +196,10 @@ impl Server for IrcProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual line-based IRC parsing")
             .llm_control("All IRC messages (NICK, JOIN, PRIVMSG)")
             .e2e_testing("Manual IRC client")

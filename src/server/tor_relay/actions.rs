@@ -160,10 +160,10 @@ impl Server for TorRelayProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Stable)
+            .state(DevelopmentState::Stable)
             .implementation("Custom Tor OR protocol with ntor handshake - 2,182 LOC")
             .llm_control("Circuit creation logging + unknown relay command responses")
             .e2e_testing("Official Tor client (tor binary)")

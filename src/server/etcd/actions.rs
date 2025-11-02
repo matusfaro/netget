@@ -226,10 +226,10 @@ impl Server for EtcdProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("tonic gRPC, official etcd protobuf schemas")
             .llm_control("All KV operations (Range, Put, Delete, Txn)")
             .e2e_testing("etcdctl / etcd-client")

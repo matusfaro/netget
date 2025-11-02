@@ -37,34 +37,9 @@ impl PrivilegeRequirement {
     }
 }
 
-/// Protocol implementation state (legacy)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DevelopmentState {
-    /// Fully implemented, production-ready
-    Implemented,
-    /// Stable, feature-complete, recommended for use
-    Beta,
-    /// Experimental, may have limitations or bugs
-    Alpha,
-    /// Implementation in-progress, abandoned, not functional (will not show in LLM prompts)
-    Disabled,
-}
-
-impl DevelopmentState {
-    /// Get the string representation for display
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Implemented => "Implemented",
-            Self::Beta => "Beta",
-            Self::Alpha => "Alpha",
-            Self::Disabled => "Disabled",
-        }
-    }
-}
-
 /// Protocol maturity and readiness state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ProtocolState {
+pub enum DevelopmentState {
     /// Incomplete implementation, not functional (e.g., OpenVPN)
     /// Will not show in LLM prompts
     Incomplete,
@@ -82,7 +57,7 @@ pub enum ProtocolState {
     Stable,
 }
 
-impl ProtocolState {
+impl DevelopmentState {
     /// Get the string representation for display
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -90,30 +65,6 @@ impl ProtocolState {
             Self::Experimental => "Experimental",
             Self::Beta => "Beta",
             Self::Stable => "Stable",
-        }
-    }
-}
-
-/// Convert ProtocolState to legacy DevelopmentState for backwards compatibility
-impl From<ProtocolState> for DevelopmentState {
-    fn from(state: ProtocolState) -> Self {
-        match state {
-            ProtocolState::Stable => DevelopmentState::Implemented,
-            ProtocolState::Beta => DevelopmentState::Beta,
-            ProtocolState::Experimental => DevelopmentState::Alpha,
-            ProtocolState::Incomplete => DevelopmentState::Disabled,
-        }
-    }
-}
-
-/// Convert legacy DevelopmentState to ProtocolState
-impl From<DevelopmentState> for ProtocolState {
-    fn from(state: DevelopmentState) -> Self {
-        match state {
-            DevelopmentState::Implemented => ProtocolState::Stable,
-            DevelopmentState::Beta => ProtocolState::Beta,
-            DevelopmentState::Alpha => ProtocolState::Experimental,
-            DevelopmentState::Disabled => ProtocolState::Incomplete,
         }
     }
 }
@@ -175,7 +126,7 @@ impl ProtocolMetadata {
 
     /// Check if this protocol should be shown to the LLM
     pub fn is_available_to_llm(&self) -> bool {
-        self.state != DevelopmentState::Disabled
+        self.state != DevelopmentState::Incomplete
     }
 }
 
@@ -183,7 +134,7 @@ impl ProtocolMetadata {
 #[derive(Debug, Clone)]
 pub struct ProtocolMetadataV2 {
     /// Current maturity/readiness state
-    pub state: ProtocolState,
+    pub state: DevelopmentState,
 
     /// Privilege requirements for this protocol
     pub privilege_requirement: PrivilegeRequirement,
@@ -231,7 +182,7 @@ impl ProtocolMetadataV2 {
 
     /// Check if this protocol should be shown to the LLM
     pub fn is_available_to_llm(&self) -> bool {
-        self.state != ProtocolState::Incomplete
+        self.state != DevelopmentState::Incomplete
     }
 
     /// Get a human-readable summary
@@ -247,7 +198,7 @@ impl ProtocolMetadataV2 {
 
 /// Builder for constructing ProtocolMetadataV2
 pub struct ProtocolMetadataV2Builder {
-    state: ProtocolState,
+    state: DevelopmentState,
     privilege_requirement: PrivilegeRequirement,
     implementation: &'static str,
     llm_control: &'static str,
@@ -258,7 +209,7 @@ pub struct ProtocolMetadataV2Builder {
 impl ProtocolMetadataV2Builder {
     pub const fn new() -> Self {
         Self {
-            state: ProtocolState::Experimental,
+            state: DevelopmentState::Experimental,
             privilege_requirement: PrivilegeRequirement::None,
             implementation: "",
             llm_control: "",
@@ -267,7 +218,7 @@ impl ProtocolMetadataV2Builder {
         }
     }
 
-    pub const fn state(mut self, state: ProtocolState) -> Self {
+    pub const fn state(mut self, state: DevelopmentState) -> Self {
         self.state = state;
         self
     }

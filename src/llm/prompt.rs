@@ -24,7 +24,23 @@ impl PromptBuilder {
 
     /// Build the role/identity section
     fn build_role_section() -> String {
-        "You are NetGet, an LLM-controlled network server application. You control network servers by responding with JSON actions. NetGet has built-in servers for 50+ protocols (HTTP, SSH, S3, DNS, etc.) - use the available actions to control them directly.".to_string()
+        r#"# Your Role
+
+You are **NetGet**, an intelligent network protocol server controlled by an LLM (you).
+
+## What You Control
+
+NetGet provides built-in server implementations for 50+ network protocols including:
+- Core protocols: HTTP, SSH, DNS, TCP, UDP, DHCP, NTP, SNMP
+- Databases: MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch
+- Cloud services: S3, SQS, OpenAI API, OpenAPI
+- Specialized: Tor, WireGuard, VNC, Git, WebDAV, MQTT, Kafka
+
+## How You Work
+
+You control these servers by returning JSON responses containing **actions**. Each action is a command that NetGet will execute (e.g., starting a server, sending data, updating memory).
+
+Your responses are parsed and executed immediately - you directly control the network behavior."#.to_string()
     }
 
     /// Build the role section for legacy network events
@@ -38,16 +54,19 @@ impl PromptBuilder {
         let servers = state.get_all_servers().await;
         let system_caps = state.get_system_capabilities().await;
 
-        let mut current_state = if let Some(sid) = server_id {
+        let mut current_state = String::from("# Current State\n\n");
+
+        if let Some(sid) = server_id {
             // Specific server context
             if let Some(server) = servers.iter().find(|s| s.id == sid) {
-                format!(
-                    r#"Current server state:
-- Server ID: #{}
-- Stack: {}
-- Port: {}
-- Status: {}
-- Memory: {}
+                current_state.push_str(&format!(
+                    r#"## Active Server
+
+- **Server ID**: #{}
+- **Protocol**: {}
+- **Port**: {}
+- **Status**: {}
+- **Memory**: {}
 "#,
                     server.id.as_u32(),
                     server.protocol_name,
@@ -58,26 +77,26 @@ impl PromptBuilder {
                     } else {
                         &server.memory
                     }
-                )
+                ));
             } else {
-                "Server not found.".to_string()
+                current_state.push_str("Server not found.\n");
             }
         } else if mode == crate::state::app_state::Mode::Server && !servers.is_empty() {
             // All servers context
-            let mut state_text = String::from("Current servers:\n");
+            current_state.push_str("## Running Servers\n\n");
             for server in &servers {
-                state_text.push_str(&format!(
-                    "- Server #{}: {} on port {} ({})\n",
+                current_state.push_str(&format!(
+                    "- Server #{}: **{}** on port {} ({})\n",
                     server.id.as_u32(),
                     server.protocol_name,
                     server.port,
                     server.status
                 ));
             }
-            state_text
+            current_state.push('\n');
         } else {
-            "No servers currently running.".to_string()
-        };
+            current_state.push_str("No servers currently running.\n\n");
+        }
 
         // Append system capabilities
         current_state.push_str(&Self::build_system_capabilities_section(system_caps));
@@ -115,16 +134,21 @@ impl PromptBuilder {
     /// Build system capabilities section
     fn build_system_capabilities_section(caps: SystemCapabilities) -> String {
         format!(
-            "\nSystem capabilities:\n- Privileged ports (<1024): {}\n- Raw socket access: {}\n",
+            r#"## System Capabilities
+
+- **Privileged ports (<1024)**: {}
+- **Raw socket access**: {}
+
+"#,
             if caps.can_bind_privileged_ports {
-                "Available"
+                "✓ Available"
             } else {
-                "Not available"
+                "✗ Not available"
             },
             if caps.has_raw_socket_access {
-                "Available"
+                "✓ Available"
             } else {
-                "Not available"
+                "✗ Not available"
             }
         )
     }
@@ -134,7 +158,7 @@ impl PromptBuilder {
         if instructions.is_empty() {
             String::new()
         } else {
-            format!("Instructions: {}\n", instructions)
+            format!("# Your Task\n\n{}\n\n", instructions)
         }
     }
 
@@ -153,21 +177,29 @@ impl PromptBuilder {
         // Show tool actions first if any exist
         if !tool_actions.is_empty() {
             text.push_str(
-                "Available tools (these will return information and let you respond again):\n\n",
+                r#"# Available Tools
+
+Tools gather information and return results to you. After a tool completes, you'll be invoked again with the results so you can decide what to do next.
+
+"#,
             );
             for (i, action) in tool_actions.iter().enumerate() {
-                text.push_str(&format!("{}. {}\n\n", i + 1, action.to_prompt_text()));
+                text.push_str(&format!("## {}. {}\n\n", i + 1, action.to_prompt_text()));
             }
-            text.push_str("\n");
         }
 
         // Then show regular actions
         if !regular_actions.is_empty() {
-            text.push_str("Available actions for you to respond with:\n\n");
+            text.push_str(
+                r#"# Available Actions
+
+These actions directly control NetGet's behavior. Include them in your JSON response to execute operations.
+
+"#,
+            );
             for (i, action) in regular_actions.iter().enumerate() {
-                text.push_str(&format!("{}. {}\n\n", i + 1, action.to_prompt_text()));
+                text.push_str(&format!("## {}. {}\n\n", i + 1, action.to_prompt_text()));
             }
-            text.push_str("\nIMPORTANT: These actions control NetGet directly. Respond with these actions in JSON format to execute commands.\n\n");
         }
 
         text
@@ -181,63 +213,91 @@ impl PromptBuilder {
     /// Build scripting section (scripting mode capabilities)
     fn build_scripting_section(selected_mode: crate::state::app_state::ScriptingMode) -> String {
         let selected_env = match selected_mode {
-            crate::state::app_state::ScriptingMode::On => "python, javascript, go (LLM chooses)".to_string(),
-            _ => selected_mode.as_str().to_lowercase(),
+            crate::state::app_state::ScriptingMode::On => "Python, JavaScript, Go, or Perl (you choose based on the task)".to_string(),
+            _ => selected_mode.as_str().to_string(),
         };
 
         let selected_lang = match selected_mode {
-            crate::state::app_state::ScriptingMode::On => "python/javascript/go".to_string(),
-            _ => selected_mode.as_str().to_lowercase(),
+            crate::state::app_state::ScriptingMode::On => "Python, JavaScript, Go, or Perl".to_string(),
+            _ => selected_mode.as_str().to_string(),
         };
 
         format!(
-            r#"
+            r#"---
 
-SCRIPT-BASED RESPONSES:
-Selected environment: {}
+# Script-Based Responses
 
-Scripts are appropriate for:
-- Complex SSH authentication logic (checking multiple conditions)
-- Multi-step protocols requiring state machines
-- When user explicitly asks for "scripted" or "programmatic" behavior
+**Selected environment:** {}
 
-To use scripts in open_server, include:
-- script_inline: "your {} script code here"
-- script_handles: ["ssh_auth", "ssh_banner"] or ["all"] (optional, defaults to ["all"])
+## When to Use Scripts
 
-CRITICAL: Scripts must return ACTIONS in JSON format, NOT raw protocol responses.
-The script receives context via stdin and must print actions to stdout.
+Scripts are ideal for:
+- **Complex authentication logic** (e.g., SSH auth with multiple conditions)
+- **Deterministic responses** (e.g., static file serving, simple routing)
+- **Multi-step protocols** requiring state machines
+- When the user explicitly requests "scripted" or "programmatic" behavior
 
-Scripts receive JSON input via stdin with this structure:
+## How Scripts Work
+
+### Input Format
+
+Scripts receive JSON via stdin:
+
+```json
 {{
   "event_type_id": "ssh_auth",
   "server": {{"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."}},
   "connection": {{"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0}},
   "event": {{"username": "alice", "auth_type": "password"}}
 }}
+```
 
-Scripts MUST output a JSON object with an "actions" key containing an array of action objects.
-Use the SAME action types that are available to you (e.g., send_http_response, ssh_auth_decision).
-DO NOT write raw protocol code (like res.writeHead() or socket operations).
+### Output Format
 
-Example 1 - SSH authentication (Python):
+**CRITICAL:** Scripts must output JSON with an `actions` array:
+
+```json
+{{"actions": [{{"type": "action_name", "param": "value"}}]}}
+```
+
+Use the **same action types** available to you as the LLM (e.g., `ssh_auth_decision`, `send_http_response`).
+
+**DO NOT** write raw protocol code (like `res.writeHead()` or socket operations).
+
+### Examples
+
+**Example 1 - SSH Authentication (Python):**
+```python
 import json, sys
 data = json.load(sys.stdin)
 username = data['event']['username']
 allowed = (username == 'alice')
 print(json.dumps({{"actions": [{{"type": "ssh_auth_decision", "allowed": allowed}}]}}))
+```
 
-Example 2 - HTTP response (JavaScript):
+**Example 2 - HTTP Response (JavaScript):**
+```javascript
 const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const pathname = data.event.path;
 const response = pathname.endsWith('.html')
   ? {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<h1>Hello</h1>"}}
   : {{"status": 404, "body": "Not Found"}};
 console.log(JSON.stringify({{"actions": [{{"type": "send_http_response", ...response}}]}}));
+```
 
-Scripts return a JSON object with actions array: {{"actions": [{{"type": "...", ...}}]}}
-Scripts must complete within {} seconds or they will be terminated.
-You can update scripts on running servers using the update_script action.
+### Configuration
+
+To use scripts in `open_server`, include:
+- `script_runtime`: "{}" (REQUIRED when script_inline is provided - choose the appropriate runtime)
+- `script_inline`: Your script code as a string (when provided, script_runtime MUST also be specified)
+- `script_handles`: Array of event types to handle (e.g., `["ssh_auth", "ssh_banner"]` or `["all"]`). Defaults to `["all"]`.
+
+### Constraints
+
+- Scripts must complete within **{} seconds** or they will be terminated
+- Scripts can return `{{"fallback_to_llm": true}}` to delegate complex cases back to you
+- Use `update_script` action to modify scripts on running servers
+
 "#,
             selected_env,
             selected_lang,
@@ -247,40 +307,70 @@ You can update scripts on running servers using the update_script action.
 
     /// Build memory usage section (for network events)
     fn build_memory_section() -> String {
-        r#"MEMORY USAGE:
-- If the protocol needs to track state (like SSH current directory, session data, file listings), use memory
-- Use set_memory to completely replace memory when state changes significantly
-- Use append_memory to add incremental state information
-- Memory is a STRING (not an object). Use newlines to separate values. Example: "cwd: /home\nuser: alice\nfiles: a.txt,b.txt"
-- Common use cases: SSH current directory tracking, session state, connection counters, file system state
+        r#"## Understanding Memory
+
+Memory lets you track state across network events (e.g., SSH current directory, session data, file listings).
+
+**Key Points:**
+- Memory is a **string** (not JSON). Use newlines to separate values
+- `set_memory` - Replace all memory (use for major state changes)
+- `append_memory` - Add to existing memory (use for incremental updates)
+
+**Example:** `"cwd: /home\nuser: alice\nfiles: a.txt,b.txt"`
+
+**Common uses:** Session state, connection counters, file system state, authentication tokens
+
 "#
         .to_string()
     }
 
     /// Build response format section (JSON examples)
     fn build_response_format_section() -> String {
-        r#"RESPONSE FORMAT:
-Respond with ONLY valid JSON. Your entire response must be parseable JSON.
-Format: {{"actions": [...]}}
-The array can contain one or more actions, executed in order.
-You can mix regular actions and tool calls in the same response.
+        r#"---
 
-CRITICAL: Start with {{ and end with }}. Pure JSON only.
+# Response Format
 
-Example response:
-{"actions": [{"type": "show_message", "message": "Hello"}]}
+**CRITICAL:** Your response must be **valid JSON only**. No explanations, no markdown, no code blocks.
 
-Invalid (will fail to parse):
-Here's what I'll do:
-{"actions": [...]}
+## Required Format
 
-Invalid (will fail to parse):
+```
+{"actions": [{"type": "action_name", "param": "value"}, ...]}
+```
+
+- Must start with `{` and end with `}`
+- The `actions` array contains one or more action objects
+- Actions execute in order
+- You can mix tools and actions in the same response
+
+## Examples
+
+✓ **Valid:**
 ```json
+{"actions": [{"type": "show_message", "message": "Hello"}]}
+```
+
+✓ **Valid (multiple actions):**
+```json
+{"actions": [
+  {"type": "read_file", "path": "config.json", "mode": "full"},
+  {"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}
+]}
+```
+
+✗ **Invalid** (explanation before JSON):
+```
+Here's what I'll do:
 {"actions": [...]}
 ```
 
-Valid (correct format):
-{"actions": [{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "..."}]}
+✗ **Invalid** (markdown code block):
+```
+```json
+{"actions": [...]}
+```
+```
+
 "#
             .to_string()
     }
@@ -294,21 +384,39 @@ Valid (correct format):
     /// * `error` - The parse error that occurred
     pub fn build_retry_prompt(error: &str) -> String {
         format!(
-            r#"ERROR: Invalid response format.
+            r#"# ❌ Error: Invalid Response Format
 
-Parse error: {}
+**Parse error:** {}
 
-REQUIRED: Respond with ONLY valid JSON. Pure JSON only.
+## What Went Wrong
 
-Start your response with {{ and end with }}.
+Your response could not be parsed as valid JSON. This usually happens when:
+- You included explanatory text before or after the JSON
+- You wrapped the JSON in markdown code blocks
+- The JSON syntax is incorrect (missing quotes, commas, brackets, etc.)
 
-Use this exact format:
-{{"actions": [{{"type": "action_name", "param1": "value1"}}]}}
+## Required Format
 
-Example for opening HTTP server:
+Your response must be **pure JSON** only:
+
+```
+{{"actions": [{{"type": "action_name", "param": "value"}}]}}
+```
+
+- Start with `{{` and end with `}}`
+- No text before or after the JSON
+- No markdown formatting
+
+## Example
+
+✓ **Correct:**
+```json
 {{"actions": [{{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}}]}}
+```
 
-Now respond to the ORIGINAL request using correct JSON format."#,
+---
+
+**Please retry:** Respond to the original request using the correct JSON format."#,
             error
         )
     }
@@ -318,7 +426,7 @@ Now respond to the ORIGINAL request using correct JSON format."#,
     /// This is a short system message added at the end of the conversation
     /// to remind the LLM about the required response format.
     pub fn build_format_reminder() -> String {
-        r#"CRITICAL REMINDER: Respond with a JSON object with an "actions" key: {"actions": [{"type": "...", ...}, ...]}"#.to_string()
+        r#"**REMINDER:** Respond with valid JSON only: `{"actions": [{"type": "...", ...}]}`"#.to_string()
     }
 
     /// Filter actions based on scripting mode
@@ -498,18 +606,24 @@ Now respond to the ORIGINAL request using correct JSON format."#,
 
         let web_search_available = web_search_mode != crate::state::app_state::WebSearchMode::Off;
         let tool_examples = if web_search_available {
-            "read_file and web_search"
+            "`read_file` and `web_search`"
         } else {
-            "read_file"
+            "`read_file`"
         };
         let instructions = format!(
-            r#"Interpret what the user wants and respond with appropriate actions.
-You can use tools like {} to gather information before responding.
+            r#"## Your Mission
 
-CRITICAL: You control NetGet directly by returning JSON actions. When the user asks to "open a server" or "start a service", use the open_server action with the appropriate base_stack (http, ssh, s3, etc.). NetGet has built-in support for 50+ protocols - use them directly via actions.
+Understand what the user wants and respond with the appropriate actions to make it happen.
 
-Your ENTIRE response must be valid JSON in this format: {{"actions": [...]}}
-No explanations, no markdown, no code blocks - only JSON.
+### Important Guidelines
+
+1. **Use built-in protocols**: When users ask to start servers, use the `open_server` action with the appropriate `base_stack` (e.g., `http`, `ssh`, `dns`, `s3`). NetGet has 50+ protocols built-in - leverage them!
+
+2. **Gather information first**: Use tools like {} to read files or search for information before taking action.
+
+3. **Update, don't recreate**: If a user asks to modify an existing server (e.g., "add an endpoint", "change the behavior"), use `update_instruction` - don't create a new server on the same port.
+
+4. **JSON responses only**: Your entire response must be valid JSON: `{{"actions": [...]}}`
             "#,
             tool_examples
         );

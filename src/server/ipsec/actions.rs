@@ -110,10 +110,10 @@ impl Server for IpsecProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Incomplete)
+            .state(DevelopmentState::Incomplete)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
             .implementation("Manual IKE header parsing, honeypot only")
             .llm_control("Reconnaissance logging")

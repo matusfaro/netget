@@ -509,10 +509,10 @@ impl Server for BgpProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Incomplete)
+            .state(DevelopmentState::Incomplete)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(179))
             .implementation("Manual BGP-4 (RFC 4271), 6-state FSM")
             .llm_control("Peering decisions, route advertisements")

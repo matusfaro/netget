@@ -123,10 +123,10 @@ impl Server for CassandraProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("cassandra-protocol v3.0 (Protocol v4)")
             .llm_control("CQL queries, prepared statements, auth")
             .e2e_testing("scylla client")
