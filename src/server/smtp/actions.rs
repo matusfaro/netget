@@ -200,10 +200,16 @@ impl Server for SmtpProtocol {
         vec!["smtp", "mail", "email"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual line-based parsing with tokio")
+            .llm_control("All SMTP commands + responses")
+            .e2e_testing("lettre SMTP client")
+            .notes("No auth/TLS, basic MTA functionality")
+            .build()
     }
 
     fn description(&self) -> &'static str {

@@ -24,6 +24,8 @@ pub struct ServerTaskDefinition {
     pub context: Option<serde_json::Value>,
     // Script configuration fields
     #[serde(default)]
+    pub runtime_choice: Option<String>,
+    #[serde(default)]
     pub script_language: Option<String>,
     #[serde(default)]
     pub script_path: Option<String>,
@@ -52,6 +54,8 @@ pub enum CommonAction {
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
         // Script configuration fields
+        #[serde(default)]
+        runtime_choice: Option<String>,
         #[serde(default)]
         script_language: Option<String>,
         #[serde(default)]
@@ -89,6 +93,8 @@ pub enum CommonAction {
         server_id: Option<u32>,
         operation: String,
         #[serde(default)]
+        runtime_choice: Option<String>,
+        #[serde(default)]
         script_language: Option<String>,
         #[serde(default)]
         script_path: Option<String>,
@@ -120,6 +126,8 @@ pub enum CommonAction {
         #[serde(default)]
         context: Option<serde_json::Value>,
         // Script configuration fields
+        #[serde(default)]
+        runtime_choice: Option<String>,
         #[serde(default)]
         script_language: Option<String>,
         #[serde(default)]
@@ -163,7 +171,10 @@ pub fn show_message_action() -> ActionDefinition {
 }
 
 /// Get action definition for open_server
-pub fn open_server_action(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
+pub fn open_server_action(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+) -> ActionDefinition {
     let mut parameters = vec![
         Parameter {
             name: "port".to_string(),
@@ -204,36 +215,72 @@ pub fn open_server_action(selected_mode: crate::state::app_state::ScriptingMode)
         Parameter {
             name: "scheduled_tasks".to_string(),
             type_hint: "array".to_string(),
-            description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_inline, script_handles).".to_string(),
+            description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (runtime_choice, script_inline, script_handles).".to_string(),
             required: false,
         },
     ];
 
-    // Add script parameters if scripting is enabled
-    if selected_mode != crate::state::app_state::ScriptingMode::Llm {
-        let lang = selected_mode.as_str().to_lowercase();
-        parameters.extend(vec![
-            Parameter {
-                name: "script_inline".to_string(),
-                type_hint: "string".to_string(),
-                description: format!(
-                    "Optional: Inline {} script code to handle deterministic responses instead of LLM. If provided, the script will be executed for network events.",
-                    lang
-                ),
-                required: false,
-            },
-            Parameter {
-                name: "script_handles".to_string(),
-                type_hint: "array".to_string(),
-                description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
-                required: false,
-            },
-        ]);
+    // Add script parameters based on scripting mode
+    match selected_mode {
+        crate::state::app_state::ScriptingMode::On => {
+            // ON mode: LLM chooses runtime from available options
+            let available_runtimes = env.format_available();
+            parameters.extend(vec![
+                Parameter {
+                    name: "runtime_choice".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "REQUIRED when using scripts: Choose runtime for script execution. Available: {}. Choose the best runtime for the task.",
+                        available_runtimes
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Optional: Inline script code to handle deterministic responses instead of LLM. Must match the runtime_choice language. If provided, the script will be executed for network events.".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
+                    required: false,
+                },
+            ]);
+        }
+        crate::state::app_state::ScriptingMode::Off => {
+            // OFF mode: no script parameters
+        }
+        crate::state::app_state::ScriptingMode::Python
+        | crate::state::app_state::ScriptingMode::JavaScript
+        | crate::state::app_state::ScriptingMode::Go
+        | crate::state::app_state::ScriptingMode::Perl => {
+            // Specific language mode: only show that language
+            let lang = selected_mode.as_str();
+            parameters.extend(vec![
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "Optional: Inline {} script code to handle deterministic responses instead of LLM. If provided, the script will be executed for network events.",
+                        lang
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
+                    required: false,
+                },
+            ]);
+        }
     }
 
     ActionDefinition {
         name: "open_server".to_string(),
-        description: "Start a new server".to_string(),
+        description: "Start a new server. You must call get_protocol_docs first to understand how to setup server and to get expected structure of startup_params".to_string(),
         parameters,
         example: json!({
             "type": "open_server",
@@ -336,37 +383,83 @@ pub fn append_memory_action() -> ActionDefinition {
 }
 
 /// Get action definition for update_script
-pub fn update_script_action(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
-    let lang = selected_mode.as_str().to_lowercase();
+pub fn update_script_action(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+) -> ActionDefinition {
+    let mut parameters = vec![
+        Parameter {
+            name: "server_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Optional: Server ID to update (defaults to first/current server)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)".to_string(),
+            required: true,
+        },
+    ];
+
+    // Add script parameters based on scripting mode
+    match selected_mode {
+        crate::state::app_state::ScriptingMode::On => {
+            // ON mode: LLM chooses runtime from available options
+            let available_runtimes = env.format_available();
+            parameters.extend(vec![
+                Parameter {
+                    name: "runtime_choice".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "Required for 'set' operation: Choose runtime for script execution. Available: {}",
+                        available_runtimes
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Inline script code (required for 'set' operation). Must match the runtime_choice language.".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
+                    required: false,
+                },
+            ]);
+        }
+        crate::state::app_state::ScriptingMode::Off => {
+            // OFF mode: no script parameters needed (only operation for disable)
+        }
+        crate::state::app_state::ScriptingMode::Python
+        | crate::state::app_state::ScriptingMode::JavaScript
+        | crate::state::app_state::ScriptingMode::Go
+        | crate::state::app_state::ScriptingMode::Perl => {
+            let lang = selected_mode.as_str();
+            parameters.extend(vec![
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!("Inline {} script code (required for 'set' operation)", lang),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
+                    required: false,
+                },
+            ]);
+        }
+    }
+
     ActionDefinition {
         name: "update_script".to_string(),
         description: "Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "server_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "Optional: Server ID to update (defaults to first/current server)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "operation".to_string(),
-                type_hint: "string".to_string(),
-                description: "Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "script_inline".to_string(),
-                type_hint: "string".to_string(),
-                description: format!("Inline {} script code (required for 'set' operation)", lang),
-                required: false,
-            },
-            Parameter {
-                name: "script_handles".to_string(),
-                type_hint: "array".to_string(),
-                description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
-                required: false,
-            },
-        ],
+        parameters,
         example: json!({
             "type": "update_script",
             "server_id": 1,
@@ -405,7 +498,10 @@ pub fn append_to_log_action() -> ActionDefinition {
 }
 
 /// Get action definition for schedule_task
-pub fn schedule_task_action(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
+pub fn schedule_task_action(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+) -> ActionDefinition {
     let mut parameters = vec![
         Parameter {
             name: "task_id".to_string(),
@@ -457,26 +553,61 @@ pub fn schedule_task_action(selected_mode: crate::state::app_state::ScriptingMod
         },
     ];
 
-    // Add script parameters if scripting is enabled
-    if selected_mode != crate::state::app_state::ScriptingMode::Llm {
-        let lang = selected_mode.as_str().to_lowercase();
-        parameters.extend(vec![
-            Parameter {
-                name: "script_inline".to_string(),
-                type_hint: "string".to_string(),
-                description: format!(
-                    "Optional: Inline {} script code to handle task execution instead of LLM. If provided, the script will be executed for each task trigger.",
-                    lang
-                ),
-                required: false,
-            },
-            Parameter {
-                name: "script_handles".to_string(),
-                type_hint: "array".to_string(),
-                description: "Optional: Event types the script handles (e.g., [\"scheduled_task_cleanup\"]). Defaults to [\"all\"].".to_string(),
-                required: false,
-            },
-        ]);
+    // Add script parameters based on scripting mode
+    match selected_mode {
+        crate::state::app_state::ScriptingMode::On => {
+            // ON mode: LLM chooses runtime from available options
+            let available_runtimes = env.format_available();
+            parameters.extend(vec![
+                Parameter {
+                    name: "runtime_choice".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "Required when using scripts: Choose runtime for script execution. Available: {}",
+                        available_runtimes
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Optional: Inline script code to handle task execution instead of LLM. Must match the runtime_choice language. If provided, the script will be executed for each task trigger.".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Optional: Event types the script handles (e.g., [\"scheduled_task_cleanup\"]). Defaults to [\"all\"].".to_string(),
+                    required: false,
+                },
+            ]);
+        }
+        crate::state::app_state::ScriptingMode::Off => {
+            // OFF mode: no script parameters
+        }
+        crate::state::app_state::ScriptingMode::Python
+        | crate::state::app_state::ScriptingMode::JavaScript
+        | crate::state::app_state::ScriptingMode::Go
+        | crate::state::app_state::ScriptingMode::Perl => {
+            let lang = selected_mode.as_str();
+            parameters.extend(vec![
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "Optional: Inline {} script code to handle task execution instead of LLM. If provided, the script will be executed for each task trigger.",
+                        lang
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Optional: Event types the script handles (e.g., [\"scheduled_task_cleanup\"]). Defaults to [\"all\"].".to_string(),
+                    required: false,
+                },
+            ]);
+        }
     }
 
     ActionDefinition {
@@ -531,17 +662,20 @@ pub fn list_tasks_action() -> ActionDefinition {
 /// 2. Server Configuration - Configure running servers
 /// 3. Task Management - Schedule/cancel tasks
 /// 4. System/Utility - Model changes, messages, logging
-pub fn get_all_common_actions(selected_mode: crate::state::app_state::ScriptingMode) -> Vec<ActionDefinition> {
+pub fn get_all_common_actions(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+) -> Vec<ActionDefinition> {
     let mut actions = vec![
         // === Server Management ===
-        get_open_server_action_with_params(selected_mode),
+        get_open_server_action_with_params(selected_mode, env),
         close_server_action(),
         // === Server Configuration ===
         update_instruction_action(),
         set_memory_action(),
         append_memory_action(),
         // === Task Management ===
-        schedule_task_action(selected_mode),
+        schedule_task_action(selected_mode, env),
         cancel_task_action(),
         list_tasks_action(),
         // === System/Utility ===
@@ -550,17 +684,20 @@ pub fn get_all_common_actions(selected_mode: crate::state::app_state::ScriptingM
         append_to_log_action(),
     ];
 
-    // Only include update_script if scripting is enabled
-    if selected_mode != crate::state::app_state::ScriptingMode::Llm {
-        actions.insert(4, update_script_action(selected_mode)); // Insert after update_instruction
+    // Only include update_script if scripting is enabled (not OFF mode)
+    if selected_mode != crate::state::app_state::ScriptingMode::Off {
+        actions.insert(4, update_script_action(selected_mode, env)); // Insert after update_instruction
     }
 
     actions
 }
 
 /// Get common actions for user input (all common actions with enhanced open_server)
-pub fn get_user_input_common_actions(selected_mode: crate::state::app_state::ScriptingMode) -> Vec<ActionDefinition> {
-    get_all_common_actions(selected_mode)
+pub fn get_user_input_common_actions(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+) -> Vec<ActionDefinition> {
+    get_all_common_actions(selected_mode, env)
 }
 
 /// Get common actions for network events (exclude server management actions)
@@ -625,81 +762,129 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
         }
     }
 
-    // Sort groups by predefined order
-    let group_order = vec![
-        "Core",
-        "Application",
-        "Database",
-        "Web & File",
-        "Proxy & Network",
-        "AI & API",
-        "Other"
-    ];
+    // Sort groups alphabetically
+    let mut sorted_group_names: Vec<&'static str> = groups.keys().copied().collect();
+    sorted_group_names.sort();
 
-    for group_name in group_order {
+    for group_name in sorted_group_names {
         if let Some(protocols) = groups.get_mut(group_name) {
             if protocols.is_empty() {
                 continue;
             }
 
             // Output group header
-            doc.push_str(&format!("### {}\n\n", group_name));
+            doc.push_str(&format!("### {}\n", group_name));
 
             // Sort protocols alphabetically within group
             protocols.sort_by(|a, b| a.0.cmp(&b.0));
 
-            // Output full details for each protocol in the group
+            // Output each protocol with keywords on one line
             for (protocol_name, protocol) in protocols {
-                // Protocol header (short name)
-                doc.push_str(&format!("**{}**\n", protocol_name));
-
-                // Full stack name
-                let stack_name = protocol.stack_name();
-                doc.push_str(&format!("Full name: \"{}\"\n", stack_name));
-
-                // Description
-                doc.push_str(&format!("Description: {}\n", protocol.description()));
-
-                // Example prompt
-                doc.push_str(&format!("Example: \"{}\"\n", protocol.example_prompt()));
-
-                // Startup parameters
-                let params = protocol.get_startup_parameters();
-                if !params.is_empty() {
-                    doc.push_str("Startup parameters:\n");
-                    for param in params {
-                        doc.push_str(&format!(
-                            "  • {} ({}) - {}\n",
-                            param.name,
-                            if param.required {
-                                "required"
-                            } else {
-                                "optional"
-                            },
-                            param.description
-                        ));
-                        doc.push_str(&format!(
-                            "    Example: {}\n",
-                            serde_json::to_string(&param.example).unwrap_or_default()
-                        ));
-                    }
+                let keywords = protocol.keywords();
+                if !keywords.is_empty() {
+                    doc.push_str(&format!("{} ({})\n", protocol_name, keywords.join(", ")));
                 } else {
-                    doc.push_str("Startup parameters: None\n");
+                    doc.push_str(&format!("{}\n", protocol_name));
                 }
-                doc.push('\n');
             }
+            doc.push('\n');
         }
     }
 
     doc
 }
 
+/// Generate documentation for a single protocol
+///
+/// This is used by the read_base_stack_docs tool to provide detailed information
+/// about a specific protocol on demand.
+///
+/// # Arguments
+/// * `protocol_name` - Name of the protocol (e.g., "http", "ssh", "tor")
+///
+/// # Returns
+/// * `Ok(String)` - Documentation for the protocol
+/// * `Err(_)` - If protocol not found
+pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let registry = crate::protocol::registry::registry();
+
+    // Protocol names are stored in uppercase (e.g., "HTTP", "SSH", "TCP")
+    // Normalize input to uppercase for case-insensitive lookup
+    let normalized_name = protocol_name.to_uppercase();
+    let protocol = registry
+        .get(&normalized_name)
+        .with_context(|| format!("Protocol '{}' not found in registry", protocol_name))?;
+
+    let mut doc = String::new();
+
+    // Protocol header
+    doc.push_str(&format!("# {} Protocol Documentation\n\n", protocol_name.to_uppercase()));
+
+    // Full stack name
+    doc.push_str(&format!("**Full name:** {}\n\n", protocol.stack_name()));
+
+    // Group
+    doc.push_str(&format!("**Category:** {}\n\n", protocol.group_name()));
+
+    // Description
+    doc.push_str(&format!("**Description:** {}\n\n", protocol.description()));
+
+    // Example prompt
+    doc.push_str(&format!("**Example usage:** \"{}\"\n\n", protocol.example_prompt()));
+
+    // Keywords
+    let keywords = protocol.keywords();
+    if !keywords.is_empty() {
+        doc.push_str(&format!("**Keywords:** {}\n\n", keywords.join(", ")));
+    }
+
+    // Startup parameters
+    let params = protocol.get_startup_parameters();
+    if !params.is_empty() {
+        doc.push_str("## Startup Parameters\n\n");
+        doc.push_str("These parameters can be included in the `startup_params` field when calling `open_server`:\n\n");
+        for param in params {
+            doc.push_str(&format!(
+                "- **{}** ({}): {}\n",
+                param.name,
+                if param.required { "required" } else { "optional" },
+                param.description
+            ));
+            doc.push_str(&format!(
+                "  - Type: {}\n",
+                param.type_hint
+            ));
+            doc.push_str(&format!(
+                "  - Example: {}\n",
+                serde_json::to_string(&param.example).unwrap_or_default()
+            ));
+            doc.push('\n');
+        }
+    } else {
+        doc.push_str("## Startup Parameters\n\nThis protocol does not require any startup parameters.\n\n");
+    }
+
+    // Metadata (state)
+    let metadata = protocol.metadata();
+    doc.push_str(&format!("**Development state:** {:?}\n", metadata.state));
+    if let Some(notes) = metadata.notes {
+        doc.push_str(&format!("**Notes:** {}\n", notes));
+    }
+
+    Ok(doc)
+}
+
 /// Get open_server action with example showing startup_params usage
 ///
 /// Startup parameter documentation is provided in the base stack documentation section,
 /// not inline here, to avoid redundancy and reduce token usage.
-pub fn get_open_server_action_with_params(selected_mode: crate::state::app_state::ScriptingMode) -> ActionDefinition {
-    let mut base_action = open_server_action(selected_mode);
+pub fn get_open_server_action_with_params(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+) -> ActionDefinition {
+    let mut base_action = open_server_action(selected_mode, env);
 
     // Use example that shows startup_params and scheduled_tasks usage
     // NOTE: Example uses TCP to avoid biasing the LLM toward any specific application protocol

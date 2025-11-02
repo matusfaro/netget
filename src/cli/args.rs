@@ -52,19 +52,19 @@ pub struct Args {
     )]
     pub log_level: String,
 
-    /// Scripting environment to use (llm, python, javascript, go)
+    /// Scripting environment to use (on, off, python, javascript, go, perl)
     #[clap(
         short = 'e',
         long = "env",
         value_name = "ENVIRONMENT",
-        help = "Scripting environment: llm (LLM handles all requests), python (LLM produces Python code), javascript (LLM produces JavaScript code), go (LLM produces Go code), perl (LLM produces Perl code)"
+        help = "Scripting environment: on (LLM chooses runtime), off (LLM only mode), python (Python scripting), javascript (JavaScript scripting), go (Go scripting), perl (Perl scripting)"
     )]
     pub scripting_env: Option<String>,
 
     /// Disable script generation (force LLM to use actions only)
     #[clap(
         long = "no-scripts",
-        help = "Disable script generation, force LLM to respond with actions only"
+        help = "Disable script generation, force LLM to respond with actions only (same as --env off)"
     )]
     pub no_scripts: bool,
 
@@ -181,11 +181,17 @@ impl Args {
 
     /// Parse the scripting environment argument into a ScriptingMode
     pub fn parse_scripting_mode(&self) -> Result<Option<crate::state::app_state::ScriptingMode>> {
+        // --no-scripts flag takes precedence
+        if self.no_scripts {
+            return Ok(Some(crate::state::app_state::ScriptingMode::Off));
+        }
+
         match &self.scripting_env {
             None => Ok(None),
             Some(env) => {
                 let mode = match env.to_lowercase().as_str() {
-                    "llm" => crate::state::app_state::ScriptingMode::Llm,
+                    "on" | "auto" => crate::state::app_state::ScriptingMode::On,
+                    "off" | "llm" => crate::state::app_state::ScriptingMode::Off,
                     "python" | "py" => crate::state::app_state::ScriptingMode::Python,
                     "javascript" | "js" | "node" => crate::state::app_state::ScriptingMode::JavaScript,
                     "go" | "golang" => crate::state::app_state::ScriptingMode::Go,
@@ -193,7 +199,7 @@ impl Args {
                     _ => {
                         anyhow::bail!(
                             "Invalid scripting environment: '{}'\n\
-                             Valid options: llm, python (py), javascript (js, node), go (golang), perl",
+                             Valid options: on (auto), off (llm), python (py), javascript (js, node), go (golang), perl",
                             env
                         );
                     }

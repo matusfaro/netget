@@ -95,10 +95,16 @@ impl Server for McpProtocol {
         vec!["mcp", "model-context-protocol", "model context protocol"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("axum HTTP, custom JSON-RPC 2.0, session management")
+            .llm_control("All capabilities: resources, tools, prompts")
+            .e2e_testing("MCP clients / TypeScript SDK")
+            .notes("HTTP POST only, no WebSocket/SSE, in-memory sessions")
+            .build()
     }
 
     fn description(&self) -> &'static str {

@@ -26,20 +26,13 @@ use crate::server::connection::ConnectionId;
 use crate::server::jsonrpc::actions::JsonRpcProtocol;
 use crate::state::app_state::AppState;
 
+/// JSON-RPC 2.0 standard error codes
+const PARSE_ERROR: i32 = -32700;
+const INVALID_REQUEST: i32 = -32600;
+const INTERNAL_ERROR: i32 = -32603;
+
 /// JSON-RPC 2.0 server that delegates to LLM
 pub struct JsonRpcServer;
-
-/// JSON-RPC 2.0 error codes
-#[allow(dead_code)]
-const PARSE_ERROR: i32 = -32700;
-#[allow(dead_code)]
-const INVALID_REQUEST: i32 = -32600;
-#[allow(dead_code)]
-const METHOD_NOT_FOUND: i32 = -32601;
-#[allow(dead_code)]
-const INVALID_PARAMS: i32 = -32602;
-#[allow(dead_code)]
-const INTERNAL_ERROR: i32 = -32603;
 
 impl JsonRpcServer {
     /// Spawn the JSON-RPC server with integrated LLM actions
@@ -452,8 +445,14 @@ Handle this method call and respond appropriately."#,
     debug!("Calling LLM for JSON-RPC method: {}", method);
     let _ = status_tx.send(format!("[DEBUG] Calling LLM for method: {}", method));
 
-    // Call LLM
-    let llm_response = llm_client.generate(&model, &prompt).await?;
+    // Call LLM with retry
+    let llm_response = llm_client
+        .generate_with_retry(
+            &model,
+            &prompt,
+            r#"[{"type": "jsonrpc_success" or "jsonrpc_error", ...}]"#
+        )
+        .await?;
 
     trace!("LLM response for JSON-RPC: {}", llm_response);
     let _ = status_tx.send(format!("[TRACE] LLM response: {}", llm_response));

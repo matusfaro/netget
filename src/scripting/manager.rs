@@ -16,14 +16,13 @@ impl ScriptManager {
     /// * `input` - Structured input for the script
     ///
     /// # Returns
-    /// * `Ok(Some(ScriptResponse))` - Script handled the request successfully
-    /// * `Ok(None)` - No script configured for this context, or script requested LLM fallback
+    /// * `Ok(Some(ScriptResponse))` - Script handled the request successfully (returns actions array)
+    /// * `Ok(None)` - No script configured for this context
     /// * `Err(_)` - Script execution failed (should fallback to LLM)
     ///
     /// # Behavior
     /// - If no config or script doesn't handle this context → returns Ok(None)
     /// - If script executes successfully and returns actions → returns Ok(Some(response))
-    /// - If script returns fallback_to_llm=true → returns Ok(None)
     /// - If script execution fails → logs error and returns Err (caller should fallback to LLM)
     pub fn try_execute(
         config: Option<&ScriptConfig>,
@@ -56,20 +55,8 @@ impl ScriptManager {
         // Execute the script
         match execute_script(config, input) {
             Ok(response) => {
-                // Check if script requests fallback
-                if response.fallback_to_llm {
-                    info!(
-                        "Script requested LLM fallback: {}",
-                        response
-                            .fallback_reason
-                            .as_deref()
-                            .unwrap_or("no reason given")
-                    );
-                    Ok(None)
-                } else {
-                    debug!("Script handled request with {} actions", response.actions.len());
-                    Ok(Some(response))
-                }
+                debug!("Script handled request with {} actions", response.actions.len());
+                Ok(Some(response))
             }
             Err(e) => {
                 warn!("Script execution failed: {}. Falling back to LLM", e);
@@ -93,6 +80,7 @@ impl ScriptManager {
     /// * `Err(_)` - Invalid configuration
     pub fn build_config(
         selected_mode: crate::state::app_state::ScriptingMode,
+        runtime_choice: Option<&str>,
         script_inline: Option<&str>,
         handles: Option<Vec<String>>,
     ) -> Result<Option<ScriptConfig>> {
@@ -102,9 +90,24 @@ impl ScriptManager {
             None => return Ok(None),
         };
 
-        // Get language from selected mode
+        // Get language from runtime_choice (ON mode) or selected mode (specific language mode)
         let language = match selected_mode {
-            crate::state::app_state::ScriptingMode::Llm => return Ok(None),
+            crate::state::app_state::ScriptingMode::On => {
+                // In ON mode, runtime_choice is required
+                let runtime = runtime_choice.ok_or_else(|| {
+                    anyhow::anyhow!("runtime_choice is required when scripting mode is ON")
+                })?;
+
+                // Parse runtime choice
+                match runtime.to_lowercase().as_str() {
+                    "python" | "py" => super::types::ScriptLanguage::Python,
+                    "javascript" | "js" | "node" => super::types::ScriptLanguage::JavaScript,
+                    "go" | "golang" => super::types::ScriptLanguage::Go,
+                    "perl" => super::types::ScriptLanguage::Perl,
+                    _ => anyhow::bail!("Invalid runtime_choice: '{}'. Valid options: python, javascript, go, perl", runtime),
+                }
+            }
+            crate::state::app_state::ScriptingMode::Off => return Ok(None),
             crate::state::app_state::ScriptingMode::Python => super::types::ScriptLanguage::Python,
             crate::state::app_state::ScriptingMode::JavaScript => {
                 super::types::ScriptLanguage::JavaScript

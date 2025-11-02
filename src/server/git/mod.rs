@@ -330,8 +330,15 @@ Provide references for this repository."#,
     debug!("Calling LLM for Git ref advertisement: {}", repo);
     let _ = status_tx.send(format!("[DEBUG] Calling LLM for ref advertisement"));
 
-    // Call LLM
-    let llm_response = match llm_client.generate(&model, &prompt).await {
+    // Call LLM with retry
+    let llm_response = match llm_client
+        .generate_with_retry(
+            &model,
+            &prompt,
+            r#"[{"type": "git_advertise_refs", ...}]"#
+        )
+        .await
+    {
         Ok(response) => response,
         Err(e) => {
             error!("LLM call failed: {}", e);
@@ -486,8 +493,15 @@ Generate a pack file response."#,
     debug!("Calling LLM for Git pack generation: {}", repo);
     let _ = status_tx.send("[DEBUG] Calling LLM for pack generation".to_string());
 
-    // Call LLM
-    let llm_response = match llm_client.generate(&model, &prompt).await {
+    // Call LLM with retry
+    let llm_response = match llm_client
+        .generate_with_retry(
+            &model,
+            &prompt,
+            r#"[{"type": "git_send_pack", ...}]"#
+        )
+        .await
+    {
         Ok(response) => response,
         Err(e) => {
             error!("LLM call failed: {}", e);

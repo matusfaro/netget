@@ -120,10 +120,17 @@ impl Server for DataLinkProtocol {
         vec!["datalink", "data link", "layer 2", "layer2", "l2", "ethernet", "arp", "pcap"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .implementation("libpcap (pcap crate) for Layer 2 packet capture")
+            .llm_control("Observation only - no packet injection")
+            .e2e_testing("libpcap for packet validation")
+            .notes("Requires root/CAP_NET_RAW for promiscuous mode")
+            .build()
     }
 
     fn description(&self) -> &'static str {

@@ -180,10 +180,16 @@ impl Server for TcpProtocol {
         vec!["tcp", "raw", "ftp", "custom"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .implementation("Manual TCP socket handling with tokio")
+            .llm_control("Full byte stream control - all sent/received data")
+            .e2e_testing("tokio::net::TcpStream")
+            .notes("Basis for FTP, SMTP, custom protocols")
+            .build()
     }
 
     fn description(&self) -> &'static str {

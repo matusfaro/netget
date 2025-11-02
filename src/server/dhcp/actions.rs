@@ -108,10 +108,17 @@ impl Server for DhcpProtocol {
         vec!["dhcp"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
+            .implementation("dhcproto v0.11 for parsing")
+            .llm_control("DISCOVER→OFFER, REQUEST→ACK flow + lease options")
+            .e2e_testing("Manual DHCP packet construction - 3 LLM calls")
+            .notes("Lenient validation for testing")
+            .build()
     }
 
     fn description(&self) -> &'static str {

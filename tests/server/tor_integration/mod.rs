@@ -7,7 +7,7 @@
 //!
 //! These tests create a minimal local Tor network and validate end-to-end functionality.
 
-#[cfg(all(test, feature = "tor-directory", feature = "tor-relay"))]
+#[cfg(all(test, feature = "tor"))]
 pub mod e2e_test;
 
 pub mod consensus_builder;

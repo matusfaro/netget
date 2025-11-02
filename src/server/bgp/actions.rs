@@ -508,10 +508,17 @@ impl Server for BgpProtocol {
         vec!["bgp", "border gateway"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Incomplete)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(179))
+            .implementation("Manual BGP-4 (RFC 4271), 6-state FSM")
+            .llm_control("Peering decisions, route advertisements")
+            .e2e_testing("Manual BGP client")
+            .notes("No RIB, no route propagation, session tracking only")
+            .build()
     }
 
     fn description(&self) -> &'static str {

@@ -7,7 +7,7 @@
 //! and cell encryption, which is beyond the scope of E2E tests. This test verifies
 //! the server starts and accepts TLS connections.
 
-#[cfg(all(test, feature = "tor-relay"))]
+#[cfg(all(test, feature = "tor"))]
 mod tests {
     use super::super::super::helpers::{self, E2EResult, ServerConfig};
     use std::time::Duration;

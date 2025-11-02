@@ -95,10 +95,16 @@ impl Server for Socks5Protocol {
         vec!["socks"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual SOCKS5 protocol (RFC 1928)")
+            .llm_control("Auth, connection allow/deny, MITM data inspection")
+            .e2e_testing("curl --socks5 / SOCKS5 clients")
+            .notes("CONNECT only (no BIND/UDP ASSOCIATE)")
+            .build()
     }
 
     fn description(&self) -> &'static str {

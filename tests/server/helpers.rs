@@ -110,12 +110,35 @@ pub async fn get_available_port() -> E2EResult<u16> {
 }
 
 /// Configuration for an e2e test server
+///
+/// ## Log Capture
+///
+/// By default, tests capture logs at "debug" level, which includes:
+/// - LLM interaction summaries (but not full prompts/responses)
+/// - Protocol-level summaries
+/// - Connection lifecycle events
+///
+/// For debugging test failures, use `.with_log_level("trace")` or `ServerConfig::new_with_trace()`
+/// to capture full LLM prompts/responses and protocol wire data.
+///
+/// All logs (stdout + stderr) are captured to `output_lines` and accessible via:
+/// - `server.get_output()` - Get all captured lines
+/// - `server.output_contains("needle")` - Check if output contains text
+/// - `server.count_in_output("pattern")` - Count occurrences
 pub struct ServerConfig {
     /// The prompt to send to the binary
     pub prompt: String,
     /// Optional model override
     pub model: Option<String>,
-    /// Log level (default: "off")
+    /// Log level (default: "debug")
+    ///
+    /// Available levels:
+    /// - "off" - No logging (fastest, but no debugging info)
+    /// - "error" - Only critical errors
+    /// - "warn" - Warnings and errors
+    /// - "info" - Lifecycle events, warnings, and errors
+    /// - "debug" - Default. Includes LLM/protocol summaries (recommended for most tests)
+    /// - "trace" - Full detail including LLM prompts/responses and wire data (for debugging)
     pub log_level: String,
     /// Listen address (default: "127.0.0.1")
     pub listen_addr: String,
@@ -133,7 +156,7 @@ impl ServerConfig {
         Self {
             prompt: prompt.into(),
             model: None,
-            log_level: "off".to_string(),
+            log_level: "debug".to_string(),
             listen_addr: "127.0.0.1".to_string(),
             no_scripts: false,
             include_disabled_protocols: false,
@@ -146,9 +169,29 @@ impl ServerConfig {
         Self {
             prompt: prompt.into(),
             model: None,
-            log_level: "off".to_string(),
+            log_level: "debug".to_string(),
             listen_addr: "127.0.0.1".to_string(),
             no_scripts: true,
+            include_disabled_protocols: false,
+            ollama_lock: true, // Enable by default for concurrent testing
+        }
+    }
+
+    /// Create a new server config with trace logging enabled (for debugging test failures)
+    ///
+    /// Trace logging includes:
+    /// - Full LLM prompts and responses
+    /// - Protocol wire data (hex dumps, request/response bodies)
+    /// - Detailed state transitions
+    ///
+    /// Use this when debugging LLM behavior or protocol-level issues.
+    pub fn new_with_trace(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+            model: None,
+            log_level: "trace".to_string(),
+            listen_addr: "127.0.0.1".to_string(),
+            no_scripts: false,
             include_disabled_protocols: false,
             ollama_lock: true, // Enable by default for concurrent testing
         }
@@ -369,11 +412,13 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         }
     });
 
-    // Also spawn a task to read stderr for debugging
+    // Also spawn a task to read stderr and capture it (non-interactive mode logs to stderr)
+    let output_lines_stderr = output_lines.clone();
     tokio::spawn(async move {
         let mut stderr_reader = BufReader::new(stderr).lines();
         while let Some(line) = stderr_reader.next_line().await.ok().flatten() {
-            println!("[DEBUG stderr] {}", line);
+            println!("[STDERR] {}", line);
+            output_lines_stderr.lock().await.push(line);
         }
     });
 

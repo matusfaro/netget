@@ -82,10 +82,16 @@ impl Server for OpenAiProtocol {
         vec!["openai"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .implementation("hyper with OpenAI-compatible HTTP endpoints")
+            .llm_control("No LLM control - direct Ollama delegation")
+            .e2e_testing("openai Python SDK and async-openai Rust client")
+            .notes("Zero-config passthrough to Ollama")
+            .build()
     }
 
     fn description(&self) -> &'static str {

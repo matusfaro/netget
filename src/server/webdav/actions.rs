@@ -81,10 +81,16 @@ impl Server for WebDavProtocol {
         vec!["webdav", "dav"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("dav-server v0.5 library, MemFs virtual filesystem")
+            .llm_control("File operations (future - currently library-driven)")
+            .e2e_testing("cadaver / WebDAV clients")
+            .notes("In-memory only, no persistence, no authentication")
+            .build()
     }
 
     fn description(&self) -> &'static str {

@@ -59,23 +59,23 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use crate::llm::action_helper::call_llm;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use crate::llm::ollama_client::OllamaClient;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use crate::llm::ActionResult;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use actions::{TOR_RELAY_CIRCUIT_CREATED_EVENT, TOR_RELAY_RELAY_CELL_EVENT};
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use crate::server::TorRelayProtocol;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use crate::protocol::Event;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use crate::state::app_state::AppState;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use circuit::{CircuitId, CircuitManager, StreamId};
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 use stream::{parse_begin_target, connect_to_target, build_relay_cell, relay_command, end_reason};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -87,7 +87,7 @@ use tokio_rustls::TlsAcceptor;
 /// Tor Relay server - handles OR protocol connections
 pub struct TorRelayServer;
 
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 impl TorRelayServer {
     /// Spawn Tor Relay server with LLM action integration
     pub async fn spawn_with_llm_actions(
@@ -180,7 +180,7 @@ impl TorRelayServer {
     }
 }
 
-#[cfg(not(feature = "tor-relay"))]
+#[cfg(not(feature = "tor"))]
 impl TorRelayServer {
     pub async fn spawn_with_llm_actions(
         _listen_addr: SocketAddr,

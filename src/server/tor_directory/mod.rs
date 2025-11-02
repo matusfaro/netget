@@ -9,19 +9,19 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use crate::llm::action_helper::call_llm;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use crate::llm::ollama_client::OllamaClient;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use crate::llm::ActionResult;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use actions::TOR_DIRECTORY_REQUEST_EVENT;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use crate::server::TorDirectoryProtocol;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use crate::protocol::Event;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 use crate::state::app_state::AppState;
 
 /// Tor Directory server that serves consensus and descriptors
@@ -34,7 +34,7 @@ static AUTHORITY_KEYS: once_cell::sync::Lazy<authority_keys::AuthorityKeys> =
             .expect("Failed to generate authority keys")
     });
 
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 impl TorDirectoryServer {
     /// Spawn Tor Directory server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
@@ -105,7 +105,7 @@ impl TorDirectoryServer {
     }
 }
 
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 struct TorDirectorySession {
     stream: tokio::net::TcpStream,
     connection_id: crate::server::connection::ConnectionId,
@@ -117,7 +117,7 @@ struct TorDirectorySession {
     protocol: Arc<TorDirectoryProtocol>,
 }
 
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 impl TorDirectorySession {
     async fn handle(&mut self) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -205,7 +205,7 @@ impl TorDirectorySession {
     }
 }
 
-#[cfg(not(feature = "tor-directory"))]
+#[cfg(not(feature = "tor"))]
 impl TorDirectoryServer {
     pub async fn spawn_with_llm_actions(
         _listen_addr: SocketAddr,

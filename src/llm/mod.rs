@@ -5,6 +5,7 @@
 // New action system
 pub mod action_helper;
 pub mod actions; // Centralized helper for LLM calls
+pub mod conversation; // Conversation-based LLM interaction
 
 // Old modules
 pub mod client;
@@ -38,3 +39,9 @@ pub use ollama_client::{
 };
 pub use prompt::PromptBuilder;
 pub use response_handler::{handle_llm_response, ProcessedResponse};
+
+// Conversation handler
+pub use conversation::ConversationHandler;
+
+// Message type from ollama_client module
+pub use ollama_client::Message;

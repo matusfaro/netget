@@ -191,7 +191,7 @@ To test Tor Relay with real Tor client:
 
 1. **Start NetGet Relay**:
    ```bash
-   ./cargo-isolated.sh run --features tor-relay --release
+   ./cargo-isolated.sh run --features tor --release
    # Prompt: "Start a Tor exit relay on port 9001"
    ```
 

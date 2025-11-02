@@ -122,10 +122,16 @@ impl Server for DohProtocol {
         vec!["doh", "dns-over-https", "dns over https"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .implementation("hickory-proto + hyper + tokio-rustls")
+            .llm_control("Same as DNS (delegates to DNS protocol)")
+            .e2e_testing("reqwest with DoH support")
+            .notes("GET/POST methods, HTTP/2")
+            .build()
     }
 
     fn description(&self) -> &'static str {

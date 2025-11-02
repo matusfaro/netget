@@ -207,10 +207,16 @@ impl Server for SqsProtocol {
         vec!["sqs", "queue", "message queue"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("hyper v1.5 HTTP with AWS JSON protocol")
+            .llm_control("All SQS operations (SendMessage, ReceiveMessage, DeleteMessage)")
+            .e2e_testing("aws-sdk-sqs client")
+            .notes("Virtual queues, visibility timeout tracking")
+            .build()
     }
 
     fn description(&self) -> &'static str {

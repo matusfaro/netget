@@ -195,46 +195,18 @@ pub struct ConnectionContext {
     pub bytes_sent: u64,
 }
 
-/// Response from a script
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Response from a script - object with actions array
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ScriptResponse {
-    /// Array of actions to execute (same format as LLM actions)
-    #[serde(default)]
     pub actions: Vec<serde_json::Value>,
-
-    /// Whether to fallback to LLM for this request
-    #[serde(default)]
-    pub fallback_to_llm: bool,
-
-    /// Optional reason for fallback (for debugging)
-    #[serde(default)]
-    pub fallback_reason: Option<String>,
 }
 
-impl ScriptResponse {
-    /// Create a response with actions
-    pub fn with_actions(actions: Vec<serde_json::Value>) -> Self {
-        Self {
-            actions,
-            fallback_to_llm: false,
-            fallback_reason: None,
-        }
-    }
-
-    /// Create a response that requests LLM fallback
-    pub fn fallback(reason: impl Into<String>) -> Self {
-        Self {
-            actions: Vec::new(),
-            fallback_to_llm: true,
-            fallback_reason: Some(reason.into()),
-        }
-    }
-
-    /// Parse from JSON string
-    pub fn from_str(s: &str) -> anyhow::Result<Self> {
-        serde_json::from_str(s)
-            .map_err(|e| anyhow::anyhow!("Failed to parse script response: {}", e))
-    }
+/// Parse script response from JSON string
+///
+/// Scripts should return a JSON object with actions array: `{"actions": [{"type": "...", ...}, ...]}`
+pub fn parse_script_response(s: &str) -> anyhow::Result<ScriptResponse> {
+    serde_json::from_str(s)
+        .map_err(|e| anyhow::anyhow!("Failed to parse script response: {}. Expected format: {{\"actions\": [...]}}", e))
 }
 
 /// Operations for updating script configuration

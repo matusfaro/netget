@@ -83,11 +83,13 @@ pub struct StickyFooter {
     last_footer_height: u16,
     /// Pending web approval request (if any)
     pub pending_approval: Option<PendingApproval>,
+    /// System capabilities (for privilege warnings in status bar)
+    system_capabilities: crate::privilege::SystemCapabilities,
 }
 
 impl StickyFooter {
     /// Create a new sticky footer
-    pub fn new(width: u16, height: u16) -> Result<Self> {
+    pub fn new(width: u16, height: u16, system_capabilities: crate::privilege::SystemCapabilities) -> Result<Self> {
         let mut footer = Self {
             terminal_width: width,
             terminal_height: height,
@@ -105,6 +107,7 @@ impl StickyFooter {
             blank_lines_buffer: 0,
             last_footer_height: 0,
             pending_approval: None,
+            system_capabilities,
         };
 
         // Calculate actual footer height
@@ -658,6 +661,13 @@ impl StickyFooter {
             WebSearchMode::Ask => ("ASK", Color::Yellow),
         };
 
+        // Determine script status and color
+        let (script_status, script_color) = if self.connection_info.scripting_env.is_empty() {
+            ("OFF", Color::Red)
+        } else {
+            ("ON", Color::Green)
+        };
+
         execute!(stdout, cursor::MoveTo(0, line))?;
 
         // Print each segment with appropriate coloring
@@ -685,7 +695,9 @@ impl StickyFooter {
             SetForegroundColor(Color::DarkGrey),
             Print(" | ^e Script:"),
             ResetColor,
-            Print(format!("{}", &self.connection_info.scripting_env)),
+            SetForegroundColor(script_color),
+            Print(format!("{}", script_status)),
+            ResetColor,
             SetForegroundColor(Color::DarkGrey),
             Print(" | ^w WebSearch:"),
             ResetColor,
@@ -693,6 +705,31 @@ impl StickyFooter {
             Print(format!("{}", web_status)),
             ResetColor,
         )?;
+
+        // Add privilege warnings if capabilities are unavailable
+        if !self.system_capabilities.can_bind_privileged_ports {
+            execute!(
+                stdout,
+                SetForegroundColor(Color::DarkGrey),
+                Print(" |"),
+                ResetColor,
+                SetForegroundColor(Color::Yellow),
+                Print(" Ports<1024 denied"),
+                ResetColor,
+            )?;
+        }
+
+        if !self.system_capabilities.has_raw_socket_access {
+            execute!(
+                stdout,
+                SetForegroundColor(Color::DarkGrey),
+                Print(" |"),
+                ResetColor,
+                SetForegroundColor(Color::Yellow),
+                Print(" PCAP denied"),
+                ResetColor,
+            )?;
+        }
 
         Ok(line + 1)
     }

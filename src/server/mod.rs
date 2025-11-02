@@ -334,18 +334,18 @@ pub use xmlrpc::XmlRpcServer;
 #[cfg(feature = "xmlrpc")]
 pub use xmlrpc::actions::XmlRpcProtocol;
 
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 pub mod tor_directory;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 pub use tor_directory::TorDirectoryServer;
-#[cfg(feature = "tor-directory")]
+#[cfg(feature = "tor")]
 pub use tor_directory::actions::TorDirectoryProtocol;
 
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 pub mod tor_relay;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 pub use tor_relay::TorRelayServer;
-#[cfg(feature = "tor-relay")]
+#[cfg(feature = "tor")]
 pub use tor_relay::actions::TorRelayProtocol;
 
 #[cfg(feature = "vnc")]

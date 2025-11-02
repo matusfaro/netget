@@ -958,68 +958,6 @@ impl ProxyServer {
         Ok(HttpsConnectionAction::Allow)
     }
 
-    /// Parse modify action from JSON
-    #[allow(dead_code)]
-    fn parse_request_modify_action(action: &serde_json::Value) -> Result<RequestAction> {
-        use filter::RegexReplacement;
-
-        let headers = action.get("headers")
-            .and_then(|h| h.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect::<HashMap<String, String>>()
-            });
-
-        let remove_headers = action.get("remove_headers")
-            .and_then(|h| h.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect::<Vec<String>>()
-            });
-
-        let new_path = action.get("new_path")
-            .and_then(|p| p.as_str())
-            .map(|s| s.to_string());
-
-        let query_params = action.get("query_params")
-            .and_then(|q| q.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect::<HashMap<String, String>>()
-            });
-
-        let new_body = action.get("new_body")
-            .and_then(|b| b.as_str())
-            .map(|s| s.to_string());
-
-        let body_replacements = action.get("body_replacements")
-            .and_then(|b| b.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        let pattern = item.get("pattern")?.as_str()?;
-                        let replacement = item.get("replacement")?.as_str()?;
-                        Some(RegexReplacement {
-                            pattern: pattern.to_string(),
-                            replacement: replacement.to_string(),
-                        })
-                    })
-                    .collect::<Vec<RegexReplacement>>()
-            });
-
-        Ok(RequestAction::Modify {
-            headers,
-            remove_headers,
-            new_path,
-            query_params,
-            new_body,
-            body_replacements,
-        })
-    }
-
     /// Apply modifications to HTTP request
     fn apply_request_modifications(
         request_data: &[u8],

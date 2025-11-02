@@ -7,9 +7,19 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::events::ActionExecutionError;
 use crate::llm::OllamaClient;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
+
+/// Check if an error is due to address already in use
+fn is_addr_in_use_error(err: &anyhow::Error) -> bool {
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        io_err.kind() == std::io::ErrorKind::AddrInUse
+    } else {
+        false
+    }
+}
 
 /// Start a specific server by ID
 pub async fn start_server_by_id(
@@ -17,7 +27,7 @@ pub async fn start_server_by_id(
     server_id: ServerId,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
-) -> Result<()> {
+) -> Result<(), ActionExecutionError> {
     // Get server info
     let server = match state.get_server(server_id).await {
         Some(s) => s,
@@ -28,7 +38,9 @@ pub async fn start_server_by_id(
     };
 
     // Build listen address
-    let listen_addr: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let listen_addr: SocketAddr = format!("127.0.0.1:{}", server.port)
+        .parse()
+        .map_err(|e| ActionExecutionError::Fatal(anyhow::anyhow!("Invalid address: {}", e)))?;
 
     let protocol_name = server.protocol_name.clone();
     let msg = format!(
@@ -46,6 +58,53 @@ pub async fn start_server_by_id(
     let protocol = crate::protocol::registry::registry()
         .get(&protocol_name)
         .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol_name))?;
+
+    // Check privilege requirements before spawning
+    let metadata = protocol.metadata();
+    let system_caps = state.get_system_capabilities().await;
+
+    if !metadata.privilege_requirement.is_met_by(&system_caps) {
+        let error_msg = format!(
+            "Cannot start {} server on port {}: {}. Current capabilities: {}",
+            protocol_name,
+            server.port,
+            metadata.privilege_requirement.description(),
+            system_caps.description()
+        );
+
+        // Provide helpful suggestion based on platform
+        let suggestion = if cfg!(target_os = "linux") {
+            match &metadata.privilege_requirement {
+                crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(port) => {
+                    format!("\nSuggestion: Run as root (sudo) or use a port >= 1024 (e.g., {}, {}, {})",
+                        port + 8000, port + 10000, 8080)
+                }
+                crate::protocol::metadata::PrivilegeRequirement::RawSockets => {
+                    "\nSuggestion: Run as root or grant CAP_NET_RAW: sudo setcap cap_net_raw+ep /path/to/netget".to_string()
+                }
+                crate::protocol::metadata::PrivilegeRequirement::Root => {
+                    "\nSuggestion: Run as root (sudo netget ...)".to_string()
+                }
+                _ => String::new(),
+            }
+        } else if cfg!(target_os = "macos") {
+            "\nSuggestion: Run as root (sudo netget ...)".to_string()
+        } else {
+            "\nSuggestion: Run as Administrator".to_string()
+        };
+
+        let full_error = format!("{}{}", error_msg, suggestion);
+
+        state
+            .update_server_status(server_id, ServerStatus::Error(full_error.clone()))
+            .await;
+        let _ = status_tx.send(format!("[ERROR] {}", full_error));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        return Err(ActionExecutionError::PrivilegeDenied {
+            requirement: metadata.privilege_requirement.description(),
+            message: full_error,
+        });
+    }
 
     // Build type-safe startup params if provided
     let startup_params = if let Some(params_json) = server.startup_params.clone() {
@@ -84,6 +143,22 @@ pub async fn start_server_by_id(
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         }
         Err(e) => {
+            // Check if error is due to port already in use
+            if is_addr_in_use_error(&e) {
+                // Return retryable error with context for LLM
+                let _ = status_tx.send(format!(
+                    "[INFO] Port {} is already in use for {} server, will retry with LLM suggestion",
+                    server.port,
+                    protocol_name
+                ));
+                return Err(ActionExecutionError::PortConflict {
+                    port: server.port,
+                    protocol: protocol_name.clone(),
+                    underlying_error: e.to_string(),
+                });
+            }
+
+            // For other errors, fail immediately
             state
                 .update_server_status(server_id, ServerStatus::Error(e.to_string()))
                 .await;
@@ -94,7 +169,7 @@ pub async fn start_server_by_id(
                 e
             ));
             let _ = status_tx.send("__UPDATE_UI__".to_string());
-            return Err(e);
+            return Err(ActionExecutionError::Fatal(e));
         }
     }
 

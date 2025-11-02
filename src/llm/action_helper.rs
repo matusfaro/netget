@@ -13,7 +13,7 @@ use crate::llm::actions::{
     executor::{execute_actions, ExecutionResult},
     get_network_event_common_actions,
     protocol_trait::Server,
-    ActionDefinition, ActionResponse,
+    ActionDefinition,
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
@@ -135,7 +135,7 @@ pub async fn call_llm_with_actions(
                             script_response.actions.len()
                         );
 
-                        // Execute the script's actions
+                        // Execute the script's actions (extract actions from ScriptResponse)
                         let result = execute_actions(
                             script_response.actions,
                             state,
@@ -187,38 +187,38 @@ pub async fn call_llm_with_actions(
         all_actions.len()
     );
 
-    // Use multi-turn generation with tools and message-based context
-    let state_clone = state.clone();
-    let event_desc = event_description.to_string();
-    let context_clone = context_json.clone();
-    let actions_clone = all_actions.clone();
+    // Build system prompt using action system (NO trigger - that goes in user message)
+    let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
+        state,
+        server_id,
+        all_actions.clone(),
+    )
+    .await;
+
+    // Create conversation handler for network event
+    let mut conversation = crate::llm::ConversationHandler::new(
+        system_prompt,
+        std::sync::Arc::new(llm_client.clone()),
+        model,
+    );
+
+    // Add event trigger as a user message
+    let event_trigger = PromptBuilder::build_event_trigger_message(
+        event_description,
+        context_json.clone(),
+    );
+    conversation.add_user_message(event_trigger);
 
     // Get web search mode and approval channel
     let web_search_mode = state.get_web_search_mode().await;
     let approval_tx = state.get_web_approval_channel().await;
 
-    let action_values = llm_client
-        .generate_with_tools(
-            &model,
-            || {
-                let state = state_clone.clone();
-                let event_description = event_desc.clone();
-                let context = context_clone.clone();
-                let all_actions = actions_clone.clone();
-                async move {
-                    PromptBuilder::build_network_event_action_prompt_for_server(
-                        &state,
-                        server_id,
-                        &event_description,
-                        context,
-                        all_actions,
-                    )
-                    .await
-                }
-            },
-            5, // max 5 iterations
+    // Generate actions with tool calling and retry
+    let action_values = conversation
+        .generate_with_tools_and_retry(
             approval_tx,
             web_search_mode,
+            all_actions.clone(),
         )
         .await
         .context("LLM generate with tools failed")?;
@@ -396,7 +396,7 @@ pub async fn call_llm(
                             script_response.actions.len()
                         );
 
-                        // Execute the script's actions
+                        // Execute the script's actions (extract actions from ScriptResponse)
                         let result = execute_actions(
                             script_response.actions,
                             state,
@@ -446,33 +446,46 @@ pub async fn call_llm(
     // Use the event's prompt description
     let event_description = event.to_prompt_description();
 
-    // Build prompt using action system
-    let prompt = PromptBuilder::build_network_event_action_prompt_for_server(
+    // Build system prompt using action system (NO trigger - that goes in user message)
+    let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
         state,
         server_id,
-        &event_description,
-        event.data.clone(), // Use event data as context
-        all_actions,
+        all_actions.clone(),
     )
     .await;
 
-    // Call LLM (uses crate-private generate method)
-    let llm_output = llm_client
-        .generate(&model, &prompt)
+    // Create conversation handler for network event
+    // Note: Network events don't use tools (immediate response), but get retry logic
+    let mut conversation = crate::llm::ConversationHandler::new(
+        system_prompt,
+        std::sync::Arc::new(llm_client.clone()),
+        model,
+    );
+
+    // Add event trigger as a user message
+    let event_trigger = PromptBuilder::build_event_trigger_message(
+        &event_description,
+        event.data.clone(),
+    );
+    conversation.add_user_message(event_trigger);
+
+    // Generate response with retry (no tool calling for network events)
+    let actions = conversation
+        .generate_with_tools_and_retry(
+            None, // No web approval for network events
+            crate::state::app_state::WebSearchMode::Off, // No web search for network events
+            all_actions,
+        )
         .await
-        .context("LLM generate call failed")?;
+        .context("Failed to generate valid response after retries")?;
 
-    // Parse action response
-    let action_response = ActionResponse::from_str(&llm_output)
-        .context("Failed to parse LLM response as ActionResponse")?;
-
-    if action_response.actions.is_empty() {
+    if actions.is_empty() {
         warn!("LLM returned empty actions array for event: {}", event.id());
     }
 
     // Execute actions
     let result = execute_actions(
-        action_response.actions,
+        actions,
         state,
         Some(protocol),
     )

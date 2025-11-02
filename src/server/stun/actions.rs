@@ -79,10 +79,16 @@ impl Server for StunProtocol {
         vec!["stun"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual STUN protocol (RFC 8489)")
+            .llm_control("Binding responses with XOR-MAPPED-ADDRESS")
+            .e2e_testing("stuntman-client / WebRTC")
+            .notes("IPv4 only, stateless UDP")
+            .build()
     }
 
     fn description(&self) -> &'static str {

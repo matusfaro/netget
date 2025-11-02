@@ -109,11 +109,17 @@ impl Server for IpsecProtocol {
         vec!["ipsec", "ikev2", "ike"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::with_notes(
-            crate::protocol::metadata::DevelopmentState::Disabled,
-            "No actual VPN tunnels. Full IPSec/IKEv2 implementation is infeasible: no viable Rust library (ipsec-parser is parse-only), protocol requires deep OS integration (XFRM policy), extremely complex (hundreds of thousands of lines in strongSwan). Use WireGuard for production VPN."
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Incomplete)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
+            .implementation("Manual IKE header parsing, honeypot only")
+            .llm_control("Reconnaissance logging")
+            .e2e_testing("strongSwan client (detection only)")
+            .notes("Honeypot - no actual VPN tunnels, IKEv1/v2 detection")
+            .build()
     }
 
     fn description(&self) -> &'static str {

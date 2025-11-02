@@ -225,11 +225,16 @@ impl Server for EtcdProtocol {
         vec!["etcd", "etcd3", "etcdv3", "etcd server"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::with_notes(
-            crate::protocol::metadata::DevelopmentState::Alpha,
-            "etcd v3 KV service only - no Watch, Lease, or Auth services yet"
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("tonic gRPC, official etcd protobuf schemas")
+            .llm_control("All KV operations (Range, Put, Delete, Txn)")
+            .e2e_testing("etcdctl / etcd-client")
+            .notes("KV service only, no Watch/Lease/Auth, simplified MVCC")
+            .build()
     }
 
     fn description(&self) -> &'static str {

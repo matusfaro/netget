@@ -10,12 +10,10 @@ import sys
 # Read input
 data = json.load(sys.stdin)
 
-# Return simple response
-response = {
-    "actions": [
-        {"type": "show_message", "message": "Hello from Python"}
-    ]
-}
+# Return array of actions
+response = [
+    {"type": "show_message", "message": "Hello from Python"}
+]
 print(json.dumps(response))
 "#;
 
@@ -42,47 +40,7 @@ print(json.dumps(response))
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.actions.len(), 1);
-    assert!(!response.fallback_to_llm);
-}
-
-#[test]
-fn test_execute_python_fallback() {
-    let code = r#"
-import json
-
-response = {
-    "fallback_to_llm": True,
-    "fallback_reason": "Complex query"
-}
-print(json.dumps(response))
-"#;
-
-    let config = ScriptConfig {
-        language: ScriptLanguage::Python,
-        source: ScriptSource::Inline(code.to_string()),
-        handles_contexts: vec!["test".to_string()],
-    };
-
-    let input = ScriptInput {
-        event_type_id: "test".to_string(),
-        server: ServerContext {
-            id: 1,
-            port: 8080,
-            stack: "HTTP".to_string(),
-            memory: String::new(),
-            instruction: "Test".to_string(),
-        },
-        connection: None,
-        event: serde_json::json!({}),
-    };
-
-    let result = execute_script(&config, &input);
-    assert!(result.is_ok());
-
-    let response = result.unwrap();
-    assert!(response.fallback_to_llm);
-    assert_eq!(response.fallback_reason, Some("Complex query".to_string()));
+    assert_eq!(response.len(), 1);
 }
 
 #[test]
@@ -99,11 +57,9 @@ if username == 'alice':
 else:
     allowed = False
 
-response = {
-    "actions": [
-        {"type": "ssh_auth_decision", "allowed": allowed}
-    ]
-}
+response = [
+    {"type": "ssh_auth_decision", "allowed": allowed}
+]
 print(json.dumps(response))
 "#;
 
@@ -130,22 +86,19 @@ print(json.dumps(response))
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.actions.len(), 1);
+    assert_eq!(response.len(), 1);
 
-    let action = &response.actions[0];
+    let action = &response[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("ssh_auth_decision"));
     assert_eq!(action.get("allowed").and_then(|v| v.as_bool()), Some(true));
 }
 
 #[test]
-#[ignore] // Only run if Node.js is available
 fn test_execute_javascript_simple() {
     let code = r#"
-const response = {
-    actions: [
-        {type: "show_message", message: "Hello from JavaScript"}
-    ]
-};
+const response = [
+    {type: "show_message", message: "Hello from JavaScript"}
+];
 console.log(JSON.stringify(response));
 "#;
 
@@ -172,19 +125,16 @@ console.log(JSON.stringify(response));
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.actions.len(), 1);
+    assert_eq!(response.len(), 1);
 }
 
 #[test]
-#[ignore] // Only run if Go is available
 fn test_execute_go_simple() {
     let code = r#"
-response := map[string]interface{}{
-    "actions": []interface{}{
-        map[string]interface{}{
-            "type":    "show_message",
-            "message": "Hello from Go",
-        },
+response := []interface{}{
+    map[string]interface{}{
+        "type":    "show_message",
+        "message": "Hello from Go",
     },
 }
 jsonBytes, _ := json.Marshal(response)
@@ -214,24 +164,21 @@ fmt.Println(string(jsonBytes))
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.actions.len(), 1);
+    assert_eq!(response.len(), 1);
 
-    let action = &response.actions[0];
+    let action = &response[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
     assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Go"));
 }
 
 #[test]
-#[ignore] // Only run if Perl is available
 fn test_execute_perl_simple() {
     let code = r#"
 use JSON;
 
-my $response = {
-    actions => [
-        {type => "show_message", message => "Hello from Perl"}
-    ]
-};
+my $response = [
+    {type => "show_message", message => "Hello from Perl"}
+];
 print encode_json($response);
 "#;
 
@@ -258,15 +205,14 @@ print encode_json($response);
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.actions.len(), 1);
+    assert_eq!(response.len(), 1);
 
-    let action = &response.actions[0];
+    let action = &response[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
     assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Perl"));
 }
 
 #[test]
-#[ignore] // Only run if Perl is available
 fn test_execute_perl_with_event_data() {
     let code = r#"
 use JSON;
@@ -278,11 +224,9 @@ my $data = decode_json($input_json);
 my $username = $data->{event}->{username};
 my $allowed = ($username eq 'alice') ? JSON::true : JSON::false;
 
-my $response = {
-    actions => [
-        {type => "ssh_auth_decision", allowed => $allowed}
-    ]
-};
+my $response = [
+    {type => "ssh_auth_decision", allowed => $allowed}
+];
 print encode_json($response);
 "#;
 
@@ -309,9 +253,9 @@ print encode_json($response);
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.actions.len(), 1);
+    assert_eq!(response.len(), 1);
 
-    let action = &response.actions[0];
+    let action = &response[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("ssh_auth_decision"));
     assert_eq!(action.get("allowed").and_then(|v| v.as_bool()), Some(true));
 }

@@ -52,6 +52,12 @@ pub enum ToolAction {
         /// URL to fetch or search query
         query: String,
     },
+
+    /// Get detailed documentation for a specific protocol
+    ReadBaseStackDocs {
+        /// Protocol name (e.g., "http", "ssh", "tor")
+        protocol: String,
+    },
 }
 
 fn default_read_mode() -> String {
@@ -61,13 +67,20 @@ fn default_read_mode() -> String {
 impl ToolAction {
     /// Parse from JSON value
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
-        serde_json::from_value(value.clone()).context("Failed to parse tool action")
+        // Check if the tool type is recognized first
+        if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
+            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs") {
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs", action_type);
+            }
+        }
+
+        serde_json::from_value(value.clone()).context("Malformed tool action")
     }
 
     /// Check if a JSON value is a tool action
     pub fn is_tool_action(value: &serde_json::Value) -> bool {
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            matches!(action_type, "read_file" | "web_search")
+            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs")
         } else {
             false
         }
@@ -104,6 +117,9 @@ impl ToolAction {
             }
             ToolAction::WebSearch { query } => {
                 format!("web_search: \"{}\"", query)
+            }
+            ToolAction::ReadBaseStackDocs { protocol } => {
+                format!("read_base_stack_docs: \"{}\"", protocol)
             }
         }
     }
@@ -663,11 +679,29 @@ pub fn web_search_action() -> ActionDefinition {
     }
 }
 
+/// Get protocol documentation action definition
+pub fn read_base_stack_docs_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "read_base_stack_docs".to_string(),
+        description: "Get detailed documentation for a specific network protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before starting a server to understand protocol configuration options.".to_string(),
+        parameters: vec![Parameter {
+            name: "protocol".to_string(),
+            type_hint: "string".to_string(),
+            description: "Protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "read_base_stack_docs",
+            "protocol": "tor"
+        }),
+    }
+}
+
 /// Get all tool action definitions
 pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchMode) -> Vec<ActionDefinition> {
     use crate::state::app_state::WebSearchMode;
 
-    let mut actions = vec![read_file_action()];
+    let mut actions = vec![read_file_action(), read_base_stack_docs_action()];
 
     // Include web search tool for both ON and ASK modes (not for OFF)
     match web_search_mode {
@@ -774,6 +808,34 @@ pub async fn execute_tool(
                 // ON mode - proceed directly
                 execute_web_search(query).await
             }
+        }
+        ToolAction::ReadBaseStackDocs { protocol } => {
+            execute_read_base_stack_docs(protocol).await
+        }
+    }
+}
+
+/// Execute read_base_stack_docs tool
+async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
+    debug!("Getting documentation for protocol: {}", protocol);
+
+    // Use the common module's function to generate docs for a single protocol
+    match super::common::generate_single_protocol_documentation(protocol) {
+        Ok(docs) => {
+            debug!(
+                "Successfully retrieved documentation for protocol '{}' ({} bytes)",
+                protocol,
+                docs.len()
+            );
+            ToolResult::success("read_base_stack_docs", protocol.to_string(), docs)
+        }
+        Err(e) => {
+            warn!("Failed to get documentation for protocol '{}': {}", protocol, e);
+            ToolResult::error(
+                "read_base_stack_docs",
+                protocol.to_string(),
+                format!("Protocol not found or unavailable: {}", e),
+            )
         }
     }
 }

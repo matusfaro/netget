@@ -5,7 +5,6 @@
 
 use crate::llm::actions::protocol_trait::{ActionResult, Server};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition};
-use crate::protocol::metadata::{DevelopmentState, ProtocolMetadata};
 use crate::protocol::{EventType, SpawnContext};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -28,10 +27,7 @@ impl GitProtocol {
 }
 
 impl Server for GitProtocol {
-    fn spawn(
-        &self,
-        ctx: SpawnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
+    fn spawn(&self, ctx: SpawnContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::git::GitServer::spawn_with_llm_actions(
                 ctx.listen_addr,
@@ -124,12 +120,14 @@ impl Server for GitProtocol {
         vec![
             ActionDefinition {
                 name: "git_advertise_refs".to_string(),
-                description: "Advertise Git references (branches, tags) for a repository".to_string(),
+                description: "Advertise Git references (branches, tags) for a repository"
+                    .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "refs".to_string(),
                         type_hint: "array".to_string(),
-                        description: "Array of reference objects with 'name' and 'sha' fields".to_string(),
+                        description: "Array of reference objects with 'name' and 'sha' fields"
+                            .to_string(),
                         required: true,
                     },
                     Parameter {
@@ -148,14 +146,12 @@ impl Server for GitProtocol {
             ActionDefinition {
                 name: "git_send_pack".to_string(),
                 description: "Send a Git pack file for clone/fetch operations".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "pack_data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Base64-encoded pack file data".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "pack_data".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Base64-encoded pack file data".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "git_send_pack",
                     "pack_data": "PACK..."
@@ -224,19 +220,15 @@ impl Server for GitProtocol {
                     }),
                 })
             }
-            "list_git_repositories" => {
-                Ok(ActionResult::Custom {
-                    name: "git_repositories_listed".to_string(),
-                    data: serde_json::json!({
-                        "repositories": [],
-                        "success": true
-                    }),
-                })
-            }
+            "list_git_repositories" => Ok(ActionResult::Custom {
+                name: "git_repositories_listed".to_string(),
+                data: serde_json::json!({
+                    "repositories": [],
+                    "success": true
+                }),
+            }),
             "git_advertise_refs" => {
-                let refs = action
-                    .get("refs")
-                    .ok_or_else(|| anyhow!("Missing refs"))?;
+                let refs = action.get("refs").ok_or_else(|| anyhow!("Missing refs"))?;
 
                 Ok(ActionResult::Custom {
                     name: "git_refs_response".to_string(),
@@ -296,11 +288,16 @@ impl Server for GitProtocol {
         vec!["git", "git server", "via git"]
     }
 
-    fn metadata(&self) -> ProtocolMetadata {
-        ProtocolMetadata::with_notes(
-            DevelopmentState::Alpha,
-            "Git Smart HTTP server with virtual repositories - read-only (clone/fetch only)"
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("Manual Git Smart HTTP (pkt-line format), hyper")
+            .llm_control("References, pack files, repository discovery")
+            .e2e_testing("git clone / git fetch")
+            .notes("Read-only (clone/fetch), virtual repositories, no push")
+            .build()
     }
 
     fn description(&self) -> &'static str {

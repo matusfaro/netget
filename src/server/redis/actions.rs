@@ -124,10 +124,16 @@ impl Server for RedisProtocol {
         vec!["redis"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("redis-protocol v5.2 (RESP2 parsing)")
+            .llm_control("All Redis commands (GET, SET, INCR, etc.)")
+            .e2e_testing("redis-rs client")
+            .notes("RESP2 only (no RESP3)")
+            .build()
     }
 
     fn description(&self) -> &'static str {

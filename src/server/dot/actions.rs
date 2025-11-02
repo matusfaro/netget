@@ -116,10 +116,16 @@ impl Server for DotProtocol {
         vec!["dot", "dns-over-tls", "dns over tls"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Beta
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Beta)
+            .implementation("hickory-proto + tokio-rustls")
+            .llm_control("Same as DNS (delegates to DNS protocol)")
+            .e2e_testing("hickory-client with TLS")
+            .notes("Self-signed certs, TLS overhead")
+            .build()
     }
 
     fn description(&self) -> &'static str {

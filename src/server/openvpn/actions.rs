@@ -109,11 +109,16 @@ impl Server for OpenvpnProtocol {
         vec!["openvpn"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::with_notes(
-            crate::protocol::metadata::DevelopmentState::Disabled,
-            "No actual VPN tunnels. Full OpenVPN implementation is infeasible: no viable Rust library exists, protocol is extremely complex (500K+ lines in C++). Use WireGuard for production VPN. OpenVPN honeypot sufficient for detection/logging reconnaissance attempts."
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Incomplete)
+            .implementation("Manual packet opcode parsing, honeypot only")
+            .llm_control("Handshake logging")
+            .e2e_testing("OpenVPN client (detection only)")
+            .notes("Honeypot - no TLS handshake or VPN tunnels")
+            .build()
     }
 
     fn description(&self) -> &'static str {

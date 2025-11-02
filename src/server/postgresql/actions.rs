@@ -121,10 +121,16 @@ impl Server for PostgresqlProtocol {
         vec!["postgres", "psql"]
     }
 
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadata {
-        crate::protocol::metadata::ProtocolMetadata::new(
-            crate::protocol::metadata::DevelopmentState::Alpha
-        )
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+
+        ProtocolMetadataV2::builder()
+            .state(ProtocolState::Experimental)
+            .implementation("pgwire v0.26 protocol library")
+            .llm_control("Query responses (columns, rows, types)")
+            .e2e_testing("tokio-postgres client")
+            .notes("Extended query timeout issue")
+            .build()
     }
 
     fn description(&self) -> &'static str {
