@@ -122,6 +122,8 @@ pub enum CommonAction {
         max_executions: Option<u64>,
         #[serde(default)]
         server_id: Option<u32>,
+        #[serde(default)]
+        connection_id: Option<String>,
         instruction: String,
         #[serde(default)]
         context: Option<serde_json::Value>,
@@ -537,6 +539,12 @@ pub fn schedule_task_action(
             name: "server_id".to_string(),
             type_hint: "number".to_string(),
             description: "Optional: Server ID to scope this task to. If provided, task uses server's instruction and protocol actions. If omitted, task is global and uses user input actions.".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Optional: Connection ID (e.g., 'conn-123') to scope this task to a specific connection. Requires server_id to be specified. Task will be automatically cleaned up when the connection closes. Useful for connection-specific timeouts, session cleanup, or per-connection monitoring.".to_string(),
             required: false,
         },
         Parameter {

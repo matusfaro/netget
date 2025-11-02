@@ -662,6 +662,7 @@ impl EventHandler {
                 interval_secs,
                 max_executions,
                 server_id,
+                connection_id,
                 instruction,
                 context,
                 runtime_choice,
@@ -672,7 +673,47 @@ impl EventHandler {
             } => {
                 use crate::state::task::{ScheduledTask, TaskScope};
 
-                let scope = if let Some(sid) = server_id {
+                // Determine scope: Connection > Server > Global
+                let scope = if let Some(conn_id_str) = connection_id {
+                    // Connection scope requires server_id
+                    if let Some(sid) = server_id {
+                        let server_id_obj = crate::state::ServerId::new(sid);
+                        match crate::server::connection::ConnectionId::from_string(&conn_id_str) {
+                            Some(cid) => {
+                                // Validate connection exists on server
+                                if let Some(server) = self.state.get_server(server_id_obj).await {
+                                    if server.connections.contains_key(&cid) {
+                                        TaskScope::Connection(server_id_obj, cid)
+                                    } else {
+                                        let _ = status_tx.send(format!(
+                                            "[ERROR] Connection {} not found on server #{}",
+                                            conn_id_str, sid
+                                        ));
+                                        return Ok(());
+                                    }
+                                } else {
+                                    let _ = status_tx.send(format!(
+                                        "[ERROR] Server #{} not found for connection-scoped task",
+                                        sid
+                                    ));
+                                    return Ok(());
+                                }
+                            }
+                            None => {
+                                let _ = status_tx.send(format!(
+                                    "[ERROR] Invalid connection_id format: {}. Expected 'conn-123' or '123'",
+                                    conn_id_str
+                                ));
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        let _ = status_tx.send(
+                            "[ERROR] connection_id requires server_id to be specified".to_string(),
+                        );
+                        return Ok(());
+                    }
+                } else if let Some(sid) = server_id {
                     TaskScope::Server(crate::state::ServerId::new(sid))
                 } else {
                     TaskScope::Global

@@ -676,6 +676,81 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - server no l
 
                 (Some(*sid), actions, trigger, combined)
             }
+            TaskScope::Connection(sid, cid) => {
+                // Connection-scoped task: use server instruction + protocol actions + connection context
+                let server = state.get_server(*sid).await;
+                if server.is_none() {
+                    // Server no longer exists - return error prompt
+                    return format!(
+                        r#"ERROR: Server #{} no longer exists. Task '{}' cannot execute.
+
+Return: [{{"type": "show_message", "message": "Task '{}' cancelled - server no longer exists"}}]"#,
+                        sid.as_u32(),
+                        task.name,
+                        task.name
+                    );
+                }
+
+                // Check if connection still exists
+                let server_instance = server.unwrap();
+                if !server_instance.connections.contains_key(cid) {
+                    // Connection closed - task should have been cleaned up, but just in case
+                    return format!(
+                        r#"ERROR: Connection {} on server #{} no longer exists. Task '{}' cannot execute.
+
+Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection closed"}}]"#,
+                        cid,
+                        sid.as_u32(),
+                        task.name,
+                        task.name
+                    );
+                }
+
+                let mut actions = get_network_event_common_actions();
+                actions.extend(protocol_actions);
+
+                // Add tool actions
+                let web_search_mode = state.get_web_search_mode().await;
+                actions.extend(get_all_tool_actions(web_search_mode));
+
+                // Get connection info for context
+                let conn_info = server_instance.connections.get(cid).unwrap();
+                let idle_duration = conn_info.last_activity.elapsed();
+
+                let trigger = format!(
+                    "Scheduled task '{}' triggered for connection {} on server #{} (created {} ago)\n\
+                     Connection: {} → {}\n\
+                     Bytes sent/received: {}/{}\n\
+                     Packets sent/received: {}/{}\n\
+                     Last activity: {:?} ago\n\
+                     Status: {:?}",
+                    task.name,
+                    cid,
+                    sid.as_u32(),
+                    crate::state::task::format_duration(task.created_at.elapsed()),
+                    conn_info.remote_addr,
+                    conn_info.local_addr,
+                    conn_info.bytes_sent,
+                    conn_info.bytes_received,
+                    conn_info.packets_sent,
+                    conn_info.packets_received,
+                    idle_duration,
+                    conn_info.status
+                );
+
+                // Combine server instruction with task instruction
+                let server_instruction = state.get_instruction(*sid).await.unwrap_or_default();
+                let combined = if server_instruction.is_empty() {
+                    task.instruction.clone()
+                } else {
+                    format!(
+                        "{}\n\nScheduled task: {}",
+                        server_instruction, task.instruction
+                    )
+                };
+
+                (Some(*sid), actions, trigger, combined)
+            }
         };
 
         // Add context data to trigger if present

@@ -626,6 +626,9 @@ impl AppState {
                 conn.status_changed_at = std::time::Instant::now();
             }
         }
+
+        // Clean up any tasks associated with this connection
+        self.cleanup_connection_tasks(server_id, connection_id).await;
     }
 
     /// Remove a connection from a specific server (used by cleanup task)
@@ -637,6 +640,11 @@ impl AppState {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             server.remove_connection(connection_id);
         }
+
+        // Clean up any tasks associated with this connection (safety measure)
+        // Tasks should already be cleaned up when connection was closed,
+        // but this ensures no orphaned tasks remain
+        self.cleanup_connection_tasks(server_id, connection_id).await;
     }
 
     // ========== Proxy Filter Configuration Methods ==========
@@ -1067,6 +1075,29 @@ impl AppState {
             .collect()
     }
 
+    /// Get tasks for a specific connection
+    pub async fn get_connection_tasks(
+        &self,
+        server_id: ServerId,
+        connection_id: crate::server::connection::ConnectionId,
+    ) -> Vec<ScheduledTask> {
+        use crate::state::task::TaskScope;
+
+        self.inner
+            .read()
+            .await
+            .tasks
+            .values()
+            .filter(|task| {
+                matches!(
+                    &task.scope,
+                    TaskScope::Connection(sid, cid) if *sid == server_id && *cid == connection_id
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Update task status
     pub async fn update_task_status(&self, id: TaskId, status: crate::state::task::TaskStatus) {
         if let Some(task) = self.inner.write().await.tasks.get_mut(&id) {
@@ -1121,6 +1152,37 @@ impl AppState {
             .tasks
             .iter()
             .filter(|(_, task)| matches!(&task.scope, TaskScope::Server(sid) if *sid == server_id))
+            .map(|(&id, _)| id)
+            .collect();
+
+        // Remove tasks and their name mappings
+        for id in task_ids_to_remove {
+            if let Some(task) = inner.tasks.remove(&id) {
+                inner.task_names.remove(&task.name);
+            }
+        }
+    }
+
+    /// Clean up tasks associated with a connection
+    pub async fn cleanup_connection_tasks(
+        &self,
+        server_id: ServerId,
+        connection_id: crate::server::connection::ConnectionId,
+    ) {
+        use crate::state::task::TaskScope;
+
+        let mut inner = self.inner.write().await;
+
+        // Collect task IDs to remove
+        let task_ids_to_remove: Vec<TaskId> = inner
+            .tasks
+            .iter()
+            .filter(|(_, task)| {
+                matches!(
+                    &task.scope,
+                    TaskScope::Connection(sid, cid) if *sid == server_id && *cid == connection_id
+                )
+            })
             .map(|(&id, _)| id)
             .collect();
 
