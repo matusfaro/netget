@@ -122,10 +122,10 @@ impl Server for MysqlProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("opensrv-mysql v0.8 protocol library")
             .llm_control("Query responses (result sets, OK packets, errors)")
             .e2e_testing("mysql_async client crate")

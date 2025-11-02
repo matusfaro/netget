@@ -77,10 +77,10 @@ impl Server for HttpProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Beta)
+            .state(DevelopmentState::Beta)
             .implementation("hyper v1.0 web server library")
             .llm_control("Response content (status, headers, body)")
             .e2e_testing("reqwest HTTP client - 14 LLM calls")

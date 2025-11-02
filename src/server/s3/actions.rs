@@ -382,10 +382,10 @@ impl Server for S3Protocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("hyper v1.5 HTTP with manual S3 REST API")
             .llm_control("All S3 operations (GetObject, PutObject, ListBuckets)")
             .e2e_testing("aws-sdk-s3 / rust-s3 client")

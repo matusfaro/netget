@@ -123,10 +123,10 @@ impl Server for DohProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Beta)
+            .state(DevelopmentState::Beta)
             .implementation("hickory-proto + hyper + tokio-rustls")
             .llm_control("Same as DNS (delegates to DNS protocol)")
             .e2e_testing("reqwest with DoH support")

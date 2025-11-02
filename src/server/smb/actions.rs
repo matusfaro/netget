@@ -83,10 +83,10 @@ impl Server for SmbProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual SMB2 protocol (0x0210 dialect)")
             .llm_control("Filesystem operations, authentication, directory listings")
             .e2e_testing("smbclient / Windows Explorer")

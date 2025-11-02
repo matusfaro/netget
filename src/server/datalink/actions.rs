@@ -121,10 +121,10 @@ impl Server for DataLinkProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Beta)
+            .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::RawSockets)
             .implementation("libpcap (pcap crate) for Layer 2 packet capture")
             .llm_control("Observation only - no packet injection")

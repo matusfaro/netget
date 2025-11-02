@@ -321,7 +321,7 @@ impl EventHandler {
                 initial_memory,
                 instruction,
                 startup_params,
-                runtime_choice,
+                script_runtime,
                 script_language: _,
                 script_path: _,
                 script_inline,
@@ -361,7 +361,7 @@ impl EventHandler {
                     let selected_mode = self.state.get_selected_scripting_mode().await;
                     match crate::scripting::ScriptManager::build_config(
                         selected_mode,
-                        runtime_choice.as_deref(),
+                        script_runtime.as_deref(),
                         script_inline.as_deref(),
                         script_handles,
                     ) {
@@ -539,7 +539,7 @@ impl EventHandler {
             CommonAction::UpdateScript {
                 server_id,
                 operation,
-                runtime_choice,
+                script_runtime,
                 script_language: _,
                 script_path: _,
                 script_inline,
@@ -567,7 +567,7 @@ impl EventHandler {
                         let selected_mode = self.state.get_selected_scripting_mode().await;
                         match crate::scripting::ScriptManager::build_config(
                             selected_mode,
-                            runtime_choice.as_deref(),
+                            script_runtime.as_deref(),
                             script_inline.as_deref(),
                             script_handles,
                         ) {
@@ -665,7 +665,7 @@ impl EventHandler {
                 connection_id,
                 instruction,
                 context,
-                runtime_choice,
+                script_runtime,
                 script_language: _,
                 script_path: _,
                 script_inline,
@@ -752,7 +752,7 @@ impl EventHandler {
 
                 // TODO: Add script configuration support for standalone scheduled tasks
                 // For now, tasks use LLM by default. Script support will be added in a future iteration.
-                let _ = runtime_choice; // Silence unused variable warning
+                let _ = script_runtime; // Silence unused variable warning
                 let _ = script_inline; // Silence unused variable warning
                 let _ = script_handles; // Silence unused variable warning
 

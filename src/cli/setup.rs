@@ -113,7 +113,8 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
             .with(EnvFilter::new("off"))
             .init();
     } else if is_interactive {
-        // Interactive (TUI) mode: log TRACE to netget.log file with bright cyan color
+        // Interactive (TUI) mode: log to netget.log file with bright cyan color
+        // Development builds default to TRACE, release builds default to INFO
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -121,8 +122,14 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
 
         let colored_writer = ColoredLogWriterMaker::new(log_file);
 
+        let default_level = if cfg!(debug_assertions) {
+            Level::TRACE
+        } else {
+            Level::INFO
+        };
+
         let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", Level::TRACE)));
+            .unwrap_or_else(|_| EnvFilter::new(format!("netget={}", default_level)));
 
         tracing_subscriber::registry()
             .with(

@@ -421,10 +421,10 @@ impl Server for ImapProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual IMAP4rev1 parsing")
             .llm_control("Authentication + mailbox ops + FETCH")
             .e2e_testing("async-imap client")

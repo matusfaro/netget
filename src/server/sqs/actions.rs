@@ -208,10 +208,10 @@ impl Server for SqsProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("hyper v1.5 HTTP with AWS JSON protocol")
             .llm_control("All SQS operations (SendMessage, ReceiveMessage, DeleteMessage)")
             .e2e_testing("aws-sdk-sqs client")

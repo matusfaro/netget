@@ -219,10 +219,10 @@ impl Server for TorDirectoryProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual HTTP parsing, LLM consensus generation")
             .llm_control("Consensus documents, microdescriptors, server descriptors")
             .e2e_testing("curl / Tor client")

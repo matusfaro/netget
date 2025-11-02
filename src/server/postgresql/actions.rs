@@ -122,10 +122,10 @@ impl Server for PostgresqlProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("pgwire v0.26 protocol library")
             .llm_control("Query responses (columns, rows, types)")
             .e2e_testing("tokio-postgres client")

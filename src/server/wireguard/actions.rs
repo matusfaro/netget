@@ -111,10 +111,10 @@ impl Server for WireguardProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState, PrivilegeRequirement};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Stable)
+            .state(DevelopmentState::Stable)
             .privilege_requirement(PrivilegeRequirement::Root)
             .implementation("defguard_wireguard_rs v0.7 - creates real TUN interfaces")
             .llm_control("Peer authorization + allowed IPs configuration")

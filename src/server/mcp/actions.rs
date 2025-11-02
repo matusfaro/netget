@@ -96,10 +96,10 @@ impl Server for McpProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("axum HTTP, custom JSON-RPC 2.0, session management")
             .llm_control("All capabilities: resources, tools, prompts")
             .e2e_testing("MCP clients / TypeScript SDK")

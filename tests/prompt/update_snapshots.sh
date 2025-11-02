@@ -2,7 +2,7 @@
 
 # Script to update prompt test snapshots
 # This script will:
-# 1. Run the prompt tests to generate .actual.snap files
+# 1. Run the prompt tests to generate .actual.snap.md files
 # 2. Update all snapshots with the new versions
 
 SNAPSHOTS_DIR="$(dirname "$0")/snapshots"
@@ -13,7 +13,7 @@ echo "  Prompt Snapshot Update Script"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Step 1: Run tests to generate .actual.snap files
+# Step 1: Run tests to generate .actual.snap.md files
 echo "Step 1: Running prompt tests to generate snapshots..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -40,20 +40,20 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Step 2: Updating snapshots..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-count=$(find "$SNAPSHOTS_DIR" -name "*.actual.snap" 2>/dev/null | wc -l | tr -d ' ')
+count=$(find "$SNAPSHOTS_DIR" -name "*.actual.snap.md" 2>/dev/null | wc -l | tr -d ' ')
 
 if [ "$count" -eq 0 ]; then
-    echo "⚠ No .actual.snap files found - tests may have all passed"
+    echo "⚠ No .actual.snap.md files found - tests may have all passed"
     exit 0
 fi
 
 echo "Found $count snapshot(s) to update:"
 echo ""
 
-# Move each .actual.snap file to replace the .snap file
-for actual_file in "$SNAPSHOTS_DIR"/*.actual.snap; do
+# Move each .actual.snap.md file to replace the .snap.md file
+for actual_file in "$SNAPSHOTS_DIR"/*.actual.snap.md; do
     if [ -f "$actual_file" ]; then
-        snap_file="${actual_file%.actual.snap}.snap"
+        snap_file="${actual_file%.actual.snap.md}.snap.md"
         filename=$(basename "$snap_file")
 
         echo "  → Updating $filename"

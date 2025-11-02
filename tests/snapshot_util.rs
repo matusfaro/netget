@@ -1,15 +1,15 @@
 //! Unified snapshot testing utility
 //!
 //! Provides consistent snapshot testing across all test suites.
-//! Uses .snap files for expected output and .actual.snap for mismatches.
+//! Uses .snap.md files for expected output and .actual.snap.md for mismatches.
 
 use std::fs;
 
 /// Assert that a value matches a snapshot file
 ///
 /// # Snapshot File Naming
-/// - `{test_name}.snap` - Expected snapshot
-/// - `{test_name}.actual.snap` - Actual output when test fails (gitignored)
+/// - `{test_name}.snap.md` - Expected snapshot (markdown format for better readability)
+/// - `{test_name}.actual.snap.md` - Actual output when test fails (gitignored)
 ///
 /// # Example
 /// ```no_run
@@ -17,12 +17,12 @@ use std::fs;
 /// ```
 ///
 /// If the snapshot doesn't match:
-/// 1. Creates `{test_name}.actual.snap` with actual output
+/// 1. Creates `{test_name}.actual.snap.md` with actual output
 /// 2. Prints diff instructions
 /// 3. Panics with helpful message
 pub fn assert_snapshot(test_name: &str, snapshot_dir: &str, actual: &str) {
-    let snapshot_path = format!("{}/{}.snap", snapshot_dir, test_name);
-    let actual_path = format!("{}/{}.actual.snap", snapshot_dir, test_name);
+    let snapshot_path = format!("{}/{}.snap.md", snapshot_dir, test_name);
+    let actual_path = format!("{}/{}.actual.snap.md", snapshot_dir, test_name);
 
     // Ensure snapshot directory exists
     fs::create_dir_all(snapshot_dir).ok();

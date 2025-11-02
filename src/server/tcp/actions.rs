@@ -181,10 +181,10 @@ impl Server for TcpProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Beta)
+            .state(DevelopmentState::Beta)
             .implementation("Manual TCP socket handling with tokio")
             .llm_control("Full byte stream control - all sent/received data")
             .e2e_testing("tokio::net::TcpStream")

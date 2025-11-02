@@ -564,10 +564,10 @@ impl Server for KafkaProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("kafka-protocol v0.13 wire format, manual broker logic")
             .llm_control("Message routing, topic management, consumer offsets")
             .e2e_testing("kafka-client / rdkafka")

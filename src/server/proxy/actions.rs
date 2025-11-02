@@ -175,10 +175,10 @@ impl Server for ProxyProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual HTTP/1.1 with rcgen v0.13")
             .llm_control("Request/response filtering, HTTPS allow/block")
             .e2e_testing("curl / HTTP clients")

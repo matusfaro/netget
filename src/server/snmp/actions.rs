@@ -83,10 +83,10 @@ impl Server for SnmpProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Beta)
+            .state(DevelopmentState::Beta)
             .implementation("rasn-snmp v0.18 for parsing + manual BER encoding")
             .llm_control("OID responses (sysDescr, ifTable, custom MIBs)")
             .e2e_testing("net-snmp tools (snmpget)")

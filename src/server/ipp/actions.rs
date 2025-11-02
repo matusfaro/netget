@@ -101,10 +101,10 @@ impl Server for IppProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual IPP binary parsing, hyper HTTP")
             .llm_control("Printer attributes, job handling, IPP responses")
             .e2e_testing("ipp-client / curl")

@@ -98,10 +98,10 @@ impl Server for NfsProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("nfsserve v0.6 NFSv3 server library")
             .llm_control("All filesystem operations (lookup, read, write, mkdir)")
             .e2e_testing("mount / nfs-client")

@@ -289,10 +289,10 @@ impl Server for GitProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, ProtocolState};
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
 
         ProtocolMetadataV2::builder()
-            .state(ProtocolState::Experimental)
+            .state(DevelopmentState::Experimental)
             .implementation("Manual Git Smart HTTP (pkt-line format), hyper")
             .llm_control("References, pack files, repository discovery")
             .e2e_testing("git clone / git fetch")
