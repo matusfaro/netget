@@ -490,19 +490,20 @@ async fn execute_single_task(
 
     let _ = status_tx.send(format!("[TASK] Executing task '{}'", task.name));
 
-    // Get protocol actions if server-scoped
-    let protocol_actions = if let TaskScope::Server(server_id) = task.scope {
-        if let Some(protocol_name) = state.get_protocol_name(server_id).await {
-            if let Some(protocol) = crate::protocol::registry::registry().get(&protocol_name) {
-                protocol.get_sync_actions()
+    // Get protocol actions if server or connection-scoped
+    let protocol_actions = match &task.scope {
+        TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
+            if let Some(protocol_name) = state.get_protocol_name(*server_id).await {
+                if let Some(protocol) = crate::protocol::registry::registry().get(&protocol_name) {
+                    protocol.get_sync_actions()
+                } else {
+                    Vec::new()
+                }
             } else {
                 Vec::new()
             }
-        } else {
-            Vec::new()
         }
-    } else {
-        Vec::new()
+        TaskScope::Global => Vec::new(),
     };
 
     // Build prompt
@@ -548,14 +549,15 @@ async fn execute_single_task(
         }
     };
 
-    // Get protocol for execution (if server-scoped)
-    let protocol = if let TaskScope::Server(server_id) = task.scope {
-        state
-            .get_protocol_name(server_id)
-            .await
-            .and_then(|name| crate::protocol::registry::registry().get(&name))
-    } else {
-        None
+    // Get protocol for execution (if server or connection-scoped)
+    let protocol = match &task.scope {
+        TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
+            state
+                .get_protocol_name(*server_id)
+                .await
+                .and_then(|name| crate::protocol::registry::registry().get(&name))
+        }
+        TaskScope::Global => None,
     };
 
     // Execute actions

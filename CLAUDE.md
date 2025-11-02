@@ -108,6 +108,88 @@ let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes", len));
 - Default model: `qwen3-coder:30b`
 - Event flow: UserCommand → Parse → EventHandler → LLM → Protocol action
 
+## Scheduled Tasks
+
+NetGet supports scheduled tasks that execute at specified intervals or delays. Tasks can be attached at three levels:
+
+### Task Attachment Levels
+
+1. **Global Tasks** - Can interact with any server, create new servers, use all common actions
+2. **Server-Scoped Tasks** - Attached to specific server, uses server's instruction and protocol actions, auto-cleaned when server closes
+3. **Connection-Scoped Tasks** - Attached to specific connection within a server, auto-cleaned when connection closes
+
+### Connection-Level Tasks
+
+Use connection-scoped tasks for:
+- **Idle timeouts**: "Close this SSH connection if no activity for 5 minutes"
+- **Session cleanup**: "Delete session data for this HTTP connection after 1 hour"
+- **Rate limiting**: "Reset rate limit counter for this connection every 5 minutes"
+- **Connection monitoring**: "Log connection stats every 30 seconds"
+
+**Example** (SSH idle timeout):
+```json
+{
+  "type": "schedule_task",
+  "task_id": "idle_timeout",
+  "server_id": 1,
+  "connection_id": "conn-456",
+  "recurring": true,
+  "interval_secs": 60,
+  "instruction": "Check if connection has been idle for >5 minutes. If so, close it with close_connection action."
+}
+```
+
+**Best Practices**:
+- Connection tasks are for long-lived connections (SSH, WebSocket, persistent TCP)
+- For short-lived connections (HTTP GET), use server-level tasks instead
+- Tasks automatically cleaned up when connection closes
+- Connection context (bytes sent/received, last activity, etc.) included in task execution prompt
+
+### Creating Tasks
+
+**At server creation** (via `open_server` action):
+```json
+{
+  "type": "open_server",
+  "port": 8080,
+  "base_stack": "http",
+  "instruction": "HTTP server",
+  "scheduled_tasks": [
+    {
+      "task_id": "heartbeat",
+      "recurring": true,
+      "interval_secs": 30,
+      "instruction": "Send heartbeat to all connections"
+    }
+  ]
+}
+```
+
+**Post-creation** (via `schedule_task` action):
+```json
+{
+  "type": "schedule_task",
+  "task_id": "cleanup",
+  "server_id": 1,
+  "recurring": false,
+  "delay_secs": 3600,
+  "instruction": "Clean up idle connections"
+}
+```
+
+**Connection-scoped** (requires `connection_id`):
+```json
+{
+  "type": "schedule_task",
+  "task_id": "session_expire",
+  "server_id": 1,
+  "connection_id": "conn-123",
+  "recurring": false,
+  "delay_secs": 1800,
+  "instruction": "Expire session and close connection"
+}
+```
+
 ## Protocol Planning (Before Implementation)
 
 Before implementing, research and document:

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 use super::server::ServerId;
+use crate::server::connection::ConnectionId;
 
 /// Unique identifier for a scheduled task
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -34,6 +35,9 @@ pub enum TaskScope {
     Global,
     /// Server-scoped task - uses server's instruction and protocol actions
     Server(ServerId),
+    /// Connection-scoped task - uses server's instruction and protocol actions
+    /// for a specific connection. Automatically cleaned up when connection closes.
+    Connection(ServerId, ConnectionId),
 }
 
 /// Task type
@@ -145,6 +149,48 @@ impl ScheduledTask {
         }
     }
 
+    /// Create a new connection-scoped one-shot task
+    pub fn new_connection_one_shot(
+        id: TaskId,
+        name: String,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        delay_secs: u64,
+        instruction: String,
+        context: Option<serde_json::Value>,
+    ) -> Self {
+        Self::new_one_shot(
+            id,
+            name,
+            TaskScope::Connection(server_id, connection_id),
+            delay_secs,
+            instruction,
+            context,
+        )
+    }
+
+    /// Create a new connection-scoped recurring task
+    pub fn new_connection_recurring(
+        id: TaskId,
+        name: String,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        interval_secs: u64,
+        max_executions: Option<u64>,
+        instruction: String,
+        context: Option<serde_json::Value>,
+    ) -> Self {
+        Self::new_recurring(
+            id,
+            name,
+            TaskScope::Connection(server_id, connection_id),
+            interval_secs,
+            max_executions,
+            instruction,
+            context,
+        )
+    }
+
     /// Get the interval for recurring tasks
     pub fn interval_secs(&self) -> Option<u64> {
         match &self.task_type {
@@ -186,6 +232,9 @@ impl ScheduledTask {
         let scope_str = match &self.scope {
             TaskScope::Global => "global".to_string(),
             TaskScope::Server(sid) => format!("server #{}", sid.as_u32()),
+            TaskScope::Connection(sid, cid) => {
+                format!("connection {} on server #{}", cid, sid.as_u32())
+            }
         };
 
         let type_str = match &self.task_type {
