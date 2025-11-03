@@ -348,6 +348,7 @@ impl ProtocolRegistry {
     }
 
     /// Register a protocol implementation
+    #[allow(dead_code)]
     fn register(&mut self, protocol: Arc<dyn Server>) {
         let protocol_name = protocol.protocol_name().to_string();
         self.protocols.insert(protocol_name, protocol);

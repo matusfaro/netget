@@ -135,6 +135,19 @@ pub async fn call_llm_with_actions(
                             script_response.actions.len()
                         );
 
+                        // Register SCRIPT conversation for tracking
+                        let truncated_desc = if event_description.len() > 30 {
+                            format!("SCRIPT \"{}...\"", &event_description[..27])
+                        } else {
+                            format!("SCRIPT \"{}\"", event_description)
+                        };
+                        let conv_id = format!("script-{}-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), rand::random::<u32>());
+                        state.register_conversation(
+                            conv_id.clone(),
+                            crate::state::app_state::ConversationSource::Network { server_id, connection_id },
+                            truncated_desc,
+                        ).await;
+
                         // Execute the script's actions (extract actions from ScriptResponse)
                         let result = execute_actions(
                             script_response.actions,
@@ -143,6 +156,9 @@ pub async fn call_llm_with_actions(
                         )
                         .await
                         .context("Failed to execute script actions")?;
+
+                        // End conversation tracking
+                        state.end_conversation(&conv_id).await;
 
                         return Ok(result);
                     }
@@ -195,11 +211,22 @@ pub async fn call_llm_with_actions(
     )
     .await;
 
-    // Create conversation handler for network event
+    // Create conversation handler for network event with tracking
+    let truncated_desc = if event_description.len() > 30 {
+        format!("LLM \"{}...\"", &event_description[..27])
+    } else {
+        format!("LLM \"{}\"", event_description)
+    };
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+    )
+    .with_tracking(
+        state.clone(),
+        crate::state::app_state::ConversationSource::Network { server_id, connection_id },
+        truncated_desc,
     );
 
     // Add event trigger as a user message
@@ -396,6 +423,20 @@ pub async fn call_llm(
                             script_response.actions.len()
                         );
 
+                        // Register SCRIPT conversation for tracking
+                        let event_desc = event.to_prompt_description();
+                        let truncated_desc = if event_desc.len() > 30 {
+                            format!("SCRIPT \"{}...\"", &event_desc[..27])
+                        } else {
+                            format!("SCRIPT \"{}\"", event_desc)
+                        };
+                        let conv_id = format!("script-{}-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), rand::random::<u32>());
+                        state.register_conversation(
+                            conv_id.clone(),
+                            crate::state::app_state::ConversationSource::Network { server_id, connection_id },
+                            truncated_desc,
+                        ).await;
+
                         // Execute the script's actions (extract actions from ScriptResponse)
                         let result = execute_actions(
                             script_response.actions,
@@ -404,6 +445,9 @@ pub async fn call_llm(
                         )
                         .await
                         .context("Failed to execute script actions")?;
+
+                        // End conversation tracking
+                        state.end_conversation(&conv_id).await;
 
                         return Ok(result);
                     }
@@ -454,12 +498,23 @@ pub async fn call_llm(
     )
     .await;
 
-    // Create conversation handler for network event
+    // Create conversation handler for network event with tracking
     // Note: Network events don't use tools (immediate response), but get retry logic
+    let truncated_desc = if event_description.len() > 30 {
+        format!("LLM \"{}...\"", &event_description[..27])
+    } else {
+        format!("LLM \"{}\"", event_description)
+    };
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+    )
+    .with_tracking(
+        state.clone(),
+        crate::state::app_state::ConversationSource::Network { server_id, connection_id },
+        truncated_desc,
     );
 
     // Add event trigger as a user message

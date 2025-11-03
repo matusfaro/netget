@@ -165,6 +165,7 @@ impl SipProtocol {
     }
 
     /// Get default reason phrase for status code
+    #[allow(dead_code)]
     fn default_reason_phrase(status_code: u16) -> &'static str {
         match status_code {
             100 => "Trying",

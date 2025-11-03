@@ -8,6 +8,7 @@ pub mod server_startup;
 mod setup;
 mod sticky_footer;
 mod terminal_cleanup;
+mod theme;
 
 use anyhow::Result;
 pub use args::Args;
@@ -74,6 +75,16 @@ pub async fn run() -> Result<()> {
             state.set_selected_scripting_mode(mode).await;
         }
 
+        // Determine theme: CLI arg > auto-detect > neutral fallback
+        let theme_option = theme::parse_theme(&args.theme)?;
+        let theme = if let Some(t) = theme_option {
+            t
+        } else {
+            // Auto-detect
+            theme::detect_theme().unwrap_or(theme::Theme::Neutral)
+        };
+        let color_palette = theme::ColorPalette::from_theme(theme);
+
         // Get system capabilities for UI display
         let system_capabilities = state.get_system_capabilities().await;
         let app = App::new(system_capabilities);
@@ -82,7 +93,7 @@ pub async fn run() -> Result<()> {
         let event_handler = EventHandler::new(state.clone(), llm.clone());
 
         // Note: init_terminal not needed for rolling TUI (manages terminal itself)
-        rolling_tui::run_rolling_tui(state, app, event_handler, llm, settings, &args).await
+        rolling_tui::run_rolling_tui(state, app, event_handler, llm, settings, &args, color_palette).await
     } else {
         // No prompt and no terminal available
         anyhow::bail!(

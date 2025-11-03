@@ -67,6 +67,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
 textwrap = "0.16"
+termbg = "0.5"  # Terminal background detection for adaptive theming
 
 # HTTP client for Ollama
 reqwest = { version = "0.12", features = ["json"] }

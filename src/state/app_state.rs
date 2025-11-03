@@ -8,6 +8,51 @@ use super::server::{ServerId, ServerInstance};
 use super::task::{ScheduledTask, TaskId};
 use crate::server::connection::ConnectionId;
 
+/// Source of an LLM conversation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationSource {
+    /// User input from the command line
+    User,
+    /// Network event from a protocol implementation
+    Network { server_id: ServerId, connection_id: Option<ConnectionId> },
+    /// Scheduled task execution
+    Task { task_name: String },
+    /// Scripting mode execution
+    Scripting,
+}
+
+impl ConversationSource {
+    pub fn display_label(&self) -> String {
+        match self {
+            ConversationSource::User => "[User]".to_string(),
+            ConversationSource::Network { server_id, connection_id } => {
+                if let Some(conn_id) = connection_id {
+                    format!("[Net #{}:{}]", server_id.as_u32(), conn_id)
+                } else {
+                    format!("[Net #{}]", server_id.as_u32())
+                }
+            }
+            ConversationSource::Task { task_name } => format!("[Task:{}]", task_name),
+            ConversationSource::Scripting => "[Scripting]".to_string(),
+        }
+    }
+}
+
+/// Information about an active or recently-completed conversation
+#[derive(Debug, Clone)]
+pub struct ConversationInfo {
+    /// Unique conversation ID
+    pub id: String,
+    /// Source of the conversation
+    pub source: ConversationSource,
+    /// Details text (truncated input, context, etc.)
+    pub details: String,
+    /// When the conversation started
+    pub start_time: std::time::Instant,
+    /// When the conversation ended (None if still active)
+    pub end_time: Option<std::time::Instant>,
+}
+
 /// Operating mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -171,6 +216,8 @@ struct AppStateInner {
     task_names: HashMap<String, TaskId>,
     /// System capabilities detected at startup
     system_capabilities: crate::privilege::SystemCapabilities,
+    /// Active and recently-completed LLM conversations
+    conversations: Vec<ConversationInfo>,
 }
 
 impl AppState {
@@ -210,6 +257,7 @@ impl AppState {
                 next_task_id: 1,
                 task_names: HashMap::new(),
                 system_capabilities,
+                conversations: Vec::new(),
             })),
         }
     }
@@ -583,11 +631,10 @@ impl AppState {
             .servers
             .iter()
             .filter(|(_, server)| {
-                // Remove if stopped/error and status changed more than max_age_secs ago
-                matches!(
-                    server.status,
-                    ServerStatus::Stopped | ServerStatus::Error(_)
-                ) && now.duration_since(server.status_changed_at).as_secs() >= max_age_secs
+                let age = now.duration_since(server.status_changed_at).as_secs();
+                // Remove if stopped and status changed more than max_age_secs ago
+                // (Error servers are removed immediately on failure)
+                matches!(server.status, ServerStatus::Stopped) && age >= max_age_secs
             })
             .map(|(id, _)| *id)
             .collect();
@@ -1192,6 +1239,80 @@ impl AppState {
                 inner.task_names.remove(&task.name);
             }
         }
+    }
+
+    // ===== Conversation Management Methods =====
+
+    /// Register a new conversation
+    pub async fn register_conversation(
+        &self,
+        id: String,
+        source: ConversationSource,
+        details: String,
+    ) {
+        let info = ConversationInfo {
+            id,
+            source,
+            details,
+            start_time: std::time::Instant::now(),
+            end_time: None,
+        };
+
+        self.inner.write().await.conversations.push(info);
+    }
+
+    /// Mark a conversation as ended
+    pub async fn end_conversation(&self, id: &str) {
+        let mut inner = self.inner.write().await;
+        if let Some(conv) = inner.conversations.iter_mut().find(|c| c.id == id) {
+            conv.end_time = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Get all active conversations and recently-completed ones (within 1 second)
+    pub async fn get_active_conversations(&self) -> Vec<ConversationInfo> {
+        let inner = self.inner.read().await;
+        let now = std::time::Instant::now();
+
+        inner
+            .conversations
+            .iter()
+            .filter(|conv| {
+                // Include if still active (no end_time)
+                conv.end_time.is_none() ||
+                // Or if ended within the last 1 second
+                conv.end_time.map(|end| now.duration_since(end).as_secs() < 1).unwrap_or(false)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Get conversations for the "Inputs" column (User + Global tasks)
+    pub async fn get_input_conversations(&self) -> Vec<ConversationInfo> {
+        let all_convs = self.get_active_conversations().await;
+        all_convs
+            .into_iter()
+            .filter(|conv| {
+                matches!(
+                    &conv.source,
+                    ConversationSource::User | ConversationSource::Scripting
+                    // Global tasks would be ConversationSource::Task but we need to filter by scope
+                )
+            })
+            .collect()
+    }
+
+    /// Clean up old completed conversations (older than 1 second)
+    pub async fn cleanup_old_conversations(&self) {
+        let mut inner = self.inner.write().await;
+        let now = std::time::Instant::now();
+
+        inner.conversations.retain(|conv| {
+            // Keep if still active
+            conv.end_time.is_none() ||
+            // Or if ended less than 1 second ago
+            conv.end_time.map(|end| now.duration_since(end).as_secs() < 1).unwrap_or(false)
+        });
     }
 }
 

@@ -222,7 +222,10 @@ pub enum CommandAction {
         /// The instruction prompt for handling network events
         instruction: String,
     },
-    CloseServer,
+    CloseServer {
+        #[serde(default)]
+        server_id: Option<u32>,
+    },
     OpenClient {
         address: String,
         base_stack: String,
@@ -618,6 +621,7 @@ impl OllamaClient {
     {
         let mut all_actions = Vec::new();
         let mut conversation_history = String::new();
+        let mut last_logged_position = 0; // Track where we last logged
 
         // Build initial prompt (system + user message)
         let initial_prompt = initial_prompt_builder().await;
@@ -634,10 +638,13 @@ impl OllamaClient {
             ));
         }
 
+        // Log initial messages
+        trace!("New messages:\n{}", &conversation_history[last_logged_position..]);
+        last_logged_position = conversation_history.len();
+
         for turn in 1..=max_iterations {
             // Generate response with full conversation history
             debug!("Conversation turn {}/{}", turn, max_iterations);
-            trace!("Full conversation history:\n{}", conversation_history);
 
             let response_text = self
                 .generate_with_format(model, &conversation_history, None)
@@ -701,7 +708,7 @@ impl OllamaClient {
                                 tool_action.describe()
                             ));
                         }
-                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode).await;
+                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None).await;
                         info!("  Result: {}", result.summary());
                         if let Some(ref tx) = self.status_tx {
                             let _ = tx.send(format!("[INFO]   Result: {}", result.summary()));
@@ -735,16 +742,17 @@ impl OllamaClient {
             conversation_history.push_str("RESPONSE FORMAT: {{\"actions\": [...]}}\n");
 
             let conv_size = conversation_history.len();
-            trace!(
-                "Conversation history after tool results: {} chars",
-                conv_size
-            );
+
+            // Log only new messages since last checkpoint
+            trace!("New messages:\n{}", &conversation_history[last_logged_position..]);
             if let Some(ref tx) = self.status_tx {
                 let _ = tx.send(format!(
-                    "[TRACE] Conversation updated: {} chars (added tool results)",
-                    conv_size
+                    "[TRACE] Conversation updated: {} chars (added {} new chars)",
+                    conv_size,
+                    conv_size - last_logged_position
                 ));
             }
+            last_logged_position = conv_size;
 
             // Performance warning if conversation is getting large
             if conv_size > 50_000 {

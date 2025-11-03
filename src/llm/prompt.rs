@@ -40,7 +40,9 @@ NetGet provides built-in server implementations for 50+ network protocols includ
 
 You control these servers by returning JSON responses containing **actions**. Each action is a command that NetGet will execute (e.g., starting a server, sending data, updating memory).
 
-Your responses are parsed and executed immediately - you directly control the network behavior."#.to_string()
+Your responses are parsed and executed immediately - you directly control the network behavior.
+
+"#.to_string()
     }
 
     /// Build the role section for legacy network events
@@ -92,6 +94,7 @@ Your responses are parsed and executed immediately - you directly control the ne
         } else if mode == crate::state::app_state::Mode::Server && !servers.is_empty() {
             // All servers context
             current_state.push_str("## Running Servers\n\n");
+            current_state.push_str("You may be asked to update these servers and you need to refer to them by number:\n\n");
             for server in &servers {
                 current_state.push_str(&format!(
                     "- Server #{}: **{}** on port {} ({})\n",
@@ -188,7 +191,7 @@ Your responses are parsed and executed immediately - you directly control the ne
     /// Public version of build_actions_section for use by conversation handler
     pub fn build_actions_section_public(actions: &[ActionDefinition]) -> String {
         if actions.is_empty() {
-            return "No actions available.".to_string();
+            return "# Available Actions\n\nNo actions available.\n\n".to_string();
         }
 
         // Separate tool actions from regular actions
@@ -216,7 +219,10 @@ Tools gather information and return results to you. After a tool completes, you'
             text.push_str(
                 r#"# Available Actions
 
-These actions directly control NetGet's behavior. Include them in your JSON response to execute operations.
+Include actions in your JSON response to execute operations.
+You will see past actions you have executed on previous invocation, actions are not idempotent.
+Unless tools are also included, you will not be invoked again if you only return actions
+so you may include multiple actions in a single response.
 
 "#,
             );
@@ -254,11 +260,17 @@ These actions directly control NetGet's behavior. Include them in your JSON resp
 
 ## When to Use Scripts
 
-Scripts are ideal for:
-- **Complex authentication logic** (e.g., SSH auth with multiple conditions)
-- **Deterministic responses** (e.g., static file serving, simple routing)
-- **Multi-step protocols** requiring state machines
-- When the user explicitly requests "scripted" or "programmatic" behavior
+**IMPORTANT:** Scripts should ONLY be used when:
+- The user explicitly requests scripting or programmatic behavior
+- Responses are **static and deterministic** (e.g., fixed file serving, simple routing with predefined rules)
+- **Complex authentication logic** with well-defined conditions (e.g., SSH auth with specific username/password combinations)
+
+**DO NOT use scripts for:**
+- **Creative or dynamic responses** - Continue using LLM for natural language, context-aware, or adaptive responses
+- Situations requiring reasoning, interpretation, or decision-making beyond simple rules
+- When responses should vary based on context or user behavior
+
+Scripts are for automation of static, repetitive tasks. Use LLM (your native mode) for everything else.
 
 ## How Scripts Work
 
@@ -593,14 +605,14 @@ Your response must be **pure JSON** only:
 
         // Assemble final prompt (NO trigger - that goes in user message)
         format!(
-            "{}\n\n{}{}\n{}\n{}{}{}",
+            "{}{}{}{}{}{}{}",
             role,
-            current_state,
             instructions_section,
             actions_section,
             base_stack_docs,
             scripting_section,
-            response_format
+            response_format,
+            current_state
         )
     }
 

@@ -9,16 +9,22 @@
 use anyhow::Result;
 use crossterm::{
     cursor, execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
+    style::{Print, ResetColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
 use tokio::sync::oneshot;
 
-use crate::state::app_state::{WebApprovalResponse, WebSearchMode};
+use crate::state::app_state::{ConversationInfo, WebApprovalResponse, WebSearchMode};
 use crate::ui::app::{ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo};
 
 use super::input_state::InputState;
+use super::theme::ColorPalette;
+
+// Layout constants for two-column footer
+const INPUTS_LEFT_MARGIN: u16 = 6;
+const INPUTS_COLUMN_WIDTH: u16 = 30;
+const COLUMN_MARGIN: u16 = 4;
 
 /// Pending web approval request
 pub struct PendingApproval {
@@ -34,6 +40,7 @@ pub enum FooterContent {
         servers: Vec<ServerDisplayInfo>,
         connections: Vec<ConnectionDisplayInfo>,
         expand_all: bool,
+        conversations: Vec<ConversationInfo>,
     },
     /// Slash command mode: show command suggestions
     SlashCommands { suggestions: Vec<String> },
@@ -85,11 +92,13 @@ pub struct StickyFooter {
     pub pending_approval: Option<PendingApproval>,
     /// System capabilities (for privilege warnings in status bar)
     system_capabilities: crate::privilege::SystemCapabilities,
+    /// Color palette for theming
+    palette: ColorPalette,
 }
 
 impl StickyFooter {
     /// Create a new sticky footer
-    pub fn new(width: u16, height: u16, system_capabilities: crate::privilege::SystemCapabilities) -> Result<Self> {
+    pub fn new(width: u16, height: u16, system_capabilities: crate::privilege::SystemCapabilities, palette: ColorPalette) -> Result<Self> {
         let mut footer = Self {
             terminal_width: width,
             terminal_height: height,
@@ -98,6 +107,7 @@ impl StickyFooter {
                 servers: Vec::new(),
                 connections: Vec::new(),
                 expand_all: false,
+                conversations: Vec::new(),
             },
             input: InputState::new(),
             connection_info: ConnectionInfo::default(),
@@ -108,6 +118,7 @@ impl StickyFooter {
             last_footer_height: 0,
             pending_approval: None,
             system_capabilities,
+            palette,
         };
 
         // Calculate actual footer height
@@ -192,59 +203,79 @@ impl StickyFooter {
         self.recalculate_scroll_region();
     }
 
-    /// Calculate lines needed for normal content (servers/connections)
+    /// Calculate lines needed for normal content (two-column layout)
     fn calculate_normal_content_lines(
         &self,
         servers: &[ServerDisplayInfo],
         connections: &[ConnectionDisplayInfo],
         expand_all: bool,
+        conversations: &[ConversationInfo],
     ) -> u16 {
         // If custom status is set, use its line count
         if let Some(ref custom) = self.custom_status {
             return custom.lines().count() as u16;
         }
 
-        if servers.is_empty() {
-            return 0; // No message when no servers
+        // Calculate inputs column height (User + Scripting conversations)
+        let input_convs: Vec<_> = conversations
+            .iter()
+            .filter(|c| matches!(&c.source, crate::state::app_state::ConversationSource::User | crate::state::app_state::ConversationSource::Scripting))
+            .collect();
+
+        let mut inputs_height = 0u16;
+        if !input_convs.is_empty() {
+            inputs_height += 1; // Header line
+            inputs_height += input_convs.len() as u16; // Each conversation is 1 line (truncated to fit column width)
         }
 
-        let mut total_lines = 0;
+        // Calculate servers column height
+        let mut servers_height = 0u16;
+        if !servers.is_empty() {
+            servers_height += 1; // Header line
 
-        for (_idx, server) in servers.iter().enumerate() {
-            // Server line
-            let server_text = format!(
-                "#{} {} :{} - {}",
-                server.id, server.protocol, server.port, server.status
-            );
-            total_lines += self.wrapped_line_count(&server_text);
+            for server in servers.iter() {
+                servers_height += 1; // Server line
 
-            // Connection lines
-            let server_connections: Vec<_> = connections
-                .iter()
-                .filter(|c| c.server_id == server.id)
-                .collect();
+                // Connection lines for this server
+                let server_connections: Vec<_> = connections
+                    .iter()
+                    .filter(|c| c.server_id == server.id)
+                    .collect();
 
-            if !server_connections.is_empty() {
-                let max_to_show = if expand_all {
-                    server_connections.len()
-                } else {
-                    3
-                };
+                if !server_connections.is_empty() {
+                    let max_to_show = if expand_all {
+                        server_connections.len()
+                    } else {
+                        10
+                    };
 
-                for conn in server_connections.iter().take(max_to_show) {
-                    let conn_text = format!("  #{} {} {}", conn.id, conn.address, conn.state);
-                    total_lines += self.wrapped_line_count(&conn_text);
-                }
+                    servers_height += max_to_show.min(server_connections.len()) as u16;
 
-                // "... N more" line if truncated
-                if !expand_all && server_connections.len() > 3 {
-                    total_lines += 1;
+                    // Add conversation sub-items for each connection
+                    for conn in server_connections.iter().take(max_to_show.min(server_connections.len())) {
+                        // Count conversations for this specific connection
+                        let conn_convs: Vec<_> = conversations
+                            .iter()
+                            .filter(|conv| {
+                                matches!(&conv.source,
+                                    crate::state::app_state::ConversationSource::Network { server_id, connection_id }
+                                    if server_id.as_u32().to_string() == server.id && connection_id.map(|id| id.to_string()) == Some(conn.id.to_string())
+                                )
+                            })
+                            .collect();
+                        servers_height += conn_convs.len() as u16;
+                    }
+
+                    // "... N more" line if truncated
+                    if !expand_all && server_connections.len() > 10 {
+                        servers_height += 1;
+                    }
                 }
             }
         }
 
-        // Cap at 15 lines
-        total_lines.min(15)
+        // Return the max of the two columns (or 0 if both empty)
+        inputs_height.max(servers_height)
     }
 
     /// Calculate lines needed for input (or approval prompt if pending)
@@ -341,19 +372,16 @@ impl StickyFooter {
                 servers,
                 connections,
                 expand_all,
-            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
+                conversations,
+            } => self.calculate_normal_content_lines(servers, connections, *expand_all, conversations),
             FooterContent::SlashCommands { suggestions } => {
                 suggestions.len().min(10) as u16
             }
         };
 
-        // If we have content, position it with a separator above it
+        // If we have content, render it without separator above
         if content_lines > 0 {
-            let separator_before_content = separator_before_input - content_lines - 1;
-            let content_start = separator_before_content + 1;
-
-            // Render separator above content
-            self.render_separator(stdout, separator_before_content)?;
+            let content_start = separator_before_input - content_lines;
 
             // Render content
             match &self.content {
@@ -361,15 +389,23 @@ impl StickyFooter {
                     servers,
                     connections,
                     expand_all,
-                } => self.render_normal_content(stdout, content_start, servers, connections, *expand_all)?,
+                    conversations,
+                } => self.render_normal_content(stdout, content_start, servers, connections, *expand_all, conversations)?,
                 FooterContent::SlashCommands { suggestions } => {
+                    // Slash commands still need a separator
+                    let separator_before_content = content_start - 1;
+                    self.render_separator(stdout, separator_before_content)?;
                     self.render_slash_commands(stdout, content_start, suggestions)?
                 }
             };
         }
 
-        // Render separator before input (always present)
-        self.render_separator(stdout, separator_before_input)?;
+        // Render separator before input (always present) with ┴ joins for columns
+        self.render_separator_with_joins(
+            stdout,
+            separator_before_input,
+            &self.content,
+        )?;
 
         // Render input or approval prompt (fixed position)
         if let Some(ref approval) = self.pending_approval {
@@ -397,25 +433,11 @@ impl StickyFooter {
 
     /// Render only the input portion of the footer (for efficient keystroke handling)
     pub fn render_input_only(&mut self, stdout: &mut impl Write) -> Result<()> {
-        let footer_height = self.calculate_footer_height();
-        let footer_start = self.terminal_height.saturating_sub(footer_height);
-
-        // Calculate where input starts
-        let content_lines = match &self.content {
-            FooterContent::Normal {
-                servers,
-                connections,
-                expand_all,
-            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
-            FooterContent::SlashCommands { suggestions } => {
-                suggestions.len().min(10) as u16
-            }
-        };
-
-        // Separators before input: 1 if content exists, otherwise just 1 for the input separator
-        let separators_before_input = if content_lines > 0 { 2 } else { 1 };
-        let input_start = footer_start + content_lines + separators_before_input;
+        // Calculate fixed positions from bottom up (same as render())
+        let status_line = self.terminal_height - 1;
+        let separator_before_status = status_line - 1;
         let input_lines = self.calculate_input_lines();
+        let input_start = separator_before_status - input_lines;
 
         // Clear input area
         for line_offset in 0..input_lines {
@@ -470,7 +492,8 @@ impl StickyFooter {
                 servers,
                 connections,
                 expand_all,
-            } => self.calculate_normal_content_lines(servers, connections, *expand_all),
+                conversations,
+            } => self.calculate_normal_content_lines(servers, connections, *expand_all, conversations),
             FooterContent::SlashCommands { suggestions } => {
                 suggestions.len().min(10) as u16
             }
@@ -479,14 +502,19 @@ impl StickyFooter {
         let input_lines = self.calculate_input_lines();
         let status_lines = 1;
 
-        // Add separator lines:
-        // - If we have content: 3 separators (one above content, one above input, one above status)
-        // - If no content: 2 separators (one above input, one above status)
-        let separator_lines = if content_lines > 0 { 3 } else { 2 };
+        // Add separator lines based on content type:
+        // - Normal mode (servers/inputs): 2 separators (one above input, one above status) - no separator above content
+        // - SlashCommands mode: 3 separators (one above content, one above input, one above status)
+        // - No content: 2 separators (one above input, one above status)
+        let separator_lines = match &self.content {
+            FooterContent::Normal { .. } if content_lines > 0 => 2,
+            FooterContent::SlashCommands { .. } if content_lines > 0 => 3,
+            _ => 2,
+        };
         content_lines + separator_lines + input_lines + status_lines
     }
 
-    /// Render normal content (servers and connections)
+    /// Render normal content (two-column layout with floating headers)
     fn render_normal_content(
         &self,
         stdout: &mut impl Write,
@@ -494,16 +522,16 @@ impl StickyFooter {
         servers: &[ServerDisplayInfo],
         connections: &[ConnectionDisplayInfo],
         expand_all: bool,
+        conversations: &[ConversationInfo],
     ) -> Result<u16> {
-        let mut current_line = start_line;
-
         // If custom status is set, render it (separator handled by main render)
         if let Some(ref custom) = self.custom_status {
+            let mut current_line = start_line;
             for line in custom.lines() {
                 execute!(
                     stdout,
                     cursor::MoveTo(0, current_line),
-                    SetForegroundColor(Color::DarkGrey),
+                    SetForegroundColor(self.palette.dimmed),
                     Print(line),
                     ResetColor,
                 )?;
@@ -512,80 +540,225 @@ impl StickyFooter {
             return Ok(current_line);
         }
 
-        if servers.is_empty() {
-            // Don't show anything when no servers - no separator, no content
-            return Ok(current_line);
+        // Filter conversations for inputs column
+        let input_convs: Vec<_> = conversations
+            .iter()
+            .filter(|c| matches!(&c.source, crate::state::app_state::ConversationSource::User | crate::state::app_state::ConversationSource::Scripting))
+            .collect();
+
+        // Calculate heights for each column
+        let inputs_height = if input_convs.is_empty() { 0 } else { 1 + input_convs.len() as u16 };
+        let mut servers_height = 0u16;
+        if !servers.is_empty() {
+            servers_height = 1; // Header
+            for server in servers {
+                servers_height += 1; // Server line
+                let server_conns: Vec<_> = connections.iter().filter(|c| c.server_id == server.id).collect();
+                let max_to_show = if expand_all { server_conns.len() } else { 10.min(server_conns.len()) };
+                servers_height += max_to_show as u16;
+                if !expand_all && server_conns.len() > 10 {
+                    servers_height += 1;
+                }
+            }
         }
 
-        let max_content_lines = self.calculate_normal_content_lines(servers, connections, expand_all);
+        // If both columns are empty, don't render anything
+        if inputs_height == 0 && servers_height == 0 {
+            return Ok(start_line);
+        }
 
-        for server in servers.iter() {
-            if current_line >= start_line + max_content_lines {
-                break; // Hit the cap
-            }
+        let total_height = inputs_height.max(servers_height);
+        let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
 
-            // Server line
-            let server_text = format!(
-                "#{} {} :{} - {}",
-                server.id, server.protocol, server.port, server.status
-            );
+        // Render line by line
+        for line_offset in 0..total_height {
+            let current_line = start_line + line_offset;
 
-            // Render wrapped server line
-            let wrapped = self.wrap_text(&server_text);
-            for line in wrapped {
-                if current_line >= start_line + max_content_lines {
-                    break;
-                }
-                execute!(stdout, cursor::MoveTo(0, current_line), Print(&line))?;
-                current_line += 1;
-            }
+            // Determine if we should render inputs column content for this line
+            let inputs_start_offset = total_height.saturating_sub(inputs_height);
+            let render_inputs = line_offset >= inputs_start_offset;
 
-            // Connection lines
-            let server_connections: Vec<_> = connections
-                .iter()
-                .filter(|c| c.server_id == server.id)
-                .collect();
+            // Determine if we should render servers column content for this line
+            let servers_start_offset = total_height.saturating_sub(servers_height);
+            let render_servers = line_offset >= servers_start_offset;
 
-            if !server_connections.is_empty() {
-                let max_to_show = if expand_all {
-                    server_connections.len()
+            // Clear the line first
+            execute!(stdout, cursor::MoveTo(0, current_line), Clear(ClearType::CurrentLine))?;
+
+            // Render inputs column
+            if render_inputs {
+                let inputs_line_idx = line_offset - inputs_start_offset;
+                if inputs_line_idx == 0 {
+                    // Header line - always use ┌
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(INPUTS_LEFT_MARGIN, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("┌──── "),
+                        ResetColor,
+                        Print("Inputs")
+                    )?;
                 } else {
-                    3
-                };
-
-                for conn in server_connections.iter().take(max_to_show) {
-                    if current_line >= start_line + max_content_lines {
-                        break;
-                    }
-
-                    let conn_text = format!("  #{} {} {}", conn.id, conn.address, conn.state);
-                    let wrapped = self.wrap_text(&conn_text);
-                    for line in wrapped {
-                        if current_line >= start_line + max_content_lines {
-                            break;
-                        }
-                        execute!(stdout, cursor::MoveTo(0, current_line), Print(&line))?;
-                        current_line += 1;
-                    }
-                }
-
-                // "... N more" line
-                if !expand_all && server_connections.len() > 3 {
-                    if current_line < start_line + max_content_lines {
+                    // Content line
+                    let conv_idx = (inputs_line_idx - 1) as usize;
+                    if conv_idx < input_convs.len() {
+                        let conv = input_convs[conv_idx];
+                        // Just show the details without the [User] prefix
+                        let text = self.truncate_to_width(&conv.details, INPUTS_COLUMN_WIDTH - 2);
+                        let is_completed = conv.end_time.is_some();
                         execute!(
                             stdout,
-                            cursor::MoveTo(0, current_line),
-                            SetForegroundColor(Color::DarkGrey),
-                            Print(format!("  ... ({} more)", server_connections.len() - 3)),
+                            cursor::MoveTo(INPUTS_LEFT_MARGIN, current_line),
+                            SetForegroundColor(self.palette.separator),
+                            Print("│ "),
                             ResetColor,
                         )?;
-                        current_line += 1;
+                        if is_completed {
+                            execute!(stdout, SetForegroundColor(self.palette.dimmed))?;
+                        }
+                        execute!(stdout, Print(&text), ResetColor)?;
+                    }
+                }
+            }
+
+            // Render column separator and servers column
+            if render_servers {
+                let servers_line_idx = line_offset - servers_start_offset;
+                if servers_line_idx == 0 {
+                    // Header line - always use ┌
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(servers_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("┌──── "),
+                        ResetColor,
+                        Print("Servers")
+                    )?;
+                } else {
+                    // Content line - need to build server/connection content
+                    let mut content_line_idx = servers_line_idx - 1;
+
+                    for server in servers {
+                        if content_line_idx == 0 {
+                            // This is the server line
+                            let text = format!("#{} {} :{} - {}", server.id, server.protocol, server.port, server.status);
+                            let is_inactive = server.status == "Stopped" || server.status.starts_with("Error:");
+                            execute!(
+                                stdout,
+                                cursor::MoveTo(servers_column_start, current_line),
+                                SetForegroundColor(self.palette.separator),
+                                Print("│ "),
+                                ResetColor,
+                            )?;
+                            if is_inactive {
+                                execute!(stdout, SetForegroundColor(self.palette.dimmed))?;
+                            }
+                            execute!(stdout, Print(&text), ResetColor)?;
+                            break;
+                        }
+                        content_line_idx -= 1;
+
+                        // Check connections for this server
+                        let server_conns: Vec<_> = connections.iter().filter(|c| c.server_id == server.id).collect();
+                        let max_to_show = if expand_all { server_conns.len() } else { 10.min(server_conns.len()) };
+
+                        // Check if this is a connection line or a conversation sub-item
+                        let mut found = false;
+                        for (conn_idx, conn) in server_conns.iter().take(max_to_show).enumerate() {
+                            if conn_idx as u16 == content_line_idx {
+                                // This is the connection line
+                                let text = format!("  #{} {} {}", conn.id, conn.address, conn.state);
+                                let is_closed = conn.state == "Closed";
+                                execute!(
+                                    stdout,
+                                    cursor::MoveTo(servers_column_start, current_line),
+                                    SetForegroundColor(self.palette.separator),
+                                    Print("│ "),
+                                    ResetColor,
+                                )?;
+                                if is_closed {
+                                    execute!(stdout, SetForegroundColor(self.palette.dimmed))?;
+                                }
+                                execute!(stdout, Print(&text), ResetColor)?;
+                                found = true;
+                                break;
+                            }
+
+                            // Skip past the connection line
+                            if content_line_idx == 0 {
+                                break;
+                            }
+                            content_line_idx -= 1;
+
+                            // Check for conversation sub-items for this connection
+                            let conn_convs: Vec<_> = conversations
+                                .iter()
+                                .filter(|conv| {
+                                    matches!(&conv.source,
+                                        crate::state::app_state::ConversationSource::Network { server_id, connection_id }
+                                        if server_id.as_u32().to_string() == server.id && connection_id.map(|id| id.to_string()) == Some(conn.id.to_string())
+                                    )
+                                })
+                                .collect();
+
+                            if content_line_idx < conn_convs.len() as u16 {
+                                // This is a conversation sub-item
+                                let conv = conn_convs[content_line_idx as usize];
+                                let is_completed = conv.end_time.is_some();
+                                execute!(
+                                    stdout,
+                                    cursor::MoveTo(servers_column_start, current_line),
+                                    SetForegroundColor(self.palette.separator),
+                                    Print("│ "),
+                                    ResetColor,
+                                )?;
+                                if is_completed {
+                                    execute!(stdout, SetForegroundColor(self.palette.dimmed))?;
+                                }
+                                execute!(stdout, Print(format!("    {}", conv.details)), ResetColor)?;
+                                found = true;
+                                break;
+                            }
+                            content_line_idx -= conn_convs.len() as u16;
+                        }
+
+                        if found {
+                            break;
+                        }
+
+                        // Check for "... N more" line
+                        if !expand_all && server_conns.len() > 10 {
+                            if content_line_idx == 0 {
+                                execute!(
+                                    stdout,
+                                    cursor::MoveTo(servers_column_start, current_line),
+                                    SetForegroundColor(self.palette.separator),
+                                    Print("│ "),
+                                    ResetColor,
+                                    SetForegroundColor(self.palette.dimmed),
+                                    Print(format!("  ... ({} more)", server_conns.len() - 10)),
+                                    ResetColor
+                                )?;
+                                break;
+                            }
+                            content_line_idx -= 1;
+                        }
                     }
                 }
             }
         }
 
-        Ok(current_line)
+        Ok(start_line + total_height)
+    }
+
+    /// Truncate text to fit within a given width
+    fn truncate_to_width(&self, text: &str, max_width: u16) -> String {
+        if text.len() <= max_width as usize {
+            text.to_string()
+        } else {
+            let truncate_at = (max_width as usize).saturating_sub(3);
+            format!("{}...", &text[..truncate_at])
+        }
     }
 
     /// Render slash command suggestions
@@ -604,7 +777,7 @@ impl StickyFooter {
                 execute!(
                     stdout,
                     cursor::MoveTo(0, current_line),
-                    SetForegroundColor(Color::DarkGrey),
+                    SetForegroundColor(self.palette.dimmed),
                     Print(&line),
                     ResetColor,
                 )?;
@@ -621,10 +794,62 @@ impl StickyFooter {
         execute!(
             stdout,
             cursor::MoveTo(0, line),
-            SetForegroundColor(Color::DarkGreen),
+            SetForegroundColor(self.palette.separator),
             Print(&separator),
             ResetColor,
         )?;
+        Ok(line + 1)
+    }
+
+    /// Render a separator line with ┴ join characters at column positions
+    fn render_separator_with_joins(
+        &self,
+        stdout: &mut impl Write,
+        line: u16,
+        content: &FooterContent,
+    ) -> Result<u16> {
+        // First render the base separator line
+        let separator = "─".repeat(self.terminal_width as usize);
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line),
+            SetForegroundColor(self.palette.separator),
+            Print(&separator),
+            ResetColor,
+        )?;
+
+        // Add ┴ characters at column positions for Normal content
+        if let FooterContent::Normal { servers, conversations, .. } = content {
+            // Filter conversations for inputs column
+            let input_convs: Vec<_> = conversations
+                .iter()
+                .filter(|c| matches!(&c.source, crate::state::app_state::ConversationSource::User | crate::state::app_state::ConversationSource::Scripting))
+                .collect();
+
+            // Add ┴ at inputs column position if inputs exist
+            if !input_convs.is_empty() {
+                execute!(
+                    stdout,
+                    cursor::MoveTo(INPUTS_LEFT_MARGIN, line),
+                    SetForegroundColor(self.palette.separator),
+                    Print("┴"),
+                    ResetColor,
+                )?;
+            }
+
+            // Add ┴ at servers column position if servers exist
+            if !servers.is_empty() {
+                let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+                execute!(
+                    stdout,
+                    cursor::MoveTo(servers_column_start, line),
+                    SetForegroundColor(self.palette.separator),
+                    Print("┴"),
+                    ResetColor,
+                )?;
+            }
+        }
+
         Ok(line + 1)
     }
 
@@ -656,16 +881,19 @@ impl StickyFooter {
     /// Render status bar
     fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
         let (web_status, web_color) = match self.connection_info.web_search_mode {
-            WebSearchMode::On => ("ON", Color::Green),
-            WebSearchMode::Off => ("OFF", Color::Red),
-            WebSearchMode::Ask => ("ASK", Color::Yellow),
+            WebSearchMode::On => ("ON", self.palette.success),
+            WebSearchMode::Off => ("OFF", self.palette.failure),
+            WebSearchMode::Ask => ("ASK", self.palette.ask),
         };
 
-        // Determine script status and color
-        let (script_status, script_color) = if self.connection_info.scripting_env.is_empty() {
-            ("OFF", Color::Red)
+        // Determine script status and color based on scripting_env value
+        // scripting_env contains the mode: "Off", "On", "Python", "JavaScript", "Go", "Perl"
+        let (script_status, script_color) = if self.connection_info.scripting_env == "Off" {
+            ("OFF", self.palette.failure)
+        } else if self.connection_info.scripting_env.is_empty() {
+            ("OFF", self.palette.failure)
         } else {
-            ("ON", Color::Green)
+            (self.connection_info.scripting_env.as_str(), self.palette.success)
         };
 
         execute!(stdout, cursor::MoveTo(0, line))?;
@@ -674,31 +902,31 @@ impl StickyFooter {
         execute!(
             stdout,
             Print(" "),
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print("↓"),
             ResetColor,
             Print(format!("{}", self.packet_stats.packets_received)),
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(" ↑"),
             ResetColor,
             Print(format!("{}", self.packet_stats.packets_sent)),
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(" | Model:"),
             ResetColor,
             Print(format!("{}", &self.connection_info.model)),
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(" | ^l Log:"),
             ResetColor,
             SetForegroundColor(self.log_level.color()),
             Print(format!("{}", self.log_level.as_str())),
             ResetColor,
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(" | ^e Script:"),
             ResetColor,
             SetForegroundColor(script_color),
             Print(format!("{}", script_status)),
             ResetColor,
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(" | ^w WebSearch:"),
             ResetColor,
             SetForegroundColor(web_color),
@@ -710,10 +938,10 @@ impl StickyFooter {
         if !self.system_capabilities.can_bind_privileged_ports {
             execute!(
                 stdout,
-                SetForegroundColor(Color::DarkGrey),
+                SetForegroundColor(self.palette.dimmed),
                 Print(" |"),
                 ResetColor,
-                SetForegroundColor(Color::Yellow),
+                SetForegroundColor(self.palette.ask),
                 Print(" Ports<1024 denied"),
                 ResetColor,
             )?;
@@ -722,10 +950,10 @@ impl StickyFooter {
         if !self.system_capabilities.has_raw_socket_access {
             execute!(
                 stdout,
-                SetForegroundColor(Color::DarkGrey),
+                SetForegroundColor(self.palette.dimmed),
                 Print(" |"),
                 ResetColor,
-                SetForegroundColor(Color::Yellow),
+                SetForegroundColor(self.palette.ask),
                 Print(" PCAP denied"),
                 ResetColor,
             )?;
@@ -865,25 +1093,25 @@ impl StickyFooter {
             stdout,
             Print(" Web Search Request: "),
             // Protocol in grey (de-emphasized)
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(&protocol_part),
-            // Domain in white (stands out)
-            SetForegroundColor(Color::White),
+            // Domain in normal color (stands out)
+            SetForegroundColor(self.palette.normal),
             Print(&domain_part),
             // Path in grey (de-emphasized)
-            SetForegroundColor(Color::DarkGrey),
+            SetForegroundColor(self.palette.dimmed),
             Print(&path_part),
             ResetColor,
             Print(" | "),
-            SetForegroundColor(Color::Green),
+            SetForegroundColor(self.palette.success),
             Print("(Y)"),
             ResetColor,
             Print("es | "),
-            SetForegroundColor(Color::Red),
+            SetForegroundColor(self.palette.failure),
             Print("(N)"),
             ResetColor,
             Print("o | "),
-            SetForegroundColor(Color::Blue),
+            SetForegroundColor(self.palette.info),
             Print("(A)"),
             ResetColor,
             Print("llow All"),

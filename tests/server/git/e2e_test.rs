@@ -66,7 +66,6 @@ If you are unsure about pack format, provide minimal pack data and we will test 
     // Start server without scripting (pure LLM mode)
     let server = helpers::start_netget_server(
         ServerConfig::new(prompt)
-            .with_model("qwen2.5-coder:32b") // Use a capable model for pack generation
     ).await?;
 
     let port = server.port;

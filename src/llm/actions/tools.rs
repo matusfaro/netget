@@ -211,6 +211,9 @@ pub async fn execute_read_file(
     context_before: Option<usize>,
     context_after: Option<usize>,
 ) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: read_file - path={}, mode={}", path, mode);
     debug!("Executing read_file tool: path={}, mode={}", path, mode);
 
     // Resolve path (support both relative and absolute)
@@ -235,6 +238,7 @@ pub async fn execute_read_file(
     // Security check: ensure path exists and is a file
     if !resolved_path.exists() {
         warn!("File not found: {}", resolved_path.display());
+        info!("  ✗ File not found: {}", path);
         return ToolResult::error(
             "read_file",
             format!("{} ({})", path, mode),
@@ -244,6 +248,7 @@ pub async fn execute_read_file(
 
     if !resolved_path.is_file() {
         warn!("Path is not a file: {}", resolved_path.display());
+        info!("  ✗ Path is not a file: {}", path);
         return ToolResult::error(
             "read_file",
             format!("{} ({})", path, mode),
@@ -256,6 +261,7 @@ pub async fn execute_read_file(
         Ok(metadata) => {
             if metadata.len() > MAX_FILE_SIZE {
                 warn!("File too large: {} bytes", metadata.len());
+                info!("  ✗ File too large: {} bytes (max: {} bytes)", metadata.len(), MAX_FILE_SIZE);
                 return ToolResult::error(
                     "read_file",
                     format!("{} ({})", path, mode),
@@ -269,6 +275,7 @@ pub async fn execute_read_file(
         }
         Err(e) => {
             error!("Failed to read file metadata: {}", e);
+            info!("  ✗ Failed to read file metadata: {}", e);
             return ToolResult::error(
                 "read_file",
                 format!("{} ({})", path, mode),
@@ -282,6 +289,7 @@ pub async fn execute_read_file(
         Ok(c) => c,
         Err(e) => {
             error!("Failed to read file: {}", e);
+            info!("  ✗ Failed to read file: {}", e);
             return ToolResult::error(
                 "read_file",
                 format!("{} ({})", path, mode),
@@ -294,12 +302,14 @@ pub async fn execute_read_file(
     let result = match mode {
         "full" => {
             debug!("Read full file: {} bytes", contents.len());
+            info!("  ✓ Read full file: {} bytes", contents.len());
             contents
         }
         "head" => {
             let n = lines.unwrap_or(DEFAULT_LINES);
             let result: Vec<&str> = contents.lines().take(n).collect();
             debug!("Read head: {} lines", result.len());
+            info!("  ✓ Read head: {} lines", result.len());
             result.join("\n")
         }
         "tail" => {
@@ -308,17 +318,21 @@ pub async fn execute_read_file(
             let start = all_lines.len().saturating_sub(n);
             let result = &all_lines[start..];
             debug!("Read tail: {} lines", result.len());
+            info!("  ✓ Read tail: {} lines", result.len());
             result.join("\n")
         }
         "grep" => {
             if let Some(pat) = pattern {
                 match grep_with_context(&contents, pat, context_before, context_after) {
                     Ok(result) => {
-                        debug!("Grep found {} matching lines", result.lines().count());
+                        let line_count = result.lines().count();
+                        debug!("Grep found {} matching lines", line_count);
+                        info!("  ✓ Grep found {} matching lines", line_count);
                         result
                     }
                     Err(e) => {
                         error!("Grep failed: {}", e);
+                        info!("  ✗ Grep failed: {}", e);
                         return ToolResult::error(
                             "read_file",
                             format!("{} (grep: {})", path, pat),
@@ -402,6 +416,9 @@ fn grep_with_context(
 
 /// Execute a web_search tool action
 pub async fn execute_web_search(query: &str) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: web_search - query=\"{}\"", query);
     debug!("Executing web_search tool for query: {}", query);
 
     // Check if query is a URL - if so, fetch it directly
@@ -425,6 +442,7 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
         Ok(response) => {
             if !response.status().is_success() {
                 warn!("Web search failed with status: {}", response.status());
+                info!("  ✗ Search failed with status: {}", response.status());
                 return ToolResult::error(
                     "web_search",
                     query.to_string(),
@@ -437,15 +455,18 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
                     // Parse search results from HTML
                     let results = parse_duckduckgo_results(&html);
                     if results.is_empty() {
+                        info!("  ⚠ No results found");
                         ToolResult::success("web_search", query.to_string(), "No results found.")
                     } else {
                         debug!("Found {} search results", results.len());
+                        info!("  ✓ Found {} search results", results.len());
                         let formatted = format_search_results(&results);
                         ToolResult::success("web_search", query.to_string(), formatted)
                     }
                 }
                 Err(e) => {
                     error!("Failed to read search response: {}", e);
+                    info!("  ✗ Failed to read response: {}", e);
                     ToolResult::error(
                         "web_search",
                         query.to_string(),
@@ -456,6 +477,7 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
         }
         Err(e) => {
             error!("Web search request failed: {}", e);
+            info!("  ✗ Request failed: {}", e);
             ToolResult::error(
                 "web_search",
                 query.to_string(),
@@ -467,6 +489,9 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
 
 /// Fetch a URL directly and convert HTML to text
 async fn fetch_url(url: &str) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: web_search (fetch URL) - {}", url);
     debug!("Fetching URL directly: {}", url);
 
     let client = reqwest::Client::builder()
@@ -479,6 +504,7 @@ async fn fetch_url(url: &str) -> ToolResult {
         Ok(response) => {
             if !response.status().is_success() {
                 warn!("URL fetch failed with status: {}", response.status());
+                info!("  ✗ HTTP {}", response.status());
                 return ToolResult::error(
                     "web_search",
                     url.to_string(),
@@ -492,18 +518,28 @@ async fn fetch_url(url: &str) -> ToolResult {
                     let text = html2text::from_read(html.as_bytes(), 120);
 
                     if text.trim().is_empty() {
+                        info!("  ⚠ URL fetched but no text content found");
                         ToolResult::success(
                             "web_search",
                             url.to_string(),
                             "URL fetched but no text content found.",
                         )
                     } else {
-                        debug!("Fetched URL: {} bytes of text", text.len());
-                        ToolResult::success("web_search", url.to_string(), text)
+                        // Truncate to reasonable length (10000 chars)
+                        let truncated = if text.len() > 10000 {
+                            format!("{}...\n\n[Content truncated to 10000 characters]", &text[..10000])
+                        } else {
+                            text
+                        };
+
+                        debug!("Fetched URL: {} chars", truncated.len());
+                        info!("  ✓ Fetched URL: {} chars", truncated.len());
+                        ToolResult::success("web_search", url.to_string(), truncated)
                     }
                 }
                 Err(e) => {
                     error!("Failed to read URL response: {}", e);
+                    info!("  ✗ Failed to read response: {}", e);
                     ToolResult::error(
                         "web_search",
                         url.to_string(),
@@ -514,6 +550,7 @@ async fn fetch_url(url: &str) -> ToolResult {
         }
         Err(e) => {
             error!("URL fetch request failed: {}", e);
+            info!("  ✗ Request failed: {}", e);
             ToolResult::error(
                 "web_search",
                 url.to_string(),
@@ -721,6 +758,7 @@ pub async fn execute_tool(
     action: &ToolAction,
     approval_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>>,
     web_search_mode: crate::state::app_state::WebSearchMode,
+    _state: Option<&crate::state::AppState>,
 ) -> ToolResult {
     use crate::state::app_state::{WebApprovalRequest, WebApprovalResponse, WebSearchMode};
 
@@ -817,6 +855,9 @@ pub async fn execute_tool(
 
 /// Execute read_base_stack_docs tool
 async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: read_base_stack_docs - protocol=\"{}\"", protocol);
     debug!("Getting documentation for protocol: {}", protocol);
 
     // Use the common module's function to generate docs for a single protocol
@@ -827,10 +868,40 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
                 protocol,
                 docs.len()
             );
-            ToolResult::success("read_base_stack_docs", protocol.to_string(), docs)
+            info!("  ✓ Retrieved docs for '{}' ({} bytes)", protocol, docs.len());
+
+            // Append open_server action description to inform LLM it's now enabled
+            let mut result = docs;
+            result.push_str("\n\n---\n\n");
+            result.push_str("## open_server Action (Now Enabled)\n\n");
+            result.push_str("The `open_server` action is now enabled. You can use it to start a server with this protocol.\n\n");
+            result.push_str("**Action:** `open_server`\n\n");
+            result.push_str("**Description:** Start a new server with the protocol you just read about.\n\n");
+            result.push_str("**Required Parameters:**\n");
+            result.push_str("- `port` (number): Port number to listen on\n");
+            result.push_str("- `base_stack` (string): Protocol stack to use (e.g., the protocol you just read about)\n");
+            result.push_str("- `instruction` (string): Detailed instructions for handling network events\n\n");
+            result.push_str("**Optional Parameters:**\n");
+            result.push_str("- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)\n");
+            result.push_str("- `initial_memory` (string): Initial memory as a string for persistent context across connections\n");
+            result.push_str("- `startup_params` (object): Protocol-specific startup parameters (see protocol documentation above)\n");
+            result.push_str("- `scheduled_tasks` (array): Scheduled tasks to create with this server\n");
+            result.push_str("- Script-related parameters (if scripting is enabled)\n\n");
+            result.push_str("**Example:**\n");
+            result.push_str("```json\n");
+            result.push_str("{\n");
+            result.push_str("  \"type\": \"open_server\",\n");
+            result.push_str(&format!("  \"port\": 8080,\n"));
+            result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol.to_lowercase()));
+            result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
+            result.push_str("}\n");
+            result.push_str("```\n");
+
+            ToolResult::success("read_base_stack_docs", protocol.to_string(), result)
         }
         Err(e) => {
             warn!("Failed to get documentation for protocol '{}': {}", protocol, e);
+            info!("  ✗ Protocol '{}' not found: {}", protocol, e);
             ToolResult::error(
                 "read_base_stack_docs",
                 protocol.to_string(),

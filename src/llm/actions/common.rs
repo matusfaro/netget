@@ -69,11 +69,13 @@ pub enum CommonAction {
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
     },
 
-    /// Close a server (closes all if server_id not specified)
+    /// Close a specific server
     CloseServer {
-        #[serde(default)]
-        server_id: Option<u32>,
+        server_id: u32,
     },
+
+    /// Close all servers
+    CloseAllServers,
 
     /// Update the server instruction (combines with existing)
     UpdateInstruction { instruction: String },
@@ -89,8 +91,7 @@ pub enum CommonAction {
 
     /// Update script configuration for a running server
     UpdateScript {
-        #[serde(default)]
-        server_id: Option<u32>,
+        server_id: u32,
         operation: String,
         #[serde(default)]
         script_runtime: Option<String>,
@@ -176,58 +177,72 @@ pub fn show_message_action() -> ActionDefinition {
 pub fn open_server_action(
     selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
+    is_enabled: bool,
 ) -> ActionDefinition {
+    let name = "open_server".to_string();
+    let mut description = "Start a new server.".to_string();
+
+    if !is_enabled {
+        description.push_str(" ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for server configuration.");
+        return ActionDefinition {
+            name,
+            description,
+            parameters: vec![],
+            example: json!({}),
+        };
+    }
+
     let mut parameters = vec![
-        Parameter {
-            name: "port".to_string(),
-            type_hint: "number".to_string(),
-            description: "Port number to listen on".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "base_stack".to_string(),
-            type_hint: "string".to_string(),
-            description: format!("Protocol stack to use. Choose the best stack for the task. Available: {}", all_base_stacks(false).join(", ")),
-            required: true,
-        },
-        Parameter {
-            name: "send_first".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "initial_memory".to_string(),
-            type_hint: "string".to_string(),
-            description: "Optional initial memory as a string. Use for storing persistent context across connections. Example: \"user_count: 0\"".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "instruction".to_string(),
-            type_hint: "string".to_string(),
-            description: "Detailed instructions for handling network events".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "startup_params".to_string(),
-            type_hint: "object".to_string(),
-            description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "scheduled_tasks".to_string(),
-            type_hint: "array".to_string(),
-            description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_runtime, script_inline, script_handles). When script_inline is provided, script_runtime MUST also be specified.".to_string(),
-            required: false,
-        },
-    ];
+            Parameter {
+                name: "port".to_string(),
+                type_hint: "number".to_string(),
+                description: "Port number to listen on".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "base_stack".to_string(),
+                type_hint: "string".to_string(),
+                description: format!("Protocol stack to use. Choose the best stack for the task. Available: {}", all_base_stacks(false).join(", ")),
+                required: true,
+            },
+            Parameter {
+                name: "send_first".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "initial_memory".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional initial memory as a string. Use for storing persistent context across connections. Example: \"user_count: 0\"".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "instruction".to_string(),
+                type_hint: "string".to_string(),
+                description: "Detailed instructions for handling network events".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "startup_params".to_string(),
+                type_hint: "object".to_string(),
+                description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "scheduled_tasks".to_string(),
+                type_hint: "array".to_string(),
+                description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_runtime, script_inline, script_handles). When script_inline is provided, script_runtime MUST also be specified.".to_string(),
+                required: false,
+            },
+        ];
 
     // Add script parameters based on scripting mode
     match selected_mode {
-        crate::state::app_state::ScriptingMode::On => {
-            // ON mode: LLM chooses runtime from available options
-            let available_runtimes = env.format_available();
-            parameters.extend(vec![
+            crate::state::app_state::ScriptingMode::On => {
+                // ON mode: LLM chooses runtime from available options
+                let available_runtimes = env.format_available();
+                parameters.extend(vec![
                 Parameter {
                     name: "script_runtime".to_string(),
                     type_hint: "string".to_string(),
@@ -250,17 +265,17 @@ pub fn open_server_action(
                     required: false,
                 },
             ]);
-        }
-        crate::state::app_state::ScriptingMode::Off => {
-            // OFF mode: no script parameters
-        }
-        crate::state::app_state::ScriptingMode::Python
-        | crate::state::app_state::ScriptingMode::JavaScript
-        | crate::state::app_state::ScriptingMode::Go
-        | crate::state::app_state::ScriptingMode::Perl => {
-            // Specific language mode: only show that language
-            let lang = selected_mode.as_str();
-            parameters.extend(vec![
+            }
+            crate::state::app_state::ScriptingMode::Off => {
+                // OFF mode: no script parameters
+            }
+            crate::state::app_state::ScriptingMode::Python
+            | crate::state::app_state::ScriptingMode::JavaScript
+            | crate::state::app_state::ScriptingMode::Go
+            | crate::state::app_state::ScriptingMode::Perl => {
+                // Specific language mode: only show that language
+                let lang = selected_mode.as_str();
+                parameters.extend(vec![
                 Parameter {
                     name: "script_inline".to_string(),
                     type_hint: "string".to_string(),
@@ -280,18 +295,20 @@ pub fn open_server_action(
         }
     }
 
+    let example = json!({
+        "type": "open_server",
+        "port": 21,
+        "base_stack": "tcp",
+        "send_first": true,
+        "initial_memory": "login_count: 0\nfiles: data.txt,readme.md",
+        "instruction": "You are an FTP server. Respond to FTP commands like USER, PASS, LIST, RETR, QUIT with appropriate FTP response codes."
+    });
+
     ActionDefinition {
-        name: "open_server".to_string(),
-        description: "Start a new server. You must call get_protocol_docs first to understand how to setup server and to get expected structure of startup_params".to_string(),
+        name,
+        description,
         parameters,
-        example: json!({
-            "type": "open_server",
-            "port": 21,
-            "base_stack": "tcp",
-            "send_first": true,
-            "initial_memory": "login_count: 0\nfiles: data.txt,readme.md",
-            "instruction": "You are an FTP server. Respond to FTP commands like USER, PASS, LIST, RETR, QUIT with appropriate FTP response codes."
-        }),
+        example,
     }
 }
 
@@ -299,10 +316,28 @@ pub fn open_server_action(
 pub fn close_server_action() -> ActionDefinition {
     ActionDefinition {
         name: "close_server".to_string(),
-        description: "Stop the current server".to_string(),
+        description: "Stop a specific server by ID.".to_string(),
+        parameters: vec![Parameter {
+            name: "server_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Server ID to close (e.g., 1, 2).".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "close_server",
+            "server_id": 1
+        }),
+    }
+}
+
+/// Get action definition for close_all_servers
+pub fn close_all_servers_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_all_servers".to_string(),
+        description: "Stop all running servers.".to_string(),
         parameters: vec![],
         example: json!({
-            "type": "close_server"
+            "type": "close_all_servers"
         }),
     }
 }
@@ -393,8 +428,8 @@ pub fn update_script_action(
         Parameter {
             name: "server_id".to_string(),
             type_hint: "number".to_string(),
-            description: "Optional: Server ID to update (defaults to first/current server)".to_string(),
-            required: false,
+            description: "Server ID to update (e.g., 1, 2)".to_string(),
+            required: true,
         },
         Parameter {
             name: "operation".to_string(),
@@ -445,13 +480,18 @@ pub fn update_script_action(
                 Parameter {
                     name: "script_inline".to_string(),
                     type_hint: "string".to_string(),
-                    description: format!("Inline {} script code (required for 'set' operation)", lang),
+                    description: format!(
+                        "Inline {} script code (required for 'set' operation)",
+                        lang
+                    ),
                     required: false,
                 },
                 Parameter {
                     name: "script_handles".to_string(),
                     type_hint: "array".to_string(),
-                    description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
+                    description:
+                        "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')"
+                            .to_string(),
                     required: false,
                 },
             ]);
@@ -673,11 +713,13 @@ pub fn list_tasks_action() -> ActionDefinition {
 pub fn get_all_common_actions(
     selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
+    is_open_server_enabled: bool,
 ) -> Vec<ActionDefinition> {
     let mut actions = vec![
         // === Server Management ===
-        get_open_server_action_with_params(selected_mode, env),
+        open_server_action(selected_mode, env, is_open_server_enabled),
         close_server_action(),
+        close_all_servers_action(),
         // === Server Configuration ===
         update_instruction_action(),
         set_memory_action(),
@@ -704,8 +746,9 @@ pub fn get_all_common_actions(
 pub fn get_user_input_common_actions(
     selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
+    is_open_server_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    get_all_common_actions(selected_mode, env)
+    get_all_common_actions(selected_mode, env, is_open_server_enabled)
 }
 
 /// Get common actions for network events (exclude server management actions)
@@ -722,7 +765,6 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         append_to_log_action(),
     ]
 }
-
 
 /// Get all protocol names that should be available to the LLM
 /// Filters out protocols with ProtocolState::Disabled unless include_disabled is true
@@ -761,12 +803,18 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
 
     // Group protocols by their group_name
     let registry = crate::protocol::registry::registry();
-    let mut groups: std::collections::HashMap<&'static str, Vec<(String, std::sync::Arc<dyn crate::llm::actions::Server>)>> = std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<
+        &'static str,
+        Vec<(String, std::sync::Arc<dyn crate::llm::actions::Server>)>,
+    > = std::collections::HashMap::new();
 
     for protocol_name in all_base_stacks(include_disabled) {
         if let Some(protocol) = registry.get(&protocol_name) {
             let group = protocol.group_name();
-            groups.entry(group).or_insert_with(Vec::new).push((protocol_name.clone(), protocol));
+            groups
+                .entry(group)
+                .or_insert_with(Vec::new)
+                .push((protocol_name.clone(), protocol));
         }
     }
 
@@ -828,7 +876,10 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
     let mut doc = String::new();
 
     // Protocol header
-    doc.push_str(&format!("# {} Protocol Documentation\n\n", protocol_name.to_uppercase()));
+    doc.push_str(&format!(
+        "# {} Protocol Documentation\n\n",
+        protocol_name.to_uppercase()
+    ));
 
     // Full stack name
     doc.push_str(&format!("**Full name:** {}\n\n", protocol.stack_name()));
@@ -840,7 +891,10 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
     doc.push_str(&format!("**Description:** {}\n\n", protocol.description()));
 
     // Example prompt
-    doc.push_str(&format!("**Example usage:** \"{}\"\n\n", protocol.example_prompt()));
+    doc.push_str(&format!(
+        "**Example usage:** \"{}\"\n\n",
+        protocol.example_prompt()
+    ));
 
     // Keywords
     let keywords = protocol.keywords();
@@ -857,13 +911,14 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
             doc.push_str(&format!(
                 "- **{}** ({}): {}\n",
                 param.name,
-                if param.required { "required" } else { "optional" },
+                if param.required {
+                    "required"
+                } else {
+                    "optional"
+                },
                 param.description
             ));
-            doc.push_str(&format!(
-                "  - Type: {}\n",
-                param.type_hint
-            ));
+            doc.push_str(&format!("  - Type: {}\n", param.type_hint));
             doc.push_str(&format!(
                 "  - Example: {}\n",
                 serde_json::to_string(&param.example).unwrap_or_default()
@@ -871,7 +926,9 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
             doc.push('\n');
         }
     } else {
-        doc.push_str("## Startup Parameters\n\nThis protocol does not require any startup parameters.\n\n");
+        doc.push_str(
+            "## Startup Parameters\n\nThis protocol does not require any startup parameters.\n\n",
+        );
     }
 
     // Metadata (state)
@@ -882,41 +939,4 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
     }
 
     Ok(doc)
-}
-
-/// Get open_server action with example showing startup_params usage
-///
-/// Startup parameter documentation is provided in the base stack documentation section,
-/// not inline here, to avoid redundancy and reduce token usage.
-pub fn get_open_server_action_with_params(
-    selected_mode: crate::state::app_state::ScriptingMode,
-    env: &crate::scripting::ScriptingEnvironment,
-) -> ActionDefinition {
-    let mut base_action = open_server_action(selected_mode, env);
-
-    // Use example that shows startup_params and scheduled_tasks usage
-    // NOTE: Example uses TCP to avoid biasing the LLM toward any specific application protocol
-    base_action.example = json!({
-        "type": "open_server",
-        "port": 8080,
-        "base_stack": "tcp",
-        "instruction": "Echo server that returns all received data",
-        "startup_params": {},
-        "scheduled_tasks": [
-            {
-                "task_id": "status_report",
-                "recurring": true,
-                "interval_secs": 30,
-                "instruction": "Send status report to all active connections"
-            },
-            {
-                "task_id": "cleanup",
-                "recurring": false,
-                "delay_secs": 3600,
-                "instruction": "Clean up idle connections older than 1 hour"
-            }
-        ]
-    });
-
-    base_action
 }
