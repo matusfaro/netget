@@ -212,6 +212,13 @@ pub use turn::TurnServer;
 #[cfg(feature = "turn")]
 pub use turn::actions::TurnProtocol;
 
+#[cfg(feature = "sip")]
+pub mod sip;
+#[cfg(feature = "sip")]
+pub use sip::SipServer;
+#[cfg(feature = "sip")]
+pub use sip::actions::SipProtocol;
+
 #[cfg(feature = "ldap")]
 pub mod ldap;
 #[cfg(feature = "ldap")]
