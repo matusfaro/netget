@@ -35,6 +35,9 @@ pub struct ConversationHandler {
 
     /// Index of last logged message (to avoid re-logging entire conversation)
     last_logged_index: usize,
+
+    /// Whether protocol documentation has been read in this conversation (enables open_server)
+    protocol_docs_read: bool,
 }
 
 impl ConversationHandler {
@@ -50,6 +53,7 @@ impl ConversationHandler {
             max_tool_iterations: 5,
             status_tx: None,
             last_logged_index: 0, // No messages logged yet
+            protocol_docs_read: false,
         }
     }
 
@@ -57,6 +61,95 @@ impl ConversationHandler {
     pub fn with_status_tx(mut self, tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
         self.status_tx = Some(tx);
         self
+    }
+
+    /// Check if protocol documentation has been read in this conversation
+    pub fn is_protocol_docs_read(&self) -> bool {
+        self.protocol_docs_read
+    }
+
+    /// Mark protocol documentation as read in this conversation (enables open_server)
+    /// This also updates the system message to enable the open_server action
+    fn mark_protocol_docs_read(&mut self, available_actions: &[ActionDefinition]) {
+        self.protocol_docs_read = true;
+        debug!("Protocol documentation read in conversation - open_server action is now enabled");
+
+        // Rebuild the actions section in the system prompt with open_server now enabled
+        self.update_actions_section(available_actions);
+    }
+
+    /// Update the "Available Actions" section in the system message
+    ///
+    /// This is used after read_base_stack_docs is called to enable the open_server action.
+    fn update_actions_section(&mut self, available_actions: &[ActionDefinition]) {
+        use crate::llm::prompt::PromptBuilder;
+
+        if self.messages.is_empty() {
+            warn!("Cannot update actions section: no system message found");
+            return;
+        }
+
+        // Get the system message (first message)
+        let system_msg = &self.messages[0];
+        if system_msg.role != "system" {
+            warn!("First message is not a system message, cannot update actions section");
+            return;
+        }
+
+        let old_content = &system_msg.content;
+
+        // Find the "# Available Tools" or "# Available Actions" section
+        let section_start = if let Some(pos) = old_content.find("# Available Tools") {
+            Some(pos)
+        } else {
+            old_content.find("# Available Actions")
+        };
+
+        if let Some(start_pos) = section_start {
+            // Find where this section ends (next "# " or "---" or end of string)
+            let content_after_section = &old_content[start_pos..];
+
+            // Find the next major section marker
+            let mut end_pos = start_pos;
+            let mut found_end = false;
+
+            // Skip past the section header
+            if let Some(first_newline) = content_after_section.find('\n') {
+                let search_start = start_pos + first_newline + 1;
+                let remaining = &old_content[search_start..];
+
+                // Look for next section (starts with "# " at line start or "---")
+                if let Some(next_section) = remaining.find("\n# ") {
+                    end_pos = search_start + next_section;
+                    found_end = true;
+                } else if let Some(divider) = remaining.find("\n---") {
+                    end_pos = search_start + divider;
+                    found_end = true;
+                }
+            }
+
+            if !found_end {
+                end_pos = old_content.len();
+            }
+
+            // Build new actions section using PromptBuilder
+            let new_actions_section = PromptBuilder::build_actions_section_public(available_actions);
+
+            // Replace the old actions section with the new one
+            let mut new_content = String::new();
+            new_content.push_str(&old_content[..start_pos]);
+            new_content.push_str(&new_actions_section);
+            if end_pos < old_content.len() {
+                new_content.push_str(&old_content[end_pos..]);
+            }
+
+            // Update the system message
+            self.messages[0] = Message::system(new_content);
+
+            debug!("Updated Available Actions section in system message with open_server enabled");
+        } else {
+            warn!("Could not find '# Available Tools' or '# Available Actions' section in system message");
+        }
     }
 
     /// Add a user message to the conversation
@@ -82,7 +175,7 @@ impl ConversationHandler {
         &mut self,
         approval_tx: Option<tokio::sync::mpsc::UnboundedSender<WebApprovalRequest>>,
         web_search_mode: WebSearchMode,
-        _available_actions: Vec<ActionDefinition>,
+        available_actions: Vec<ActionDefinition>,
     ) -> Result<Vec<serde_json::Value>> {
         let mut all_actions = Vec::new();
         let mut tool_results = Vec::new();
@@ -141,9 +234,20 @@ impl ConversationHandler {
                 match ToolAction::from_json(&tool_json) {
                     Ok(tool_action) => {
                         info!("→ Executing tool: {}", tool_action.describe());
+
+                        // Check if this is read_base_stack_docs tool
+                        let is_read_docs = matches!(tool_action, ToolAction::ReadBaseStackDocs { .. });
+
                         let result =
-                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode).await;
+                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None).await;
                         info!("  Result: {}", result.summary());
+
+                        // Mark protocol docs as read if the tool succeeded
+                        // This will update the system prompt to enable open_server action
+                        if is_read_docs && result.success {
+                            self.mark_protocol_docs_read(&available_actions);
+                        }
+
                         tool_results.push(result);
                     }
                     Err(e) => {
@@ -478,5 +582,66 @@ impl ConversationHandler {
     /// Get the number of messages in the conversation
     pub fn message_count(&self) -> usize {
         self.messages.len()
+    }
+
+    /// Update the "Current State" section in the system message
+    ///
+    /// This is used after actions like `open_server` that modify application state.
+    /// The system message is rebuilt with updated state so subsequent tool calls
+    /// see the current state.
+    ///
+    /// # Arguments
+    /// * `state` - Application state
+    /// * `server_id` - Optional server context
+    pub async fn update_current_state(
+        &mut self,
+        state: &crate::state::app_state::AppState,
+        server_id: Option<crate::state::ServerId>,
+    ) {
+        use crate::llm::prompt::PromptBuilder;
+
+        if self.messages.is_empty() {
+            warn!("Cannot update current state: no system message found");
+            return;
+        }
+
+        // Get the system message (first message)
+        let system_msg = &self.messages[0];
+        if system_msg.role != "system" {
+            warn!("First message is not a system message, cannot update current state");
+            return;
+        }
+
+        let old_content = &system_msg.content;
+
+        // Find the "# Current State" section
+        if let Some(state_start) = old_content.find("# Current State") {
+            // Find the next section (starts with "# ")
+            let state_content_start = state_start;
+            let state_end = old_content[state_content_start..]
+                .find("\n# ")
+                .map(|pos| state_content_start + pos)
+                .unwrap_or(old_content.len());
+
+            // Build new current state section
+            let new_state_section =
+                PromptBuilder::build_current_state_section_public(state, server_id).await;
+
+            // Replace the old state section with the new one
+            let mut new_content = String::new();
+            new_content.push_str(&old_content[..state_start]);
+            new_content.push_str(&new_state_section);
+            // Don't include the newline before next section, it's already in new_state_section
+            if state_end < old_content.len() {
+                new_content.push_str(&old_content[state_end..]);
+            }
+
+            // Update the system message
+            self.messages[0] = Message::system(new_content);
+
+            debug!("Updated Current State section in system message");
+        } else {
+            warn!("Could not find '# Current State' section in system message");
+        }
     }
 }

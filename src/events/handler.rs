@@ -102,7 +102,7 @@ impl EventHandler {
                 };
 
                 // Execute the tool (this will trigger approval prompt if in ASK mode)
-                let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode).await;
+                let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode, Some(&self.state)).await;
 
                 // Display the result
                 if result.success {
@@ -203,7 +203,9 @@ impl EventHandler {
         // Get available actions for retry correction messages
         let selected_mode = self.state.get_selected_scripting_mode().await;
         let scripting_env = self.state.get_scripting_env().await;
-        let mut available_actions = get_user_input_common_actions(selected_mode, &scripting_env);
+        // Initially disable open_server - it will be enabled after read_base_stack_docs is called in the conversation loop
+        let is_open_server_enabled = false;
+        let mut available_actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled);
         available_actions.extend(get_all_tool_actions(web_search_mode));
         available_actions.extend(protocol_async_actions);
 
@@ -238,11 +240,21 @@ impl EventHandler {
                     let mut retry_error: Option<crate::events::ActionExecutionError> = None;
 
                     // Handle server management actions FIRST (they need to be executed before other actions)
+                    let mut state_changed = false;
                     for action_value in &action_values {
                         if let Ok(common_action) = CommonAction::from_json(action_value) {
+                            // Check if this action will modify state (open_server, close_server, etc.)
+                            let modifies_state = matches!(
+                                common_action,
+                                CommonAction::OpenServer { .. } | CommonAction::CloseServer { .. }
+                            );
+
                             match self.execute_server_management_action(common_action, &status_tx).await {
                                 Ok(_) => {
                                     // Action executed successfully
+                                    if modifies_state {
+                                        state_changed = true;
+                                    }
                                 }
                                 Err(e) if e.is_retryable() && execution_attempts < MAX_EXECUTION_RETRIES => {
                                     // Retryable error (e.g., port conflict) - prepare to retry
@@ -256,6 +268,12 @@ impl EventHandler {
                                 }
                             }
                         }
+                    }
+
+                    // Update conversation state if server state changed
+                    if state_changed && !should_retry {
+                        conversation.update_current_state(&self.state, None).await;
+                        let _ = status_tx.send("[DEBUG] Updated conversation state after server changes".to_string());
                     }
 
                     // If we should retry, add error to conversation and retry
@@ -590,7 +608,12 @@ impl EventHandler {
                                 }
                             }
                             Ok(None) => {
-                                let _ = status_tx.send("[WARN] No script configuration provided for 'set' operation".to_string());
+                                // Null values mean disable/unset the script
+                                self.state.set_script_config(target_server_id, None).await;
+                                let _ = status_tx.send(format!(
+                                    "[INFO] Server #{} script disabled (null values provided)",
+                                    target_server_id.as_u32()
+                                ));
                             }
                             Err(e) => {
                                 let _ = status_tx.send(format!("[ERROR] Failed to build script config: {}", e));

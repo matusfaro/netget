@@ -50,6 +50,14 @@ Your responses are parsed and executed immediately - you directly control the ne
 
     /// Build current state section (server state + system capabilities)
     async fn build_current_state_section(state: &AppState, server_id: Option<ServerId>) -> String {
+        Self::build_current_state_section_public(state, server_id).await
+    }
+
+    /// Public version of build_current_state_section for use by conversation handler
+    pub async fn build_current_state_section_public(
+        state: &AppState,
+        server_id: Option<ServerId>,
+    ) -> String {
         let mode = state.get_mode().await;
         let servers = state.get_all_servers().await;
         let system_caps = state.get_system_capabilities().await;
@@ -136,8 +144,8 @@ Your responses are parsed and executed immediately - you directly control the ne
         format!(
             r#"## System Capabilities
 
-- **Privileged ports (<1024)**: {}
-- **Raw socket access**: {}
+- **Privileged ports (<1024)**: {} {}
+- **Raw socket access**: {} {}
 
 "#,
             if caps.can_bind_privileged_ports {
@@ -145,10 +153,20 @@ Your responses are parsed and executed immediately - you directly control the ne
             } else {
                 "✗ Not available"
             },
+            if caps.can_bind_privileged_ports {
+                ""
+            } else {
+                "— Warn user if they request port <1024"
+            },
             if caps.has_raw_socket_access {
                 "✓ Available"
             } else {
                 "✗ Not available"
+            },
+            if caps.has_raw_socket_access {
+                ""
+            } else {
+                "— DataLink protocol unavailable"
             }
         )
     }
@@ -164,6 +182,11 @@ Your responses are parsed and executed immediately - you directly control the ne
 
     /// Build actions section (formatted list of available actions)
     fn build_actions_section(actions: &[ActionDefinition]) -> String {
+        Self::build_actions_section_public(actions)
+    }
+
+    /// Public version of build_actions_section for use by conversation handler
+    pub fn build_actions_section_public(actions: &[ActionDefinition]) -> String {
         if actions.is_empty() {
             return "No actions available.".to_string();
         }
@@ -184,7 +207,7 @@ Tools gather information and return results to you. After a tool completes, you'
 "#,
             );
             for (i, action) in tool_actions.iter().enumerate() {
-                text.push_str(&format!("## {}. {}\n\n", i + 1, action.to_prompt_text()));
+                text.push_str(&format!("## {}. {}\n", i + 1, action.to_prompt_text()));
             }
         }
 
@@ -198,7 +221,7 @@ These actions directly control NetGet's behavior. Include them in your JSON resp
 "#,
             );
             for (i, action) in regular_actions.iter().enumerate() {
-                text.push_str(&format!("## {}. {}\n\n", i + 1, action.to_prompt_text()));
+                text.push_str(&format!("## {}. {}\n", i + 1, action.to_prompt_text()));
             }
         }
 
@@ -595,7 +618,9 @@ Your response must be **pure JSON** only:
     ) -> String {
         let selected_mode = state.get_selected_scripting_mode().await;
         let scripting_env = state.get_scripting_env().await;
-        let mut actions = get_user_input_common_actions(selected_mode, &scripting_env);
+        // Initially disable open_server - it will be enabled after read_base_stack_docs is called
+        let is_open_server_enabled = false;
+        let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled);
 
         // Add tool actions
         let web_search_mode = state.get_web_search_mode().await;
@@ -732,7 +757,9 @@ Understand what the user wants and respond with the appropriate actions to make 
         let (server_id, actions, trigger, instructions) = match &task.scope {
             TaskScope::Global => {
                 // Global task: use user input actions
-                let mut actions = get_user_input_common_actions(selected_mode, &scripting_env);
+                // Initially disable open_server (tasks don't use tool calling loop)
+                let is_open_server_enabled = false;
+                let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled);
 
                 // Add tool actions
                 let web_search_mode = state.get_web_search_mode().await;
