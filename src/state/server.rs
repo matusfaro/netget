@@ -229,6 +229,14 @@ pub enum ProtocolConnectionInfo {
         allocation_ids: Vec<String>,
         relay_addresses: Vec<String>,
     },
+    /// SIP connection (VoIP signaling)
+    Sip {
+        dialog_id: Option<String>,    // Call-ID + From tag + To tag
+        from: Option<String>,          // Caller SIP URI
+        to: Option<String>,            // Callee SIP URI
+        state: String,                 // idle/early/confirmed/terminated
+        call_id: Option<String>,       // Call-ID header value
+    },
     /// LDAP connection with write half
     Ldap {
         write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
