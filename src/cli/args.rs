@@ -102,6 +102,15 @@ pub struct Args {
     )]
     pub ollama_lock: bool,
 
+    /// Terminal color theme (auto, light, dark, neutral)
+    #[clap(
+        long = "theme",
+        value_name = "THEME",
+        default_value = "auto",
+        help = "Color theme for TUI: auto (detect background), light (dark colors on light background), dark (bright colors on dark background), neutral (medium contrast for both)"
+    )]
+    pub theme: String,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,

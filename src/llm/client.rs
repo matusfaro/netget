@@ -685,7 +685,7 @@ impl OllamaClient {
                 match ToolAction::from_json(&tool_json) {
                     Ok(tool_action) => {
                         info!("→ Executing tool: {}", tool_action.describe());
-                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode).await;
+                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None).await;
                         info!("  Result: {}", result.summary());
                         tool_results.push(result);
                     }

@@ -126,6 +126,11 @@ async fn execute_common_action(
             warn!("close_server action cannot be executed by action executor - must be handled by caller");
         }
 
+        CommonAction::CloseAllServers => {
+            // This should be handled by the caller
+            warn!("close_all_servers action cannot be executed by action executor - must be handled by caller");
+        }
+
         CommonAction::UpdateInstruction { .. } => {
             // This should be handled by the caller
             warn!("update_instruction action cannot be executed by action executor - must be handled by caller");

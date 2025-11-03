@@ -58,11 +58,10 @@ fn summarize_common_action(action: &CommonAction) -> String {
             format!("open_server: {}:{} \"{}\"", base_stack, port, instr_preview)
         }
         CommonAction::CloseServer { server_id } => {
-            if let Some(id) = server_id {
-                format!("close_server: #{}", id)
-            } else {
-                "close_server: all".to_string()
-            }
+            format!("close_server: #{}", server_id)
+        }
+        CommonAction::CloseAllServers => {
+            "close_all_servers".to_string()
         }
         CommonAction::UpdateInstruction { instruction } => {
             let preview = if instruction.len() > 30 {
@@ -91,8 +90,8 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("append_memory: \"{}\"", preview)
         }
-        CommonAction::UpdateScript { operation, .. } => {
-            format!("update_script: {}", operation)
+        CommonAction::UpdateScript { server_id, operation, .. } => {
+            format!("update_script: #{} {}", server_id, operation)
         }
         CommonAction::AppendToLog {
             output_name,

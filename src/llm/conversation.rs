@@ -8,13 +8,16 @@
 
 use crate::llm::actions::{execute_tool, ActionDefinition, ActionResponse, ToolAction, ToolResult};
 use crate::llm::ollama_client::{Message, OllamaClient};
-use crate::state::app_state::{WebApprovalRequest, WebSearchMode};
+use crate::state::app_state::{AppState, ConversationSource, WebApprovalRequest, WebSearchMode};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
 /// Conversation handler for multi-turn LLM interactions
 pub struct ConversationHandler {
+    /// Unique conversation ID for tracking
+    conversation_id: String,
+
     /// Conversation messages (system, user, assistant, tool)
     messages: Vec<Message>,
 
@@ -38,6 +41,15 @@ pub struct ConversationHandler {
 
     /// Whether protocol documentation has been read in this conversation (enables open_server)
     protocol_docs_read: bool,
+
+    /// Application state (for conversation tracking)
+    state: Option<AppState>,
+
+    /// Source of this conversation (for UI display)
+    source: Option<ConversationSource>,
+
+    /// Details text for UI display
+    details: Option<String>,
 }
 
 impl ConversationHandler {
@@ -45,7 +57,11 @@ impl ConversationHandler {
     pub fn new(system_message: String, client: Arc<OllamaClient>, model: String) -> Self {
         let messages = vec![Message::system(system_message)];
 
+        // Generate unique conversation ID using timestamp and random bytes
+        let conversation_id = Self::generate_conversation_id();
+
         Self {
+            conversation_id,
             messages,
             client,
             model,
@@ -54,12 +70,34 @@ impl ConversationHandler {
             status_tx: None,
             last_logged_index: 0, // No messages logged yet
             protocol_docs_read: false,
+            state: None,
+            source: None,
+            details: None,
         }
+    }
+
+    /// Generate a unique conversation ID
+    fn generate_conversation_id() -> String {
+        use std::time::SystemTime;
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let random: u32 = rand::random();
+        format!("conv-{}-{:x}", timestamp, random)
     }
 
     /// Set the status channel for user-visible logs
     pub fn with_status_tx(mut self, tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
         self.status_tx = Some(tx);
+        self
+    }
+
+    /// Set conversation tracking information
+    pub fn with_tracking(mut self, state: AppState, source: ConversationSource, details: String) -> Self {
+        self.state = Some(state);
+        self.source = Some(source);
+        self.details = Some(details);
         self
     }
 
@@ -177,6 +215,15 @@ impl ConversationHandler {
         web_search_mode: WebSearchMode,
         available_actions: Vec<ActionDefinition>,
     ) -> Result<Vec<serde_json::Value>> {
+        // Register conversation if tracking is enabled
+        if let (Some(state), Some(source), Some(details)) = (&self.state, &self.source, &self.details) {
+            state.register_conversation(
+                self.conversation_id.clone(),
+                source.clone(),
+                details.clone()
+            ).await;
+        }
+
         let mut all_actions = Vec::new();
         let mut tool_results = Vec::new();
         let mut consecutive_tool_failures = 0;
@@ -209,7 +256,27 @@ impl ConversationHandler {
                 .partition(|action| ToolAction::is_tool_action(action));
 
             // Collect regular actions
-            all_actions.extend(regular);
+            all_actions.extend(regular.clone());
+
+            // Add acknowledgment message for regular actions so LLM knows they were collected
+            if !regular.is_empty() {
+                let action_summary = regular
+                    .iter()
+                    .filter_map(|a| a.get("type").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                debug!(
+                    "Acknowledging {} regular actions in conversation: {}",
+                    regular.len(),
+                    action_summary
+                );
+
+                self.messages.push(Message::user(format!(
+                    "Actions acknowledged and will be executed: [{}]",
+                    action_summary
+                )));
+            }
 
             // If no tool calls, we're done
             if tools.is_empty() {
@@ -305,6 +372,12 @@ impl ConversationHandler {
             "Conversation complete: {} total actions collected",
             all_actions.len()
         );
+
+        // End conversation tracking if enabled
+        if let Some(state) = &self.state {
+            state.end_conversation(&self.conversation_id).await;
+        }
+
         Ok(all_actions)
     }
 
@@ -320,78 +393,49 @@ impl ConversationHandler {
             // Send status update
             if let Some(ref tx) = self.status_tx {
                 if attempt == 1 {
-                    let _ = tx.send("[INFO] Sending request to LLM...".to_string());
+                    let _ = tx.send("[TRACE] Sending request to LLM...".to_string());
                 } else {
                     let _ = tx.send(format!(
-                        "[INFO] Retrying LLM request (attempt {})...",
+                        "[TRACE] Retrying LLM request (attempt {})...",
                         attempt
                     ));
                 }
             }
 
+            // Log summary of message count
+            let new_message_count = self.messages.len().saturating_sub(self.last_logged_index);
+            debug!("Conversation state: {} messages, {} new since last call",
+                self.messages.len(),
+                new_message_count
+            );
+
             // Log only new messages at TRACE level
-            if self.last_logged_index < self.messages.len() {
-                trace!("New messages in conversation:");
-                for (i, msg) in self
-                    .messages
-                    .iter()
-                    .enumerate()
-                    .skip(self.last_logged_index)
-                {
-                    trace!(
-                        "  Message {}: role={}, content_len={}",
-                        i + 1,
+            if new_message_count > 0 {
+                trace!("New messages:");
+                for (idx, msg) in self.messages.iter().enumerate().skip(self.last_logged_index) {
+                    trace!("  Message {}: [{}] {}",
+                        idx + 1,
                         msg.role,
-                        msg.content.len()
-                    );
-                    trace!(
-                        "    Content preview: {}",
-                        if msg.content.len() > 500 {
-                            format!("{}...", &msg.content[..500])
+                        if msg.content.len() > 200 {
+                            format!("{}...", &msg.content[..200])
                         } else {
                             msg.content.clone()
                         }
                     );
-                }
-
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!(
-                        "[TRACE] LLM request: {} messages total, {} new",
-                        self.messages.len(),
-                        self.messages.len() - self.last_logged_index
-                    ));
-                    // Log only new messages in the conversation
-                    for (i, msg) in self
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .skip(self.last_logged_index)
-                    {
-                        // Replace \n with \r\n for proper terminal display
-                        let content_with_cr = msg.content.replace('\n', "\r\n");
-                        let _ = tx.send(format!(
-                            "[TRACE] Message {} ({}): {}",
-                            i + 1,
-                            msg.role,
-                            content_with_cr
-                        ));
+                    if let Some(ref tx) = self.status_tx {
+                        let preview = if msg.content.len() > 200 {
+                            format!("{}...", &msg.content[..200])
+                        } else {
+                            msg.content.clone()
+                        };
+                        let _ = tx.send(format!("[TRACE] Message {}: [{}] {}",
+                            idx + 1, msg.role, preview.replace('\n', "\r\n")));
                     }
                 }
-
-                // Update the last logged index
-                self.last_logged_index = self.messages.len();
-            } else {
-                trace!(
-                    "LLM request: {} messages (no new messages to log)",
-                    self.messages.len()
-                );
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!(
-                        "[TRACE] LLM request: {} messages (no new messages)",
-                        self.messages.len()
-                    ));
-                }
             }
+
+            // Update the last logged index (track what's been sent, don't re-log)
+            self.last_logged_index = self.messages.len();
 
             // Concatenate all messages into a single prompt for generate API
             // This provides better JSON formatting than chat API
@@ -408,7 +452,7 @@ impl ConversationHandler {
                     }
                     "assistant" => {
                         // Include previous assistant responses in conversation
-                        full_prompt.push_str("Previous response:\n");
+                        full_prompt.push_str("Actions you have executed:\n");
                         full_prompt.push_str(&msg.content);
                         full_prompt.push_str("\n\n");
                     }

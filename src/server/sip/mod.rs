@@ -448,6 +448,7 @@ impl SipServer {
 #[derive(Debug, Clone)]
 struct SipMessage {
     method: String,
+    #[allow(dead_code)]
     request_uri: String,
     call_id: String,
     from: String,
@@ -456,6 +457,7 @@ struct SipMessage {
     cseq: String,
     contact: Option<String>,
     expires: Option<u32>,
+    #[allow(dead_code)]
     content_type: Option<String>,
     body: Option<String>,
 }

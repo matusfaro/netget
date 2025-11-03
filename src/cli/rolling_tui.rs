@@ -10,7 +10,7 @@ use crossterm::{
     cursor,
     event::{Event, EventStream, KeyCode, KeyModifiers},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
+    style::{Print, ResetColor, SetForegroundColor},
     terminal,
 };
 use futures::StreamExt;
@@ -29,6 +29,7 @@ use crate::ui::{app::LogLevel, App};
 
 use super::input_state::InputState;
 use super::sticky_footer::{ConnectionInfo, FooterContent, StickyFooter};
+use super::theme::ColorPalette;
 
 /// Format scripting mode for display in status bar
 /// Returns "LLM", "Python", or "JavaScript" based on selected mode
@@ -44,11 +45,15 @@ pub async fn run_rolling_tui(
     llm_client: OllamaClient,
     settings: Settings,
     args: &super::Args,
+    palette: ColorPalette,
 ) -> Result<()> {
     info!("Starting rolling TUI mode");
 
     // Wrap settings in Arc<Mutex> for sharing with event handlers
     let settings = Arc::new(Mutex::new(settings));
+
+    // Wrap palette in Arc for sharing
+    let palette = Arc::new(palette);
 
     // Override model if specified in args, otherwise use settings
     let effective_model = if let Some(model) = &args.model {
@@ -75,7 +80,7 @@ pub async fn run_rolling_tui(
 
     // Create sticky footer with system capabilities
     let system_capabilities = state.get_system_capabilities().await;
-    let mut footer = StickyFooter::new(width, height, system_capabilities)?;
+    let mut footer = StickyFooter::new(width, height, system_capabilities, (*palette).clone())?;
     let scroll_height = footer.scroll_region_height();
     let footer_height = height.saturating_sub(scroll_height);
 
@@ -116,7 +121,7 @@ pub async fn run_rolling_tui(
     footer.set_log_level(app.log_level);
 
     // Print welcome messages to scrolling region
-    print_welcome_messages(&mut footer)?;
+    print_welcome_messages(&mut footer, &palette)?;
 
     // Render footer initially to position cursor correctly
     // Without this, the cursor sits at the terminal default position until first keystroke
@@ -183,7 +188,7 @@ pub async fn run_rolling_tui(
                 };
 
                 if should_show {
-                    print_output_line(&msg, &mut footer)?;
+                    print_output_line(&msg, &mut footer, &palette)?;
                     ui_needs_update = true;
                 }
             }
@@ -202,7 +207,7 @@ pub async fn run_rolling_tui(
             maybe_event = event_stream.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer, settings.clone()).await? {
+                        if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer, settings.clone(), palette.clone()).await? {
                             info!("Quit requested by user");
                             break; // Quit requested
                         }
@@ -242,7 +247,7 @@ pub async fn run_rolling_tui(
                 let timestamp = Local::now().format("%H:%M:%S");
                 let msg = format!("[DEBUG] Test heartbeat #{} at {}", heartbeat_counter, timestamp);
                 info!("Test heartbeat firing: {}", msg);
-                print_output_line(&msg, &mut footer)?;
+                print_output_line(&msg, &mut footer, &palette)?;
                 // Immediately re-render footer after printing
                 footer.render(&mut stdout())?;
                 heartbeat_counter += 1;
@@ -259,6 +264,8 @@ pub async fn run_rolling_tui(
                 state.cleanup_old_servers(SERVER_CLEANUP_TIMEOUT_SECS).await;
                 state.cleanup_closed_connections(CONNECTION_CLEANUP_TIMEOUT_SECS).await;
                 state.cleanup_old_connections(CONNECTIONLESS_CLEANUP_TIMEOUT_SECS).await;
+                state.cleanup_old_conversations().await;
+                ui_needs_update = true;
             }
         }
 
@@ -285,20 +292,20 @@ pub async fn run_rolling_tui(
 }
 
 /// Print welcome messages to the scrolling region
-fn print_welcome_messages(footer: &mut StickyFooter) -> Result<()> {
+fn print_welcome_messages(footer: &mut StickyFooter, palette: &ColorPalette) -> Result<()> {
     let messages = vec![
         "NetGet - LLM-Controlled Server",
     ];
 
     for msg in messages {
-        print_output_line(msg, footer)?;
+        print_output_line(msg, footer, palette)?;
     }
 
     Ok(())
 }
 
 /// Print a line to stdout (scrolls naturally within scroll region - no flickering!)
-fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
+fn print_output_line(line: &str, footer: &mut StickyFooter, palette: &ColorPalette) -> Result<()> {
     let mut stdout = stdout();
 
     // Move cursor to the LAST line of the scrolling region
@@ -315,7 +322,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     if line.starts_with("[ERROR]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Red),
+            SetForegroundColor(palette.error),
             Print("✗ "),
             ResetColor,
             Print(line.strip_prefix("[ERROR]").unwrap()),
@@ -323,7 +330,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     } else if line.starts_with("[WARN]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Yellow),
+            SetForegroundColor(palette.warning),
             Print("⚠ "),
             ResetColor,
             Print(line.strip_prefix("[WARN]").unwrap()),
@@ -331,7 +338,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     } else if line.starts_with("[INFO]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Blue),
+            SetForegroundColor(palette.info),
             Print("● "),
             ResetColor,
             Print(line.strip_prefix("[INFO]").unwrap()),
@@ -339,7 +346,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     } else if line.starts_with("[DEBUG]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Cyan),
+            SetForegroundColor(palette.debug),
             Print("○ "),
             ResetColor,
             Print(line.strip_prefix("[DEBUG]").unwrap()),
@@ -358,23 +365,23 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             // LLM headers: grey bullet, grey text
             execute!(
                 stdout,
-                SetForegroundColor(Color::DarkGrey),
+                SetForegroundColor(palette.trace),
                 Print("· "),
                 Print(content),
                 ResetColor,
             )?;
         } else if content.trim_start().starts_with("Message ") {
-            // Conversation messages: split at colon to show prefix in white, content in grey
+            // Conversation messages: split at colon to show prefix in normal color, content in trace color
             if let Some(colon_pos) = content.find(':') {
                 let prefix = &content[..=colon_pos]; // Include the colon
                 let message_content = &content[colon_pos + 1..];
                 execute!(
                     stdout,
-                    SetForegroundColor(Color::DarkGrey),
+                    SetForegroundColor(palette.trace),
                     Print("· "),
                     ResetColor,
                     Print(prefix),
-                    SetForegroundColor(Color::DarkGrey),
+                    SetForegroundColor(palette.trace),
                     Print(message_content),
                     ResetColor,
                 )?;
@@ -382,7 +389,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
                 // No colon found, just print normally
                 execute!(
                     stdout,
-                    SetForegroundColor(Color::DarkGrey),
+                    SetForegroundColor(palette.trace),
                     Print("· "),
                     ResetColor,
                     Print(content),
@@ -392,7 +399,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
             // For all other TRACE content (including multi-line LLM output), keep grey
             execute!(
                 stdout,
-                SetForegroundColor(Color::DarkGrey),
+                SetForegroundColor(palette.trace),
                 Print("· "),
                 Print(content),
                 ResetColor,
@@ -402,7 +409,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     } else if line.starts_with("[USER]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Green),
+            SetForegroundColor(palette.user),
             Print("▶ "),
             ResetColor,
             Print(line.strip_prefix("[USER]").unwrap()),
@@ -410,7 +417,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     } else if line.starts_with("[SERVER]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Cyan),
+            SetForegroundColor(palette.server),
             Print("◆ "),
             ResetColor,
             Print(line.strip_prefix("[SERVER]").unwrap()),
@@ -418,7 +425,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter) -> Result<()> {
     } else if line.starts_with("[CONN]") {
         execute!(
             stdout,
-            SetForegroundColor(Color::Cyan),
+            SetForegroundColor(palette.connection),
             Print("◇ "),
             ResetColor,
             Print(line.strip_prefix("[CONN]").unwrap()),
@@ -484,7 +491,6 @@ async fn execute_single_task(
     status_tx: mpsc::UnboundedSender<String>,
     task: crate::state::ScheduledTask,
 ) {
-    use crate::llm::actions::ActionResponse;
     use crate::llm::prompt::PromptBuilder;
     use crate::state::task::{TaskExecutionResult, TaskScope};
 
@@ -512,30 +518,49 @@ async fn execute_single_task(
     // Get current model
     let model = state.get_ollama_model().await;
 
-    // Call LLM
-    let response_text = match llm_client.generate(&model, &prompt).await {
-        Ok(text) => text,
+    // Register task as conversation
+    let conversation_source = match &task.scope {
+        TaskScope::Global => crate::state::app_state::ConversationSource::Task { task_name: task.name.clone() },
+        TaskScope::Server(server_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}#{}",task.name, server_id.as_u32()) },
+        TaskScope::Connection(server_id, conn_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}#{}/{}", task.name, server_id.as_u32(), conn_id) },
+    };
+
+    let truncated_instruction = if task.instruction.len() > 30 {
+        format!("{}...", &task.instruction[..27])
+    } else {
+        task.instruction.clone()
+    };
+
+    // Create conversation handler with tracking
+    let mut conversation = crate::llm::ConversationHandler::new(
+        prompt.clone(),
+        std::sync::Arc::new(llm_client.clone()),
+        model.clone(),
+    )
+    .with_status_tx(status_tx.clone())
+    .with_tracking(
+        state.clone(),
+        conversation_source,
+        truncated_instruction,
+    );
+
+    // Add empty user message to trigger generation
+    conversation.add_user_message("Execute the task.".to_string());
+
+    // Generate with conversation handler (handles tracking automatically)
+    let web_search_mode = state.get_web_search_mode().await;
+    let actions = match conversation
+        .generate_with_tools_and_retry(
+            state.get_web_approval_channel().await,
+            web_search_mode,
+            Vec::new(), // No additional actions for tasks
+        )
+        .await
+    {
+        Ok(actions) => actions,
         Err(e) => {
             // Execution failed
             let error = format!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
-
-            let result = TaskExecutionResult {
-                success: false,
-                actions: Vec::new(),
-                error: Some(error),
-            };
-
-            handle_task_failure(&state, &status_tx, task, result).await;
-            return;
-        }
-    };
-
-    // Parse response
-    let action_response = match ActionResponse::from_str(&response_text) {
-        Ok(resp) => resp,
-        Err(e) => {
-            let error = format!("Failed to parse LLM response: {}", e);
             let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
 
             let result = TaskExecutionResult {
@@ -561,7 +586,7 @@ async fn execute_single_task(
     };
 
     // Execute actions
-    match crate::llm::execute_actions(action_response.actions.clone(), &state, protocol.as_deref())
+    match crate::llm::execute_actions(actions.clone(), &state, protocol.as_deref())
         .await
     {
         Ok(_exec_result) => {
@@ -573,7 +598,7 @@ async fn execute_single_task(
 
             let result = TaskExecutionResult {
                 success: true,
-                actions: action_response.actions,
+                actions: actions,
                 error: None,
             };
 
@@ -586,7 +611,7 @@ async fn execute_single_task(
 
             let result = TaskExecutionResult {
                 success: false,
-                actions: action_response.actions,
+                actions: actions,
                 error: Some(error),
             };
 
@@ -719,10 +744,11 @@ async fn handle_event(
     status_tx: &mpsc::UnboundedSender<String>,
     footer: &mut StickyFooter,
     settings: Arc<Mutex<Settings>>,
+    palette: Arc<ColorPalette>,
 ) -> Result<bool> {
     match event {
         Event::Key(key) => {
-            handle_key_event(key.code, key.modifiers, app, state, event_handler, status_tx, footer, settings).await
+            handle_key_event(key.code, key.modifiers, app, state, event_handler, status_tx, footer, settings, palette).await
         }
         Event::Resize(width, height) => {
             footer.handle_resize(width, height);
@@ -743,6 +769,7 @@ async fn handle_key_event(
     status_tx: &mpsc::UnboundedSender<String>,
     footer: &mut StickyFooter,
     settings: Arc<Mutex<Settings>>,
+    palette: Arc<ColorPalette>,
 ) -> Result<bool> {
     // Handle web approval prompt first (if active)
     if let Some(approval) = footer.pending_approval.take() {
@@ -826,7 +853,7 @@ async fn handle_key_event(
                         "Scripting mode: Perl (use /env to change)"
                     }
                 };
-                print_output_line(message, footer)?;
+                print_output_line(message, footer, &palette)?;
 
                 // Save the new scripting mode to settings
                 let mode_str = new_mode.as_str().to_lowercase();
@@ -846,7 +873,7 @@ async fn handle_key_event(
             let new_level = app.log_level.cycle();
             app.set_log_level(new_level);
             footer.set_log_level(new_level);
-            print_output_line(&format!("Log level set to: {}", new_level.as_str()), footer)?;
+            print_output_line(&format!("Log level set to: {}", new_level.as_str()), footer, &palette)?;
             footer.render(&mut stdout())?;
             return Ok(false);
         }
@@ -859,7 +886,7 @@ async fn handle_key_event(
                 crate::state::app_state::WebSearchMode::Ask => "Web search: ASK - LLM will request approval before searching",
                 crate::state::app_state::WebSearchMode::Off => "Web search: OFF - LLM cannot perform web searches",
             };
-            print_output_line(message, footer)?;
+            print_output_line(message, footer, &palette)?;
 
             // Save the new web search mode to settings
             if let Err(e) = settings.lock().await.set_web_search_mode(new_mode) {
@@ -899,6 +926,7 @@ async fn handle_key_event(
                         servers: app.servers.clone(),
                         connections: app.connections.clone(),
                         expand_all: app.expand_all_connections,
+                        conversations: app.conversations.clone(),
                     });
                 }
 
@@ -914,19 +942,19 @@ async fn handle_key_event(
                 );
 
                 if print_echo_before {
-                    print_output_line(&format!("[USER] {}", text), footer)?;
+                    print_output_line(&format!("[USER] {}", text), footer, &palette)?;
                 }
 
                 // Handle command
                 match command {
                     UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv | UserCommand::ShowWebSearch => {
                         // Handle status/info commands
-                        handle_status_command(&command, app, state, event_handler, footer).await?;
+                        handle_status_command(&command, app, state, event_handler, footer, &palette).await?;
                     }
                     UserCommand::ChangeModel { model } => {
                         state.set_ollama_model(model.clone()).await;
                         app.connection_info.model = model.clone();
-                        print_output_line(&format!("Model changed to: {}", model), footer)?;
+                        print_output_line(&format!("Model changed to: {}", model), footer, &palette)?;
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
@@ -934,17 +962,17 @@ async fn handle_key_event(
                         if let Some(log_level) = crate::ui::app::LogLevel::from_str(&level) {
                             app.set_log_level(log_level);
                             footer.set_log_level(log_level);
-                            print_output_line(&format!("Log level set to: {}", log_level.as_str()), footer)?;
+                            print_output_line(&format!("Log level set to: {}", log_level.as_str()), footer, &palette)?;
                             footer.render(&mut stdout())?;
                         } else {
-                            print_output_line(&format!("Unknown log level: {}", level), footer)?;
+                            print_output_line(&format!("Unknown log level: {}", level), footer, &palette)?;
                         }
                     }
                     UserCommand::TestOutput { count } => {
                         // Generate test output lines using print_output_line (scrolling mechanism)
                         // This ensures content is properly preserved during footer expansion/shrinking
                         for i in 1..=count {
-                            print_output_line(&format!("Test line {} of {}", i, count), footer)?;
+                            print_output_line(&format!("Test line {} of {}", i, count), footer, &palette)?;
                         }
 
                         // Re-render footer
@@ -954,7 +982,7 @@ async fn handle_key_event(
                         // Test web search approval by triggering a search
                         use crate::llm::actions::tools::{execute_tool, ToolAction};
 
-                        print_output_line("[INFO] Testing web search approval with DuckDuckGo...", footer)?;
+                        print_output_line("[INFO] Testing web search approval with DuckDuckGo...", footer, &palette)?;
 
                         // Get web search mode and approval channel
                         let web_search_mode = state.get_web_search_mode().await;
@@ -967,8 +995,9 @@ async fn handle_key_event(
 
                         // Execute the tool asynchronously (this will trigger approval prompt if in ASK mode)
                         let status_tx_clone = status_tx.clone();
+                        let state_clone = state.clone();
                         tokio::spawn(async move {
-                            let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode).await;
+                            let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode, Some(&state_clone)).await;
 
                             // Send result to status channel
                             if result.success {
@@ -1105,18 +1134,18 @@ async fn handle_key_event(
                             match docs::show_protocol_docs(&protocol_name) {
                                 Ok(docs_text) => {
                                     for line in docs_text.lines() {
-                                        print_output_line(line, footer)?;
+                                        print_output_line(line, footer, &palette)?;
                                     }
                                 }
                                 Err(err_msg) => {
-                                    print_output_line(&err_msg, footer)?;
+                                    print_output_line(&err_msg, footer, &palette)?;
                                 }
                             }
                         } else {
                             // List all protocols
                             let docs_text = docs::list_all_protocols();
                             for line in docs_text.lines() {
-                                print_output_line(line, footer)?;
+                                print_output_line(line, footer, &palette)?;
                             }
                         }
 
@@ -1126,7 +1155,7 @@ async fn handle_key_event(
                         return Ok(true);
                     }
                     UserCommand::UnknownSlashCommand { command } => {
-                        print_output_line(&format!("Unknown command: {}", command), footer)?;
+                        print_output_line(&format!("Unknown command: {}", command), footer, &palette)?;
                     }
                     UserCommand::Interpret { input: llm_input } => {
                         // Spawn async task to process with LLM
@@ -1182,7 +1211,7 @@ async fn handle_key_event(
                                         "Scripting environment set to: Perl (LLM will produce Perl code)"
                                     }
                                 };
-                                print_output_line(message, footer)?;
+                                print_output_line(message, footer, &palette)?;
 
                                 // Save to settings
                                 let mode_str = new_mode.as_str().to_lowercase();
@@ -1193,10 +1222,10 @@ async fn handle_key_event(
                                 update_ui_from_state(app, state, footer).await;
                                 footer.render(&mut stdout())?;
                             } else {
-                                print_output_line(&format!("{} environment is not available on this system", new_mode), footer)?;
+                                print_output_line(&format!("{} environment is not available on this system", new_mode), footer, &palette)?;
                             }
                         } else {
-                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: on (auto), off (llm), python, javascript, go, perl", env), footer)?;
+                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: on (auto), off (llm), python, javascript, go, perl", env), footer, &palette)?;
                         }
                     }
                     UserCommand::SetWebSearch { mode } => {
@@ -1206,7 +1235,7 @@ async fn handle_key_event(
                             crate::state::app_state::WebSearchMode::Ask => "Web search: ASK - will request approval",
                             crate::state::app_state::WebSearchMode::Off => "Web search: OFF",
                         };
-                        print_output_line(message, footer)?;
+                        print_output_line(message, footer, &palette)?;
 
                         // Save the new web search mode to settings
                         if let Err(e) = settings.lock().await.set_web_search_mode(mode) {
@@ -1386,6 +1415,7 @@ fn update_slash_suggestions_and_render(
                 servers: app.servers.clone(),
                 connections: app.connections.clone(),
                 expand_all: app.expand_all_connections,
+                conversations: app.conversations.clone(),
             });
         } else {
             footer.set_content(FooterContent::SlashCommands {
@@ -1446,12 +1476,16 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     }
     app.connections = connections;
 
+    // Fetch active conversations from state
+    app.conversations = state.get_active_conversations().await;
+
     // Update footer content (this recalculates scroll region)
     if app.slash_suggestions.is_empty() {
         footer.set_content(FooterContent::Normal {
             servers: app.servers.clone(),
             connections: app.connections.clone(),
             expand_all: app.expand_all_connections,
+            conversations: app.conversations.clone(),
         });
     } else {
         footer.set_content(FooterContent::SlashCommands {
@@ -1548,12 +1582,13 @@ async fn handle_status_command(
     state: &AppState,
     event_handler: &mut EventHandler,
     footer: &mut StickyFooter,
+    palette: &ColorPalette,
 ) -> Result<()> {
     match command {
         UserCommand::Status => {
-            print_output_line("=== Server Status ===", footer)?;
+            print_output_line("=== Server Status ===", footer, &palette)?;
             if app.servers.is_empty() {
-                print_output_line("No servers running", footer)?;
+                print_output_line("No servers running", footer, &palette)?;
             } else {
                 for server in &app.servers {
                     print_output_line(
@@ -1562,38 +1597,39 @@ async fn handle_status_command(
                             server.id, server.protocol, server.port, server.status
                         ),
                         footer,
+                        &palette,
                     )?;
                 }
             }
         }
         UserCommand::ShowModel => {
             let current_model = state.get_ollama_model().await;
-            print_output_line(&format!("Current model: {}", current_model), footer)?;
-            print_output_line("", footer)?;
-            print_output_line("Fetching available models...", footer)?;
+            print_output_line(&format!("Current model: {}", current_model), footer, &palette)?;
+            print_output_line("", footer, &palette)?;
+            print_output_line("Fetching available models...", footer, &palette)?;
 
             // Fetch model list from Ollama via event handler's LLM client
             match event_handler.list_models().await {
                 Ok(models) => {
                     if models.is_empty() {
-                        print_output_line("No models found. Please pull a model first.", footer)?;
-                        print_output_line("Example: ollama pull llama3.2", footer)?;
+                        print_output_line("No models found. Please pull a model first.", footer, &palette)?;
+                        print_output_line("Example: ollama pull llama3.2", footer, &palette)?;
                     } else {
-                        print_output_line(&format!("Available models ({}):", models.len()), footer)?;
+                        print_output_line(&format!("Available models ({}):", models.len()), footer, &palette)?;
                         for model in &models {
                             if model == &current_model {
-                                print_output_line(&format!("  * {} (current)", model), footer)?;
+                                print_output_line(&format!("  * {} (current)", model), footer, &palette)?;
                             } else {
-                                print_output_line(&format!("    {}", model), footer)?;
+                                print_output_line(&format!("    {}", model), footer, &palette)?;
                             }
                         }
-                        print_output_line("", footer)?;
-                        print_output_line("To change model, use: /model <name>", footer)?;
+                        print_output_line("", footer, &palette)?;
+                        print_output_line("To change model, use: /model <name>", footer, &palette)?;
                     }
                 }
                 Err(e) => {
-                    print_output_line(&format!("Failed to fetch models: {}", e), footer)?;
-                    print_output_line("Make sure Ollama is running.", footer)?;
+                    print_output_line(&format!("Failed to fetch models: {}", e), footer, &palette)?;
+                    print_output_line("Make sure Ollama is running.", footer, &palette)?;
                 }
             }
         }
@@ -1601,6 +1637,7 @@ async fn handle_status_command(
             print_output_line(
                 &format!("Current log level: {}", app.log_level.as_str()),
                 footer,
+                &palette,
             )?;
         }
         UserCommand::ShowWebSearch => {
@@ -1610,10 +1647,10 @@ async fn handle_status_command(
                 crate::state::app_state::WebSearchMode::Ask => "ASK (requires approval)",
                 crate::state::app_state::WebSearchMode::Off => "OFF (disabled)",
             };
-            print_output_line(&format!("Web search mode: {}", status), footer)?;
-            print_output_line("", footer)?;
-            print_output_line("To change, use: /web on, /web ask, or /web off", footer)?;
-            print_output_line("Or press Ctrl+W to cycle through modes", footer)?;
+            print_output_line(&format!("Web search mode: {}", status), footer, &palette)?;
+            print_output_line("", footer, &palette)?;
+            print_output_line("To change, use: /web on, /web ask, or /web off", footer, &palette)?;
+            print_output_line("Or press Ctrl+W to cycle through modes", footer, &palette)?;
         }
         _ => {}
     }

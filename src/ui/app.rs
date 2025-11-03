@@ -140,6 +140,8 @@ pub struct App {
     pub connection_id_map: std::collections::HashMap<String, u32>,
     /// System capabilities (for privilege warnings in status bar)
     pub system_capabilities: crate::privilege::SystemCapabilities,
+    /// Active and recently-completed conversations
+    pub conversations: Vec<crate::state::app_state::ConversationInfo>,
 }
 
 impl Default for App {
@@ -158,6 +160,7 @@ impl Default for App {
             next_global_connection_id: 1,
             connection_id_map: std::collections::HashMap::new(),
             system_capabilities: crate::privilege::SystemCapabilities::detect(),
+            conversations: Vec::new(),
         }
     }
 }

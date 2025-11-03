@@ -88,11 +88,11 @@ impl ActionDefinition {
 
     /// Convert to prompt text format for LLM
     pub fn to_prompt_text(&self) -> String {
-        let mut text = format!("{}. {}\n", self.name, self.description);
+        let mut text = format!("{}\n\n{}\n", self.name, self.description);
 
         // Only show schema if there are parameters
         if !self.parameters.is_empty() {
-            text.push_str("Parameters:\n");
+            text.push_str("\nParameters:\n");
             for param in &self.parameters {
                 let required = if param.required {
                     "required"
@@ -100,15 +100,15 @@ impl ActionDefinition {
                     "optional"
                 };
                 text.push_str(&format!(
-                    "  • {}: {} ({}) - {}\n",
+                    "- {}: {} ({}) - {}\n",
                     param.name, param.type_hint, required, param.description
                 ));
             }
-            text.push_str("\n");
         }
 
-        text.push_str("Example:\n");
+        text.push_str("\nExample:\n```json\n");
         text.push_str(&serde_json::to_string_pretty(&self.example).unwrap_or_default());
+        text.push_str("\n```");
         text
     }
 }

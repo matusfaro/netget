@@ -209,13 +209,24 @@ impl EventHandler {
         available_actions.extend(get_all_tool_actions(web_search_mode));
         available_actions.extend(protocol_async_actions);
 
-        // Create conversation handler
+        // Create conversation handler with tracking
+        let truncated_input = if input.len() > 60 {
+            format!("LLM \"{}...\"", &input[..57])
+        } else {
+            format!("LLM \"{}\"", input)
+        };
+
         let mut conversation = ConversationHandler::new(
             system_prompt,
             std::sync::Arc::new(llm_with_status),
             model,
         )
-        .with_status_tx(status_tx.clone());
+        .with_status_tx(status_tx.clone())
+        .with_tracking(
+            self.state.clone(),
+            crate::state::app_state::ConversationSource::User,
+            truncated_input,
+        );
 
         // Add user input as a separate user message
         conversation.add_user_message(input.clone());
@@ -246,7 +257,7 @@ impl EventHandler {
                             // Check if this action will modify state (open_server, close_server, etc.)
                             let modifies_state = matches!(
                                 common_action,
-                                CommonAction::OpenServer { .. } | CommonAction::CloseServer { .. }
+                                CommonAction::OpenServer { .. } | CommonAction::CloseServer { .. } | CommonAction::CloseAllServers
                             );
 
                             match self.execute_server_management_action(common_action, &status_tx).await {
@@ -420,12 +431,16 @@ impl EventHandler {
                         return Err(e);
                     }
                     Err(e) => {
-                        // Fatal error - log and continue (don't fail entire action execution)
+                        // Fatal error - log, update status to Error, and remove server immediately
+                        let error_msg = e.to_string();
+                        self.state.update_server_status(server_id, ServerStatus::Error(error_msg.clone())).await;
                         let _ = status_tx.send(format!(
                             "[ERROR] Failed to start server #{}: {}",
                             server_id.as_u32(),
-                            e
+                            error_msg
                         ));
+                        // Remove the failed server immediately
+                        self.state.remove_server(server_id).await;
                     }
                 }
 
@@ -481,16 +496,43 @@ impl EventHandler {
             CommonAction::CloseServer { server_id } => {
                 use crate::state::server::ServerStatus;
 
-                let server_ids = if let Some(sid) = server_id {
-                    // Close specific server
-                    vec![crate::state::ServerId::new(sid)]
-                } else {
-                    // Close all servers
-                    self.state.get_all_server_ids().await
-                };
+                // Close specific server
+                let sid = crate::state::ServerId::new(server_id);
+
+                // Mark server as Stopped instead of removing it (reaper will clean up after 30s)
+                self.state
+                    .update_server_status(sid, ServerStatus::Stopped)
+                    .await;
+                let _ =
+                    status_tx.send(format!("[SERVER] Stopped server #{}", sid.as_u32()));
+
+                // Clean up tasks associated with this server
+                self.state.cleanup_server_tasks(sid).await;
+                let _ = status_tx.send(format!(
+                    "[TASK] Cleaned up tasks for server #{}",
+                    sid.as_u32()
+                ));
+
+                // Check if all servers are stopped/error
+                let all_stopped =
+                    self.state.get_all_servers().await.iter().all(|s| {
+                        matches!(s.status, ServerStatus::Stopped | ServerStatus::Error(_))
+                    });
+
+                if all_stopped {
+                    self.state.set_mode(Mode::Idle).await;
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
+            CommonAction::CloseAllServers => {
+                use crate::state::server::ServerStatus;
+
+                // Close all servers
+                let server_ids = self.state.get_all_server_ids().await;
 
                 for server_id in server_ids {
-                    // Mark server as Stopped instead of removing it (reaper will clean up after 10s)
+                    // Mark server as Stopped instead of removing it (reaper will clean up after 30s)
                     self.state
                         .update_server_status(server_id, ServerStatus::Stopped)
                         .await;
@@ -505,15 +547,8 @@ impl EventHandler {
                     ));
                 }
 
-                // Check if all servers are stopped/error
-                let all_stopped =
-                    self.state.get_all_servers().await.iter().all(|s| {
-                        matches!(s.status, ServerStatus::Stopped | ServerStatus::Error(_))
-                    });
-
-                if all_stopped {
-                    self.state.set_mode(Mode::Idle).await;
-                }
+                // Set mode to Idle
+                self.state.set_mode(Mode::Idle).await;
 
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
@@ -565,15 +600,7 @@ impl EventHandler {
             } => {
                 use crate::scripting::types::ScriptUpdateOperation;
 
-                // Determine which server to update
-                let target_server_id = if let Some(sid) = server_id {
-                    crate::state::ServerId::new(sid)
-                } else if let Some(sid) = self.state.get_first_server_id().await {
-                    sid
-                } else {
-                    let _ = status_tx.send("[WARN] No server to update script for".to_string());
-                    return Ok(());
-                };
+                let target_server_id = crate::state::ServerId::new(server_id);
 
                 // Parse operation
                 let op = ScriptUpdateOperation::from_str(&operation)
