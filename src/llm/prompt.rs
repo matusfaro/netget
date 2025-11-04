@@ -571,6 +571,7 @@ Your response must be **pure JSON** only:
         instructions: &str,
         available_actions: Vec<ActionDefinition>,
         include_base_stacks: bool,
+        conversation_history: Option<String>,
     ) -> String {
         // Get selected scripting mode
         let selected_mode = state.get_selected_scripting_mode().await;
@@ -603,10 +604,18 @@ Your response must be **pure JSON** only:
 
         let response_format = Self::build_response_format_section();
 
+        // Build conversation history section if provided
+        let history_section = if let Some(history) = conversation_history {
+            format!("# Conversation History\n\n{}\n\n", history)
+        } else {
+            String::new()
+        };
+
         // Assemble final prompt (NO trigger - that goes in user message)
         format!(
-            "{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}",
             role,
+            history_section,
             instructions_section,
             actions_section,
             base_stack_docs,
@@ -627,6 +636,7 @@ Your response must be **pure JSON** only:
     pub async fn build_user_input_system_prompt(
         state: &AppState,
         protocol_async_actions: Vec<ActionDefinition>,
+        conversation_history: Option<String>,
     ) -> String {
         let selected_mode = state.get_selected_scripting_mode().await;
         let scripting_env = state.get_scripting_env().await;
@@ -665,7 +675,7 @@ Understand what the user wants and respond with the appropriate actions to make 
             tool_examples
         );
 
-        Self::build_action_prompt(state, None, &instructions, actions, true).await
+        Self::build_action_prompt(state, None, &instructions, actions, true, conversation_history).await
     }
 
     /// Convert a prompt string to conversation messages
@@ -719,7 +729,8 @@ Understand what the user wants and respond with the appropriate actions to make 
         };
 
         // Network events don't need base stack docs (server already running, handling specific event)
-        Self::build_action_prompt(state, Some(server_id), &instructions_str, all_actions, false)
+        // Network events don't use conversation history
+        Self::build_action_prompt(state, Some(server_id), &instructions_str, all_actions, false, None)
             .await
     }
 
@@ -934,6 +945,7 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection 
             &instructions_with_error,
             actions,
             false, // Don't include base stack docs for tasks
+            None, // Tasks don't use conversation history
         )
         .await;
 
