@@ -1,0 +1,56 @@
+{{#if tool_actions}}
+# Available Tools
+
+Tools gather information and return results to you. After a tool completes, you'll be invoked again with the results so you can decide what to do next.
+
+{{#each tool_actions}}
+## {{@index}}. {{this.name}}
+
+{{this.description}}
+
+{{#if this.parameters}}
+Parameters:
+{{#each this.parameters}}
+- `{{@key}}` ({{this.type}}{{#if this.required}}, required{{/if}}): {{this.description}}
+{{/each}}
+{{/if}}
+
+{{#if this.example}}
+Example:
+```json
+{{{this.example}}}
+```
+{{/if}}
+
+{{/each}}
+{{/if}}
+
+{{#if regular_actions}}
+# Available Actions
+
+Include actions in your JSON response to execute operations.
+You will see past actions you have executed on previous invocation, actions are not idempotent.
+Unless tools are also included, you will not be invoked again if you only return actions
+so you may include multiple actions in a single response.
+
+{{#each regular_actions}}
+## {{@index}}. {{this.name}}
+
+{{this.description}}
+
+{{#if this.parameters}}
+Parameters:
+{{#each this.parameters}}
+- `{{@key}}` ({{this.type}}{{#if this.required}}, required{{/if}}): {{this.description}}
+{{/each}}
+{{/if}}
+
+{{#if this.example}}
+Example:
+```json
+{{{this.example}}}
+```
+{{/if}}
+
+{{/each}}
+{{/if}}

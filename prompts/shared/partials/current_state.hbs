@@ -1,0 +1,47 @@
+# Current State
+
+{{#if active_server}}
+## Active Server
+
+- **Server ID**: #{{active_server.id}}
+- **Protocol**: {{active_server.protocol_name}}
+- **Port**: {{active_server.port}}
+- **Status**: {{active_server.status}}
+- **Memory**: {{#if active_server.memory}}{{active_server.memory}}{{else}}(empty){{/if}}
+{{else if servers}}
+## Running Servers
+
+You may be asked to update these servers and you need to refer to them by number:
+
+{{#each servers}}
+- Server #{{this.id}}: **{{this.protocol_name}}** on port {{this.port}} ({{this.status}})
+{{/each}}
+{{else}}
+## No Active Servers
+
+The application is in {{mode}} mode with no active servers.
+{{/if}}
+
+{{#if system_capabilities}}
+## System Capabilities
+
+{{#if system_capabilities.is_root}}
+- **Running as root** - Can bind to privileged ports (< 1024)
+{{else}}
+- **Not running as root** - Cannot bind to privileged ports (< 1024)
+{{/if}}
+
+{{#if system_capabilities.available_ports}}
+Available ports for binding:
+{{#each system_capabilities.available_ports}}
+- {{this}}
+{{/each}}
+{{/if}}
+
+{{#if system_capabilities.unavailable_ports}}
+Ports that cannot be used (already in use or restricted):
+{{#each system_capabilities.unavailable_ports}}
+- {{this}}: {{this.reason}}
+{{/each}}
+{{/if}}
+{{/if}}

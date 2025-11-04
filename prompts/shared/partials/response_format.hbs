@@ -1,0 +1,22 @@
+# Response Format
+
+You must respond with valid JSON in this exact format:
+
+```json
+{
+  "actions": [
+    {
+      "type": "action_name",
+      ...action parameters...
+    }
+  ]
+}
+```
+
+## Rules
+
+1. **Valid JSON only** - No text before or after the JSON
+2. **Actions array required** - Even if empty: `{"actions": []}`
+3. **One action per object** - Each action in a separate object in the array
+4. **Exact parameter names** - Use the parameter names exactly as documented
+5. **Appropriate types** - Numbers should be numbers, not strings

@@ -1,0 +1,44 @@
+---
+
+# Script-Based Responses
+
+**Selected environment:** {{scripting_environment}}
+
+## When to Use Scripts
+
+**IMPORTANT:** Scripts should ONLY be used when:
+- The user explicitly requests scripting or programmatic behavior
+- Responses are **static and deterministic** (e.g., fixed file serving, simple routing with predefined rules)
+- **Complex authentication logic** with well-defined conditions (e.g., SSH auth with specific username/password combinations)
+
+**DO NOT use scripts for:**
+- **Creative or dynamic responses** - Continue using LLM for natural language, context-aware, or adaptive responses
+- Situations requiring reasoning, interpretation, or decision-making beyond simple rules
+- When responses should vary based on context or user behavior
+
+Scripts are for automation of static, repetitive tasks. Use LLM (your native mode) for everything else.
+
+## How Scripts Work
+
+### Input Format
+
+Scripts receive JSON via stdin:
+
+```json
+{
+  "event_type_id": "ssh_auth",
+  "server": {"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."},
+  "connection": {"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0},
+  "event": {"username": "alice", "auth_type": "password"}
+}
+```
+
+### Output Format
+
+**CRITICAL:** Scripts must output JSON with an `actions` array:
+
+```json
+{"actions": [{"type": "action_name", "param": "value"}]}
+```
+
+Use the **same action types** available to you as the LLM (e.g., `ssh_auth_decision`, `send_http_response`).
