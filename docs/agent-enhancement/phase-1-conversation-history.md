@@ -14,9 +14,9 @@ Add conversation memory to the User Input Agent so it can maintain context acros
 
 ### Problems This Solves
 1. **Lost Context**: User has to repeat information in follow-up requests
-2. **No Learning**: Agent doesn't remember what servers are running or what was configured
-3. **Redundant Actions**: Agent might suggest creating servers that already exist
-4. **Poor UX**: User can't reference "the server we just created" or "like before"
+2. **No Continuity**: Agent doesn't remember what was discussed or attempted
+3. **Poor UX**: User can't reference previous interactions naturally
+4. **No Learning from Errors**: Agent repeats same mistakes without memory of retries
 
 ## Design Specification
 
@@ -28,25 +28,24 @@ pub struct ConversationState {
     // Unique conversation ID
     pub conversation_id: String,
 
-    // Rolling history window
+    // Conversation messages (limited by token count)
     pub messages: VecDeque<ConversationMessage>,
 
-    // Maximum messages to retain
-    pub max_history_size: usize,
+    // Maximum token/character size for history
+    pub max_token_size: usize,
 
-    // Conversation metadata
-    pub started_at: DateTime<Utc>,
-    pub last_interaction: DateTime<Utc>,
+    // Current total size in characters
+    pub current_size: usize,
 
-    // Context accumulator
-    pub context: ConversationContext,
+    // Flag indicating if older messages were removed
+    pub truncated: bool,
 }
 
 pub struct ConversationMessage {
     pub timestamp: DateTime<Utc>,
     pub role: MessageRole,
     pub content: String,
-    pub actions: Option<Vec<ExecutedAction>>,
+    pub message_type: MessageType,
 }
 
 pub enum MessageRole {
@@ -55,41 +54,56 @@ pub enum MessageRole {
     System,
 }
 
-pub struct ExecutedAction {
-    pub action_type: String,
-    pub parameters: serde_json::Value,
-    pub result: ActionResult,
-    pub timestamp: DateTime<Utc>,
-}
+pub enum MessageType {
+    // User input
+    UserInput(String),
 
-pub struct ConversationContext {
-    // Servers created in this conversation
-    pub created_servers: Vec<ServerSummary>,
+    // LLM response (action JSON or raw if invalid)
+    LLMResponse {
+        action_json: Option<serde_json::Value>,
+        raw_output: String,
+    },
 
-    // Active configurations
-    pub active_configs: HashMap<ServerId, ServerConfig>,
+    // Retry instruction (e.g., "Invalid JSON, please retry")
+    RetryInstruction(String),
 
-    // User preferences learned
-    pub preferences: UserPreferences,
-
-    // Important decisions made
-    pub decisions: Vec<Decision>,
+    // Tool call reference (without content)
+    ToolCall {
+        tool_name: String,
+        description: String, // Brief description, not full content
+        // Example: "get_protocol_docs (Fetches protocol documentation)"
+        // NOT the actual documentation content returned
+    },
 }
 ```
 
 #### 2. History Management
 
 **Storage Strategy**:
-- In-memory for current session (Phase 1)
-- Optional persistence to disk (future enhancement)
-- Rolling window of last N messages (configurable, default 20)
-- Summarization of older messages (future enhancement)
+- In-memory for current session
+- Token-based size limit (character count)
+- FIFO removal when size exceeded
+- Truncation indicator when messages removed
 
-**History Inclusion**:
-- Include last 5-10 message pairs in prompt
-- Include all actions from current session
-- Include active server configurations
-- Include relevant context based on current request
+**Size Management**:
+```rust
+impl ConversationState {
+    pub fn add_message(&mut self, message: ConversationMessage) {
+        let message_size = message.content.len();
+
+        // Remove oldest messages if needed
+        while self.current_size + message_size > self.max_token_size && !self.messages.is_empty() {
+            if let Some(removed) = self.messages.pop_front() {
+                self.current_size -= removed.content.len();
+                self.truncated = true;
+            }
+        }
+
+        self.messages.push_back(message);
+        self.current_size += message_size;
+    }
+}
+```
 
 #### 3. Prompt Integration
 
@@ -100,32 +114,28 @@ You are the NetGet User Input Agent...
 
 ## Conversation History
 <conversation_history>
-User (10:23:15): Start an HTTP server on port 8080
-Assistant: I'll start an HTTP server on port 8080.
-Action: open_server(port=8080, base_stack="http", instruction="HTTP server")
-Result: Server started with ID 1
-
-User (10:24:03): Make it return JSON responses
-Assistant: I'll update the server to return JSON responses.
-Action: update_instruction(server_id=1, instruction="HTTP server that returns JSON")
-Result: Server updated
+[Note: Earlier messages were removed due to size limits]
+<user>Start an HTTP server on port 8080</user>
+<assistant>{"type": "open_server", "port": 8080, "base_stack": "http"}</assistant>
+<user>Make it return JSON responses</user>
+<assistant>{"type": "update_instruction", "server_id": 1, "instruction": "Return JSON"}</assistant>
+<system>Retry - Invalid JSON format, please provide valid action</system>
+<assistant>{"type": "update_instruction", "server_id": 1, "instruction": "HTTP server that returns JSON responses"}</assistant>
+<user>Show me the server details</user>
+<system>Tool Call - get_server_info (Fetches current server configuration)</system>
+<assistant>{"type": "get_server_info", "server_id": 1}</assistant>
+<user>What protocols are available?</user>
+<system>Tool Call - get_protocol_docs (Fetches protocol documentation)</system>
+<assistant>{"type": "list_protocols"}</assistant>
+<user>Show me the HTTP protocol details</user>
+<system>Tool Call - get_protocol_details (Fetches HTTP protocol specification)</system>
+<assistant>Invalid response: I can show you the HTTP protocol details...</assistant>
+<system>Retry - Please provide a valid JSON action</system>
+<assistant>{"type": "get_protocol_info", "protocol": "http"}</assistant>
 </conversation_history>
 
-## Current Context
-<context>
-Active Servers:
-- Server 1: HTTP on port 8080 (configured for JSON responses)
-- Server 2: SSH on port 2222
-
-Recent Decisions:
-- Chose to use HTTP instead of HTTPS for local development
-- Configured JSON response format
-</context>
-
 ## Current Request
-<user_input>
-Add CORS headers to the HTTP server
-</user_input>
+<user_input>Add CORS headers to the HTTP server</user_input>
 
 ## Your Task
 ...
@@ -137,13 +147,20 @@ Add CORS headers to the HTTP server
 **File**: `src/llm/conversation_state.rs`
 
 ```rust
-// Core state management
 impl ConversationState {
-    pub fn new(max_history_size: usize) -> Self
-    pub fn add_user_message(&mut self, content: String)
-    pub fn add_assistant_message(&mut self, content: String, actions: Vec<ExecutedAction>)
-    pub fn get_history_for_prompt(&self, max_entries: usize) -> String
-    pub fn get_context_summary(&self) -> String
+    pub fn new(max_token_size: usize) -> Self
+
+    pub fn add_user_input(&mut self, input: String)
+
+    pub fn add_llm_response(&mut self, response: String, parsed_action: Option<serde_json::Value>)
+
+    pub fn add_retry_instruction(&mut self, instruction: String)
+
+    pub fn add_tool_call(&mut self, tool_name: String, brief_description: String)
+
+    pub fn get_history_for_prompt(&self) -> String
+
+    pub fn clear_history(&mut self)
 }
 ```
 
@@ -152,173 +169,172 @@ impl ConversationState {
 
 Modifications:
 1. Add `conversation_state: Arc<Mutex<ConversationState>>` field
-2. Update `handle_user_input` to record messages
-3. Pass conversation history to prompt builder
-4. Record executed actions
+2. Record user inputs before processing
+3. Record LLM responses (with raw output if JSON invalid)
+4. Record retry instructions when sent
+5. Record tool calls (name and brief description only)
 
 #### Step 3: Update PromptBuilder
 **File**: `src/llm/prompt_builder.rs`
 
 Modifications:
 1. Add `with_conversation_history` method
-2. Include history in user input prompt
-3. Format history for optimal LLM comprehension
-4. Add context section to prompt
-
-#### Step 4: State Persistence (Optional)
-**File**: `src/llm/conversation_persistence.rs`
-
-```rust
-impl ConversationState {
-    pub fn save_to_file(&self, path: &Path) -> Result<()>
-    pub fn load_from_file(path: &Path) -> Result<Self>
-    pub fn auto_save(&self) // Called periodically
-}
-```
+2. Include truncation indicator if history was truncated
+3. Format messages clearly with role prefixes
+4. Include raw LLM output when JSON was invalid
 
 ### Configuration
 
 Add to configuration:
 ```toml
 [conversation]
-# Maximum messages to keep in history
-max_history_size = 50
+# Maximum token/character size for history
+max_token_size = 8000
 
-# Number of message pairs to include in prompt
-history_in_prompt = 10
+# Enable truncation indicator
+show_truncation_notice = true
 
-# Enable conversation persistence
-persist_conversation = false
-
-# Persistence file location
-persistence_path = "~/.netget/conversation.json"
-
-# Auto-save interval (seconds)
-auto_save_interval = 60
+# Clear history command
+clear_command = "/clear-history"
 ```
 
 ### Testing Plan
 
 #### Unit Tests
-1. Test conversation state management
-2. Test history rolling window
-3. Test context accumulation
-4. Test prompt formatting with history
+1. Test message addition and size management
+2. Test truncation when size exceeded
+3. Test history formatting for prompt
+4. Test different message types
 
 #### Integration Tests
 1. Multi-turn conversation flow
-2. Context reference ("the server we just created")
-3. Action history tracking
-4. State persistence and recovery
+2. Retry instruction tracking
+3. Tool call reference tracking
+4. Invalid JSON raw output capture
 
 #### E2E Test Scenarios
 ```rust
 #[test]
-fn test_conversation_remembers_server_creation() {
+fn test_conversation_tracks_user_and_llm() {
     // User: "Start an HTTP server"
-    // Assistant: Creates server
-    // User: "What port is it running on?"
-    // Assistant: Should know from history
+    // LLM: {"type": "open_server", ...}
+    // User: "What did I just create?"
+    // Verify history contains both messages
 }
 
 #[test]
-fn test_conversation_references_previous_config() {
-    // User: "Create an SSH server with password auth"
-    // Assistant: Creates server
-    // User: "Create another one like that on port 2223"
-    // Assistant: Should copy configuration
+fn test_retry_tracking() {
+    // User: "Create server"
+    // LLM: Invalid JSON response
+    // System: Retry instruction
+    // LLM: Valid JSON
+    // Verify all tracked in history
+}
+
+#[test]
+fn test_truncation_indicator() {
+    // Add messages until max_token_size exceeded
+    // Verify truncation flag set
+    // Verify prompt shows truncation notice
 }
 ```
 
 ### Migration Strategy
 
-1. **Phase 1A**: Basic history tracking (no prompt changes)
-   - Implement ConversationState
-   - Start recording messages
-   - No behavior change yet
-
-2. **Phase 1B**: Include history in prompts
-   - Update PromptBuilder
-   - Add history section to prompts
-   - Test with small history window
-
-3. **Phase 1C**: Full context integration
-   - Track executed actions
-   - Build context summaries
-   - Include in prompts
-
-4. **Phase 1D**: Optimization
-   - Tune history window size
-   - Add summarization for old messages
-   - Performance optimization
+1. **Step 1**: Implement ConversationState with token-based limits
+2. **Step 2**: Integrate with ConversationHandler to track messages
+3. **Step 3**: Update PromptBuilder to include history
+4. **Step 4**: Test with various conversation flows
 
 ### Success Criteria
 
 1. **Functional**:
-   - [ ] Agent remembers previous messages in session
-   - [ ] Agent can reference past actions
-   - [ ] Agent knows what servers are running
-   - [ ] Context references work ("like before", "that server")
+   - [ ] User inputs tracked in history
+   - [ ] LLM responses tracked (JSON and raw)
+   - [ ] Retry instructions tracked
+   - [ ] Tool calls referenced (without full content)
+   - [ ] Truncation indicator when size exceeded
 
 2. **Performance**:
-   - [ ] No significant latency increase (< 50ms)
-   - [ ] Memory usage reasonable (< 10MB per conversation)
-   - [ ] Prompt size stays within limits
+   - [ ] Token-based size limit enforced
+   - [ ] No memory leak with bounded history
+   - [ ] Efficient string operations
 
 3. **User Experience**:
-   - [ ] More natural conversation flow
-   - [ ] Fewer repeated questions
-   - [ ] Accurate context awareness
+   - [ ] Natural conversation flow
+   - [ ] Clear history in prompts
+   - [ ] Truncation notice when applicable
 
 ### Dependencies
 
 - **Required Before**: None (can run in parallel with other phases)
-- **Enables**: Phase 4 (User Agent Configuration) benefits from history
-- **Optional Integration**: Phase 2 (Prompt Templates) for better formatting
+- **Benefits From**: Phase 2 (Templates) for consistent formatting
 
 ### Risks & Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Prompt size explosion | High | Implement rolling window, summarization |
-| Memory leak | Medium | Bounded history, automatic cleanup |
-| Context confusion | Medium | Clear history formatting, testing |
-| Performance degradation | Low | Lazy loading, caching, benchmarks |
-
-### Open Questions
-
-1. **Persistence Format**: JSON, MessagePack, or Protocol Buffers?
-2. **History Window**: Fixed size or time-based (last hour)?
-3. **Summarization**: When to summarize old messages?
-4. **Multi-User**: Should conversations be user-specific?
-5. **Reset Command**: How to clear conversation history?
+| Token limit exceeded | High | Character-based truncation |
+| Unclear history format | Medium | Clear role prefixes |
+| Lost important context | Medium | Strategic message selection |
 
 ### Example Implementation Flow
 
 ```rust
 // User starts NetGet
-let mut conversation = ConversationState::new(50);
+let mut conversation = ConversationState::new(8000); // 8000 character limit
 
-// User: "Start HTTP server on 8080"
-conversation.add_user_message("Start HTTP server on 8080");
-// ... agent processes and creates server ...
-conversation.add_assistant_message(
-    "I've started an HTTP server on port 8080",
-    vec![ExecutedAction {
-        action_type: "open_server",
-        parameters: json!({"port": 8080, "base_stack": "http"}),
-        result: ActionResult::Success(json!({"server_id": 1})),
-    }]
+// User input
+conversation.add_user_input("Start HTTP server on 8080");
+
+// LLM response (valid JSON)
+conversation.add_llm_response(
+    r#"{"type": "open_server", "port": 8080, "base_stack": "http"}"#,
+    Some(json!({"type": "open_server", "port": 8080, "base_stack": "http"}))
 );
 
-// User: "Make it return JSON"
-conversation.add_user_message("Make it return JSON");
-// Prompt now includes history showing HTTP server was created
-let prompt = PromptBuilder::new()
-    .with_conversation_history(&conversation)
-    .with_current_input("Make it return JSON")
-    .build();
-// Agent knows server_id=1 from context
+// User asks for protocol docs
+conversation.add_user_input("What protocols are available?");
+
+// Tool call happens (track it without the actual docs content)
+conversation.add_tool_call("get_protocol_docs", "Fetches protocol documentation");
+
+// LLM uses the tool response (which isn't stored) to answer
+conversation.add_llm_response(
+    r#"{"type": "list_protocols"}"#,
+    Some(json!({"type": "list_protocols"}))
+);
+
+// User input
+conversation.add_user_input("That's not what I wanted");
+
+// LLM response (invalid JSON - raw output stored)
+conversation.add_llm_response(
+    "I'll create a different server for you",
+    None // No valid JSON parsed
+);
+
+// Retry instruction
+conversation.add_retry_instruction("Invalid response format. Please provide a valid JSON action.");
+
+// LLM corrects itself
+conversation.add_llm_response(
+    r#"{"type": "create_server", "config": {...}}"#,
+    Some(json!({"type": "create_server", "config": {...}}))
+);
+
+// Get formatted history for prompt
+let history = conversation.get_history_for_prompt();
+// Output format:
+// <user>Start HTTP server on 8080</user>
+// <assistant>{"type": "open_server", "port": 8080, "base_stack": "http"}</assistant>
+// <user>What protocols are available?</user>
+// <system>Tool Call - get_protocol_docs (Fetches protocol documentation)</system>
+// <assistant>{"type": "list_protocols"}</assistant>
+// <user>That's not what I wanted</user>
+// <assistant>I'll create a different server for you</assistant>
+// <system>Retry - Invalid response format. Please provide a valid JSON action.</system>
+// <assistant>{"type": "create_server", "config": {...}}</assistant>
 ```
 
 ### Completion Checklist
