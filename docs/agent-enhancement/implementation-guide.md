@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides step-by-step instructions for implementing the NetGet agent enhancement plan. The implementation is divided into 6 phases that can be executed incrementally, with clear dependencies and integration points.
+This guide provides step-by-step instructions for implementing the NetGet agent enhancement plan. The implementation is divided into 4 phases (reduced from 6) that can be executed incrementally.
 
 ## Prerequisites
 
@@ -17,14 +17,14 @@ Before starting implementation:
 2. **Understanding Required**:
    - Current NetGet architecture
    - Tokio async runtime
+   - Handlebars templating
    - LLM prompt engineering basics
-   - Rust trait system
 
 3. **Codebase Familiarity**:
    - `src/llm/` - Current prompt and agent system
    - `src/server/` - Protocol implementations
    - `src/protocol/` - BaseStack definitions
-   - `src/state/` - Application state management
+   - `tests/` - Existing test structure
 
 ## Implementation Timeline
 
@@ -33,437 +33,340 @@ gantt
     title Implementation Schedule
     dateFormat  YYYY-MM-DD
     section Foundation
-    Phase 2 Template System     :p2, 2024-01-01, 7d
+    Phase 2 Handlebars     :p2, 2024-01-01, 7d
     section Core Features
-    Phase 1 Conversation History :p1, after p2, 7d
-    Phase 3 Event Instructions   :p3, after p2, 7d
-    section Integration
-    Phase 4 User Agent Config    :p4, after p3, 14d
-    section Enhancement
-    Phase 5 Testing Framework    :p5, after p2, 7d
-    Phase 6 Script Integration   :p6, after p4, 7d
+    Phase 1 Conversation   :p1, after p2, 7d
+    Phase 3 Instructions   :p3, after p2, 7d
+    section Testing
+    Phase 5 Test Framework :p5, 2024-01-01, 7d
 ```
 
-## Phase 2: Prompt Template System (Week 1)
+## Phase 2: Handlebars Template System (Week 1)
 
-**Goal**: Foundation for all other phases
+**Goal**: Foundation for all prompt management
 
-### Day 1-2: Core Template Engine
+### Day 1-2: Setup Handlebars
 
-1. **Create new module structure**:
-```bash
-mkdir -p src/llm/templates
-mkdir -p prompts/{user_input,network_request,shared}
+1. **Add dependencies**:
+```toml
+# Cargo.toml
+[dependencies]
+handlebars = "5.1"
+walkdir = "2.4"
 ```
 
-2. **Implement `template_engine.rs`**:
+2. **Create template engine**:
 ```rust
-// Start with basic template loading and variable substitution
+// src/llm/template_engine.rs
 pub struct TemplateEngine {
-    templates: HashMap<String, Template>,
-    loader: Box<dyn TemplateLoader>,
+    handlebars: Handlebars<'static>,
+    template_dir: PathBuf,
 }
 ```
 
-3. **Key functions to implement**:
-   - `load_template()` - Load from file system
-   - `render()` - Variable substitution
-   - `validate()` - Check required variables
+3. **Setup directory structure**:
+```bash
+mkdir -p prompts/{user_input,network_request,shared,defaults}
+mkdir -p prompts/user_input/{partials,examples}
+mkdir -p prompts/network_request/{partials,events}
+```
 
 ### Day 3-4: Extract Current Prompts
 
 1. **Analyze `prompt_builder.rs`**:
    - Identify all prompt sections
-   - Document variable requirements
-   - Map to new template structure
+   - Map to Handlebars templates
+   - Create partials for reusable sections
 
 2. **Create template files**:
-```markdown
-# prompts/user_input/base.md
-# [ROLE]
-{{role_description}}
+```handlebars
+{{!-- prompts/user_input/main.hbs --}}
+{{> user_input::partials::role }}
 
-# [CONTEXT]
-{{context}}
-...
+{{#if conversation_history}}
+## Conversation History
+{{conversation_history}}
+{{/if}}
+
+{{> user_input::partials::instructions }}
 ```
 
-3. **Maintain exact content** (no behavior changes yet)
+3. **Maintain exact prompt content** (no changes yet)
 
 ### Day 5-6: Integration
 
-1. **Refactor `PromptBuilder`**:
+1. **Refactor PromptBuilder**:
 ```rust
 impl PromptBuilder {
-    pub fn new(engine: Arc<TemplateEngine>) -> Self {
-        // Migrate from string concatenation
-    }
+    pub fn new(engine: Arc<TemplateEngine>) -> Self
+    pub fn build_user_input_prompt(&self, ...) -> Result<String>
+    pub fn build_network_prompt(&self, ...) -> Result<String>
 }
 ```
 
-2. **Add feature flag**:
-```toml
-[features]
-prompt_templates = []
-```
-
-3. **Parallel testing**:
-   - Run old and new systems side by side
-   - Verify identical output
-
-### Day 7: Testing & Documentation
-
-1. **Unit tests**:
-```rust
-#[test]
-fn test_template_rendering() {
-    // Test all template operations
-}
-```
-
-2. **Performance benchmarks**:
-   - Template loading time
-   - Rendering performance
-   - Memory usage
-
-### Validation Checklist
-- [ ] All prompts extracted to files
-- [ ] No behavior changes
-- [ ] Tests passing
-- [ ] Performance acceptable
-
----
-
-## Phase 3: Event-Specific Instructions (Week 2)
-
-**Goal**: Structure for event-based customization
-
-### Day 1-2: Instruction Registry
-
-1. **Create instruction types**:
-```rust
-// src/llm/event_instructions.rs
-pub struct EventInstructions {
-    event_type: EventType,
-    base_instructions: InstructionSet,
-    customizations: InstructionCustomization,
-}
-```
-
-2. **Build registry**:
-```rust
-pub struct EventInstructionRegistry {
-    defaults: HashMap<(BaseStack, EventType), InstructionSet>,
-}
-```
-
-### Day 3-4: Default Instructions
-
-1. **Create YAML definitions**:
-```yaml
-# prompts/network_request/events/defaults/http/data_received.yaml
-event_type: DataReceived
-primary_task: "Process HTTP request"
-steps:
-  - order: 1
-    description: "Parse request"
-...
-```
-
-2. **Load and validate**:
-   - Parse YAML files
-   - Build instruction sets
-   - Validate completeness
-
-### Day 5-6: Customization System
-
-1. **Implement merging logic**:
-```rust
-pub fn merge_instructions(
-    base: &InstructionSet,
-    custom: &InstructionCustomization,
-) -> InstructionSet
-```
-
-2. **Test merging**:
-   - Override steps
-   - Add new steps
-   - Modify constraints
-
-### Day 7: Integration & Testing
-
-1. **Update prompt building**:
-   - Include event instructions
-   - Format for LLM consumption
-
-2. **Validation**:
-   - Each event has instructions
-   - Customizations apply correctly
-
-### Validation Checklist
-- [ ] All events have default instructions
-- [ ] Customization system working
-- [ ] Merging logic tested
-- [ ] Integration complete
-
----
-
-## Phase 1: Conversation History (Can run parallel with Phase 3)
-
-**Goal**: Add memory to User Agent
-
-### Day 1-2: State Management
-
-1. **Create `conversation_state.rs`**:
-```rust
-pub struct ConversationState {
-    messages: VecDeque<ConversationMessage>,
-    context: ConversationContext,
-    max_history_size: usize,
-}
-```
-
-2. **Implement core operations**:
-   - Add messages
-   - Maintain rolling window
-   - Extract context
-
-### Day 3-4: History Integration
-
-1. **Update `ConversationHandler`**:
-```rust
-pub struct ConversationHandler {
-    conversation_state: Arc<Mutex<ConversationState>>,
-    // ... existing fields
-}
-```
-
-2. **Record interactions**:
-   - User messages
-   - Assistant responses
-   - Executed actions
-
-### Day 5-6: Prompt Enhancement
-
-1. **Include history in prompts**:
-```rust
-impl PromptBuilder {
-    pub fn with_conversation_history(&mut self, history: &ConversationState) {
-        // Add history section to prompt
-    }
-}
-```
-
-2. **Format for clarity**:
-   - Recent messages first
-   - Action results included
-   - Context summary
+2. **Include Phase 3 fields** in templates:
+   - `global_instructions`
+   - `event_instructions`
+   - `examples`
 
 ### Day 7: Testing
 
-1. **Multi-turn conversations**:
-   - Context references work
-   - History maintains correctly
-   - Memory limits respected
+1. **Migrate snapshot tests**:
+```rust
+#[test]
+fn test_template_output_matches_snapshot() {
+    let prompt = builder.build_user_input_prompt(...);
+    insta::assert_snapshot!(prompt);
+}
+```
+
+2. **Verify identical output** with old system
 
 ### Validation Checklist
-- [ ] State management working
-- [ ] History in prompts
-- [ ] Context references functional
-- [ ] Performance acceptable
+- [ ] Handlebars engine working
+- [ ] All prompts extracted to templates
+- [ ] Partials for composition
+- [ ] Examples in separate files
+- [ ] Snapshot tests passing
+- [ ] Phase 3 fields supported
 
 ---
 
-## Phase 4: User Agent Configuration (Weeks 3-4)
+## Phase 1: Conversation History (Week 1-2, parallel)
 
-**Goal**: Dynamic Network Agent configuration
+**Goal**: Add token-limited memory to User Agent
 
-### Week 1: Analysis & Manufacturing
+### Day 1-2: State Management
 
-1. **Requirement analyzer**:
+1. **Create conversation state**:
 ```rust
-impl UserAgent {
-    pub async fn analyze_requirements(&self, input: &str) -> RequirementAnalysis {
-        // Extract structured requirements
+// src/llm/conversation_state.rs
+pub struct ConversationState {
+    messages: VecDeque<ConversationMessage>,
+    max_token_size: usize,
+    current_size: usize,
+    truncated: bool,
+}
+```
+
+2. **Implement message types**:
+   - UserInput
+   - LLMResponse (with raw output if invalid JSON)
+   - RetryInstruction
+   - ToolCall (name and brief description only)
+
+### Day 3-4: Integration
+
+1. **Update ConversationHandler**:
+```rust
+pub struct ConversationHandler {
+    conversation_state: Arc<Mutex<ConversationState>>,
+    // existing fields...
+}
+```
+
+2. **Track messages**:
+   - Add user inputs before processing
+   - Record LLM responses with raw output
+   - Track retry instructions
+   - Log tool calls (without full content)
+
+### Day 5-6: Token Management
+
+1. **Implement size limits**:
+```rust
+impl ConversationState {
+    pub fn add_message(&mut self, msg: ConversationMessage) {
+        while self.current_size + msg.len() > self.max_token_size {
+            // Remove oldest messages
+            self.truncated = true;
+        }
     }
 }
 ```
 
-2. **Prompt manufacturer**:
-```rust
-pub struct PromptManufacturer {
-    pub fn manufacture(&self, event: &NetworkEvent, config: &AgentConfiguration) -> ManufacturedPrompt
-}
-```
+2. **Format for prompts**:
+   - Include truncation notice if needed
+   - Clear role prefixes
+   - Show raw LLM output when JSON invalid
 
-3. **Configuration builder**:
-   - From requirements
-   - Per-event customization
-   - Validation
+### Day 7: Testing
 
-### Week 2: Integration & Testing
-
-1. **Dynamic prompt builder**:
-```rust
-pub struct DynamicPromptBuilder {
-    manufacturer: Arc<PromptManufacturer>,
-    configuration: Arc<RwLock<AgentConfiguration>>,
-}
-```
-
-2. **Network Agent integration**:
-   - Use manufactured prompts
-   - Configuration updates
-   - Runtime modifications
-
-3. **End-to-end testing**:
-   - User requirements → Configuration
-   - Configuration → Prompts
-   - Prompts → Behavior
+1. **Test scenarios**:
+   - Message tracking
+   - Token limit enforcement
+   - Truncation handling
+   - History formatting
 
 ### Validation Checklist
-- [ ] Requirements analysis working
-- [ ] Manufacturing system complete
-- [ ] Configuration transfer functional
-- [ ] Network Agent using manufactured prompts
-- [ ] Behavior matches specifications
+- [ ] Conversation state implemented
+- [ ] Messages tracked correctly
+- [ ] Token limits enforced
+- [ ] Truncation indicator working
+- [ ] History in prompts
 
 ---
 
-## Phase 5: Testing Framework (Week 2-3, parallel after Phase 2)
+## Phase 3: Event Instructions (Week 2)
 
-**Goal**: Prompt validation and regression detection
+**Goal**: Simple default instructions with override capability
 
-### Day 1-2: Test Framework Core
+### Day 1-2: Core Types
 
-1. **Test case structure**:
+1. **Define structures**:
+```rust
+// src/llm/event_instructions.rs
+pub struct EventInstructions {
+    pub instructions: String,
+    pub examples: Vec<Example>,
+}
+
+pub struct Example {
+    pub input: String,
+    pub output: String,
+}
+```
+
+2. **Create configuration**:
+```rust
+pub struct ServerInstructionConfig {
+    pub global_instructions: Option<String>,
+    pub event_overrides: HashMap<EventType, EventInstructions>,
+    pub scripts: HashMap<EventType, ScriptConfig>, // existing
+}
+```
+
+### Day 3-4: Default Registry
+
+1. **Build defaults**:
+```rust
+// src/llm/default_instructions.rs
+impl DefaultInstructionsRegistry {
+    pub fn new() -> Self {
+        // Add defaults for each protocol/event
+    }
+}
+```
+
+2. **Create YAML defaults**:
 ```yaml
-tests:
-  - id: create_http_basic
-    input:
-      trigger: "Start HTTP server on 8080"
-    expectations:
-      action: open_server
-      parameters:
-        port: 8080
+# prompts/defaults/http/data_received.yaml
+instructions: |
+  Parse HTTP request.
+  Return appropriate response.
+examples:
+  - input: "GET /"
+    output: '{"type": "send_data", ...}'
 ```
 
-2. **Test runner**:
+### Day 5-6: Agent Integration
+
+1. **User Agent configuration**:
 ```rust
-pub struct TestRunner {
-    pub async fn run_test(&self, test: &PromptTestCase) -> TestResult
+impl UserAgent {
+    pub fn configure_server_instructions(&self, input: &str)
+        -> ServerInstructionConfig
 }
 ```
 
-### Day 3-4: Evaluation System
+2. **Network Agent priority**:
+   - Check scripts first
+   - Use event override if present
+   - Fall back to defaults
 
-1. **Implement scorers**:
-   - Action match
-   - Parameter accuracy
-   - Semantic similarity
+### Day 7: Testing
 
-2. **Scoring pipeline**:
-   - Run all scorers
-   - Aggregate scores
-   - Determine pass/fail
-
-### Day 5-6: Regression Detection
-
-1. **Baseline management**:
-   - Store results
-   - Compare runs
-   - Detect degradation
-
-2. **Reporting**:
-   - Test results
-   - Regression analysis
-   - Recommendations
-
-### Day 7: CLI Integration
-
-1. **Test commands**:
-```bash
-netget test prompts --all
-netget test prompts --regression
-netget test prompts --ab
-```
+1. **Test priority chain**:
+   - Script takes precedence
+   - Override over default
+   - Default as fallback
 
 ### Validation Checklist
-- [ ] Test cases defined
-- [ ] Runner executing tests
-- [ ] Evaluation accurate
-- [ ] Regression detection working
-- [ ] CLI integrated
+- [ ] EventInstructions types defined
+- [ ] Default registry working
+- [ ] User Agent configuration
+- [ ] Network Agent uses instructions
+- [ ] Priority chain correct
 
 ---
 
-## Phase 6: Script Integration (Week 5)
+## Phase 5: E2E Test Framework (Week 1, parallel)
 
-**Goal**: Enhanced scripting per event
+**Goal**: Split tests into validators and executors
 
-### Day 1-2: Per-Event Scripts
+### Day 1-2: Protocol Validators
 
-1. **Script configuration**:
+1. **Create validators**:
 ```rust
-pub struct ScriptConfiguration {
-    event_scripts: HashMap<EventType, ScriptDefinition>,
+// tests/validators/http_validator.rs
+pub struct HttpValidator {
+    pub async fn expect_status(&self, path: &str, status: StatusCode)
+    pub async fn expect_json(&self, path: &str, json: Value)
+    pub async fn expect_contains(&self, path: &str, text: &str)
 }
 ```
 
-2. **Script definitions**:
-   - Language specification
-   - Source management
-   - Interface contracts
+2. **Implement for each protocol**:
+   - HTTP validator
+   - SSH validator
+   - TCP validator
 
-### Day 3-4: Runtime Manager
+### Day 3-4: NetGet Wrapper
 
-1. **Executor implementation**:
+1. **Extend wrapper**:
 ```rust
-pub trait ScriptExecutor {
-    fn execute(&self, script: &ScriptDefinition, context: &ScriptContext) -> Result<ScriptOutput>
+// tests/e2e/netget_wrapper.rs
+pub struct NetGetWrapper {
+    pub async fn send_user_input(&mut self, input: &str)
+    pub async fn create_server(&mut self, prompt: &str) -> ServerInfo
+    pub fn get_server_port(&self, id: &str) -> Option<u16>
+    pub fn get_output(&self) -> String
 }
 ```
 
-2. **Language support**:
-   - JavaScript executor
-   - Python executor
-   - Go executor
-   - WASM executor
+2. **Add control features**:
+   - Wait for completion
+   - Parse server creation
+   - Track server status
 
-### Day 5-6: Template Library
+### Day 5-6: Write Tests Directly
 
-1. **Create templates**:
-```javascript
-// scripts/templates/http/static_response.js
-function handleEvent(event, context) {
-    return {
-        type: "send_data",
-        data: buildResponse({{status_code}}, "{{body}}")
-    };
-}
-```
-
-2. **Script generation**:
-   - From templates
-   - LLM generation
-   - Validation
-
-### Day 7: Integration
-
-1. **Network Agent routing**:
+1. **Create test structure**:
 ```rust
-if let Some(script) = config.get_script_for_event(&event_type) {
-    return execute_script(script, context);
+// tests/e2e/http_test.rs
+#[tokio::test]
+async fn test_http_server() {
+    let mut netget = NetGetWrapper::new();
+    netget.start("model", vec![]).await.unwrap();
+
+    let server = netget.create_server("...").await.unwrap();
+    let validator = HttpValidator::new(server.port);
+
+    // Direct assertions
+    let response = validator.get("/").await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
-// Fall back to LLM
 ```
+
+2. **Simple test flow**:
+   - Start NetGet
+   - Create server
+   - Create validator
+   - Make requests and assert
+
+### Day 7: Migration
+
+1. **Migrate existing tests**:
+   - Extract validators
+   - Simplify test logic
+   - Use new format
 
 ### Validation Checklist
-- [ ] Per-event scripts working
-- [ ] All languages supported
-- [ ] Templates functional
-- [ ] Mixed mode routing
-- [ ] Hot reload working
+- [ ] Validators implemented
+- [ ] NetGet wrapper extended
+- [ ] Tests using validators directly
+- [ ] Tests migrated to new approach
+- [ ] Tests more readable
 
 ---
 
@@ -471,28 +374,19 @@ if let Some(script) = config.get_script_for_event(&event_type) {
 
 After each phase:
 
-1. **Smoke Tests**:
+1. **Unit Tests**:
 ```bash
-# Basic functionality
-cargo test --features prompt_templates
+cargo test --lib
 ```
 
 2. **Integration Tests**:
 ```bash
-# Cross-phase functionality
-cargo test --all-features integration
+cargo test integration
 ```
 
-3. **Performance Tests**:
+3. **E2E Validation**:
 ```bash
-# Benchmark before/after
-cargo bench
-```
-
-4. **E2E Validation**:
-```bash
-# Real server scenarios
-./run_e2e_tests.sh
+cargo test e2e
 ```
 
 ## Rollback Strategy
@@ -501,125 +395,96 @@ Each phase should be reversible:
 
 1. **Feature Flags**:
 ```rust
-#[cfg(feature = "prompt_templates")]
-mod templates;
+#[cfg(feature = "handlebars_templates")]
+mod template_engine;
 ```
 
-2. **Dual Mode Operation**:
-   - Run old and new in parallel
-   - Compare results
+2. **Parallel Operation**:
+   - Run old and new systems together
+   - Compare outputs
    - Switch based on config
-
-3. **Data Migration**:
-   - Export old format
-   - Import to new format
-   - Validate conversion
 
 ## Common Pitfalls & Solutions
 
 ### Pitfall 1: Breaking Existing Functionality
-**Solution**: Always maintain backward compatibility, use feature flags
+**Solution**: Feature flags, maintain backward compatibility
 
-### Pitfall 2: Performance Regression
-**Solution**: Benchmark each phase, optimize critical paths
+### Pitfall 2: Token Limit Issues
+**Solution**: Character-based counting, clear truncation
 
-### Pitfall 3: Complex Dependencies
-**Solution**: Follow implementation order, test integration points
+### Pitfall 3: Template Errors
+**Solution**: Validate templates on load, good error messages
 
-### Pitfall 4: LLM Response Variations
-**Solution**: Use deterministic prompts for testing, implement retries
-
-### Pitfall 5: Memory Leaks
-**Solution**: Bounded data structures, regular cleanup, monitoring
+### Pitfall 4: Test Flakiness
+**Solution**: Proper waits, deterministic validators
 
 ## Success Metrics
 
-Track these metrics throughout implementation:
+Track these throughout:
 
 1. **Code Quality**:
-   - Test coverage > 80%
+   - Test coverage maintained
    - No clippy warnings
    - Documentation complete
 
 2. **Performance**:
-   - Prompt generation < 10ms
-   - Memory usage < 100MB
-   - No latency increase
+   - Template rendering < 10ms
+   - History management < 5ms
+   - No memory leaks
 
 3. **Functionality**:
    - All existing tests pass
    - New features working
-   - No regressions detected
-
-4. **Developer Experience**:
-   - Easy to modify prompts
-   - Clear error messages
-   - Good debugging tools
+   - No regressions
 
 ## Post-Implementation
 
-After all phases complete:
+After all phases:
 
 1. **Documentation Update**:
-   - Update README.md
-   - API documentation
-   - Usage examples
+   - Update main README
+   - Template documentation
+   - Test writing guide
 
 2. **Performance Tuning**:
    - Profile hot paths
-   - Optimize critical sections
-   - Cache where beneficial
+   - Optimize templates
+   - Cache where needed
 
 3. **User Testing**:
    - Beta release
    - Gather feedback
-   - Iterate on issues
-
-4. **Maintenance Plan**:
-   - Regular testing
-   - Prompt updates
-   - Feature additions
-
-## Support & Resources
-
-- **Questions**: Open issue in repository
-- **Discussions**: Project Discord/Slack
-- **Documentation**: See phase-specific docs
-- **Examples**: `examples/` directory
+   - Iterate
 
 ## Final Checklist
 
-Before considering implementation complete:
+Before considering complete:
 
-- [ ] All 6 phases implemented
-- [ ] Integration tests passing
-- [ ] Performance benchmarks met
+- [ ] Phase 2: Handlebars templates implemented
+- [ ] Phase 1: Conversation history working
+- [ ] Phase 3: Event instructions functional
+- [ ] Phase 5: Test validators and wrapper operational
+- [ ] All tests passing
 - [ ] Documentation updated
-- [ ] Migration guide written
-- [ ] Rollback tested
-- [ ] User feedback incorporated
-- [ ] Production ready
+- [ ] Performance acceptable
+- [ ] Backward compatible
 
-## Appendix: Quick Commands
+## Quick Commands
 
 ```bash
 # Run specific phase tests
-cargo test --features phase_1
-cargo test --features phase_2
+cargo test --features handlebars_templates
+cargo test conversation_history
 
-# Full integration test
-cargo test --all-features
+# Build with new features
+cargo build --release --features "handlebars_templates conversation_history"
 
-# Benchmarks
-cargo bench --features prompt_templates
+# Run E2E tests with validators
+cargo test --test e2e_tests
 
-# Build with all enhancements
-cargo build --release --all-features
+# Check templates
+ls -la prompts/
 
-# Run with new features
-./target/release/netget --use-templates --enable-history
-
-# Rollback to previous version
-git checkout v1.0.0
-cargo build --release
+# Test with specific model
+OLLAMA_MODEL=qwen2.5-coder:7b cargo test
 ```
