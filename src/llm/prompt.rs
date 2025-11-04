@@ -9,15 +9,37 @@ use crate::llm::actions::{
     ActionDefinition,
 };
 use crate::llm::ollama_client::Message;
+use crate::llm::template_engine::{TemplateDataBuilder, TEMPLATE_ENGINE};
 use crate::privilege::SystemCapabilities;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
+use tracing::debug;
 
 /// Builder for constructing LLM prompts
 pub struct PromptBuilder;
 
 impl PromptBuilder {
+    // ============================================================================
+    // TEMPLATE-BASED PROMPT BUILDING
+    // ============================================================================
+
+    /// Try to build prompt using templates, with fallback to hardcoded
+    fn try_template_prompt(
+        template_name: &str,
+        data: serde_json::Value,
+        fallback: impl FnOnce() -> String,
+    ) -> String {
+        if let Ok(result) = TEMPLATE_ENGINE.render_json(template_name, &data) {
+            if !result.is_empty() {
+                debug!("Using template: {}", template_name);
+                return result;
+            }
+        }
+        debug!("Template {} not found or empty, using fallback", template_name);
+        fallback()
+    }
+
     // ============================================================================
     // SECTION BUILDERS - These build individual sections of prompts
     // ============================================================================
@@ -577,52 +599,153 @@ Your response must be **pure JSON** only:
         let selected_mode = state.get_selected_scripting_mode().await;
         let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Off;
 
-        // Build sections using section builders
-        let role = Self::build_role_section();
-        let current_state = Self::build_current_state_section(state, server_id).await;
-        let instructions_section = Self::build_instructions_section(instructions);
-
         // Filter actions based on scripting mode
         let filtered_actions =
             Self::filter_actions_by_scripting_mode(available_actions, has_scripting);
-        let actions_section = Self::build_actions_section(&filtered_actions);
 
-        // Conditionally generate base stack documentation
+        // Try to use template first
+        let template_name = if server_id.is_some() {
+            "network_request/main"
+        } else {
+            "user_input/main"
+        };
+
+        // Prepare template data
+        let servers = state.get_all_servers().await;
         let include_disabled = state.get_include_disabled_protocols().await;
-        let base_stack_docs = if include_base_stacks {
-            Self::build_base_stack_docs_section(include_disabled)
-        } else {
-            String::new()
-        };
 
-        // Build scripting section if applicable
-        let scripting_section = if include_base_stacks && has_scripting {
-            Self::build_scripting_section(selected_mode)
-        } else {
-            String::new()
-        };
+        // Split actions into tools and regular actions and convert to JSON
+        let (tool_actions_raw, regular_actions_raw): (Vec<_>, Vec<_>) = filtered_actions
+            .iter()
+            .partition(|a| a.is_tool());
 
-        let response_format = Self::build_response_format_section();
+        // Convert actions to JSON for templates
+        let tool_actions: Vec<serde_json::Value> = tool_actions_raw.iter().map(|a| {
+            let mut params_map = serde_json::Map::new();
+            for param in &a.parameters {
+                params_map.insert(param.name.clone(), serde_json::json!({
+                    "type": param.type_hint,
+                    "description": param.description,
+                    "required": param.required
+                }));
+            }
 
-        // Build conversation history section if provided
-        let history_section = if let Some(history) = conversation_history {
-            format!("# Conversation History\n\n{}\n\n", history)
-        } else {
-            String::new()
-        };
+            serde_json::json!({
+                "name": a.name,
+                "description": a.description,
+                "is_tool": a.is_tool(),
+                "parameters": params_map,
+                "example": a.example
+            })
+        }).collect();
 
-        // Assemble final prompt (NO trigger - that goes in user message)
-        format!(
-            "{}{}{}{}{}{}{}{}",
-            role,
-            history_section,
-            instructions_section,
-            actions_section,
-            base_stack_docs,
-            scripting_section,
-            response_format,
-            current_state
-        )
+        let regular_actions: Vec<serde_json::Value> = regular_actions_raw.iter().map(|a| {
+            let mut params_map = serde_json::Map::new();
+            for param in &a.parameters {
+                params_map.insert(param.name.clone(), serde_json::json!({
+                    "type": param.type_hint,
+                    "description": param.description,
+                    "required": param.required
+                }));
+            }
+
+            serde_json::json!({
+                "name": a.name,
+                "description": a.description,
+                "is_tool": a.is_tool(),
+                "parameters": params_map,
+                "example": a.example
+            })
+        }).collect();
+
+        // Convert servers to simple objects for templates
+        let servers_data: Vec<serde_json::Value> = servers.iter().map(|s| {
+            serde_json::json!({
+                "id": s.id.as_u32(),
+                "protocol_name": s.protocol_name,
+                "port": s.port,
+                "status": s.status.to_string(),
+                "memory": s.memory
+            })
+        }).collect();
+
+        let active_server_data = server_id.and_then(|id| {
+            servers.iter().find(|s| s.id == id).map(|s| {
+                serde_json::json!({
+                    "id": s.id.as_u32(),
+                    "protocol_name": s.protocol_name,
+                    "port": s.port,
+                    "status": s.status.to_string(),
+                    "memory": s.memory
+                })
+            })
+        });
+
+        // Build template data
+        let data = TemplateDataBuilder::new()
+            .field("conversation_history", &conversation_history)
+            .field("instructions", instructions)
+            .field("tool_actions", &tool_actions)
+            .field("regular_actions", &regular_actions)
+            .field("include_base_stacks", include_base_stacks)
+            .field("include_disabled_protocols", include_disabled)
+            .field("scripting_enabled", has_scripting)
+            .field("selected_scripting_mode", selected_mode.as_str())
+            .field("mode", state.get_mode().await.as_str())
+            .field("servers", &servers_data)
+            .optional_field("active_server", active_server_data)
+            .field("tool_examples", if state.get_web_search_mode().await != crate::state::app_state::WebSearchMode::Off {
+                "`read_file` and `web_search`"
+            } else {
+                "`read_file`"
+            })
+            .field("base_stack_docs", Self::build_base_stack_docs_section(include_disabled))
+            .field("current_state", Self::build_current_state_section(state, server_id).await)
+            .field("scripting_environment", selected_mode.as_str())
+            .build();
+
+        // Pre-compute current state for fallback (async call can't be in closure)
+        let current_state_str = Self::build_current_state_section(state, server_id).await;
+
+        // Try template, fall back to hardcoded
+        Self::try_template_prompt(template_name, data, || {
+            // Fallback to hardcoded prompt building
+            let role = Self::build_role_section();
+            let current_state = current_state_str.clone();
+            let instructions_section = Self::build_instructions_section(instructions);
+            let actions_section = Self::build_actions_section(&filtered_actions);
+
+            let base_stack_docs = if include_base_stacks {
+                Self::build_base_stack_docs_section(include_disabled)
+            } else {
+                String::new()
+            };
+
+            let scripting_section = if include_base_stacks && has_scripting {
+                Self::build_scripting_section(selected_mode)
+            } else {
+                String::new()
+            };
+
+            let response_format = Self::build_response_format_section();
+            let history_section = if let Some(history) = &conversation_history {
+                format!("# Conversation History\n\n{}\n\n", history)
+            } else {
+                String::new()
+            };
+
+            format!(
+                "{}{}{}{}{}{}{}{}",
+                role,
+                history_section,
+                instructions_section,
+                actions_section,
+                base_stack_docs,
+                scripting_section,
+                response_format,
+                current_state
+            )
+        })
     }
 
     /// Build system prompt for user input using new action system

@@ -1,0 +1,23 @@
+{{> shared::role }}
+
+{{#if conversation_history}}
+# Conversation History
+
+{{{conversation_history}}}
+
+{{/if}}
+{{> user_input::instructions }}
+
+{{> shared::actions available_actions=available_actions }}
+
+{{#if include_base_stacks}}
+{{> shared::base_stack_docs include_disabled=include_disabled_protocols }}
+
+{{/if}}
+{{#if scripting_enabled}}
+{{> shared::scripting selected_mode=selected_scripting_mode }}
+
+{{/if}}
+{{> shared::response_format }}
+
+{{> shared::current_state state=current_state servers=servers mode=mode }}
