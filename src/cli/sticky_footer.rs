@@ -359,26 +359,44 @@ impl StickyFooter {
         // We clear from the start of output area to the bottom to ensure all artifacts are removed
         let width_changed = self.terminal_width != self.last_terminal_width;
 
+        debug!(
+            "Render: width_changed={}, terminal_width={}, last_terminal_width={}, scroll_region_height={}, terminal_height={}, footer_height={}",
+            width_changed, self.terminal_width, self.last_terminal_width,
+            self.scroll_region_height, self.terminal_height, footer_height
+        );
+
         if width_changed {
-            // When width changes, clear everything from the scroll region boundary down to bottom
-            // The scroll region is calculated to end where the footer should start, so this clears:
-            // - The new footer area (where we'll render)
-            // - Any wrapped crumbles from the old footer
-            // - Without touching the scroll output above
-            let clear_start = self.scroll_region_height;
+            // Calculate how much wrapping could have occurred based on width ratio
+            // If width shrunk from 292 to 146 (50%), each line could wrap into 2 lines
+            // So a 4-line footer could become 8 lines
+            let width_ratio = if self.terminal_width > 0 {
+                self.last_terminal_width as f32 / self.terminal_width as f32
+            } else {
+                1.0
+            };
+
+            // Estimate how many lines the old footer took up after wrapping
+            // Use last_footer_height (from before width change) and multiply by ratio
+            let estimated_wrapped_lines = (self.last_footer_height as f32 * width_ratio).ceil() as u16;
+
+            // Clear from terminal bottom up by this estimated amount
+            let clear_start = self.terminal_height.saturating_sub(estimated_wrapped_lines);
 
             debug!(
-                "Width changed: {} -> {}, clearing from scroll_region line {} down to bottom",
-                self.last_terminal_width, self.terminal_width, clear_start
+                "CLEARING: Width changed {} -> {}, ratio {:.2}, clearing from line {} down (terminal_height={}, old_footer={}, estimated_wrapped={})",
+                self.last_terminal_width, self.terminal_width, width_ratio, clear_start,
+                self.terminal_height, self.last_footer_height, estimated_wrapped_lines
             );
 
-            // Move to the scroll region boundary and clear everything below
+            // Clear from the estimated start position down to bottom
             execute!(
                 stdout,
                 cursor::MoveTo(0, clear_start),
                 Clear(ClearType::FromCursorDown),
             )?;
             stdout.flush()?;
+
+            debug!("Clear complete");
         } else {
             // Normal case: clear max of old and new footer heights line by line
             let height_to_clear = footer_height.max(self.last_footer_height);
