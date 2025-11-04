@@ -119,6 +119,18 @@ fn test_parse_nfs_stack() {
 }
 
 #[test]
+#[cfg(feature = "sip")]
+fn test_parse_sip_all_keywords() {
+    // Test that ALL keywords defined by SIP protocol are recognized
+    // This verifies that parse_from_str checks all keywords, not just hardcoded ones
+    assert_eq!(registry().parse_from_str("sip"), Some("SIP".to_string()));
+    assert_eq!(registry().parse_from_str("voip"), Some("SIP".to_string()));
+    assert_eq!(registry().parse_from_str("session initiation"), Some("SIP".to_string()));
+    assert_eq!(registry().parse_from_str("SIP server"), Some("SIP".to_string()));
+    assert_eq!(registry().parse_from_str("VoIP server"), Some("SIP".to_string()));
+}
+
+#[test]
 fn test_no_keyword_overlaps() {
     // This test verifies that the registry initialization succeeds without panicking.
     // The validate_keyword_uniqueness() function is called during registry creation,

@@ -13,6 +13,7 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
+use tracing::debug;
 use tokio::sync::oneshot;
 
 use crate::state::app_state::{ConversationInfo, WebApprovalResponse, WebSearchMode};
@@ -88,6 +89,10 @@ pub struct StickyFooter {
     blank_lines_buffer: u16,
     /// Track last footer height to clear properly when shrinking
     last_footer_height: u16,
+    /// Track last terminal width to detect resize and clear extra lines
+    last_terminal_width: u16,
+    /// Track last scroll region height to clear from old position after resize
+    last_scroll_region_height: u16,
     /// Pending web approval request (if any)
     pub pending_approval: Option<PendingApproval>,
     /// System capabilities (for privilege warnings in status bar)
@@ -116,6 +121,8 @@ impl StickyFooter {
             custom_status: None,
             blank_lines_buffer: 0,
             last_footer_height: 0,
+            last_terminal_width: width,
+            last_scroll_region_height: height.saturating_sub(10),
             pending_approval: None,
             system_capabilities,
             palette,
@@ -198,6 +205,10 @@ impl StickyFooter {
 
     /// Handle terminal resize
     pub fn handle_resize(&mut self, width: u16, height: u16) {
+        // Save the old scroll region height BEFORE recalculating
+        // (This is needed for clearing wrapped content on resize)
+        self.last_scroll_region_height = self.scroll_region_height;
+
         self.terminal_width = width;
         self.terminal_height = height;
         self.recalculate_scroll_region();
@@ -344,29 +355,58 @@ impl StickyFooter {
         }
 
         // Clear footer area - use max of old and new height to clear remnants when shrinking
-        let height_to_clear = footer_height.max(self.last_footer_height);
-        let clear_start = self.terminal_height.saturating_sub(height_to_clear);
+        // If width changed (resize), the old footer may have wrapped into many more lines
+        // We clear from the start of output area to the bottom to ensure all artifacts are removed
+        let width_changed = self.terminal_width != self.last_terminal_width;
 
-        for line_offset in 0..height_to_clear {
+        if width_changed {
+            // When width changes, clear everything from the scroll region boundary down to bottom
+            // The scroll region is calculated to end where the footer should start, so this clears:
+            // - The new footer area (where we'll render)
+            // - Any wrapped crumbles from the old footer
+            // - Without touching the scroll output above
+            let clear_start = self.scroll_region_height;
+
+            debug!(
+                "Width changed: {} -> {}, clearing from scroll_region line {} down to bottom",
+                self.last_terminal_width, self.terminal_width, clear_start
+            );
+
+            // Move to the scroll region boundary and clear everything below
             execute!(
                 stdout,
-                cursor::MoveTo(0, clear_start + line_offset),
-                Clear(ClearType::CurrentLine),
+                cursor::MoveTo(0, clear_start),
+                Clear(ClearType::FromCursorDown),
             )?;
+            stdout.flush()?;
+        } else {
+            // Normal case: clear max of old and new footer heights line by line
+            let height_to_clear = footer_height.max(self.last_footer_height);
+            let clear_start = self.terminal_height.saturating_sub(height_to_clear);
+
+            for line_offset in 0..height_to_clear {
+                execute!(
+                    stdout,
+                    cursor::MoveTo(0, clear_start + line_offset),
+                    Clear(ClearType::CurrentLine),
+                )?;
+            }
         }
 
-        // Update tracked height for next render
+        // Update tracked dimensions for next render
         self.last_footer_height = footer_height;
+        self.last_terminal_width = self.terminal_width;
+        self.last_scroll_region_height = self.scroll_region_height;
 
         // Calculate fixed positions from bottom up
-        // Input, separators, and status bar stay in fixed positions
+        // Status bar and input box (with borders) stay in fixed positions
         let status_line = self.terminal_height - 1;
-        let separator_before_status = status_line - 1;
+        let input_box_bottom_line = status_line - 1;
         let input_lines = self.calculate_input_lines();
-        let input_start = separator_before_status - input_lines;
-        let separator_before_input = input_start - 1;
+        let input_start = input_box_bottom_line - input_lines; // First line inside input box
+        let input_box_top_line = input_start - 1; // Top border of input box (connects to content columns)
 
-        // Content is positioned above the input separator
+        // Content is positioned directly above the input box top border (no separator)
         let content_lines = match &self.content {
             FooterContent::Normal {
                 servers,
@@ -379,9 +419,9 @@ impl StickyFooter {
             }
         };
 
-        // If we have content, render it without separator above
+        // If we have content, render it directly above the input box
         if content_lines > 0 {
-            let content_start = separator_before_input - content_lines;
+            let content_start = input_box_top_line - content_lines;
 
             // Render content
             match &self.content {
@@ -400,29 +440,27 @@ impl StickyFooter {
             };
         }
 
-        // Render separator before input (always present) with ┴ joins for columns
-        self.render_separator_with_joins(
-            stdout,
-            separator_before_input,
-            &self.content,
-        )?;
-
-        // Render input or approval prompt (fixed position)
-        if let Some(ref approval) = self.pending_approval {
-            // Render approval prompt instead of input
-            self.render_approval_prompt(stdout, input_start, &approval.url)?;
-            // Hide cursor during approval
-            execute!(stdout, cursor::Hide)?;
+        // Render top border of input box (with column connections if we have content)
+        if content_lines > 0 {
+            self.render_input_box_top_with_columns(stdout, input_box_top_line, &self.content)?;
         } else {
-            // Render normal input
-            self.render_input(stdout, input_start)?;
-            // Position cursor in input field and show it
-            self.position_cursor(stdout)?;
-            execute!(stdout, cursor::Show)?;
+            self.render_input_box_top(stdout, input_box_top_line)?;
         }
 
-        // Render separator before status bar (always present)
-        self.render_separator(stdout, separator_before_status)?;
+        // Render input or approval prompt (fixed position)
+        let input_end_line = if let Some(ref approval) = self.pending_approval {
+            // Render approval prompt instead of input
+            let line = self.render_approval_prompt(stdout, input_start, &approval.url)?;
+            // Hide cursor during approval
+            execute!(stdout, cursor::Hide)?;
+            line
+        } else {
+            // Render normal input
+            self.render_input(stdout, input_start)?
+        };
+
+        // Render bottom border of input box
+        self.render_input_box_bottom(stdout, input_end_line)?;
 
         // Render status bar (fixed position)
         self.render_status_bar(stdout, status_line)?;
@@ -435,21 +473,26 @@ impl StickyFooter {
     pub fn render_input_only(&mut self, stdout: &mut impl Write) -> Result<()> {
         // Calculate fixed positions from bottom up (same as render())
         let status_line = self.terminal_height - 1;
-        let separator_before_status = status_line - 1;
+        let input_box_bottom_line = status_line - 1;
         let input_lines = self.calculate_input_lines();
-        let input_start = separator_before_status - input_lines;
+        let input_box_borders = 2;
+        let input_start = input_box_bottom_line - input_lines;
+        let input_box_top_line = input_start - 1;
 
-        // Clear input area
-        for line_offset in 0..input_lines {
+        // Clear input box area (including borders)
+        for line_offset in 0..(input_lines + input_box_borders) {
             execute!(
                 stdout,
-                cursor::MoveTo(0, input_start + line_offset),
+                cursor::MoveTo(0, input_box_top_line + line_offset),
                 Clear(ClearType::CurrentLine),
             )?;
         }
 
+        // Render top border of input box
+        self.render_input_box_top(stdout, input_box_top_line)?;
+
         // Render input or approval prompt and get the next line number
-        let next_line = if let Some(ref approval) = self.pending_approval {
+        let input_end_line = if let Some(ref approval) = self.pending_approval {
             // Render approval prompt
             let result = self.render_approval_prompt(stdout, input_start, &approval.url)?;
             execute!(stdout, cursor::Hide)?;
@@ -459,21 +502,16 @@ impl StickyFooter {
             self.render_input(stdout, input_start)?
         };
 
-        // Clear and render separator before status bar
-        execute!(
-            stdout,
-            cursor::MoveTo(0, next_line),
-            Clear(ClearType::CurrentLine),
-        )?;
-        let separator_line = self.render_separator(stdout, next_line)?;
+        // Render bottom border of input box
+        self.render_input_box_bottom(stdout, input_end_line)?;
 
-        // Clear and render status bar
+        // Clear and render status bar (directly below input box bottom border)
         execute!(
             stdout,
-            cursor::MoveTo(0, separator_line),
+            cursor::MoveTo(0, status_line),
             Clear(ClearType::CurrentLine),
         )?;
-        self.render_status_bar(stdout, separator_line)?;
+        self.render_status_bar(stdout, status_line)?;
 
         // Position cursor (only if not in approval mode)
         if self.pending_approval.is_none() {
@@ -500,18 +538,19 @@ impl StickyFooter {
         };
 
         let input_lines = self.calculate_input_lines();
+        let input_box_borders = 2; // Top and bottom borders of input box
         let status_lines = 1;
 
         // Add separator lines based on content type:
-        // - Normal mode (servers/inputs): 2 separators (one above input, one above status) - no separator above content
-        // - SlashCommands mode: 3 separators (one above content, one above input, one above status)
-        // - No content: 2 separators (one above input, one above status)
+        // - Normal mode (servers/inputs): 0 separators (columns connect directly to input box top border)
+        // - SlashCommands mode: 2 separators (one above content, one between content and input box)
+        // - No content: 0 separators
         let separator_lines = match &self.content {
-            FooterContent::Normal { .. } if content_lines > 0 => 2,
-            FooterContent::SlashCommands { .. } if content_lines > 0 => 3,
-            _ => 2,
+            FooterContent::Normal { .. } if content_lines > 0 => 0,
+            FooterContent::SlashCommands { .. } if content_lines > 0 => 2,
+            _ => 0,
         };
-        content_lines + separator_lines + input_lines + status_lines
+        content_lines + separator_lines + input_box_borders + input_lines + status_lines
     }
 
     /// Render normal content (two-column layout with floating headers)
@@ -556,6 +595,21 @@ impl StickyFooter {
                 let server_conns: Vec<_> = connections.iter().filter(|c| c.server_id == server.id).collect();
                 let max_to_show = if expand_all { server_conns.len() } else { 10.min(server_conns.len()) };
                 servers_height += max_to_show as u16;
+
+                // Add conversation sub-items for each connection
+                for conn in server_conns.iter().take(max_to_show) {
+                    let conn_convs: Vec<_> = conversations
+                        .iter()
+                        .filter(|conv| {
+                            matches!(&conv.source,
+                                crate::state::app_state::ConversationSource::Network { server_id, connection_id }
+                                if server_id.as_u32().to_string() == server.id && connection_id.map(|id| id.to_string()) == Some(conn.id.to_string())
+                            )
+                        })
+                        .collect();
+                    servers_height += conn_convs.len() as u16;
+                }
+
                 if !expand_all && server_conns.len() > 10 {
                     servers_height += 1;
                 }
@@ -801,24 +855,33 @@ impl StickyFooter {
         Ok(line + 1)
     }
 
-    /// Render a separator line with ┴ join characters at column positions
-    fn render_separator_with_joins(
-        &self,
-        stdout: &mut impl Write,
-        line: u16,
-        content: &FooterContent,
-    ) -> Result<u16> {
-        // First render the base separator line
-        let separator = "─".repeat(self.terminal_width as usize);
+    /// Render top border of input box (┌─────┐)
+    fn render_input_box_top(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
         execute!(
             stdout,
             cursor::MoveTo(0, line),
             SetForegroundColor(self.palette.separator),
-            Print(&separator),
+            Print("┌"),
+            Print("─".repeat((self.terminal_width - 2) as usize)),
+            Print("┐"),
             ResetColor,
         )?;
+        Ok(line + 1)
+    }
 
-        // Add ┴ characters at column positions for Normal content
+    /// Render top border of input box with column connections (┌──┴──┐)
+    fn render_input_box_top_with_columns(&self, stdout: &mut impl Write, line: u16, content: &FooterContent) -> Result<u16> {
+        // Start with the left corner
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line),
+            SetForegroundColor(self.palette.separator),
+            Print("┌"),
+        )?;
+
+        // Determine where to place ┴ join characters based on content type
+        let mut join_positions = Vec::new();
+
         if let FooterContent::Normal { servers, conversations, .. } = content {
             // Filter conversations for inputs column
             let input_convs: Vec<_> = conversations
@@ -828,32 +891,52 @@ impl StickyFooter {
 
             // Add ┴ at inputs column position if inputs exist
             if !input_convs.is_empty() {
-                execute!(
-                    stdout,
-                    cursor::MoveTo(INPUTS_LEFT_MARGIN, line),
-                    SetForegroundColor(self.palette.separator),
-                    Print("┴"),
-                    ResetColor,
-                )?;
+                join_positions.push(INPUTS_LEFT_MARGIN);
             }
 
             // Add ┴ at servers column position if servers exist
             if !servers.is_empty() {
                 let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
-                execute!(
-                    stdout,
-                    cursor::MoveTo(servers_column_start, line),
-                    SetForegroundColor(self.palette.separator),
-                    Print("┴"),
-                    ResetColor,
-                )?;
+                join_positions.push(servers_column_start);
             }
         }
+
+        // Draw the horizontal line with joins
+        for col in 1..(self.terminal_width - 1) {
+            if join_positions.contains(&col) {
+                execute!(stdout, cursor::MoveTo(col, line), Print("┴"))?;
+            } else {
+                execute!(stdout, cursor::MoveTo(col, line), Print("─"))?;
+            }
+        }
+
+        // End with the right corner
+        execute!(
+            stdout,
+            cursor::MoveTo(self.terminal_width - 1, line),
+            Print("┐"),
+            ResetColor,
+        )?;
 
         Ok(line + 1)
     }
 
-    /// Render input field
+    /// Render bottom border of input box (└─────┘)
+    fn render_input_box_bottom(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line),
+            SetForegroundColor(self.palette.separator),
+            Print("└"),
+            Print("─".repeat((self.terminal_width - 2) as usize)),
+            Print("┘"),
+            ResetColor,
+        )?;
+        Ok(line + 1)
+    }
+
+
+    /// Render input field with rectangular box
     fn render_input(&self, stdout: &mut impl Write, start_line: u16) -> Result<u16> {
         let mut current_line = start_line;
 
@@ -865,12 +948,43 @@ impl StickyFooter {
                 break;
             }
 
+            // Left border with green color
+            execute!(
+                stdout,
+                cursor::MoveTo(0, current_line),
+                SetForegroundColor(self.palette.separator),
+                Print("│ "),
+                ResetColor
+            )?;
+
+            // Add prefix and content
             let prefix = if idx == 0 { "> " } else { "  " };
             let text_with_prefix = format!("{}{}", prefix, line);
 
             let wrapped = self.wrap_text(&text_with_prefix);
             for wrapped_line in wrapped {
-                execute!(stdout, cursor::MoveTo(0, current_line), Print(&wrapped_line))?;
+                // Print the wrapped line content
+                execute!(stdout, Print(&wrapped_line))?;
+
+                // Calculate padding needed to reach right border
+                let content_width = wrapped_line.chars().count();
+                let available_width = (self.terminal_width - 4) as usize; // -4 for "│ " on left and " │" on right
+                let padding = if content_width < available_width {
+                    available_width - content_width
+                } else {
+                    0
+                };
+
+                // Right border with padding and green color
+                execute!(
+                    stdout,
+                    Print(" ".repeat(padding)),
+                    Print(" "),
+                    SetForegroundColor(self.palette.separator),
+                    Print("│"),
+                    ResetColor
+                )?;
+
                 current_line += 1;
             }
         }
@@ -966,13 +1080,13 @@ impl StickyFooter {
     fn position_cursor(&self, stdout: &mut impl Write) -> Result<()> {
         let (cursor_row, cursor_col) = self.input.cursor_position();
 
-        // Calculate visual position considering wrapping and "> " prefix
+        // Calculate visual position considering wrapping, box borders, and "> " prefix
         let input_start_line = self.terminal_height
             - self.calculate_input_lines()
-            - 2; // -2 for separator + status bar
+            - 4; // -4 for input_box_bottom, separator before status, status bar, and we're inside the box
 
         let mut visual_row = input_start_line;
-        let mut visual_col = 0;
+        let mut visual_col = 2; // Start at column 2 to account for "│ " left border
 
         let input_lines = self.input.lines();
 
@@ -987,7 +1101,7 @@ impl StickyFooter {
             } else if idx == cursor_row {
                 // Handle empty input as a special case - cursor goes right after prefix
                 if line.is_empty() && cursor_col == 0 {
-                    visual_col = prefix.len() as u16;
+                    visual_col += prefix.len() as u16;
                     break;
                 }
 
@@ -1000,7 +1114,7 @@ impl StickyFooter {
 
                 // Handle case where wrapped is empty
                 if wrapped.is_empty() {
-                    visual_col = prefix.len() as u16;
+                    visual_col += prefix.len() as u16;
                 } else {
                     let mut char_count = 0;
                     let mut found = false;
@@ -1008,7 +1122,7 @@ impl StickyFooter {
                         let line_end = char_count + wrapped_line.len();
                         if cursor_in_line <= line_end {
                             visual_row += wrap_idx as u16;
-                            visual_col = (cursor_in_line - char_count) as u16;
+                            visual_col += (cursor_in_line - char_count) as u16;
                             found = true;
                             break;
                         }
@@ -1018,14 +1132,14 @@ impl StickyFooter {
                     // Fallback: if cursor position wasn't found in wrapped lines,
                     // place it at the end of the last line or after prefix
                     if !found {
-                        visual_col = prefix.len() as u16;
+                        visual_col += prefix.len() as u16;
                     }
                 }
                 break;
             }
         }
 
-        execute!(stdout, cursor::MoveTo(visual_col as u16, visual_row))?;
+        execute!(stdout, cursor::MoveTo(visual_col, visual_row))?;
         Ok(())
     }
 
