@@ -212,6 +212,8 @@ struct AppStateInner {
     tasks: HashMap<TaskId, ScheduledTask>,
     /// Next task ID to assign
     next_task_id: u64,
+    /// Conversation state for User Input Agent
+    user_conversation_state: Option<Arc<std::sync::Mutex<crate::llm::ConversationState>>>,
     /// Task name to ID mapping (for user-friendly task_id strings)
     task_names: HashMap<String, TaskId>,
     /// System capabilities detected at startup
@@ -255,6 +257,7 @@ impl AppState {
                 instance_id,
                 tasks: HashMap::new(),
                 next_task_id: 1,
+                user_conversation_state: None,
                 task_names: HashMap::new(),
                 system_capabilities,
                 conversations: Vec::new(),
@@ -1313,6 +1316,44 @@ impl AppState {
             // Or if ended less than 1 second ago
             conv.end_time.map(|end| now.duration_since(end).as_secs() < 1).unwrap_or(false)
         });
+    }
+
+    /// Get or create the user conversation state
+    pub async fn get_or_create_user_conversation_state(&self) -> Arc<std::sync::Mutex<crate::llm::ConversationState>> {
+        let mut inner = self.inner.write().await;
+
+        if inner.user_conversation_state.is_none() {
+            // Create with default 50k character limit for conversation history
+            let conversation_state = Arc::new(std::sync::Mutex::new(
+                crate::llm::ConversationState::new(50000)
+            ));
+            inner.user_conversation_state = Some(conversation_state.clone());
+        }
+
+        inner.user_conversation_state.as_ref().unwrap().clone()
+    }
+
+    /// Clear user conversation history
+    pub async fn clear_user_conversation_history(&self) {
+        let inner = self.inner.read().await;
+        if let Some(conversation_state) = &inner.user_conversation_state {
+            if let Ok(mut state) = conversation_state.lock() {
+                state.clear_history();
+            }
+        }
+    }
+
+    /// Get formatted conversation history for prompts
+    pub async fn get_user_conversation_history(&self) -> Option<String> {
+        let inner = self.inner.read().await;
+        if let Some(conversation_state) = &inner.user_conversation_state {
+            if let Ok(state) = conversation_state.lock() {
+                if !state.is_empty() {
+                    return Some(state.get_history_for_prompt());
+                }
+            }
+        }
+        None
     }
 }
 

@@ -7,10 +7,11 @@
 //! 4. Works for both user input and network events
 
 use crate::llm::actions::{execute_tool, ActionDefinition, ActionResponse, ToolAction, ToolResult};
+use crate::llm::conversation_state::ConversationState;
 use crate::llm::ollama_client::{Message, OllamaClient};
 use crate::state::app_state::{AppState, ConversationSource, WebApprovalRequest, WebSearchMode};
 use anyhow::{Context, Result};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
 /// Conversation handler for multi-turn LLM interactions
@@ -20,6 +21,9 @@ pub struct ConversationHandler {
 
     /// Conversation messages (system, user, assistant, tool)
     messages: Vec<Message>,
+
+    /// Conversation state for history tracking with token limits
+    conversation_state: Arc<Mutex<ConversationState>>,
 
     /// Ollama client for chat API calls
     client: Arc<OllamaClient>,
@@ -60,9 +64,14 @@ impl ConversationHandler {
         // Generate unique conversation ID using timestamp and random bytes
         let conversation_id = Self::generate_conversation_id();
 
+        // Create conversation state with default token limit (8000 characters)
+        // This can be made configurable later
+        let conversation_state = Arc::new(Mutex::new(ConversationState::new(8000)));
+
         Self {
             conversation_id,
             messages,
+            conversation_state,
             client,
             model,
             max_retries: 1,
@@ -90,6 +99,12 @@ impl ConversationHandler {
     /// Set the status channel for user-visible logs
     pub fn with_status_tx(mut self, tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
         self.status_tx = Some(tx);
+        self
+    }
+
+    /// Set an existing conversation state
+    pub fn with_conversation_state(mut self, state: Arc<Mutex<ConversationState>>) -> Self {
+        self.conversation_state = state;
         self
     }
 
@@ -192,6 +207,11 @@ impl ConversationHandler {
 
     /// Add a user message to the conversation
     pub fn add_user_message(&mut self, content: String) {
+        // Track in conversation state
+        if let Ok(mut state) = self.conversation_state.lock() {
+            state.add_user_input(content.clone());
+        }
+
         self.messages.push(Message::user(content));
     }
 
@@ -301,6 +321,16 @@ impl ConversationHandler {
                 match ToolAction::from_json(&tool_json) {
                     Ok(tool_action) => {
                         info!("→ Executing tool: {}", tool_action.describe());
+
+                        // Track tool call in conversation state
+                        if let Ok(mut state) = self.conversation_state.lock() {
+                            let tool_name = match &tool_action {
+                                ToolAction::ReadFile { .. } => "read_file",
+                                ToolAction::WebSearch { .. } => "web_search",
+                                ToolAction::ReadBaseStackDocs { .. } => "read_base_stack_docs",
+                            };
+                            state.add_tool_call(tool_name.to_string(), tool_action.describe());
+                        }
 
                         // Check if this is read_base_stack_docs tool
                         let is_read_docs = matches!(tool_action, ToolAction::ReadBaseStackDocs { .. });
@@ -502,8 +532,16 @@ impl ConversationHandler {
 
             // Try to parse as ActionResponse (use normalized version for better compatibility)
             match ActionResponse::from_str(&normalized_response) {
-                Ok(_) => {
+                Ok(action_response) => {
                     // Valid response!
+                    // Track in conversation state
+                    if let Ok(mut state) = self.conversation_state.lock() {
+                        state.add_llm_response(
+                            normalized_response.clone(),
+                            Some(serde_json::json!(action_response)),
+                        );
+                    }
+
                     if attempt > 1 {
                         info!(
                             "✓ Retry successful! LLM provided valid format on attempt {}",
@@ -552,6 +590,11 @@ impl ConversationHandler {
                         self.messages
                             .push(Message::assistant(normalized_response.clone()));
 
+                        // Track invalid response in conversation state
+                        if let Ok(mut state) = self.conversation_state.lock() {
+                            state.add_llm_response(normalized_response.clone(), None);
+                        }
+
                         // Build corrective user message using minimal retry prompt
                         let correction =
                             crate::llm::prompt::PromptBuilder::build_retry_prompt(&e.to_string());
@@ -563,6 +606,12 @@ impl ConversationHandler {
                                 &correction
                             }
                         );
+
+                        // Track retry instruction in conversation state
+                        if let Ok(mut state) = self.conversation_state.lock() {
+                            state.add_retry_instruction(correction.clone());
+                        }
+
                         self.messages.push(Message::user(correction));
 
                         info!(

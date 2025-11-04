@@ -6,6 +6,7 @@
 pub mod action_helper;
 pub mod actions; // Centralized helper for LLM calls
 pub mod conversation; // Conversation-based LLM interaction
+pub mod conversation_state; // Conversation history management
 
 // Old modules
 pub mod client;
@@ -42,6 +43,9 @@ pub use response_handler::{handle_llm_response, ProcessedResponse};
 
 // Conversation handler
 pub use conversation::ConversationHandler;
+
+// Conversation state management
+pub use conversation_state::{ConversationState, ConversationMessage, MessageRole, MessageType};
 
 // Message type from ollama_client module
 pub use ollama_client::Message;

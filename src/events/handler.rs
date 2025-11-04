@@ -193,10 +193,14 @@ impl EventHandler {
         let web_search_mode = self.state.get_web_search_mode().await;
         let approval_tx = self.state.get_web_approval_channel().await;
 
+        // Get conversation history from persistent state
+        let conversation_history = self.state.get_user_conversation_history().await;
+
         // Build system prompt (without user input - that's added as a message)
         let system_prompt = PromptBuilder::build_user_input_system_prompt(
             &self.state,
             protocol_async_actions.clone(),
+            conversation_history,
         )
         .await;
 
@@ -216,6 +220,9 @@ impl EventHandler {
             format!("LLM \"{}\"", input)
         };
 
+        // Get or create persistent conversation state
+        let conversation_state = self.state.get_or_create_user_conversation_state().await;
+
         let mut conversation = ConversationHandler::new(
             system_prompt,
             std::sync::Arc::new(llm_with_status),
@@ -226,7 +233,8 @@ impl EventHandler {
             self.state.clone(),
             crate::state::app_state::ConversationSource::User,
             truncated_input,
-        );
+        )
+        .with_conversation_state(conversation_state);
 
         // Add user input as a separate user message
         conversation.add_user_message(input.clone());
