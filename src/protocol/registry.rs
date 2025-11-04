@@ -376,58 +376,43 @@ impl ProtocolRegistry {
         // Try keyword matching with priority ordering
         // More specific protocols checked first to avoid substring collisions
 
-        // Priority 1: Check SSH first (specific)
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["ssh"]) {
+        // Priority 1: Check mDNS before DNS (avoid substring match)
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "mDNS") {
             return Some(stack);
         }
 
-        // Priority 2: Check mDNS before DNS (avoid substring match)
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["mdns", "bonjour", "dns-sd", "zeroconf"]) {
+        // Priority 2: Check IMAP before SMTP (more specific for mail/email)
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "IMAP") {
             return Some(stack);
         }
 
-        // Priority 3: Check DNS
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["dns"]) {
+        // Priority 3: Check PostgreSQL before MySQL (avoid "sql" substring)
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "PostgreSQL") {
             return Some(stack);
         }
 
-        // Priority 4: Check IMAP before SMTP (more specific for mail/email)
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["imap"]) {
+        // Priority 4: Check XML-RPC and JSON-RPC before HTTP (avoid "http" substring in stack names)
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "XmlRPC") {
+            return Some(stack);
+        }
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "JsonRPC") {
             return Some(stack);
         }
 
-        // Priority 5: Check SMTP
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["smtp", "mail", "email"]) {
+        // Priority 5: Check Proxy before HTTP (avoid "http" substring in "http proxy")
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "Proxy") {
             return Some(stack);
         }
 
-        // Priority 6: Check PostgreSQL before MySQL (avoid "sql" substring)
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["postgres", "psql"]) {
+        // Priority 6: Check Tor protocols before TCP fallback
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "TorDirectory") {
+            return Some(stack);
+        }
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "TorRelay") {
             return Some(stack);
         }
 
-        // Priority 7: Check XML-RPC and JSON-RPC before HTTP (avoid "http" substring in stack names)
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["xmlrpc", "xml-rpc", "xml rpc"]) {
-            return Some(stack);
-        }
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["jsonrpc", "json-rpc", "json rpc"]) {
-            return Some(stack);
-        }
-
-        // Priority 8: Check Proxy before HTTP (avoid "http" substring in "http proxy")
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["proxy", "mitm"]) {
-            return Some(stack);
-        }
-
-        // Priority 9: Check Tor protocols before TCP fallback
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["tor_directory", "tor-directory", "directory authority", "tordirectory"]) {
-            return Some(stack);
-        }
-        if let Some(stack) = self.try_keyword_match(&input_lower, &["tor_relay", "tor-relay", "onion router", "torrelay"]) {
-            return Some(stack);
-        }
-
-        // For all other protocols, check keywords in registration order
+        // For all other protocols, check ALL keywords from each protocol
         for (protocol_name, protocol) in &self.protocols {
             for keyword in protocol.keywords() {
                 if input_lower.contains(&keyword.to_lowercase()) {
@@ -449,15 +434,15 @@ impl ProtocolRegistry {
         None
     }
 
-    /// Try to match any of the given keywords in the input
-    fn try_keyword_match(&self, input_lower: &str, keywords: &[&str]) -> Option<String> {
-        for keyword in keywords {
-            if input_lower.contains(keyword) {
-                // Find which protocol has this keyword
-                for (protocol_name, protocol) in &self.protocols {
-                    if protocol.keywords().contains(keyword) {
-                        return Some(protocol_name.clone());
-                    }
+    /// Match a specific protocol by checking if input contains ANY of its keywords
+    ///
+    /// This method checks ALL keywords defined by the protocol, not just a hardcoded subset.
+    /// Returns the protocol name if any keyword matches.
+    fn match_protocol_by_any_keyword(&self, input_lower: &str, protocol_name: &str) -> Option<String> {
+        if let Some(protocol) = self.protocols.get(protocol_name) {
+            for keyword in protocol.keywords() {
+                if input_lower.contains(&keyword.to_lowercase()) {
+                    return Some(protocol_name.to_string());
                 }
             }
         }

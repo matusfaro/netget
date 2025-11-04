@@ -160,6 +160,10 @@ pub async fn run_rolling_tui(
     // Counter for test heartbeats
     let mut heartbeat_counter = 0u64;
 
+    // Resize debouncing - store pending resize dimensions
+    let mut pending_resize: Option<(u16, u16)> = None;
+    const RESIZE_DEBOUNCE_MS: u64 = 100; // Wait 100ms after last resize before rendering
+
     // Main event loop
     info!("Entering main event loop");
 
@@ -203,9 +207,23 @@ pub async fn run_rolling_tui(
         }
 
         tokio::select! {
+            // Debounce timer for resize events
+            _ = tokio::time::sleep(Duration::from_millis(RESIZE_DEBOUNCE_MS)), if pending_resize.is_some() => {
+                // Debounce period has passed, apply the resize
+                if let Some((width, height)) = pending_resize {
+                    footer.handle_resize(width, height);
+                    update_ui_from_state(&mut app, &state, &mut footer).await;
+                    footer.render(&mut stdout())?;
+                    pending_resize = None;
+                }
+            }
             // Keyboard events
             maybe_event = event_stream.next() => {
                 match maybe_event {
+                    Some(Ok(Event::Resize(width, height))) => {
+                        // Store the resize event but don't render yet - wait for debounce
+                        pending_resize = Some((width, height));
+                    }
                     Some(Ok(event)) => {
                         if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer, settings.clone(), palette.clone()).await? {
                             info!("Quit requested by user");
@@ -749,11 +767,6 @@ async fn handle_event(
     match event {
         Event::Key(key) => {
             handle_key_event(key.code, key.modifiers, app, state, event_handler, status_tx, footer, settings, palette).await
-        }
-        Event::Resize(width, height) => {
-            footer.handle_resize(width, height);
-            footer.render(&mut stdout())?;
-            Ok(false)
         }
         _ => Ok(false),
     }

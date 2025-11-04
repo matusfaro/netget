@@ -16,17 +16,6 @@ You control these servers by returning JSON responses containing **actions**. Ea
 
 Your responses are parsed and executed immediately - you directly control the network behavior.
 
-# Current State
-
-## Running Servers
-
-- Server #1: **Proxy** on port 8080 (Running)
-
-## System Capabilities
-
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
-
 # Your Task
 
 ## Your Mission
@@ -43,7 +32,6 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 4. **JSON responses only**: Your entire response must be valid JSON: `{"actions": [...]}`
             
-
 
 # Available Tools
 
@@ -85,56 +73,44 @@ Example:
 ```
 # Available Actions
 
-These actions directly control NetGet's behavior. Include them in your JSON response to execute operations.
+Include actions in your JSON response to execute operations.
+You will see past actions you have executed on previous invocation, actions are not idempotent.
+Unless tools are also included, you will not be invoked again if you only return actions
+so you may include multiple actions in a single response.
 
 ## 1. open_server
 
-Start a new server. You must call get_protocol_docs first to understand how to setup server and to get expected structure of startup_params
-
-Parameters:
-- port: number (required) - Port number to listen on
-- base_stack: string (required) - Protocol stack to use. Choose the best stack for the task. Available: Cassandra, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, IMAP, IPP, IRC, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MySQL, NFS, NTP, OpenAI, OpenAPI, PostgreSQL, Proxy, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, STUN, TCP, TURN, Telnet, Tor Directory, Tor Relay, UDP, VNC, WebDAV, WireGuard, XML-RPC, etcd, gRPC, mDNS
-- send_first: boolean (optional) - True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
-- initial_memory: string (optional) - Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
-- instruction: string (required) - Detailed instructions for handling network events
-- startup_params: object (optional) - Optional protocol-specific startup parameters. See protocol documentation for available parameters.
-- scheduled_tasks: array (optional) - Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_runtime, script_inline, script_handles). When script_inline is provided, script_runtime MUST also be specified.
+Start a new server. ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for server configuration.
 
 Example:
 ```json
-{
-  "type": "open_server",
-  "port": 8080,
-  "base_stack": "tcp",
-  "instruction": "Echo server that returns all received data",
-  "startup_params": {},
-  "scheduled_tasks": [
-    {
-      "task_id": "status_report",
-      "recurring": true,
-      "interval_secs": 30,
-      "instruction": "Send status report to all active connections"
-    },
-    {
-      "task_id": "cleanup",
-      "recurring": false,
-      "delay_secs": 3600,
-      "instruction": "Clean up idle connections older than 1 hour"
-    }
-  ]
-}
+{}
 ```
 ## 2. close_server
 
-Stop the current server
+Stop a specific server by ID.
+
+Parameters:
+- server_id: number (required) - Server ID to close (e.g., 1, 2).
 
 Example:
 ```json
 {
-  "type": "close_server"
+  "type": "close_server",
+  "server_id": 1
 }
 ```
-## 3. update_instruction
+## 3. close_all_servers
+
+Stop all running servers.
+
+Example:
+```json
+{
+  "type": "close_all_servers"
+}
+```
+## 4. update_instruction
 
 Update the current server instruction (combines with existing instruction)
 
@@ -148,7 +124,7 @@ Example:
   "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
 }
 ```
-## 4. set_memory
+## 5. set_memory
 
 Replace the entire global memory with new content. Any existing memory is discarded. Use this to reset or completely rewrite memory state.
 
@@ -162,7 +138,7 @@ Example:
   "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
 }
 ```
-## 5. append_memory
+## 6. append_memory
 
 Add new content to the end of global memory. Existing memory is preserved and a newline is automatically added before the new content. Use this to incrementally build up memory state.
 
@@ -176,7 +152,7 @@ Example:
   "value": "connection_count: 5\nlast_file_requested: readme.md"
 }
 ```
-## 6. schedule_task
+## 7. schedule_task
 
 Schedule a task (one-shot or recurring). The task will call the LLM or execute a script with the provided instruction. One-shot tasks execute once after a delay and are automatically removed. Recurring tasks execute at intervals until cancelled or max_executions is reached. Useful for delayed operations, timeouts, periodic health checks, heartbeats, SSE messages, metrics collection, etc.
 
@@ -202,7 +178,7 @@ Example:
   "instruction": "Send SSE heartbeat to all active connections"
 }
 ```
-## 7. cancel_task
+## 8. cancel_task
 
 Cancel a scheduled task by its task_id. Works for both one-shot and recurring tasks. The task is immediately removed and will not execute again.
 
@@ -216,7 +192,7 @@ Example:
   "task_id": "cleanup_logs"
 }
 ```
-## 8. list_tasks
+## 9. list_tasks
 
 List all currently scheduled tasks. Returns information about all one-shot and recurring tasks, including their status, next execution time, and configuration.
 
@@ -226,7 +202,7 @@ Example:
   "type": "list_tasks"
 }
 ```
-## 9. change_model
+## 10. change_model
 
 Switch to a different LLM model
 
@@ -240,7 +216,7 @@ Example:
   "model": "llama3.2:latest"
 }
 ```
-## 10. show_message
+## 11. show_message
 
 Display a message to the user controlling NetGet
 
@@ -254,7 +230,7 @@ Example:
   "message": "Server started successfully on port 8080"
 }
 ```
-## 11. append_to_log
+## 12. append_to_log
 
 Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.
 
@@ -270,7 +246,7 @@ Example:
   "content": "127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"
 }
 ```
-## 12. read_base_stack_docs
+## 13. read_base_stack_docs
 
 Get detailed documentation for a specific network protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before starting a server to understand protocol configuration options.
 
@@ -284,7 +260,7 @@ Example:
   "protocol": "tor"
 }
 ```
-## 13. configure_certificate
+## 14. configure_certificate
 
 Configure certificate mode for proxy (generate, load from file, or none for pass-through)
 
@@ -300,7 +276,7 @@ Example:
   "mode": "generate"
 }
 ```
-## 14. configure_request_filters
+## 15. configure_request_filters
 
 Set up filters to determine which requests to intercept and send to LLM
 
@@ -320,7 +296,7 @@ Example:
   ]
 }
 ```
-## 15. configure_response_filters
+## 16. configure_response_filters
 
 Set up filters to determine which responses to intercept and send to LLM
 
@@ -339,7 +315,7 @@ Example:
   ]
 }
 ```
-## 16. configure_https_connection_filters
+## 17. configure_https_connection_filters
 
 Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.
 
@@ -359,7 +335,7 @@ Example:
   ]
 }
 ```
-## 17. set_filter_mode
+## 18. set_filter_mode
 
 Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)
 
@@ -377,7 +353,6 @@ Example:
   "https_connection_filter_mode": "match_only"
 }
 ```
-
 ## Available Base Stacks
 
 ### AI & API
@@ -488,6 +463,19 @@ Here's what I'll do:
 {"actions": [...]}
 ```
 ```
+
+# Current State
+
+## Running Servers
+
+You may be asked to update these servers and you need to refer to them by number:
+
+- Server #1: **Proxy** on port 8080 (Running)
+
+## System Capabilities
+
+- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
 
 
 
