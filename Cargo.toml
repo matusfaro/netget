@@ -69,6 +69,7 @@ xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
+openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
@@ -140,6 +141,7 @@ all-protocols = [
     "tor",
     "vnc",
     "openapi",
+    "openid",
     "git",
     "kafka",
     "etcd",
