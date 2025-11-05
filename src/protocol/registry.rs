@@ -233,6 +233,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "rip")]
         self.register(Arc::new(crate::server::RipProtocol::new()));
 
+        #[cfg(feature = "bitcoin")]
+        self.register(Arc::new(crate::server::BitcoinProtocol::new()));
+
         #[cfg(feature = "mcp")]
         self.register(Arc::new(crate::server::McpProtocol::new()));
 

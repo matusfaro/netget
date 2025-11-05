@@ -48,6 +48,7 @@ openvpn = []  # OpenVPN honeypot (packet detection only, no full crypto)
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
+bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
@@ -57,7 +58,7 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "xmpp", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "rip", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd"]
+all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "xmpp", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "rip", "bitcoin", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd"]
 e2e-tests = []  # Feature flag for E2E tests
 
 [dependencies]
@@ -211,6 +212,9 @@ rumqttd = { version = "0.20", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
+
+# Bitcoin P2P protocol (blockchain P2P network)
+bitcoin = { version = "0.32", optional = true }
 
 # WireGuard VPN server (full implementation with LLM control)
 defguard_wireguard_rs = { version = "0.7", optional = true, features = ["serde"] }
