@@ -12,15 +12,32 @@ use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
-/// Default template directory relative to project root
-const DEFAULT_TEMPLATE_DIR: &str = "prompts";
+/// Get the template directory path (compile-time resolution)
+fn get_template_dir() -> PathBuf {
+    // Try to use CARGO_MANIFEST_DIR at compile time, fall back to runtime "prompts" dir
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+        PathBuf::from(manifest_dir).join("prompts")
+    } else {
+        PathBuf::from("prompts")
+    }
+}
 
 /// Global template engine instance
 pub static TEMPLATE_ENGINE: Lazy<Arc<TemplateEngine>> = Lazy::new(|| {
-    Arc::new(TemplateEngine::new(DEFAULT_TEMPLATE_DIR).unwrap_or_else(|e| {
-        warn!("Failed to initialize template engine: {}", e);
+    let template_dir = get_template_dir();
+    info!("Initializing template engine from: {:?}", template_dir);
+
+    let engine = TemplateEngine::new(&template_dir).unwrap_or_else(|e| {
+        warn!("Failed to initialize template engine from {:?}: {}", template_dir, e);
         TemplateEngine::empty()
-    }))
+    });
+
+    info!("Template engine initialized with {} templates", engine.get_templates().len());
+    for template_name in engine.get_templates() {
+        debug!("  Loaded template: {}", template_name);
+    }
+
+    Arc::new(engine)
 });
 
 /// Template engine that manages Handlebars templates
