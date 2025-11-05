@@ -99,6 +99,13 @@ pub use irc::IrcServer;
 #[cfg(feature = "irc")]
 pub use irc::actions::IrcProtocol;
 
+#[cfg(feature = "xmpp")]
+pub mod xmpp;
+#[cfg(feature = "xmpp")]
+pub use xmpp::XmppServer;
+#[cfg(feature = "xmpp")]
+pub use xmpp::actions::XmppProtocol;
+
 #[cfg(feature = "telnet")]
 pub mod telnet;
 #[cfg(feature = "telnet")]
@@ -268,6 +275,13 @@ pub use sqs::SqsServer;
 #[cfg(feature = "sqs")]
 pub use sqs::actions::SqsProtocol;
 
+#[cfg(feature = "npm")]
+pub mod npm;
+#[cfg(feature = "npm")]
+pub use npm::NpmServer;
+#[cfg(feature = "npm")]
+pub use npm::actions::NpmProtocol;
+
 #[cfg(feature = "openai")]
 pub mod openai;
 #[cfg(feature = "openai")]
@@ -319,6 +333,13 @@ pub mod isis;
 pub use isis::IsisServer;
 #[cfg(feature = "isis")]
 pub use isis::actions::IsisProtocol;
+
+#[cfg(feature = "rip")]
+pub mod rip;
+#[cfg(feature = "rip")]
+pub use rip::RipServer;
+#[cfg(feature = "rip")]
+pub use rip::actions::RipProtocol;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
