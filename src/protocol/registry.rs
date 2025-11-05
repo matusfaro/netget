@@ -44,6 +44,12 @@ impl ProtocolRegistry {
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::server::HttpProtocol::new()));
 
+        #[cfg(feature = "pypi")]
+        self.register(Arc::new(crate::server::PypiProtocol::new()));
+
+        #[cfg(feature = "maven")]
+        self.register(Arc::new(crate::server::MavenProtocol::new()));
+
         #[cfg(feature = "udp")]
         self.register(Arc::new(crate::server::UdpProtocol::new()));
 
@@ -51,6 +57,14 @@ impl ProtocolRegistry {
         self.register(
             Arc::new(crate::server::DataLinkProtocol::new()),
         );
+
+        #[cfg(feature = "arp")]
+        self.register(
+            Arc::new(crate::server::ArpProtocol::new()),
+        );
+
+        #[cfg(feature = "dc")]
+        self.register(Arc::new(crate::server::DcProtocol::new()));
 
         #[cfg(feature = "dns")]
         self.register(Arc::new(crate::server::DnsProtocol::new()));
@@ -64,6 +78,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "dhcp")]
         self.register(Arc::new(crate::server::DhcpProtocol::new()));
 
+        #[cfg(feature = "bootp")]
+        self.register(Arc::new(crate::server::BootpProtocol::new()));
+
         #[cfg(feature = "ntp")]
         self.register(Arc::new(crate::server::NtpProtocol::new()));
 
@@ -73,12 +90,21 @@ impl ProtocolRegistry {
         #[cfg(feature = "snmp")]
         self.register(Arc::new(crate::server::SnmpProtocol::new()));
 
+        #[cfg(feature = "igmp")]
+        self.register(Arc::new(crate::server::IgmpProtocol::new()));
+
+        #[cfg(feature = "syslog")]
+        self.register(Arc::new(crate::server::SyslogProtocol::new()));
+
         #[cfg(feature = "ssh")]
         self.register(Arc::new(crate::server::SshProtocol::new()));
 
         // Application protocols
         #[cfg(feature = "irc")]
         self.register(Arc::new(crate::server::IrcProtocol::new()));
+
+        #[cfg(feature = "xmpp")]
+        self.register(Arc::new(crate::server::XmppProtocol::new()));
 
         #[cfg(feature = "telnet")]
         self.register(
@@ -90,6 +116,9 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "imap")]
         self.register(Arc::new(crate::server::ImapProtocol::new()));
+
+        #[cfg(feature = "nntp")]
+        self.register(Arc::new(crate::server::NntpProtocol::new()));
 
         #[cfg(feature = "mqtt")]
         self.register(Arc::new(crate::server::MqttProtocol::new()));
@@ -177,6 +206,12 @@ impl ProtocolRegistry {
             Arc::new(crate::server::ElasticsearchProtocol::new()),
         );
 
+        // Package Management
+        #[cfg(feature = "npm")]
+        self.register(
+            Arc::new(crate::server::NpmProtocol::new()),
+        );
+
         // Web & File protocols
         #[cfg(feature = "ipp")]
         self.register(Arc::new(crate::server::IppProtocol::new()));
@@ -230,6 +265,15 @@ impl ProtocolRegistry {
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
 
+        #[cfg(feature = "isis")]
+        self.register(Arc::new(crate::server::IsisProtocol::new()));
+
+        #[cfg(feature = "rip")]
+        self.register(Arc::new(crate::server::RipProtocol::new()));
+
+        #[cfg(feature = "bitcoin")]
+        self.register(Arc::new(crate::server::BitcoinProtocol::new()));
+
         #[cfg(feature = "mcp")]
         self.register(Arc::new(crate::server::McpProtocol::new()));
 
@@ -278,6 +322,16 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
+
+        // BitTorrent protocols
+        #[cfg(feature = "torrent-tracker")]
+        self.register(Arc::new(crate::server::TorrentTrackerProtocol::new()));
+
+        #[cfg(feature = "torrent-dht")]
+        self.register(Arc::new(crate::server::TorrentDhtProtocol::new()));
+
+        #[cfg(feature = "torrent-peer")]
+        self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

@@ -58,6 +58,12 @@ pub enum ToolAction {
         /// Protocol name (e.g., "http", "ssh", "tor")
         protocol: String,
     },
+
+    /// List available network interfaces for DataLink/IP layer protocols
+    ListNetworkInterfaces,
+
+    /// List available models from Ollama
+    ListModels,
 }
 
 fn default_read_mode() -> String {
@@ -69,8 +75,8 @@ impl ToolAction {
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         // Check if the tool type is recognized first
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs") {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs", action_type);
+            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models") {
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_network_interfaces, list_models", action_type);
             }
         }
 
@@ -80,7 +86,7 @@ impl ToolAction {
     /// Check if a JSON value is a tool action
     pub fn is_tool_action(value: &serde_json::Value) -> bool {
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs")
+            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models")
         } else {
             false
         }
@@ -120,6 +126,12 @@ impl ToolAction {
             }
             ToolAction::ReadBaseStackDocs { protocol } => {
                 format!("read_base_stack_docs: \"{}\"", protocol)
+            }
+            ToolAction::ListNetworkInterfaces => {
+                "list_network_interfaces".to_string()
+            }
+            ToolAction::ListModels => {
+                "list_models: query available Ollama models".to_string()
             }
         }
     }
@@ -647,6 +659,49 @@ fn format_search_results(results: &[SearchResult]) -> String {
     formatted
 }
 
+/// Execute a list_models tool action
+pub async fn execute_list_models() -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: list_models - querying Ollama for available models");
+    debug!("Executing list_models tool");
+
+    // Create Ollama client
+    let client = crate::llm::ollama_client::OllamaClient::new("http://localhost:11434");
+
+    match client.list_models().await {
+        Ok(models) => {
+            if models.is_empty() {
+                info!("  ⚠ No models found in Ollama");
+                ToolResult::success(
+                    "list_models",
+                    "query available models".to_string(),
+                    "No models found. Please pull a model using 'ollama pull <model-name>'.",
+                )
+            } else {
+                let model_count = models.len();
+                let formatted = format!(
+                    "Available Ollama models ({} total):\n\n{}\n\nYou can use any of these models with the change_model action.",
+                    model_count,
+                    models.join("\n")
+                );
+                debug!("Found {} models", model_count);
+                info!("  ✓ Found {} models", model_count);
+                ToolResult::success("list_models", "query available models".to_string(), formatted)
+            }
+        }
+        Err(e) => {
+            error!("Failed to list models: {}", e);
+            info!("  ✗ Failed to list models: {}", e);
+            ToolResult::error(
+                "list_models",
+                "query available models".to_string(),
+                format!("Failed to list models: {}. Is Ollama running?", e),
+            )
+        }
+    }
+}
+
 /// Get action definition for read_file tool
 pub fn read_file_action() -> ActionDefinition {
     ActionDefinition {
@@ -734,11 +789,40 @@ pub fn read_base_stack_docs_action() -> ActionDefinition {
     }
 }
 
+/// Get list network interfaces action definition
+pub fn list_network_interfaces_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_network_interfaces".to_string(),
+        description: "List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_network_interfaces"
+        }),
+    }
+}
+
+/// Get list models action definition
+pub fn list_models_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_models".to_string(),
+        description: "List all available Ollama models that can be used for LLM generation. Returns a list of model names that can be used with the change_model action. Use this to discover which models are available before switching models.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_models"
+        }),
+    }
+}
+
 /// Get all tool action definitions
 pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchMode) -> Vec<ActionDefinition> {
     use crate::state::app_state::WebSearchMode;
 
-    let mut actions = vec![read_file_action(), read_base_stack_docs_action()];
+    let mut actions = vec![
+        read_file_action(),
+        read_base_stack_docs_action(),
+        list_network_interfaces_action(),
+        list_models_action(),
+    ];
 
     // Include web search tool for both ON and ASK modes (not for OFF)
     match web_search_mode {
@@ -751,6 +835,72 @@ pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchM
     }
 
     actions
+}
+
+/// Execute list_network_interfaces tool
+async fn execute_list_network_interfaces() -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: list_network_interfaces");
+    debug!("Listing available network interfaces");
+
+    // Check if datalink feature is enabled (required for pcap)
+    #[cfg(not(feature = "datalink"))]
+    {
+        warn!("DataLink feature not enabled, cannot list network interfaces");
+        info!("  ✗ DataLink feature not enabled");
+        return ToolResult::error(
+            "list_network_interfaces",
+            "list interfaces",
+            "DataLink feature not enabled. Rebuild with --features datalink to use this tool.".to_string(),
+        );
+    }
+
+    #[cfg(feature = "datalink")]
+    {
+        // Use the DataLinkServer to list devices
+        match crate::server::datalink::DataLinkServer::list_devices() {
+            Ok(devices) => {
+                if devices.is_empty() {
+                    info!("  ⚠ No network interfaces found");
+                    return ToolResult::success(
+                        "list_network_interfaces",
+                        "list interfaces",
+                        "No network interfaces found. This may be due to permissions or pcap not being installed.",
+                    );
+                }
+
+                // Format device information
+                let mut result = String::from("Available network interfaces:\n\n");
+                for (i, device) in devices.iter().enumerate() {
+                    result.push_str(&format!("{}. {}\n", i + 1, device.name));
+                    if let Some(ref desc) = device.desc {
+                        if !desc.is_empty() {
+                            result.push_str(&format!("   Description: {}\n", desc));
+                        }
+                    }
+                    result.push('\n');
+                }
+
+                // Add helpful note
+                result.push_str("Note: Use these interface names when starting DataLink servers.\n");
+                result.push_str("Example: \"listen on interface eth0 via datalink\"\n");
+
+                debug!("Found {} network interfaces", devices.len());
+                info!("  ✓ Found {} network interfaces", devices.len());
+                ToolResult::success("list_network_interfaces", "list interfaces", result)
+            }
+            Err(e) => {
+                error!("Failed to list network interfaces: {}", e);
+                info!("  ✗ Failed to list interfaces: {}", e);
+                ToolResult::error(
+                    "list_network_interfaces",
+                    "list interfaces",
+                    format!("Failed to list network interfaces: {}. This may be due to missing permissions or pcap not being installed.", e),
+                )
+            }
+        }
+    }
 }
 
 /// Execute a tool action
@@ -849,6 +999,12 @@ pub async fn execute_tool(
         }
         ToolAction::ReadBaseStackDocs { protocol } => {
             execute_read_base_stack_docs(protocol).await
+        }
+        ToolAction::ListNetworkInterfaces => {
+            execute_list_network_interfaces().await
+        }
+        ToolAction::ListModels => {
+            execute_list_models().await
         }
     }
 }

@@ -2,12 +2,20 @@
 
 #[cfg(feature = "bgp")]
 pub mod bgp;
+#[cfg(feature = "isis")]
+pub mod isis;
+#[cfg(feature = "rip")]
+pub mod rip;
 #[cfg(feature = "cassandra")]
 pub mod cassandra;
 // DataLink doesn't have a feature flag, it's always available
 pub mod datalink;
+#[cfg(feature = "dc")]
+pub mod dc;
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
+#[cfg(feature = "bootp")]
+pub mod bootp;
 #[cfg(feature = "dns")]
 pub mod dns;
 #[cfg(feature = "dot")]
@@ -26,6 +34,10 @@ pub mod grpc;
 pub mod etcd;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "pypi")]
+pub mod pypi;
+#[cfg(feature = "maven")]
+pub mod maven;
 #[cfg(feature = "imap")]
 pub mod imap;
 #[cfg(feature = "ipp")]
@@ -34,6 +46,8 @@ pub mod ipp;
 pub mod ipsec;
 #[cfg(feature = "irc")]
 pub mod irc;
+#[cfg(feature = "xmpp")]
+pub mod xmpp;
 #[cfg(feature = "ldap")]
 pub mod ldap;
 #[cfg(feature = "mcp")]
@@ -44,10 +58,14 @@ pub mod mdns;
 pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "nntp")]
+pub mod nntp;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "ntp")]
 pub mod ntp;
+#[cfg(feature = "npm")]
+pub mod npm;
 #[cfg(feature = "openai")]
 pub mod openai;
 #[cfg(feature = "openapi")]
@@ -70,6 +88,8 @@ pub mod smb;
 pub mod smtp;
 #[cfg(feature = "snmp")]
 pub mod snmp;
+#[cfg(feature = "syslog")]
+pub mod syslog;
 #[cfg(feature = "socks5")]
 pub mod socks5;
 #[cfg(feature = "s3")]
@@ -90,6 +110,14 @@ pub mod tor_directory;
 pub mod tor_relay;
 #[cfg(feature = "tor")]
 pub mod tor_integration;
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(all(feature = "torrent-tracker", feature = "torrent-dht", feature = "torrent-peer"))]
+pub mod torrent_integration;
 #[cfg(feature = "turn")]
 pub mod turn;
 #[cfg(feature = "udp")]
