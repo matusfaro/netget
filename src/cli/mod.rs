@@ -1,6 +1,7 @@
 //! CLI module - handles command-line interface and application startup
 
 mod args;
+pub mod client_startup;
 mod input_state;
 mod non_interactive;
 mod rolling_tui;
