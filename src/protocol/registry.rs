@@ -84,6 +84,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "ntp")]
         self.register(Arc::new(crate::server::NtpProtocol::new()));
 
+        #[cfg(feature = "whois")]
+        self.register(Arc::new(crate::server::WhoisProtocol::new()));
+
         #[cfg(feature = "snmp")]
         self.register(Arc::new(crate::server::SnmpProtocol::new()));
 
