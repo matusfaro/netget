@@ -10,8 +10,12 @@ pub mod rip;
 pub mod cassandra;
 // DataLink doesn't have a feature flag, it's always available
 pub mod datalink;
+#[cfg(feature = "dc")]
+pub mod dc;
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
+#[cfg(feature = "bootp")]
+pub mod bootp;
 #[cfg(feature = "dns")]
 pub mod dns;
 #[cfg(feature = "dot")]
@@ -30,6 +34,8 @@ pub mod grpc;
 pub mod etcd;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "pypi")]
+pub mod pypi;
 #[cfg(feature = "maven")]
 pub mod maven;
 #[cfg(feature = "imap")]
@@ -52,6 +58,8 @@ pub mod mdns;
 pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "nntp")]
+pub mod nntp;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "ntp")]

@@ -7,16 +7,21 @@ edition = "2021"
 default = ["all-protocols"]
 tcp = ["async-trait"]
 http = []
+pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
+dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
+bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
+whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
+igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
@@ -38,6 +43,7 @@ turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
+nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
@@ -54,6 +60,7 @@ bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
 ospf = []  # OSPF routing protocol (IP protocol 89, raw sockets, requires root/CAP_NET_RAW)
 isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
+bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
@@ -69,16 +76,21 @@ torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-p
 all-protocols = [
     "tcp",
     "http",
+    "pypi",
     "maven",
     "udp",
     "datalink",
     "arp",
+    "dc",
     "dns",
     "dot",
     "doh",
     "dhcp",
+    "bootp",
     "ntp",
+    "whois",
     "snmp",
+    "igmp",
     "syslog",
     "ssh",
     "irc",
@@ -100,6 +112,7 @@ all-protocols = [
     "sip",
     "ldap",
     "imap",
+    "nntp",
     "mqtt",
     "socks5",
     "elasticsearch",
@@ -116,6 +129,7 @@ all-protocols = [
     "ospf",
     "isis",
     "rip",
+    "bitcoin",
     "mcp",
     "grpc",
     "xmlrpc",
@@ -171,6 +185,9 @@ base64 = "0.22"
 
 # Socket options (SO_REUSEADDR)
 socket2 = "0.5"
+
+# System interface for raw sockets (IGMP)
+libc = "0.2"
 
 # File locking for cross-process synchronization
 fs2 = "0.4"
@@ -291,6 +308,9 @@ rumqttd = { version = "0.20", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
+
+# Bitcoin P2P protocol (blockchain P2P network)
+bitcoin = { version = "0.32", optional = true }
 
 # WireGuard VPN server (full implementation with LLM control)
 defguard_wireguard_rs = { version = "0.7", optional = true, features = ["serde"] }
