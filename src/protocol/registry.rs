@@ -326,6 +326,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
 
+        #[cfg(feature = "http3")]
+        self.register(Arc::new(crate::server::Http3Protocol::new()));
+
         // BitTorrent protocols
         #[cfg(feature = "torrent-tracker")]
         self.register(Arc::new(crate::server::TorrentTrackerProtocol::new()));
