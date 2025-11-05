@@ -334,6 +334,13 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "isis")]
+pub mod isis;
+#[cfg(feature = "isis")]
+pub use isis::IsisServer;
+#[cfg(feature = "isis")]
+pub use isis::actions::IsisProtocol;
+
 #[cfg(feature = "rip")]
 pub mod rip;
 #[cfg(feature = "rip")]

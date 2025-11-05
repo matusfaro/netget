@@ -2,6 +2,8 @@
 
 #[cfg(feature = "bgp")]
 pub mod bgp;
+#[cfg(feature = "isis")]
+pub mod isis;
 #[cfg(feature = "rip")]
 pub mod rip;
 #[cfg(feature = "cassandra")]

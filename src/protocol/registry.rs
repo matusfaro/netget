@@ -241,6 +241,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
 
+        #[cfg(feature = "isis")]
+        self.register(Arc::new(crate::server::IsisProtocol::new()));
+
         #[cfg(feature = "rip")]
         self.register(Arc::new(crate::server::RipProtocol::new()));
 

@@ -49,6 +49,7 @@ wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard 
 openvpn = []  # OpenVPN honeypot (packet detection only, no full crypto)
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
+isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
@@ -104,6 +105,7 @@ all-protocols = [
     "openvpn",
     "ipsec",
     "bgp",
+    "isis",
     "rip",
     "mcp",
     "grpc",
