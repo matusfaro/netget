@@ -513,6 +513,13 @@ pub use git::GitServer;
 #[cfg(feature = "git")]
 pub use git::actions::GitProtocol;
 
+#[cfg(feature = "mercurial")]
+pub mod mercurial;
+#[cfg(feature = "mercurial")]
+pub use mercurial::MercurialServer;
+#[cfg(feature = "mercurial")]
+pub use mercurial::actions::MercurialProtocol;
+
 #[cfg(feature = "kafka")]
 pub mod kafka;
 #[cfg(feature = "kafka")]

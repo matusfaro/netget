@@ -28,6 +28,8 @@ pub mod dynamo;
 pub mod elasticsearch;
 #[cfg(feature = "git")]
 pub mod git;
+#[cfg(feature = "mercurial")]
+pub mod mercurial;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 #[cfg(feature = "etcd")]
