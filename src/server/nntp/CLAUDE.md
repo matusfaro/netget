@@ -1,0 +1,426 @@
+# NNTP Protocol Implementation
+
+## Overview
+NNTP (Network News Transfer Protocol) server implementing Usenet news server functionality. The LLM controls news article distribution, newsgroup management, and article retrieval. Focuses on core NNTP commands (LIST, GROUP, ARTICLE, POST, etc.) with line-based text protocol.
+
+**Status**: Experimental (Application Protocol)
+**RFC**: RFC 3977 (Network News Transfer Protocol), RFC 2980 (Common NNTP Extensions)
+**Port**: 119 (plain TCP), 563 (with TLS, not implemented)
+
+## Library Choices
+- **No NNTP library** - Manual protocol implementation
+  - NNTP is line-based text protocol (simple parsing)
+  - Commands parsed from text lines
+  - Responses constructed as formatted strings with numeric codes
+  - Multi-line responses end with ".\r\n"
+- **tokio** - Async runtime and I/O
+  - `TcpListener` for accepting connections
+  - `BufReader` for line-based reading
+  - `AsyncWriteExt` for sending responses
+
+**Rationale**: NNTP protocol is straightforward enough that no dedicated library is needed. Messages are text lines ending with `\r\n`, commands are space-separated tokens, responses use numeric codes (similar to SMTP/FTP). Manual implementation gives LLM full control over newsgroup and article management.
+
+## Architecture Decisions
+
+### 1. Action-Based LLM Control
+The LLM receives NNTP commands and responds with structured actions:
+- `send_nntp_message` - Send raw NNTP message
+- `send_nntp_response` - Send response with code and text (e.g., "200 Service ready")
+- `send_nntp_article` - Send article with headers and body (multi-line)
+- `send_nntp_list` - Send list of newsgroups (multi-line)
+- `send_nntp_group` - Send GROUP response (211 count low high group)
+- `send_nntp_overview` - Send article overview (XOVER/OVER command)
+- `wait_for_more` - Buffer more data before responding
+- `close_connection` - Close client connection
+
+### 2. Line-Based Message Processing
+NNTP message flow:
+1. Accept TCP connection
+2. Send greeting (200 Service ready or 201 No posting)
+3. Read lines with `BufReader::read_line()` (splits on `\n`)
+4. Parse NNTP command from line (e.g., "GROUP comp.lang.rust\r\n")
+5. Send line to LLM as `nntp_command_received` event
+6. LLM returns actions (e.g., `send_nntp_group`)
+7. Execute actions (send responses)
+8. Loop for next line
+
+### 3. Automatic Line Termination
+All NNTP messages must end with `\r\n`:
+- Received messages: Preserved as-is from `read_line()`
+- Sent messages: Automatically add `\r\n` if not present
+- `send_nntp_message`: Formats to ensure `\r\n` termination
+- Multi-line responses: End with `.\r\n` (dot-stuffing for lines starting with dot)
+
+### 4. Multi-Line Responses
+NNTP uses multi-line responses for articles, lists, etc.:
+- Start with status line (e.g., "220 <msg-id> article follows")
+- Content lines
+- End with `.\r\n` on its own line
+- Lines starting with `.` should be dot-stuffed (`.` → `..`)
+
+### 5. Dual Logging
+- **DEBUG**: Command summary with 100-char preview ("NNTP received 15 bytes: GROUP comp.lang.rust")
+- **TRACE**: Full text message ("NNTP data (text): \"GROUP comp.lang.rust\\r\\n\"")
+- Both go to netget.log and TUI Status panel
+
+### 6. Connection Management
+Each NNTP client gets:
+- Unique `ConnectionId`
+- Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::Nntp`
+- Tracked bytes sent/received, packets sent/received
+- State: Active until client disconnects or sends QUIT
+
+## LLM Integration
+
+### Event Type
+**`nntp_command_received`** - Triggered when NNTP client sends a command
+
+Event parameters:
+- `command` (string) - The NNTP command received (e.g., "GROUP comp.lang.rust")
+
+### Available Actions
+
+#### `send_nntp_message`
+Send raw NNTP message (for custom responses).
+
+Parameters:
+- `message` (required) - NNTP message to send (auto-adds `\r\n` if missing)
+
+Example:
+```json
+{
+  "type": "send_nntp_message",
+  "message": "200 NetGet NNTP Service Ready"
+}
+```
+
+#### `send_nntp_response`
+Send NNTP response with code and text.
+
+Parameters:
+- `code` (required) - NNTP response code (e.g., 200, 211, 500)
+- `text` (required) - Response text
+
+Example:
+```json
+{
+  "type": "send_nntp_response",
+  "code": 200,
+  "text": "NetGet NNTP Service Ready - posting allowed"
+}
+```
+
+Sends: `200 NetGet NNTP Service Ready - posting allowed\r\n`
+
+#### `send_nntp_article`
+Send NNTP article with headers and body (multi-line response).
+
+Parameters:
+- `code` (optional) - Response code (220=article, 221=head, 222=body, default: 220)
+- `message_id` (optional) - Message-ID
+- `headers` (required) - Article headers (one per line)
+- `body` (optional) - Article body text
+
+Example:
+```json
+{
+  "type": "send_nntp_article",
+  "code": 220,
+  "message_id": "<12345@example.com>",
+  "headers": "Subject: Welcome to Rust\r\nFrom: user@example.com\r\nDate: Mon, 1 Jan 2024 00:00:00 +0000",
+  "body": "This is a test article about Rust programming."
+}
+```
+
+Sends:
+```
+220 <12345@example.com> article follows
+Subject: Welcome to Rust
+From: user@example.com
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+
+This is a test article about Rust programming.
+.
+```
+
+#### `send_nntp_list`
+Send list of newsgroups (multi-line response).
+
+Parameters:
+- `groups` (required) - Array of newsgroups with name, high, low, status
+
+Example:
+```json
+{
+  "type": "send_nntp_list",
+  "groups": [
+    {"name": "comp.lang.rust", "high": 100, "low": 1, "status": "y"},
+    {"name": "comp.lang.python", "high": 200, "low": 1, "status": "y"}
+  ]
+}
+```
+
+Sends:
+```
+215 list of newsgroups follows
+comp.lang.rust 100 1 y
+comp.lang.python 200 1 y
+.
+```
+
+#### `send_nntp_group`
+Send GROUP response with count and article range.
+
+Parameters:
+- `name` (required) - Newsgroup name
+- `count` (optional) - Estimated number of articles (default: 0)
+- `low` (optional) - Lowest article number (default: 0)
+- `high` (optional) - Highest article number (default: 0)
+
+Example:
+```json
+{
+  "type": "send_nntp_group",
+  "name": "comp.lang.rust",
+  "count": 100,
+  "low": 1,
+  "high": 100
+}
+```
+
+Sends: `211 100 1 100 comp.lang.rust\r\n`
+
+#### `send_nntp_overview`
+Send article overview information (XOVER/OVER command).
+
+Parameters:
+- `articles` (required) - Array of articles with number, subject, from, date, message_id, references, bytes, lines
+
+Example:
+```json
+{
+  "type": "send_nntp_overview",
+  "articles": [
+    {
+      "number": 1,
+      "subject": "Welcome",
+      "from": "user@example.com",
+      "date": "Mon, 1 Jan 2024 00:00:00 +0000",
+      "message_id": "<12345@example.com>",
+      "references": "",
+      "bytes": 100,
+      "lines": 5
+    }
+  ]
+}
+```
+
+Sends:
+```
+224 overview information follows
+1	Welcome	user@example.com	Mon, 1 Jan 2024 00:00:00 +0000	<12345@example.com>		100	5
+.
+```
+
+## Connection Management
+
+### Connection Lifecycle
+1. **Accept**: TCP listener accepts connection
+2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Nntp`
+3. **Split**: Stream split into ReadHalf and WriteHalf
+4. **Track**: WriteHalf stored in `Arc<Mutex<WriteHalf>>` for sending
+5. **Greeting**: Send initial greeting (200 or 201)
+6. **Read Loop**: Continuous line reading until disconnect
+7. **Close**: Connection removed when client closes or sends QUIT
+
+### State Management
+- `ProtocolState`: Idle/Processing/Accumulating (prevents concurrent LLM calls)
+- `queued_data`: Data buffered while LLM is processing
+- Connection stays in ServerInstance until closed
+- UI updates on every message (bytes sent/received, last activity)
+
+## Known Limitations
+
+### 1. No Article Storage
+- Server doesn't store articles persistently
+- No database or filesystem storage
+- LLM generates articles on-demand from prompts
+- No real article retention or expiry
+
+**Workaround**: LLM can maintain pseudo-storage through conversation context or external database via actions.
+
+### 2. No Authentication
+- No AUTHINFO USER/PASS support
+- No SASL authentication (RFC 4643)
+- All users treated as anonymous
+
+**Future Enhancement**: Add AUTHINFO commands and authentication actions.
+
+### 3. No Posting Support (Yet)
+- No POST command handling
+- Read-only news server
+- Clients can retrieve but not post articles
+
+**Future Enhancement**: Add POST action and article submission handling.
+
+### 4. No Feed Management
+- No peer-to-peer article distribution
+- No IHAVE/CHECK/TAKETHIS commands
+- Single-server only
+
+### 5. No TLS Support
+- Plain TCP only (port 119)
+- No SSL/TLS encryption (port 563)
+
+**Workaround**: Use reverse proxy (e.g., nginx) for TLS termination.
+
+### 6. Limited NNTP Extensions
+- No XPAT (pattern matching)
+- No LISTGROUP (list article numbers)
+- No HDR (header retrieval)
+- Basic NNTP commands only
+
+**Future Enhancement**: Add common NNTP extensions as needed.
+
+### 7. No Newsgroup Hierarchy Management
+- No dynamic newsgroup creation/deletion
+- Newsgroups defined in LLM prompt
+- No newsgroups file
+
+## Example Prompts
+
+### Basic Read-Only News Server
+```
+listen on port 119 via nntp
+Send greeting: "200 NetGet NNTP Service Ready - posting allowed"
+Support newsgroups: comp.lang.rust, comp.lang.python, misc.test
+When users send LIST, show all newsgroups
+When users send GROUP <name>, respond with article count
+When users send ARTICLE <number>, generate a test article
+When users send QUIT, close connection
+```
+
+### News Server with Categories
+```
+listen on port 119 via nntp
+Newsgroups: comp.lang.rust, comp.lang.python, sci.math, rec.arts.books
+For GROUP command, show: comp.lang.rust has 50 articles (1-50)
+For ARTICLE command, generate relevant article based on newsgroup
+For XOVER command, show article summaries with subject, author, date
+```
+
+### Tech News Server
+```
+listen on port 119 via nntp
+Act as a tech news aggregator
+Newsgroups: tech.programming, tech.linux, tech.security
+Generate articles about recent tech topics
+Each article has proper headers (Subject, From, Date, Message-ID)
+Support ARTICLE, HEAD, BODY commands
+```
+
+### Simple Test Server
+```
+listen on port 119 via nntp
+One newsgroup: misc.test
+10 test articles (numbers 1-10)
+All articles say "This is test article <number>"
+Support LIST, GROUP, ARTICLE commands
+```
+
+## Performance Characteristics
+
+### Latency
+- **Per Command (with scripting)**: Sub-millisecond
+- **Per Command (without scripting)**: 2-5 seconds (LLM call)
+- Line parsing: <1 microsecond
+- Response formatting: <1 microsecond
+
+### Throughput
+- **With Scripting**: Thousands of commands per second
+- **Without Scripting**: ~0.2-0.5 commands per second (LLM-limited)
+- Concurrent connections: Unlimited (bounded by system resources)
+- Each connection processes independently
+
+### Scripting Compatibility
+Good scripting candidate:
+- Text-based protocol (easy to parse and generate)
+- Repetitive command/response patterns
+- Article content can be templated
+- Newsgroup lists are static
+
+## NNTP Protocol References
+
+### Common Commands
+- **CAPABILITIES** - List server capabilities (RFC 3977)
+- **MODE READER** - Switch to reader mode
+- **LIST** - List newsgroups
+- **GROUP** - Select newsgroup
+- **ARTICLE** - Retrieve article (headers + body)
+- **HEAD** - Retrieve article headers only
+- **BODY** - Retrieve article body only
+- **STAT** - Check article existence
+- **NEXT** - Move to next article
+- **LAST** - Move to previous article
+- **POST** - Post new article
+- **QUIT** - Close connection
+- **XOVER** (or OVER) - Article overview (subject, author, etc.)
+- **XHDR** (or HDR) - Retrieve header field
+- **AUTHINFO** - Authentication (RFC 4643)
+
+### Common Response Codes
+- **200** - Service available, posting allowed
+- **201** - Service available, posting not allowed
+- **211** - Group selected (count low high name)
+- **215** - List of newsgroups follows
+- **220** - Article retrieved (headers + body)
+- **221** - Article headers retrieved
+- **222** - Article body retrieved
+- **224** - Overview information follows
+- **281** - Authentication accepted
+- **400** - Service temporarily unavailable
+- **411** - No such newsgroup
+- **420** - No current article selected
+- **423** - No such article in group
+- **430** - No such article
+- **440** - Posting not allowed
+- **500** - Command not recognized
+- **501** - Command syntax error
+- **502** - Permission denied
+
+### Response Format
+```
+<code> [parameters] <text>
+```
+
+Examples:
+- `200 NetGet NNTP Service Ready`
+- `211 100 1 100 comp.lang.rust`
+- `220 0 <12345@example.com> article follows`
+
+### Multi-Line Format
+```
+<status line>
+<content line 1>
+<content line 2>
+...
+.
+```
+
+Example (ARTICLE response):
+```
+220 0 <12345@example.com> article follows
+Subject: Welcome
+From: user@example.com
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+
+This is the article body.
+.
+```
+
+## References
+- [RFC 3977: Network News Transfer Protocol (NNTP)](https://datatracker.ietf.org/doc/html/rfc3977)
+- [RFC 2980: Common NNTP Extensions](https://datatracker.ietf.org/doc/html/rfc2980)
+- [RFC 4643: NNTP Authentication](https://datatracker.ietf.org/doc/html/rfc4643)
+- [Wikipedia: NNTP](https://en.wikipedia.org/wiki/Network_News_Transfer_Protocol)
+- [NNTP Command Reference](https://www.ietf.org/rfc/rfc3977.txt)
