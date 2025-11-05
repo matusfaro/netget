@@ -82,6 +82,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "irc")]
         self.register(Arc::new(crate::server::IrcProtocol::new()));
 
+        #[cfg(feature = "xmpp")]
+        self.register(Arc::new(crate::server::XmppProtocol::new()));
+
         #[cfg(feature = "telnet")]
         self.register(
             Arc::new(crate::server::TelnetProtocol::new()),
@@ -179,6 +182,12 @@ impl ProtocolRegistry {
             Arc::new(crate::server::ElasticsearchProtocol::new()),
         );
 
+        // Package Management
+        #[cfg(feature = "npm")]
+        self.register(
+            Arc::new(crate::server::NpmProtocol::new()),
+        );
+
         // Web & File protocols
         #[cfg(feature = "ipp")]
         self.register(Arc::new(crate::server::IppProtocol::new()));
@@ -231,6 +240,9 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
+
+        #[cfg(feature = "rip")]
+        self.register(Arc::new(crate::server::RipProtocol::new()));
 
         #[cfg(feature = "mcp")]
         self.register(Arc::new(crate::server::McpProtocol::new()));
