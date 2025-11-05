@@ -117,6 +117,25 @@ pub enum BgpSessionState {
     Established,
 }
 
+/// OSPF neighbor state (RFC 2328 Section 10.1)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OspfNeighborState {
+    /// Down - initial state, no Hello received
+    Down,
+    /// Init - Hello received from neighbor
+    Init,
+    /// 2-Way - bidirectional communication established
+    TwoWay,
+    /// ExStart - master/slave negotiation for database exchange
+    ExStart,
+    /// Exchange - database description packets exchanged
+    Exchange,
+    /// Loading - link state requests sent
+    Loading,
+    /// Full - adjacency complete, databases synchronized
+    Full,
+}
+
 /// Protocol-specific connection information
 #[derive(Debug, Clone)]
 pub enum ProtocolConnectionInfo {
@@ -389,6 +408,14 @@ pub enum ProtocolConnectionInfo {
     /// Kafka connection (recent requests)
     Kafka {
         recent_requests: Vec<(String, Instant)>, // API type, time
+    },
+    /// OSPF connection (neighbor relationship)
+    Ospf {
+        neighbor_state: OspfNeighborState,
+        router_id: String,
+        area_id: String,
+        dr: String,  // Designated Router
+        bdr: String, // Backup Designated Router
     },
 }
 
