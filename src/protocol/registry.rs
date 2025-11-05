@@ -77,6 +77,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "irc")]
         self.register(Arc::new(crate::server::IrcProtocol::new()));
 
+        #[cfg(feature = "xmpp")]
+        self.register(Arc::new(crate::server::XmppProtocol::new()));
+
         #[cfg(feature = "telnet")]
         self.register(
             Arc::new(crate::server::TelnetProtocol::new()),
