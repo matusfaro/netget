@@ -254,6 +254,12 @@ pub enum ProtocolConnectionInfo {
         selected_mailbox: Option<String>,
         mailbox_read_only: bool,
     },
+    /// NNTP connection (Network News Transfer Protocol)
+    Nntp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
     /// MQTT connection (client session)
     Mqtt {
         client_id: String,

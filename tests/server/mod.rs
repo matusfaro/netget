@@ -44,6 +44,8 @@ pub mod mdns;
 pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "nntp")]
+pub mod nntp;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "ntp")]
