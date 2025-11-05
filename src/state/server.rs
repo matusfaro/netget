@@ -134,6 +134,10 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// HTTP/2 connection (recent requests with multiplexing)
+    Http2 {
+        recent_requests: Vec<(String, String, Instant)>, // method, path, time
+    },
     /// SNMP connection (recent requests)
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
