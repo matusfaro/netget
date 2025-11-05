@@ -363,6 +363,13 @@ pub use openai::OpenAiServer;
 #[cfg(feature = "openai")]
 pub use openai::actions::OpenAiProtocol;
 
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
+#[cfg(feature = "oauth2")]
+pub use oauth2::OAuth2Server;
+#[cfg(feature = "oauth2")]
+pub use oauth2::actions::OAuth2Protocol;
+
 #[cfg(feature = "jsonrpc")]
 pub mod jsonrpc;
 #[cfg(feature = "jsonrpc")]
