@@ -178,6 +178,12 @@ pub enum ProtocolConnectionInfo {
         username: Option<String>,
         channels: Vec<String>, // Active channel types (shell, sftp)
     },
+    /// DC (Direct Connect) connection with write half
+    Dc {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
     /// IRC connection with write half
     Irc {
         write_half: Arc<Mutex<WriteHalf<TcpStream>>>,

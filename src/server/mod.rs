@@ -48,6 +48,13 @@ pub use arp::ArpServer;
 #[cfg(feature = "arp")]
 pub use arp::actions::ArpProtocol;
 
+#[cfg(feature = "dc")]
+pub mod dc;
+#[cfg(feature = "dc")]
+pub use dc::DcServer;
+#[cfg(feature = "dc")]
+pub use dc::actions::DcProtocol;
+
 #[cfg(feature = "udp")]
 pub mod udp;
 #[cfg(feature = "udp")]

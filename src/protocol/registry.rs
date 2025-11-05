@@ -60,6 +60,9 @@ impl ProtocolRegistry {
             Arc::new(crate::server::ArpProtocol::new()),
         );
 
+        #[cfg(feature = "dc")]
+        self.register(Arc::new(crate::server::DcProtocol::new()));
+
         #[cfg(feature = "dns")]
         self.register(Arc::new(crate::server::DnsProtocol::new()));
 
