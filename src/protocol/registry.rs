@@ -275,6 +275,16 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
+
+        // BitTorrent protocols
+        #[cfg(feature = "torrent-tracker")]
+        self.register(Arc::new(crate::server::TorrentTrackerProtocol::new()));
+
+        #[cfg(feature = "torrent-dht")]
+        self.register(Arc::new(crate::server::TorrentDhtProtocol::new()));
+
+        #[cfg(feature = "torrent-peer")]
+        self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
