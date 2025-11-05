@@ -99,6 +99,13 @@ pub use irc::IrcServer;
 #[cfg(feature = "irc")]
 pub use irc::actions::IrcProtocol;
 
+#[cfg(feature = "xmpp")]
+pub mod xmpp;
+#[cfg(feature = "xmpp")]
+pub use xmpp::XmppServer;
+#[cfg(feature = "xmpp")]
+pub use xmpp::actions::XmppProtocol;
+
 #[cfg(feature = "telnet")]
 pub mod telnet;
 #[cfg(feature = "telnet")]
@@ -319,6 +326,13 @@ pub mod bgp;
 pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
+
+#[cfg(feature = "rip")]
+pub mod rip;
+#[cfg(feature = "rip")]
+pub use rip::RipServer;
+#[cfg(feature = "rip")]
+pub use rip::actions::RipProtocol;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
