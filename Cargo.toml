@@ -15,6 +15,7 @@ dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
+bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
 syslog = ["syslog_loose"]
@@ -78,6 +79,7 @@ all-protocols = [
     "dot",
     "doh",
     "dhcp",
+    "bootp",
     "ntp",
     "snmp",
     "syslog",

@@ -164,6 +164,10 @@ pub enum ProtocolConnectionInfo {
     Dhcp {
         recent_requests: Vec<(String, Instant)>, // client MAC, time
     },
+    /// BOOTP connection (recent requests)
+    Bootp {
+        recent_requests: Vec<(String, Instant)>, // request type, time
+    },
     /// NTP connection (recent clients)
     Ntp {
         recent_clients: Vec<(SocketAddr, Instant)>,
