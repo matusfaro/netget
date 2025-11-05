@@ -401,6 +401,13 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "ospf")]
+pub mod ospf;
+#[cfg(feature = "ospf")]
+pub use ospf::OspfServer;
+#[cfg(feature = "ospf")]
+pub use ospf::actions::OspfProtocol;
+
 #[cfg(feature = "isis")]
 pub mod isis;
 #[cfg(feature = "isis")]
@@ -491,6 +498,13 @@ pub mod kafka;
 pub use kafka::KafkaServer;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaProtocol;
+
+#[cfg(feature = "http3")]
+pub mod http3;
+#[cfg(feature = "http3")]
+pub use http3::Http3Server;
+#[cfg(feature = "http3")]
+pub use http3::actions::Http3Protocol;
 
 #[cfg(feature = "torrent-tracker")]
 pub mod torrent_tracker;

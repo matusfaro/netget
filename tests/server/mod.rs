@@ -78,10 +78,14 @@ pub mod jsonrpc;
 pub mod kafka;
 #[cfg(feature = "openvpn")]
 pub mod openvpn;
+#[cfg(feature = "ospf")]
+pub mod ospf;
 #[cfg(feature = "postgresql")]
 pub mod postgresql;
 #[cfg(feature = "proxy")]
 pub mod proxy;
+#[cfg(feature = "http3")]
+pub mod http3;
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "smb")]
