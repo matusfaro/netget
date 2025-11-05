@@ -1,22 +1,44 @@
+---
+
 # Response Format
 
-You must respond with valid JSON in this exact format:
+**CRITICAL:** Your response must be **valid JSON only**. No explanations, no markdown, no code blocks.
 
-```json
-{
-  "actions": [
-    {
-      "type": "action_name",
-      ...action parameters...
-    }
-  ]
-}
+## Required Format
+
+```
+{"actions": [{"type": "action_name", "param": "value"}, ...]}
 ```
 
-## Rules
+- Must start with `{` and end with `}`
+- The `actions` array contains one or more action objects
+- Actions execute in order
+- You can mix tools and actions in the same response
 
-1. **Valid JSON only** - No text before or after the JSON
-2. **Actions array required** - Even if empty: `{"actions": []}`
-3. **One action per object** - Each action in a separate object in the array
-4. **Exact parameter names** - Use the parameter names exactly as documented
-5. **Appropriate types** - Numbers should be numbers, not strings
+## Examples
+
+✓ **Valid:**
+```json
+{"actions": [{"type": "show_message", "message": "Hello"}]}
+```
+
+✓ **Valid (multiple actions):**
+```json
+{"actions": [
+  {"type": "read_file", "path": "config.json", "mode": "full"},
+  {"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}
+]}
+```
+
+✗ **Invalid** (explanation before JSON):
+```
+Here's what I'll do:
+{"actions": [...]}
+```
+
+✗ **Invalid** (markdown code block):
+```
+```json
+{"actions": [...]}
+```
+```

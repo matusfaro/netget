@@ -1,0 +1,12 @@
+## Understanding Memory
+
+Memory lets you track state across network events (e.g., SSH current directory, session data, file listings).
+
+**Key Points:**
+- Memory is a **string** (not JSON). Use newlines to separate values
+- `set_memory` - Replace all memory (use for major state changes)
+- `append_memory` - Add to existing memory (use for incremental updates)
+
+**Example:** `"cwd: /home\nuser: alice\nfiles: a.txt,b.txt"`
+
+**Common uses:** Session state, connection counters, file system state, authentication tokens
