@@ -8,7 +8,7 @@ pub mod isis;
 pub mod rip;
 #[cfg(feature = "cassandra")]
 pub mod cassandra;
-// DataLink doesn't have a feature flag, it's always available
+#[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "dc")]
 pub mod dc;
