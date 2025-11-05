@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
+use super::client::{ClientId, ClientInstance};
 use super::server::{ServerId, ServerInstance};
 use super::task::{ScheduledTask, TaskId};
 use crate::server::connection::ConnectionId;
@@ -190,8 +191,12 @@ struct AppStateInner {
     mode: Mode,
     /// All server instances
     servers: HashMap<ServerId, ServerInstance>,
+    /// All client instances
+    clients: HashMap<ClientId, ClientInstance>,
     /// Next server ID to assign
     next_server_id: u32,
+    /// Next client ID to assign
+    next_client_id: u32,
     /// Current Ollama model
     ollama_model: String,
     /// Available scripting environments (Python, Node.js)
@@ -246,7 +251,9 @@ impl AppState {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
                 servers: HashMap::new(),
+                clients: HashMap::new(),
                 next_server_id: 1,
+                next_client_id: 1,
                 ollama_model: "qwen3-coder:30b".to_string(),
                 scripting_env,
                 selected_scripting_mode,
@@ -314,8 +321,8 @@ impl AppState {
         let mut inner = self.inner.write().await;
         let server = inner.servers.remove(&id);
 
-        // Set mode to Idle if no more servers
-        if inner.servers.is_empty() {
+        // Set mode to Idle if no more servers and no clients
+        if inner.servers.is_empty() && inner.clients.is_empty() {
             inner.mode = Mode::Idle;
         }
 
@@ -570,9 +577,10 @@ impl AppState {
         let inner = self.inner.read().await;
         let total_connections: usize = inner.servers.values().map(|s| s.connections.len()).sum();
         format!(
-            "Mode: {}, Servers: {}, Total Connections: {}",
+            "Mode: {}, Servers: {}, Clients: {}, Total Connections: {}",
             inner.mode,
             inner.servers.len(),
+            inner.clients.len(),
             total_connections
         )
     }
@@ -640,8 +648,8 @@ impl AppState {
             inner.servers.remove(&id);
         }
 
-        // Set mode to Idle if no more servers
-        if inner.servers.is_empty() {
+        // Set mode to Idle if no more servers and no clients
+        if inner.servers.is_empty() && inner.clients.is_empty() {
             inner.mode = Mode::Idle;
         }
     }
@@ -997,6 +1005,195 @@ impl AppState {
         // Write halves are no longer stored in centralized state
         // Protocols manage their own local connection data for I/O
         None
+    }
+
+    // ========== Client Management Methods ==========
+
+    /// Add a new client instance and return its ID
+    pub async fn add_client(&self, mut client: ClientInstance) -> ClientId {
+        let mut inner = self.inner.write().await;
+        let id = ClientId::new(inner.next_client_id);
+        inner.next_client_id += 1;
+        client.id = id;
+        inner.clients.insert(id, client);
+
+        // Set mode to Client if this is the first client (and no servers)
+        if inner.mode == Mode::Idle {
+            inner.mode = Mode::Client;
+        }
+
+        id
+    }
+
+    /// Remove a client instance
+    pub async fn remove_client(&self, id: ClientId) -> Option<ClientInstance> {
+        let mut inner = self.inner.write().await;
+        let client = inner.clients.remove(&id);
+
+        // Set mode to Idle if no more clients and no servers
+        if inner.clients.is_empty() && inner.servers.is_empty() {
+            inner.mode = Mode::Idle;
+        }
+
+        client
+    }
+
+    /// Get a client instance (cloned)
+    pub async fn get_client(&self, id: ClientId) -> Option<ClientInstance> {
+        // Note: ClientInstance doesn't impl Clone because it contains JoinHandle
+        // We'll need to provide specific access methods instead
+        self.inner.read().await.clients.get(&id).map(|c| {
+            // Create a lightweight copy without the handle
+            ClientInstance {
+                id: c.id,
+                remote_addr: c.remote_addr.clone(),
+                protocol_name: c.protocol_name.clone(),
+                instruction: c.instruction.clone(),
+                memory: c.memory.clone(),
+                status: c.status.clone(),
+                connection: c.connection.clone(),
+                handle: None,
+                created_at: c.created_at,
+                status_changed_at: c.status_changed_at,
+                startup_params: c.startup_params.clone(),
+                script_config: c.script_config.clone(),
+                protocol_data: c.protocol_data.clone(),
+                log_files: c.log_files.clone(),
+            }
+        })
+    }
+
+    /// Get all client IDs
+    pub async fn get_all_client_ids(&self) -> Vec<ClientId> {
+        self.inner.read().await.clients.keys().copied().collect()
+    }
+
+    /// Get all clients (lightweight copies without handles)
+    pub async fn get_all_clients(&self) -> Vec<ClientInstance> {
+        self.inner
+            .read()
+            .await
+            .clients
+            .values()
+            .map(|c| ClientInstance {
+                id: c.id,
+                remote_addr: c.remote_addr.clone(),
+                protocol_name: c.protocol_name.clone(),
+                instruction: c.instruction.clone(),
+                memory: c.memory.clone(),
+                status: c.status.clone(),
+                connection: c.connection.clone(),
+                handle: None,
+                created_at: c.created_at,
+                status_changed_at: c.status_changed_at,
+                startup_params: c.startup_params.clone(),
+                script_config: c.script_config.clone(),
+                protocol_data: c.protocol_data.clone(),
+                log_files: c.log_files.clone(),
+            })
+            .collect()
+    }
+
+    /// Update client status
+    pub async fn update_client_status(&self, id: ClientId, status: super::client::ClientStatus) {
+        if let Some(client) = self.inner.write().await.clients.get_mut(&id) {
+            client.status = status;
+            client.status_changed_at = std::time::Instant::now();
+        }
+    }
+
+    /// Get instruction for a specific client
+    pub async fn get_instruction_for_client(&self, client_id: ClientId) -> Option<String> {
+        self.inner
+            .read()
+            .await
+            .clients
+            .get(&client_id)
+            .map(|c| c.instruction.clone())
+    }
+
+    /// Set instruction for a specific client
+    pub async fn set_instruction_for_client(&self, client_id: ClientId, instruction: String) {
+        if let Some(client) = self.inner.write().await.clients.get_mut(&client_id) {
+            client.instruction = instruction;
+        }
+    }
+
+    /// Get memory for a specific client
+    pub async fn get_memory_for_client(&self, client_id: ClientId) -> Option<String> {
+        self.inner
+            .read()
+            .await
+            .clients
+            .get(&client_id)
+            .map(|c| c.memory.clone())
+    }
+
+    /// Set memory for a specific client
+    pub async fn set_memory_for_client(&self, client_id: ClientId, memory: String) {
+        if let Some(client) = self.inner.write().await.clients.get_mut(&client_id) {
+            client.memory = memory;
+        }
+    }
+
+    /// Append to memory for a specific client
+    pub async fn append_memory_for_client(&self, client_id: ClientId, text: String) {
+        if let Some(client) = self.inner.write().await.clients.get_mut(&client_id) {
+            if !client.memory.is_empty() {
+                client.memory.push('\n');
+            }
+            client.memory.push_str(&text);
+        }
+    }
+
+    /// Get protocol name for a client
+    pub async fn get_protocol_name_for_client(&self, client_id: ClientId) -> Option<String> {
+        self.inner
+            .read()
+            .await
+            .clients
+            .get(&client_id)
+            .map(|c| c.protocol_name.clone())
+    }
+
+    /// Execute a closure with mutable access to a client
+    pub async fn with_client_mut<F, R>(&self, client_id: ClientId, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut ClientInstance) -> R,
+    {
+        self.inner
+            .write()
+            .await
+            .clients
+            .get_mut(&client_id)
+            .map(f)
+    }
+
+    /// Cleanup old disconnected clients (removes clients that have been disconnected for more than max_age_secs)
+    pub async fn cleanup_old_clients(&self, max_age_secs: u64) {
+        use super::client::ClientStatus;
+        let now = std::time::Instant::now();
+
+        let mut inner = self.inner.write().await;
+        let to_remove: Vec<ClientId> = inner
+            .clients
+            .iter()
+            .filter(|(_, client)| {
+                let age = now.duration_since(client.status_changed_at).as_secs();
+                // Remove if disconnected and status changed more than max_age_secs ago
+                matches!(client.status, ClientStatus::Disconnected) && age >= max_age_secs
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in to_remove {
+            inner.clients.remove(&id);
+        }
+
+        // Set mode to Idle if no more clients and no servers
+        if inner.clients.is_empty() && inner.servers.is_empty() {
+            inner.mode = Mode::Idle;
+        }
     }
 
     // ========== Backwards Compatibility Methods ==========
