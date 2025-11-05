@@ -13,8 +13,8 @@ pub mod socket_helpers;
 #[cfg(any(feature = "http", feature = "http2"))]
 pub mod http_common;
 
-// TLS certificate management for DoT, DoH, and SMTP
-#[cfg(any(feature = "dot", feature = "doh", feature = "smtp"))]
+// TLS certificate management for DoT, DoH, and TLS protocols
+#[cfg(any(feature = "dot", feature = "doh", feature = "smtp", feature = "tls"))]
 pub mod tls_cert_manager;
 
 #[cfg(feature = "tcp")]
@@ -533,6 +533,13 @@ pub mod torrent_peer;
 pub use torrent_peer::TorrentPeerServer;
 #[cfg(feature = "torrent-peer")]
 pub use torrent_peer::actions::TorrentPeerProtocol;
+
+#[cfg(feature = "tls")]
+pub mod tls;
+#[cfg(feature = "tls")]
+pub use tls::TlsServer;
+#[cfg(feature = "tls")]
+pub use tls::actions::TlsProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
