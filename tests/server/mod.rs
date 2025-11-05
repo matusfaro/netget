@@ -2,6 +2,8 @@
 
 #[cfg(feature = "bgp")]
 pub mod bgp;
+#[cfg(feature = "rip")]
+pub mod rip;
 #[cfg(feature = "cassandra")]
 pub mod cassandra;
 // DataLink doesn't have a feature flag, it's always available
@@ -34,6 +36,8 @@ pub mod ipp;
 pub mod ipsec;
 #[cfg(feature = "irc")]
 pub mod irc;
+#[cfg(feature = "xmpp")]
+pub mod xmpp;
 #[cfg(feature = "ldap")]
 pub mod ldap;
 #[cfg(feature = "mcp")]
