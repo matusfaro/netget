@@ -83,7 +83,7 @@ pub struct ActionDefinition {
 impl ActionDefinition {
     /// Check if this is a tool action (returns information and triggers LLM re-invocation)
     pub fn is_tool(&self) -> bool {
-        matches!(self.name.as_str(), "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces")
+        matches!(self.name.as_str(), "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models")
     }
 
     /// Convert to prompt text format for LLM

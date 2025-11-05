@@ -21,7 +21,9 @@ Output: {{{this.output}}}
 {{/if}}
 {{> network_request::instructions }}
 
-{{> shared::actions available_actions=available_actions }}
+{{> shared::actions tool_actions=tool_actions regular_actions=regular_actions }}
+
+{{> shared::memory }}
 
 {{#if scripting_enabled}}
 {{> shared::scripting selected_mode=selected_scripting_mode }}
@@ -29,4 +31,4 @@ Output: {{{this.output}}}
 {{/if}}
 {{> shared::response_format }}
 
-{{> shared::current_state state=current_state active_server=server }}
+{{> shared::current_state active_server=active_server can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}
