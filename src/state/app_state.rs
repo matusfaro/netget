@@ -342,10 +342,7 @@ impl AppState {
                 local_addr: s.local_addr,
                 startup_params: s.startup_params.clone(),
                 script_config: s.script_config.clone(),
-                #[cfg(feature = "proxy")]
-                proxy_filter_config: s.proxy_filter_config.clone(),
-                #[cfg(feature = "socks5")]
-                socks5_filter_config: s.socks5_filter_config.clone(),
+                protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
             }
         })
@@ -377,10 +374,7 @@ impl AppState {
                 local_addr: s.local_addr,
                 startup_params: s.startup_params.clone(),
                 script_config: s.script_config.clone(),
-                #[cfg(feature = "proxy")]
-                proxy_filter_config: s.proxy_filter_config.clone(),
-                #[cfg(feature = "socks5")]
-                socks5_filter_config: s.socks5_filter_config.clone(),
+                protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
             })
             .collect()
@@ -710,7 +704,11 @@ impl AppState {
             .await
             .servers
             .get(&server_id)
-            .and_then(|s| s.proxy_filter_config.clone())
+            .and_then(|s| {
+                s.protocol_data
+                    .get("proxy_filter_config")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+            })
     }
 
     /// Set proxy filter configuration for a server
@@ -721,7 +719,9 @@ impl AppState {
         config: crate::server::proxy::filter::ProxyFilterConfig,
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
-            server.proxy_filter_config = Some(config);
+            if let Ok(value) = serde_json::to_value(&config) {
+                server.set_protocol_field("proxy_filter_config".to_string(), value);
+            }
         }
     }
 
@@ -733,13 +733,16 @@ impl AppState {
         update_fn: impl FnOnce(&mut crate::server::proxy::filter::ProxyFilterConfig),
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
-            if let Some(config) = &mut server.proxy_filter_config {
-                update_fn(config);
-            } else {
-                // Initialize with default if not set
-                let mut config = crate::server::proxy::filter::ProxyFilterConfig::default();
-                update_fn(&mut config);
-                server.proxy_filter_config = Some(config);
+            let mut config = server
+                .protocol_data
+                .get("proxy_filter_config")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_else(crate::server::proxy::filter::ProxyFilterConfig::default);
+
+            update_fn(&mut config);
+
+            if let Ok(value) = serde_json::to_value(&config) {
+                server.set_protocol_field("proxy_filter_config".to_string(), value);
             }
         }
     }
@@ -755,7 +758,11 @@ impl AppState {
             .await
             .servers
             .get(&server_id)
-            .and_then(|s| s.socks5_filter_config.clone())
+            .and_then(|s| {
+                s.protocol_data
+                    .get("socks5_filter_config")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+            })
     }
 
     /// Set SOCKS5 filter configuration for a server
@@ -766,7 +773,9 @@ impl AppState {
         config: crate::server::socks5::filter::Socks5FilterConfig,
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
-            server.socks5_filter_config = Some(config);
+            if let Ok(value) = serde_json::to_value(&config) {
+                server.set_protocol_field("socks5_filter_config".to_string(), value);
+            }
         }
     }
 
@@ -781,14 +790,18 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Socks5 {
-                    target_addr: ref mut addr,
-                    username: ref mut user,
-                    ..
-                } = conn.protocol_info
-                {
-                    *addr = target_addr;
-                    *user = username;
+                // Update fields in the flexible storage
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    if let Some(target) = target_addr {
+                        obj.insert("target_addr".to_string(), serde_json::Value::String(target));
+                    } else {
+                        obj.insert("target_addr".to_string(), serde_json::Value::Null);
+                    }
+                    if let Some(user) = username {
+                        obj.insert("username".to_string(), serde_json::Value::String(user));
+                    } else {
+                        obj.insert("username".to_string(), serde_json::Value::Null);
+                    }
                 }
             }
         }
@@ -806,12 +819,8 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Imap {
-                    session_state: ref mut state,
-                    ..
-                } = conn.protocol_info
-                {
-                    *state = session_state;
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert("session_state".to_string(), serde_json::to_value(&session_state).unwrap_or(serde_json::Value::Null));
                 }
             }
         }
@@ -830,25 +839,18 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Imap {
-                    session_state: ref mut state,
-                    authenticated_user: ref mut user,
-                    selected_mailbox: ref mut mailbox,
-                    mailbox_read_only: ref mut readonly,
-                    ..
-                } = conn.protocol_info
-                {
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
                     if let Some(s) = session_state {
-                        *state = s;
+                        obj.insert("session_state".to_string(), serde_json::to_value(&s).unwrap_or(serde_json::Value::Null));
                     }
                     if let Some(u) = authenticated_user {
-                        *user = u;
+                        obj.insert("authenticated_user".to_string(), serde_json::to_value(&u).unwrap_or(serde_json::Value::Null));
                     }
                     if let Some(m) = selected_mailbox {
-                        *mailbox = m;
+                        obj.insert("selected_mailbox".to_string(), serde_json::to_value(&m).unwrap_or(serde_json::Value::Null));
                     }
                     if let Some(r) = mailbox_read_only {
-                        *readonly = r;
+                        obj.insert("mailbox_read_only".to_string(), serde_json::Value::Bool(r));
                     }
                 }
             }
@@ -869,19 +871,17 @@ impl AppState {
         let inner = self.inner.read().await;
         if let Some(server) = inner.servers.get(&server_id) {
             if let Some(conn) = server.connections.get(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Imap {
+                let session_state = conn.protocol_info.data.get("session_state")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())?;
+                let authenticated_user = conn.protocol_info.data.get("authenticated_user")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                let selected_mailbox = conn.protocol_info.data.get("selected_mailbox")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                return Some((
                     session_state,
-                    authenticated_user,
-                    selected_mailbox,
-                    ..
-                } = &conn.protocol_info
-                {
-                    return Some((
-                        session_state.clone(),
-                        authenticated_user.clone(),
-                        selected_mailbox.clone(),
-                    ));
-                }
+                    authenticated_user.flatten(),
+                    selected_mailbox.flatten(),
+                ));
             }
         }
         None
@@ -897,12 +897,8 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Imap {
-                    state: ref mut pstate,
-                    ..
-                } = conn.protocol_info
-                {
-                    *pstate = protocol_state;
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert("state".to_string(), serde_json::to_value(&protocol_state).unwrap_or(serde_json::Value::Null));
                 }
             }
         }
@@ -962,9 +958,9 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Vnc { authenticated: auth, username: uname, .. } = &mut conn.protocol_info {
-                    *auth = authenticated;
-                    *uname = username;
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert("authenticated".to_string(), serde_json::Value::Bool(authenticated));
+                    obj.insert("username".to_string(), serde_json::to_value(&username).unwrap_or(serde_json::Value::Null));
                 }
             }
         }
@@ -979,15 +975,11 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Bitcoin {
-                    last_message_type: ref mut msg_type,
-                    handshake_complete: ref mut handshake,
-                    ..
-                } = &mut conn.protocol_info {
-                    *msg_type = Some(last_message_type.clone());
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert("last_message_type".to_string(), serde_json::Value::String(last_message_type.clone()));
                     // Mark handshake complete if we've seen both version and verack
                     if last_message_type == "verack" {
-                        *handshake = true;
+                        obj.insert("handshake_complete".to_string(), serde_json::Value::Bool(true));
                     }
                 }
             }
@@ -995,18 +987,15 @@ impl AppState {
     }
 
     /// Get VNC write half for sending framebuffer updates
+    ///
+    /// Note: This method is deprecated. Write halves are now managed locally
+    /// within protocol modules and not stored in centralized state.
     pub async fn get_vnc_write_half(
         &self,
-        connection_id: ConnectionId,
+        _connection_id: ConnectionId,
     ) -> Option<std::sync::Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>> {
-        let inner = self.inner.read().await;
-        for server in inner.servers.values() {
-            if let Some(conn) = server.connections.get(&connection_id) {
-                if let crate::state::server::ProtocolConnectionInfo::Vnc { write_half, .. } = &conn.protocol_info {
-                    return Some(write_half.clone());
-                }
-            }
-        }
+        // Write halves are no longer stored in centralized state
+        // Protocols manage their own local connection data for I/O
         None
     }
 

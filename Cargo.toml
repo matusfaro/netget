@@ -192,9 +192,6 @@ base64 = "0.22"
 # Socket options (SO_REUSEADDR)
 socket2 = "0.5"
 
-# System interface for raw sockets (IGMP)
-libc = "0.2"
-
 # File locking for cross-process synchronization
 fs2 = "0.4"
 

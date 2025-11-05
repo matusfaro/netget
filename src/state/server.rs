@@ -3,11 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Instant;
-use tokio::io::WriteHalf;
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::server::connection::ConnectionId;
@@ -137,386 +133,43 @@ pub enum OspfNeighborState {
 }
 
 /// Protocol-specific connection information
+///
+/// This uses flexible storage to avoid centralized enum fighting between protocols.
+/// Each protocol defines its own structure and serializes it to JSON.
+///
+/// Note: This storage is primarily for UI display and metrics.
+/// Protocols maintain their own local connection data for I/O operations.
 #[derive(Debug, Clone)]
-pub enum ProtocolConnectionInfo {
-    /// TCP connection with write half
-    Tcp {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// UDP "connection" (recent peers)
-    Udp {
-        recent_peers: Vec<(SocketAddr, Instant)>,
-    },
-    /// HTTP connection (recent requests)
-    Http {
-        recent_requests: Vec<(String, String, Instant)>, // method, path, time
-    },
-    /// HTTP/2 connection (recent requests with multiplexing)
-    Http2 {
-        recent_requests: Vec<(String, String, Instant)>, // method, path, time
-    },
-    /// PyPI connection (recent requests)
-    Pypi {
-        recent_requests: Vec<String>, // URIs
-    },
-    /// Maven repository connection (recent artifact requests)
-    Maven {
-        recent_artifacts: Vec<String>,
-    },
-    /// SNMP connection (recent requests)
-    Snmp {
-        recent_peers: Vec<(SocketAddr, Instant)>,
-    },
-    /// IGMP connection (multicast group management)
-    Igmp {
-        joined_groups: Vec<std::net::Ipv4Addr>,
-    },
-    /// Syslog connection (recent messages)
-    Syslog {
-        recent_peers: Vec<(SocketAddr, Instant)>,
-    },
-    /// DNS connection (recent queries)
-    Dns {
-        recent_queries: Vec<(String, Instant)>, // query, time
-    },
-    /// DNS-over-TLS connection (persistent TCP+TLS)
-    Dot {
-        peer_addr: SocketAddr,
-        recent_queries: Vec<(String, chrono::DateTime<chrono::Utc>)>, // query, time
-    },
-    /// DNS-over-HTTPS connection (HTTP/2 session)
-    Doh {
-        peer_addr: SocketAddr,
-        recent_queries: Vec<(String, chrono::DateTime<chrono::Utc>)>, // query, time
-    },
-    /// DHCP connection (recent requests)
-    Dhcp {
-        recent_requests: Vec<(String, Instant)>, // client MAC, time
-    },
-    /// BOOTP connection (recent requests)
-    Bootp {
-        recent_requests: Vec<(String, Instant)>, // request type, time
-    },
-    /// NTP connection (recent clients)
-    Ntp {
-        recent_clients: Vec<(SocketAddr, Instant)>,
-    },
-    /// WHOIS connection (recent queries)
-    Whois {
-        recent_queries: Vec<(String, Instant)>, // domain, time
-    },
-    /// SSH connection (managed by russh library)
-    Ssh {
-        authenticated: bool,
-        username: Option<String>,
-        channels: Vec<String>, // Active channel types (shell, sftp)
-    },
-    /// DC (Direct Connect) connection with write half
-    Dc {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// IRC connection with write half
-    Irc {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// XMPP connection with write half
-    Xmpp {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-        jid: Option<String>,
-        authenticated: bool,
-    },
-    /// Telnet connection with write half
-    Telnet {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// SMTP connection with write half
-    Smtp {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// mDNS service (no traditional connections, just advertisements)
-    Mdns {
-        advertised_services: Vec<(String, u16, Instant)>, // service_name, port, time
-    },
-    /// MySQL connection (managed by opensrv-mysql)
-    Mysql,
-    /// IPP connection (recent print jobs)
-    Ipp {
-        recent_jobs: Vec<(String, Instant)>, // job ID, time
-    },
-    /// PostgreSQL connection (managed by pgwire)
-    Postgresql,
-    /// Redis connection (managed by RESP protocol)
-    Redis,
-    /// Cassandra connection (CQL native protocol)
-    Cassandra {
-        ready: bool,
-        protocol_version: u8,
-    },
-    /// HTTP Proxy connection (recent requests)
-    Proxy {
-        recent_requests: Vec<(String, String, Instant)>, // method, URL, time
-    },
-    /// WebDAV connection (recent operations)
-    WebDav {
-        recent_operations: Vec<(String, String, Instant)>, // operation, path, time
-    },
-    /// NFS connection (mounted paths)
-    Nfs { mounted_paths: Vec<String> },
-    /// SMB connection with session and file state
-    Smb {
-        authenticated: bool,
-        username: Option<String>,
-        session_id: Option<u64>,
-        open_files: Vec<String>, // Paths of currently open files
-    },
-    /// STUN connection (transaction)
-    Stun {
-        transaction_id: Option<String>,
-    },
-    /// TURN connection (allocations and relay)
-    Turn {
-        allocation_ids: Vec<String>,
-        relay_addresses: Vec<String>,
-    },
-    /// SIP connection (VoIP signaling)
-    Sip {
-        dialog_id: Option<String>,    // Call-ID + From tag + To tag
-        from: Option<String>,          // Caller SIP URI
-        to: Option<String>,            // Callee SIP URI
-        state: String,                 // idle/early/confirmed/terminated
-        call_id: Option<String>,       // Call-ID header value
-    },
-    /// LDAP connection with write half
-    Ldap {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-        authenticated: bool,
-        bind_dn: Option<String>,
-    },
-    /// IMAP connection (write_half stored in ImapSession)
-    Imap {
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-        session_state: ImapSessionState,
-        authenticated_user: Option<String>,
-        selected_mailbox: Option<String>,
-        mailbox_read_only: bool,
-    },
-    /// NNTP connection (Network News Transfer Protocol)
-    Nntp {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// MQTT connection (client session)
-    Mqtt {
-        client_id: String,
-        subscriptions: Vec<String>, // Subscribed topic filters
-    },
-    /// SOCKS5 proxy connection
-    Socks5 {
-        target_addr: Option<String>,       // Target address being proxied to
-        username: Option<String>,          // Authenticated username (if any)
-        mitm_enabled: bool,               // Whether MITM inspection is active
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-    },
-    /// Elasticsearch connection (recent queries)
-    Elasticsearch {
-        recent_requests: Vec<(String, String, Instant)>, // method, path, time
-    },
-    /// DynamoDB connection (recent operations)
-    Dynamo {
-        recent_operations: Vec<(String, String, Instant)>, // operation, table, time
-    },
-    /// S3 connection (recent operations)
-    S3 {
-        recent_operations: Vec<(String, Option<String>, Option<String>, Instant)>, // operation, bucket, key, time
-    },
-    /// SQS connection (recent operations)
-    Sqs {
-        recent_operations: Vec<(String, String, Instant)>, // operation, queue_url, time
-    },
-    /// NPM registry connection (recent requests)
-    Npm {
-        recent_requests: Vec<String>, // Recent package requests
-    },
-    /// OpenAI API connection (recent requests)
-    OpenAi {
-        recent_requests: Vec<String>, // Recent endpoints accessed
-    },
-    /// JSON-RPC connection (recent method calls)
-    JsonRpc {
-        recent_methods: Vec<String>, // Recent RPC methods called
-    },
-    /// WireGuard VPN connection
-    Wireguard {
-        public_key: String,                      // Peer's public key (base64)
-        endpoint: Option<String>,                // Peer's endpoint address (may be unknown initially)
-        allowed_ips: Vec<String>,                // Allowed IPs for this peer
-        last_handshake: Option<std::time::SystemTime>, // Last successful handshake time
-    },
-    /// OpenVPN VPN connection
-    Openvpn {
-        session_id: String,                // Session ID (hex)
-        vpn_ip: Option<String>,            // Assigned VPN IP address
-        cipher: String,                    // Encryption cipher (e.g., "AES-256-GCM")
-    },
-    /// IPSec/IKEv2 connection
-    Ipsec {
-        endpoint: SocketAddr,              // Peer endpoint address
-        initiator_spi: String,             // Initiator SPI (hex)
-        responder_spi: String,             // Responder SPI (hex)
-        ike_version: String,               // IKEv1 or IKEv2
-        last_packet: Option<Instant>,      // Last packet received time
-        tx_bytes: u64,                     // Bytes transmitted
-        rx_bytes: u64,                     // Bytes received
-    },
-    /// BGP connection with write half and FSM state
-    Bgp {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-        session_state: BgpSessionState,
-        peer_as: Option<u32>,              // Peer AS number
-        hold_time: u16,                    // Negotiated hold time (seconds)
-        keepalive_time: u16,               // Keepalive interval (seconds)
-        announced_prefixes: Vec<String>,   // Announced route prefixes
-    },
-    /// IS-IS routing protocol connection (Layer 2 neighbor adjacency)
-    Isis {
-        adjacency_state: String,           // init, up, down
-        neighbor_system_id: Option<String>, // e.g., "0000.0000.0002"
-        level: String,                     // level-1, level-2, level-1+2
-    },
-    /// RIP connection (recent peers)
-    Rip {
-        recent_peers: Vec<(SocketAddr, Instant)>,
-    },
-    /// gRPC connection (HTTP/2)
-    Grpc {
-        service_name: String,              // Service being called
-        method_name: String,               // Method being called
-        metadata: std::collections::HashMap<String, String>,  // gRPC metadata (headers)
-    },
-    /// etcd connection (gRPC-based distributed KV store)
-    Etcd {
-        cluster_name: String,              // Cluster name
-        last_operation: String,            // Last RPC operation (Range, Put, etc.)
-        operations_count: u64,             // Total RPC calls made
-    },
-    /// XML-RPC connection (HTTP-based RPC)
-    XmlRpc {
-        recent_methods: Vec<(String, Instant)>,  // method_name, time
-    },
-    /// MCP (Model Context Protocol) connection
-    Mcp {
-        session_id: String,                              // Session ID
-        initialized: bool,                               // Whether session completed initialization
-        capabilities: serde_json::Value,                 // Server capabilities
-        subscriptions: std::collections::HashSet<String>, // Resource URIs subscribed to
-        tools: std::collections::HashMap<String, String>, // Tool name -> description
-        resources: std::collections::HashMap<String, String>, // Resource URI -> name
-        prompts: std::collections::HashMap<String, String>, // Prompt name -> description
-    },
-    /// Tor Directory connection (HTTP requests for consensus/descriptors)
-    TorDirectory {
-        recent_requests: Vec<(String, Instant)>, // path, time
-    },
-    /// Tor Relay connection (OR protocol with TLS and cells)
-    TorRelay {
-        circuits: Vec<String>,         // Active circuit IDs (hex format)
-        relay_type: Option<String>,    // Guard, Middle, or Exit (if configured)
-        last_cell: Option<Instant>,    // Last cell received time
-    },
-    /// VNC connection (Remote Frame Buffer protocol)
-    Vnc {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-        authenticated: bool,
-        username: Option<String>,
-        framebuffer_width: u16,
-        framebuffer_height: u16,
-        pixel_format: VncPixelFormat,
-    },
-    /// OpenAPI connection (HTTP requests validated against OpenAPI spec)
-    OpenApi {
-        operation_id: Option<String>,  // Matched OpenAPI operation ID
-        method: Option<String>,        // HTTP method (GET, POST, etc.)
-        path: Option<String>,          // Request path
-        validated: bool,               // Whether request was successfully validated
-    },
-    /// Git Smart HTTP connection
-    Git {
-        recent_repos: Vec<String>,  // Recently accessed repositories
-    },
-    /// Kafka connection (recent requests)
-    Kafka {
-        recent_requests: Vec<(String, Instant)>, // API type, time
-    },
-    /// HTTP/3 connection (multiplexed streams over UDP)
-    Http3 {
-        stream_count: usize,  // Number of active bidirectional streams
-    },
-    /// OSPF connection (neighbor relationship)
-    Ospf {
-        neighbor_state: OspfNeighborState,
-        router_id: String,
-        area_id: String,
-        dr: String,  // Designated Router
-        bdr: String, // Backup Designated Router
-    },
-    /// Bitcoin P2P connection
-    Bitcoin {
-        handshake_complete: bool,
-        last_message_type: Option<String>, // Last message type received (version, ping, etc.)
-    },
-    /// BitTorrent Tracker connection
-    TorrentTracker {
-        recent_requests: Vec<(String, Instant)>, // request type (announce/scrape), time
-    },
-    /// BitTorrent DHT connection
-    TorrentDht {
-        recent_queries: Vec<(String, Instant)>, // query type (ping/find_node/get_peers/announce_peer), time
-    },
-    /// BitTorrent Peer Wire Protocol connection
-    TorrentPeer {
-        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-        state: ProtocolState,
-        queued_data: Vec<u8>,
-        handshake_complete: bool,
-        peer_id: Option<String>,
-        info_hash: Option<String>,
-    },
+pub struct ProtocolConnectionInfo {
+    /// Protocol-specific data as JSON
+    /// Protocols can serialize any structure they need here
+    pub data: serde_json::Value,
 }
 
-/// VNC pixel format
-#[derive(Debug, Clone)]
-pub struct VncPixelFormat {
-    pub bits_per_pixel: u8,
-    pub depth: u8,
-    pub big_endian: bool,
-    pub true_color: bool,
-    pub red_max: u16,
-    pub green_max: u16,
-    pub blue_max: u16,
-    pub red_shift: u8,
-    pub green_shift: u8,
-    pub blue_shift: u8,
+impl ProtocolConnectionInfo {
+    /// Create new protocol connection info from any serializable data
+    pub fn new<T: serde::Serialize>(data: T) -> Self {
+        Self {
+            data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+        }
+    }
+
+    /// Create empty protocol connection info
+    pub fn empty() -> Self {
+        Self {
+            data: serde_json::Value::Object(serde_json::Map::new()),
+        }
+    }
+
+    /// Get a reference to a field in the data
+    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        self.data.get(key)
+    }
+
+    /// Try to deserialize the data into a specific type
+    pub fn try_into<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.data.clone())
+    }
 }
 
 /// Connection status
@@ -584,12 +237,12 @@ pub struct ServerInstance {
     pub startup_params: Option<serde_json::Value>,
     /// Script configuration for handling protocol events
     pub script_config: Option<crate::scripting::ScriptConfig>,
-    /// Proxy filter configuration (only for proxy servers)
-    #[cfg(feature = "proxy")]
-    pub proxy_filter_config: Option<crate::server::proxy::filter::ProxyFilterConfig>,
-    /// SOCKS5 filter configuration (feature-gated)
-    #[cfg(feature = "socks5")]
-    pub socks5_filter_config: Option<crate::server::socks5::filter::Socks5FilterConfig>,
+    /// Protocol-specific server data (flexible storage)
+    ///
+    /// This replaces protocol-specific feature-gated fields.
+    /// Each protocol can store any data structure here by serializing to JSON.
+    /// Use get_protocol_data() and set_protocol_data() helper methods.
+    pub protocol_data: serde_json::Value,
     /// Log file paths (output_name -> log_file_path)
     pub log_files: HashMap<String, PathBuf>,
 }
@@ -612,11 +265,36 @@ impl ServerInstance {
             local_addr: None,
             startup_params: None,
             script_config: None,
-            #[cfg(feature = "proxy")]
-            proxy_filter_config: None,
-            #[cfg(feature = "socks5")]
-            socks5_filter_config: None,
+            protocol_data: serde_json::Value::Object(serde_json::Map::new()),
             log_files: HashMap::new(),
+        }
+    }
+
+    /// Get protocol-specific data
+    pub fn get_protocol_data<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.protocol_data.clone())
+    }
+
+    /// Set protocol-specific data
+    pub fn set_protocol_data<T: serde::Serialize>(&mut self, data: T) -> Result<(), serde_json::Error> {
+        self.protocol_data = serde_json::to_value(data)?;
+        Ok(())
+    }
+
+    /// Get a field from protocol data
+    pub fn get_protocol_field(&self, key: &str) -> Option<&serde_json::Value> {
+        self.protocol_data.get(key)
+    }
+
+    /// Set a field in protocol data
+    pub fn set_protocol_field(&mut self, key: String, value: serde_json::Value) {
+        if let Some(obj) = self.protocol_data.as_object_mut() {
+            obj.insert(key, value);
+        } else {
+            // Initialize as object if not already
+            let mut map = serde_json::Map::new();
+            map.insert(key, value);
+            self.protocol_data = serde_json::Value::Object(map);
         }
     }
 
