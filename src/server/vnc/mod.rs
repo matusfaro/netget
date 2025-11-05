@@ -9,7 +9,7 @@ use crate::display::{DisplayCanvas, DisplayCommand};
 use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo, ProtocolState, VncPixelFormat};
+use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo, ProtocolState};
 use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -31,6 +31,21 @@ enum SecurityType {
     None = 1,
     #[allow(dead_code)]
     VncAuth = 2, // Not yet implemented
+}
+
+/// VNC pixel format
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VncPixelFormat {
+    pub bits_per_pixel: u8,
+    pub depth: u8,
+    pub big_endian: bool,
+    pub true_color: bool,
+    pub red_max: u16,
+    pub green_max: u16,
+    pub blue_max: u16,
+    pub red_shift: u8,
+    pub green_shift: u8,
+    pub blue_shift: u8,
 }
 
 impl VncPixelFormat {

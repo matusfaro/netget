@@ -215,7 +215,7 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
 
     output.push_str(&format!("\n{}▸ Description:{}\n  {}{}{}\n\n",
         colors::BRIGHT_CYAN, colors::RESET,
-        colors::DIM, get_protocol_description(&parsed_protocol_name), colors::RESET));
+        colors::DIM, protocol.description(), colors::RESET));
 
     // Try to get protocol instance for detailed info
     if let Some(protocol) = registry.get(&parsed_protocol_name) {
@@ -356,56 +356,5 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
     }
 
     Ok(output)
-}
-
-/// Get protocol description
-fn get_protocol_description(protocol_name: &str) -> &'static str {
-    match protocol_name {
-        "TCP" => "Raw TCP/IP stack where the LLM constructs entire protocol messages from scratch",
-        "HTTP" => "HTTP stack using hyper library where the LLM controls responses (status, headers, body)",
-        "UDP" => "Raw UDP/IP stack where the LLM controls datagrams",
-        "DataLink" => "Layer 2 Ethernet stack where the LLM controls frames (ARP, custom protocols)",
-        "DNS" => "DNS server using hickory-dns where the LLM generates DNS responses",
-        "DoT" => "DNS-over-TLS server using hickory-dns where the LLM generates DNS responses over TLS",
-        "DoH" => "DNS-over-HTTPS server using hickory-dns where the LLM generates DNS responses over HTTPS",
-        "DHCP" => "DHCP server using dhcproto where the LLM handles DHCP requests",
-        "NTP" => "NTP server using ntpd-rs where the LLM handles time synchronization",
-        "SNMP" => "SNMP agent using rasn-snmp where the LLM handles get/set requests",
-        "SSH" => "SSH server using russh where the LLM handles authentication and shell sessions",
-        "IRC" => "IRC chat server where the LLM handles chat protocol and channels",
-        "Telnet" => "Telnet server using nectar where the LLM handles terminal interactions",
-        "SMTP" => "SMTP mail server where the LLM handles email delivery",
-        "IMAP" => "IMAP mail server where the LLM handles mailbox operations",
-        "mDNS" => "Multicast DNS service discovery where the LLM advertises services",
-        "MySQL" => "MySQL server using opensrv-mysql where the LLM handles SQL queries",
-        "IPP" => "Internet Printing Protocol server where the LLM handles print jobs",
-        "PostgreSQL" => "PostgreSQL server using pgwire where the LLM handles SQL queries",
-        "Redis" => "Redis server with RESP protocol where the LLM handles data operations",
-        "Proxy" => "HTTP/HTTPS proxy using http-mitm-proxy where the LLM intercepts and modifies requests",
-        "WebDAV" => "WebDAV file server where the LLM handles file operations over HTTP",
-        "NFS" => "NFSv3 file server using nfsserve where the LLM handles file system operations",
-        "SOCKS5" => "SOCKS5 proxy server where the LLM controls proxy decisions and authentication",
-        "SMB" => "SMB/CIFS file server where the LLM handles file operations",
-        "Cassandra" => "Cassandra/CQL database server where the LLM handles CQL queries",
-        "STUN" => "STUN server for NAT traversal where the LLM handles binding requests",
-        "TURN" => "TURN relay server for NAT traversal where the LLM handles allocations",
-        "Elasticsearch" => "Elasticsearch server where the LLM handles search queries",
-        "WireGuard" => "WireGuard VPN honeypot where the LLM detects handshake attempts",
-        "OpenVPN" => "OpenVPN honeypot where the LLM detects connection attempts",
-        "IPSec" => "IPSec/IKEv2 VPN honeypot where the LLM detects handshake attempts",
-        "DynamoDB" => "DynamoDB-compatible server where the LLM handles API operations",
-        "OpenAI" => "OpenAI-compatible API server where the LLM handles chat completions",
-        "LDAP" => "LDAP directory server where the LLM handles directory queries",
-        "BGP" => "BGP routing protocol where the LLM handles peering and route announcements",
-        "MCP" => "Model Context Protocol server",
-        "gRPC" => "gRPC server",
-        "TorDirectory" => "Tor directory server",
-        "TorRelay" => "Tor relay server",
-        "JsonRPC" => "JSON-RPC server",
-        "XmlRPC" => "XML-RPC server",
-        "VNC" => "VNC server",
-        "OpenAPI" => "OpenAPI spec-driven HTTP server",
-        _ => "Unknown protocol"
-    }
 }
 
