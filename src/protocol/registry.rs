@@ -227,6 +227,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
 
+        #[cfg(feature = "ospf")]
+        self.register(Arc::new(crate::server::OspfProtocol::new()));
+
         #[cfg(feature = "mcp")]
         self.register(Arc::new(crate::server::McpProtocol::new()));
 
