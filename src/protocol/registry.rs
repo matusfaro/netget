@@ -326,6 +326,11 @@ impl ProtocolRegistry {
             Arc::new(crate::server::OpenApiProtocol::new()),
         );
 
+        #[cfg(feature = "openid")]
+        self.register(
+            Arc::new(crate::server::OpenIdProtocol::new()),
+        );
+
         #[cfg(feature = "git")]
         self.register(Arc::new(crate::server::GitProtocol::new()));
 
