@@ -1,34 +1,27 @@
 //! Handlebars template engine for prompt management
 //!
 //! This module provides a centralized template engine that loads and manages
-//! Handlebars templates from the file system, supporting partials and hot reloading.
+//! Handlebars templates from embedded resources, supporting partials.
+//!
+//! Templates are embedded at compile time using include_dir, so the binary
+//! is self-contained and works in release builds.
 
 use anyhow::{Context, Result};
 use handlebars::Handlebars;
+use include_dir::{include_dir, Dir};
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
-use walkdir::WalkDir;
 
-/// Get the template directory path (compile-time resolution)
-fn get_template_dir() -> PathBuf {
-    // Try to use CARGO_MANIFEST_DIR at compile time, fall back to runtime "prompts" dir
-    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
-        PathBuf::from(manifest_dir).join("prompts")
-    } else {
-        PathBuf::from("prompts")
-    }
-}
+/// Embedded template directory (compiled into binary)
+static EMBEDDED_TEMPLATES: Dir = include_dir!("$CARGO_MANIFEST_DIR/prompts");
 
 /// Global template engine instance
 pub static TEMPLATE_ENGINE: Lazy<Arc<TemplateEngine>> = Lazy::new(|| {
-    let template_dir = get_template_dir();
-    info!("Initializing template engine from: {:?}", template_dir);
+    info!("Initializing template engine from embedded templates");
 
-    let engine = TemplateEngine::new(&template_dir).unwrap_or_else(|e| {
-        warn!("Failed to initialize template engine from {:?}: {}", template_dir, e);
+    let engine = TemplateEngine::from_embedded().unwrap_or_else(|e| {
+        warn!("Failed to initialize template engine from embedded templates: {}", e);
         TemplateEngine::empty()
     });
 
@@ -43,33 +36,21 @@ pub static TEMPLATE_ENGINE: Lazy<Arc<TemplateEngine>> = Lazy::new(|| {
 /// Template engine that manages Handlebars templates
 pub struct TemplateEngine {
     handlebars: RwLock<Handlebars<'static>>,
-    template_dir: PathBuf,
 }
 
 impl TemplateEngine {
-    /// Create a new template engine with the given template directory
-    pub fn new<P: AsRef<Path>>(template_dir: P) -> Result<Self> {
-        let template_dir = template_dir.as_ref().to_path_buf();
-
-        if !template_dir.exists() {
-            warn!("Template directory does not exist: {:?}", template_dir);
-            // Return empty engine instead of failing
-            return Ok(Self::empty());
-        }
-
+    /// Create a template engine from embedded templates
+    pub fn from_embedded() -> Result<Self> {
         let mut handlebars = Handlebars::new();
 
         // Set strict mode to catch template errors
         handlebars.set_strict_mode(true);
 
-        // Load all templates and partials
-        Self::load_templates(&mut handlebars, &template_dir)?;
-
-        info!("Template engine initialized with directory: {:?}", template_dir);
+        // Load all templates and partials from embedded directory
+        Self::load_embedded_templates(&mut handlebars, &EMBEDDED_TEMPLATES, "")?;
 
         Ok(Self {
             handlebars: RwLock::new(handlebars),
-            template_dir,
         })
     }
 
@@ -77,76 +58,89 @@ impl TemplateEngine {
     pub fn empty() -> Self {
         Self {
             handlebars: RwLock::new(Handlebars::new()),
-            template_dir: PathBuf::new(),
         }
     }
 
-    /// Load all templates and partials from the template directory
-    fn load_templates(handlebars: &mut Handlebars<'static>, template_dir: &Path) -> Result<()> {
-        // Walk through all .hbs files in the template directory
-        for entry in WalkDir::new(template_dir)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
+    /// Load all templates and partials from embedded directory
+    fn load_embedded_templates(
+        handlebars: &mut Handlebars<'static>,
+        dir: &Dir,
+        prefix: &str,
+    ) -> Result<()> {
+        // Process all files in this directory
+        for file in dir.files() {
+            let file_path = file.path();
 
-            // Skip non-template files
-            if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("hbs") {
+            // Only process .hbs files
+            if file_path.extension().and_then(|s| s.to_str()) != Some("hbs") {
                 continue;
             }
 
-            // Calculate relative path for template name
-            let relative_path = path
-                .strip_prefix(template_dir)
-                .context("Failed to strip template directory prefix")?;
+            // Get the full relative path
+            let relative_path = if prefix.is_empty() {
+                file_path.to_string_lossy().to_string()
+            } else {
+                format!("{}/{}", prefix, file_path.file_name().unwrap().to_string_lossy())
+            };
 
-            // Convert path to template name (without .hbs extension)
+            // Convert to template name (without .hbs extension)
             let template_name = relative_path
-                .with_extension("")
-                .to_string_lossy()
+                .trim_end_matches(".hbs")
                 .replace(std::path::MAIN_SEPARATOR, "/");
 
-            // Read template content
-            let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read template: {:?}", path))?;
+            // Get template content
+            let content = file
+                .contents_utf8()
+                .context("Template file is not valid UTF-8")?;
 
-            // Register template or partial
-            if path.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new("partials")) {
+            // Check if this is a partial (in a "partials" directory)
+            let is_partial = file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                == Some("partials");
+
+            if is_partial {
                 // Register as partial with namespace
                 let partial_name = template_name.replace("/partials/", "::");
                 handlebars
-                    .register_partial(&partial_name, &content)
+                    .register_partial(&partial_name, content)
                     .with_context(|| format!("Failed to register partial: {}", partial_name))?;
                 debug!("Registered partial: {}", partial_name);
             } else {
                 // Register as template
                 handlebars
-                    .register_template_string(&template_name, &content)
+                    .register_template_string(&template_name, content)
                     .with_context(|| format!("Failed to register template: {}", template_name))?;
                 debug!("Registered template: {}", template_name);
             }
         }
 
+        // Recursively process subdirectories
+        for subdir in dir.dirs() {
+            let subdir_name = subdir
+                .path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+
+            let new_prefix = if prefix.is_empty() {
+                subdir_name
+            } else {
+                format!("{}/{}", prefix, subdir_name)
+            };
+
+            Self::load_embedded_templates(handlebars, subdir, &new_prefix)?;
+        }
+
         Ok(())
     }
 
-    /// Reload all templates from the file system
+    /// Reload templates (no-op for embedded templates, kept for API compatibility)
     pub fn reload(&self) -> Result<()> {
-        if !self.template_dir.exists() {
-            return Ok(());
-        }
-
-        let mut handlebars = Handlebars::new();
-        handlebars.set_strict_mode(true);
-
-        Self::load_templates(&mut handlebars, &self.template_dir)?;
-
-        // Replace the handlebars instance
-        let mut guard = self.handlebars.write().unwrap();
-        *guard = handlebars;
-
-        info!("Templates reloaded successfully");
+        // Templates are embedded, so there's nothing to reload
+        info!("Reload requested but templates are embedded (no-op)");
         Ok(())
     }
 
@@ -239,7 +233,6 @@ impl Default for TemplateDataBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_template_data_builder() {
@@ -264,18 +257,14 @@ mod tests {
     }
 
     #[test]
-    fn test_template_loading() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let template_path = temp_dir.path().join("test.hbs");
-        std::fs::write(&template_path, "Hello {{name}}!")?;
+    fn test_embedded_templates_loaded() {
+        let engine = TemplateEngine::from_embedded().expect("Failed to load embedded templates");
 
-        let engine = TemplateEngine::new(temp_dir.path())?;
-        assert!(engine.has_template("test"));
+        // Check that the main templates are loaded
+        assert!(engine.has_template("user_input/main"), "user_input/main template should be loaded");
+        assert!(engine.has_template("network_request/main"), "network_request/main template should be loaded");
 
-        let data = TemplateDataBuilder::new().field("name", "World").build();
-        let result = engine.render("test", &data)?;
-        assert_eq!(result, "Hello World!");
-
-        Ok(())
+        // Should have multiple templates
+        assert!(engine.get_templates().len() > 0, "Should have loaded templates");
     }
 }
