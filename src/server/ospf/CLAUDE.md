@@ -76,8 +76,16 @@ Real Router → OSPF packet (IP proto 89) → NetGet
 
 **Outgoing**:
 ```
-LLM → JSON action → Build OSPF packet → Send to multicast/unicast
+LLM → JSON action → execute_action() → ActionResult::Output(packet_bytes)
+                                           ↓
+                               mod.rs processes protocol_results
+                                           ↓
+                               send_ospf_packet(socket_fd, dest_ip, bytes)
+                                           ↓
+                               Raw sendto() to 224.0.0.5 (multicast)
 ```
+
+**Architecture**: LLM actions return `ActionResult::Output` with raw OSPF packet bytes. The mod.rs event handler processes these results and calls `send_ospf_packet()` with the raw socket FD from `OspfState`. Currently sends to multicast (224.0.0.5) by default; unicast destination support is TODO.
 
 ### No Real Routing
 
@@ -265,13 +273,13 @@ unsafe {
 - Structured JSON events to LLM
 - Hello packet construction
 - Packet transmission function
-
-### ⏳ In Progress
 - Connect LLM actions to packet sending
-  - Need architecture for passing socket_fd to actions
-  - Options: Global state, app_state extension, callback pattern
+  - LLM JSON responses converted to OSPF packets
+  - Packets sent to multicast (224.0.0.5) by default
+  - Full logging (dual tracing + status_tx)
 
 ### 📋 TODO
+- Unicast destination support (send to specific neighbor instead of multicast)
 - LSA packet construction (Router, Network, Summary)
 - Database Description handling
 - LSR/LSU/LSAck handling
