@@ -76,6 +76,13 @@ pub use ntp::NtpServer;
 #[cfg(feature = "ntp")]
 pub use ntp::actions::NtpProtocol;
 
+#[cfg(feature = "whois")]
+pub mod whois;
+#[cfg(feature = "whois")]
+pub use whois::WhoisServer;
+#[cfg(feature = "whois")]
+pub use whois::actions::WhoisProtocol;
+
 #[cfg(feature = "snmp")]
 pub mod snmp;
 #[cfg(feature = "snmp")]

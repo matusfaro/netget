@@ -160,6 +160,10 @@ pub enum ProtocolConnectionInfo {
     Ntp {
         recent_clients: Vec<(SocketAddr, Instant)>,
     },
+    /// WHOIS connection (recent queries)
+    Whois {
+        recent_queries: Vec<(String, Instant)>, // domain, time
+    },
     /// SSH connection (managed by russh library)
     Ssh {
         authenticated: bool,
