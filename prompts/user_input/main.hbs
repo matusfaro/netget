@@ -6,12 +6,14 @@
 {{{conversation_history}}}
 
 {{/if}}
-{{> user_input::instructions }}
+# Your Task
 
-{{> shared::actions available_actions=available_actions }}
+{{instructions}}
+
+{{> shared::actions tool_actions=tool_actions regular_actions=regular_actions }}
 
 {{#if include_base_stacks}}
-{{> shared::base_stack_docs include_disabled=include_disabled_protocols }}
+{{> shared::base_stack_docs base_stack_docs=base_stack_docs }}
 
 {{/if}}
 {{#if scripting_enabled}}
@@ -20,4 +22,4 @@
 {{/if}}
 {{> shared::response_format }}
 
-{{> shared::current_state state=current_state servers=servers mode=mode }}
+{{> shared::current_state servers=servers mode=mode can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}
