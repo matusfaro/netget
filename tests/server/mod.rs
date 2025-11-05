@@ -90,6 +90,14 @@ pub mod tor_directory;
 pub mod tor_relay;
 #[cfg(feature = "tor")]
 pub mod tor_integration;
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(all(feature = "torrent-tracker", feature = "torrent-dht", feature = "torrent-peer"))]
+pub mod torrent_integration;
 #[cfg(feature = "turn")]
 pub mod turn;
 #[cfg(feature = "udp")]
