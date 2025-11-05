@@ -1,4 +1,4 @@
-//! IGMP server implementation using raw sockets
+//! IGMP server implementation using raw IP sockets
 pub mod actions;
 
 use crate::server::connection::ConnectionId;
@@ -9,6 +9,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
+use socket2::Socket;
+use std::os::fd::{AsRawFd, FromRawFd};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -123,7 +125,7 @@ impl IgmpServerState {
 pub struct IgmpServer;
 
 impl IgmpServer {
-    /// Spawn IGMP server with action-based LLM handling
+    /// Spawn IGMP server with action-based LLM handling using raw IP sockets
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -131,30 +133,54 @@ impl IgmpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        // For IGMP, we need raw socket with IP_HDRINCL or IPPROTO_IGMP
-        // Since this requires root privileges and is complex, we'll use a UDP socket
-        // on a non-standard port as a placeholder for testing.
-        // In production, this would use socket2 with raw sockets.
+        info!("IGMP server starting with raw IP sockets (requires root privileges)");
+        let _ = status_tx.send("[INFO] IGMP server starting with raw IP sockets (requires root privileges)".to_string());
 
-        info!("IGMP server starting (note: requires raw socket support)");
-        let _ = status_tx.send("[INFO] IGMP server starting (note: requires raw socket support)".to_string());
+        // Create raw socket for IGMP (protocol 2)
+        // This requires CAP_NET_RAW capability or root privileges
+        // SOCK_RAW = 3, IPPROTO_IGMP = 2
+        let socket = unsafe {
+            Socket::from_raw_fd(libc::socket(
+                libc::AF_INET,
+                libc::SOCK_RAW,
+                libc::IPPROTO_IGMP,
+            ))
+        };
+        if socket.as_raw_fd() < 0 {
+            return Err(anyhow::anyhow!("Failed to create raw IGMP socket (need root privileges)"));
+        }
 
-        // IMPORTANT: IGMP uses IP protocol 2, not UDP. This is a simplified implementation
-        // for demonstration. A full implementation would use:
-        // - socket2::Socket with Domain::IPV4, Type::RAW, Protocol::IGMPV2
-        // - Setting IP_HDRINCL or using IPPROTO_IGMP
-        // - Joining multicast groups via IP_ADD_MEMBERSHIP
+        // Set socket to reuse address
+        socket.set_reuse_address(true)?;
 
-        warn!("IGMP server: Using UDP socket for testing (production requires raw sockets with root)");
-        let _ = status_tx.send("[WARN] IGMP server: Using UDP socket for testing (production requires raw sockets with root)".to_string());
+        // Bind to the interface address (0.0.0.0 to listen on all interfaces)
+        let bind_addr = std::net::SocketAddrV4::new(
+            match listen_addr.ip() {
+                std::net::IpAddr::V4(addr) => addr,
+                std::net::IpAddr::V6(_) => Ipv4Addr::UNSPECIFIED,
+            },
+            0, // Port is ignored for raw sockets
+        );
+        socket.bind(&bind_addr.into())?;
 
-        use tokio::net::UdpSocket;
-        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
-        let local_addr = socket.local_addr()?;
-        info!("IGMP server listening on {} (action-based)", local_addr);
+        // Set socket to non-blocking mode for tokio
+        socket.set_nonblocking(true)?;
+
+        // Get the local address (for display purposes)
+        let local_addr = SocketAddr::new(
+            std::net::IpAddr::V4(bind_addr.ip().clone()),
+            2, // IGMP protocol number
+        );
+
+        info!("IGMP server listening on {} (raw socket, protocol 2)", local_addr);
 
         let protocol = Arc::new(IgmpProtocol::new());
         let server_state = Arc::new(Mutex::new(IgmpServerState::new()));
+
+        // Convert socket2::Socket to std::net::UdpSocket for tokio
+        // Even though this is a raw socket, we can wrap it as UdpSocket
+        let std_socket: std::net::UdpSocket = socket.into();
+        let socket = Arc::new(tokio::net::UdpSocket::from_std(std_socket)?);
 
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
@@ -162,7 +188,35 @@ impl IgmpServer {
             loop {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
-                        let data = buffer[..n].to_vec();
+                        let raw_data = &buffer[..n];
+
+                        // Raw sockets receive the full IP packet including IP header
+                        // We need to strip the IP header to get the IGMP payload
+                        // IP header is minimum 20 bytes, but can be longer with options
+                        if raw_data.len() < 20 {
+                            debug!("IGMP received packet too short ({} bytes)", n);
+                            continue;
+                        }
+
+                        // Extract IP header length from the first byte (IHL field, lower 4 bits)
+                        let ihl = (raw_data[0] & 0x0F) as usize * 4; // IHL is in 32-bit words
+
+                        if raw_data.len() < ihl {
+                            debug!("IGMP received malformed IP packet (IHL={}, len={})", ihl, n);
+                            continue;
+                        }
+
+                        // Extract protocol field from IP header (byte 9)
+                        let ip_protocol = raw_data[9];
+                        if ip_protocol != 2 {
+                            // Not IGMP protocol, skip
+                            debug!("Received non-IGMP IP packet (protocol={})", ip_protocol);
+                            continue;
+                        }
+
+                        // Extract the IGMP payload (after IP header)
+                        let igmp_data = &raw_data[ihl..];
+                        let data = igmp_data.to_vec();
                         let connection_id = ConnectionId::new();
 
                         // Add connection to ServerInstance
@@ -174,7 +228,7 @@ impl IgmpServer {
                             remote_addr: peer_addr,
                             local_addr,
                             bytes_sent: 0,
-                            bytes_received: n as u64,
+                            bytes_received: data.len() as u64,
                             packets_sent: 0,
                             packets_received: 1,
                             last_activity: now,
@@ -192,8 +246,8 @@ impl IgmpServer {
                         let igmp_msg = match IgmpMessage::parse(&data) {
                             Ok(msg) => msg,
                             Err(e) => {
-                                debug!("IGMP received non-IGMP packet ({} bytes): {}", n, e);
-                                let _ = status_tx.send(format!("[DEBUG] IGMP received non-IGMP packet ({} bytes): {}", n, e));
+                                debug!("IGMP received non-IGMP packet ({} bytes): {}", data.len(), e);
+                                let _ = status_tx.send(format!("[DEBUG] IGMP received non-IGMP packet ({} bytes): {}", data.len(), e));
                                 continue;
                             }
                         };
@@ -273,14 +327,43 @@ impl IgmpServer {
                                     // Process protocol results
                                     for protocol_result in &execution_result.protocol_results {
                                         if let Some(output_data) = protocol_result.get_all_output().first() {
-                                            // Send the IGMP response packet
-                                            // In a real implementation, this would use raw sockets
-                                            // For now, we send via UDP to the peer
-                                            if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
-                                                error!("Failed to send IGMP response: {}", e);
+                                            // Determine destination address based on IGMP packet type
+                                            let dest_addr = if output_data.len() >= 8 {
+                                                let msg_type = output_data[0];
+                                                match msg_type {
+                                                    0x16 => {
+                                                        // Membership Report - send to the group address
+                                                        let group = Ipv4Addr::new(
+                                                            output_data[4],
+                                                            output_data[5],
+                                                            output_data[6],
+                                                            output_data[7],
+                                                        );
+                                                        SocketAddr::new(std::net::IpAddr::V4(group), 0)
+                                                    }
+                                                    0x17 => {
+                                                        // Leave Group - send to ALL_ROUTERS (224.0.0.2)
+                                                        SocketAddr::new(
+                                                            std::net::IpAddr::V4(Ipv4Addr::new(224, 0, 0, 2)),
+                                                            0,
+                                                        )
+                                                    }
+                                                    _ => {
+                                                        // Unknown type, send to peer
+                                                        peer_addr
+                                                    }
+                                                }
                                             } else {
-                                                debug!("IGMP sent {} bytes to {}", output_data.len(), peer_addr);
-                                                let _ = status_clone.send(format!("[DEBUG] IGMP sent {} bytes to {}", output_data.len(), peer_addr));
+                                                peer_addr
+                                            };
+
+                                            // Send the IGMP packet via raw socket
+                                            if let Err(e) = socket_clone.send_to(output_data, dest_addr).await {
+                                                error!("Failed to send IGMP response: {}", e);
+                                                let _ = status_clone.send(format!("✗ Failed to send IGMP response: {}", e));
+                                            } else {
+                                                debug!("IGMP sent {} bytes to {}", output_data.len(), dest_addr);
+                                                let _ = status_clone.send(format!("[DEBUG] IGMP sent {} bytes to {}", output_data.len(), dest_addr));
 
                                                 // TRACE: Log full payload
                                                 let hex_str = hex::encode(output_data);
@@ -289,7 +372,7 @@ impl IgmpServer {
 
                                                 let _ = status_clone.send(format!(
                                                     "→ IGMP response to {} ({} bytes)",
-                                                    peer_addr, output_data.len()
+                                                    dest_addr, output_data.len()
                                                 ));
                                             }
                                         }
@@ -304,13 +387,22 @@ impl IgmpServer {
                                                     if let Some(group_str) = data.get("group_address")
                                                         .and_then(|v| v.as_str()) {
                                                         if let Ok(group_addr) = group_str.parse::<Ipv4Addr>() {
-                                                            let mut state = server_state_clone.lock().await;
-                                                            state.joined_groups.insert(group_addr);
-                                                            info!("IGMP joined multicast group {}", group_addr);
-                                                            let _ = status_clone.send(format!("[INFO] IGMP joined multicast group {}", group_addr));
-
-                                                            // In a real implementation, we would call:
-                                                            // socket.join_multicast_v4(&group_addr, &interface_addr)?;
+                                                            // Join the multicast group on all interfaces (0.0.0.0)
+                                                            match socket_clone.join_multicast_v4(
+                                                                group_addr,
+                                                                Ipv4Addr::UNSPECIFIED,
+                                                            ) {
+                                                                Ok(_) => {
+                                                                    let mut state = server_state_clone.lock().await;
+                                                                    state.joined_groups.insert(group_addr);
+                                                                    info!("IGMP joined multicast group {}", group_addr);
+                                                                    let _ = status_clone.send(format!("[INFO] IGMP joined multicast group {}", group_addr));
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Failed to join multicast group {}: {}", group_addr, e);
+                                                                    let _ = status_clone.send(format!("✗ Failed to join multicast group {}: {}", group_addr, e));
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -318,13 +410,22 @@ impl IgmpServer {
                                                     if let Some(group_str) = data.get("group_address")
                                                         .and_then(|v| v.as_str()) {
                                                         if let Ok(group_addr) = group_str.parse::<Ipv4Addr>() {
-                                                            let mut state = server_state_clone.lock().await;
-                                                            state.joined_groups.remove(&group_addr);
-                                                            info!("IGMP left multicast group {}", group_addr);
-                                                            let _ = status_clone.send(format!("[INFO] IGMP left multicast group {}", group_addr));
-
-                                                            // In a real implementation, we would call:
-                                                            // socket.leave_multicast_v4(&group_addr, &interface_addr)?;
+                                                            // Leave the multicast group on all interfaces (0.0.0.0)
+                                                            match socket_clone.leave_multicast_v4(
+                                                                group_addr,
+                                                                Ipv4Addr::UNSPECIFIED,
+                                                            ) {
+                                                                Ok(_) => {
+                                                                    let mut state = server_state_clone.lock().await;
+                                                                    state.joined_groups.remove(&group_addr);
+                                                                    info!("IGMP left multicast group {}", group_addr);
+                                                                    let _ = status_clone.send(format!("[INFO] IGMP left multicast group {}", group_addr));
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Failed to leave multicast group {}: {}", group_addr, e);
+                                                                    let _ = status_clone.send(format!("✗ Failed to leave multicast group {}: {}", group_addr, e));
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }

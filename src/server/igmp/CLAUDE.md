@@ -40,20 +40,25 @@ IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent rou
 
 ### Server Library
 
-**Current**: `tokio::net::UdpSocket` (placeholder)
+**Implementation**: Raw IP sockets using `libc` and `socket2::Socket`
 
-**Production**: Should use `socket2::Socket` with:
-- Domain: `AF_INET` (IPv4)
-- Type: `SOCK_RAW`
-- Protocol: `IPPROTO_IGMP` (2)
+**Socket Creation**:
+- Domain: `AF_INET` (IPv4, constant 2)
+- Type: `SOCK_RAW` (constant 3)
+- Protocol: `IPPROTO_IGMP` (constant 2)
 
-**Why raw sockets required**:
-- IGMP operates at IP layer (protocol 2), not UDP/TCP
-- Requires root/CAP_NET_RAW privileges
-- Need to set IP_HDRINCL or similar options
-- Must handle IP header construction
+**Requirements**:
+- Root privileges or `CAP_NET_RAW` capability
+- Linux platform (uses libc socket syscall)
+- Multicast-enabled network interface
 
-**Current Limitation**: Raw socket implementation requires elevated privileges and is platform-specific. The current implementation uses UDP as a placeholder for testing.
+**Implementation Details**:
+- Raw socket receives full IP packets (including IP header)
+- IP header is stripped before IGMP parsing (IHL field determines header length)
+- Multicast group join/leave uses `join_multicast_v4`/`leave_multicast_v4`
+- IGMP packets sent to appropriate multicast addresses:
+  - Membership Reports → group address itself
+  - Leave Group → ALL_ROUTERS (224.0.0.2)
 
 ### Client Library (for testing)
 
@@ -130,46 +135,54 @@ Server maintains `IgmpServerState`:
 
 ### Packet Processing Flow
 
-1. Receive IGMP packet from socket
-2. Parse packet (type, max_response_time, group_address, checksum)
-3. Create connection state with protocol info
-4. Determine event type based on message type
-5. Call LLM with event
-6. Execute actions:
-   - Sync: Build and send IGMP response packet
-   - Async: Update joined_groups state, perform socket operations
+1. Receive raw IP packet from socket (includes IP header)
+2. Strip IP header using IHL (Internet Header Length) field
+3. Verify protocol is IGMP (IP protocol 2)
+4. Parse IGMP message (type, max_response_time, group_address, checksum)
+5. Create connection state with protocol info
+6. Determine event type based on message type
+7. Call LLM with event
+8. Execute actions:
+   - Sync: Build and send IGMP response packet to multicast address
+   - Async: Perform actual multicast join/leave via socket options
 
-## Implementation Limitations
+## Implementation Details
 
-### Current Limitations
+### Current Implementation
 
-1. **Raw Socket Placeholder**: Uses UDP socket instead of raw IP socket
-   - Production needs: `socket2::Socket` with `SOCK_RAW` and `IPPROTO_IGMP`
-   - Requires: Root privileges or `CAP_NET_RAW` capability
+**Raw Socket Support**: ✅ Fully implemented
+- Uses `libc::socket()` with SOCK_RAW and IPPROTO_IGMP
+- Requires root privileges or CAP_NET_RAW capability
+- Receives and parses real IGMP packets from network
 
-2. **Multicast Join/Leave**: Currently simulated
-   - Production needs: `socket.join_multicast_v4()` and `leave_multicast_v4()`
-   - Requires: Raw socket with proper setup
+**Multicast Group Management**: ✅ Fully implemented
+- Uses `join_multicast_v4()` to actually join multicast groups
+- Uses `leave_multicast_v4()` to actually leave groups
+- Kernel handles IP-level multicast membership
 
-3. **IGMPv3 Support**: Partial
+**IP Header Handling**: ✅ Implemented
+- Extracts IHL field to determine IP header length
+- Strips IP header before IGMP parsing
+- Validates IP protocol field (must be 2 for IGMP)
+
+### Limitations
+
+1. **IGMPv3 Support**: Partial
    - Can parse IGMPv3 reports (type 0x22)
    - Cannot construct IGMPv3 reports with source lists
+   - No source filtering (INCLUDE/EXCLUDE modes)
 
-4. **Router Functionality**: Not implemented
+2. **Router Functionality**: Not implemented
    - Current implementation is host-side only
    - Router would need to send queries and track group members
 
+3. **Platform**: Linux-only
+   - Uses Linux-specific libc constants
+   - Not tested on other Unix platforms
+
 ### Future Enhancements
 
-1. **Full Raw Socket Support**:
-   ```rust
-   use socket2::{Socket, Domain, Type, Protocol};
-
-   let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::IGMPV2))?;
-   socket.set_header_included(true)?;
-   ```
-
-2. **IGMPv3 Source Filtering**:
+1. **IGMPv3 Source Filtering**:
    - INCLUDE mode: specific sources
    - EXCLUDE mode: all except specific sources
 
