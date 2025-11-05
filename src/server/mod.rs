@@ -27,12 +27,40 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "pypi")]
+pub mod pypi;
+#[cfg(feature = "pypi")]
+pub use pypi::PypiServer;
+#[cfg(feature = "pypi")]
+pub use pypi::actions::PypiProtocol;
+
+#[cfg(feature = "maven")]
+pub mod maven;
+#[cfg(feature = "maven")]
+pub use maven::MavenServer;
+#[cfg(feature = "maven")]
+pub use maven::actions::MavenProtocol;
+
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "datalink")]
 pub use datalink::DataLinkServer;
 #[cfg(feature = "datalink")]
 pub use datalink::actions::DataLinkProtocol;
+
+#[cfg(feature = "arp")]
+pub mod arp;
+#[cfg(feature = "arp")]
+pub use arp::ArpServer;
+#[cfg(feature = "arp")]
+pub use arp::actions::ArpProtocol;
+
+#[cfg(feature = "dc")]
+pub mod dc;
+#[cfg(feature = "dc")]
+pub use dc::DcServer;
+#[cfg(feature = "dc")]
+pub use dc::actions::DcProtocol;
 
 #[cfg(feature = "udp")]
 pub mod udp;
@@ -69,6 +97,13 @@ pub use dhcp::DhcpServer;
 #[cfg(feature = "dhcp")]
 pub use dhcp::actions::DhcpProtocol;
 
+#[cfg(feature = "bootp")]
+pub mod bootp;
+#[cfg(feature = "bootp")]
+pub use bootp::BootpServer;
+#[cfg(feature = "bootp")]
+pub use bootp::actions::BootpProtocol;
+
 #[cfg(feature = "ntp")]
 pub mod ntp;
 #[cfg(feature = "ntp")]
@@ -76,12 +111,33 @@ pub use ntp::NtpServer;
 #[cfg(feature = "ntp")]
 pub use ntp::actions::NtpProtocol;
 
+#[cfg(feature = "whois")]
+pub mod whois;
+#[cfg(feature = "whois")]
+pub use whois::WhoisServer;
+#[cfg(feature = "whois")]
+pub use whois::actions::WhoisProtocol;
+
 #[cfg(feature = "snmp")]
 pub mod snmp;
 #[cfg(feature = "snmp")]
 pub use snmp::SnmpServer;
 #[cfg(feature = "snmp")]
 pub use snmp::actions::SnmpProtocol;
+
+#[cfg(feature = "igmp")]
+pub mod igmp;
+#[cfg(feature = "igmp")]
+pub use igmp::IgmpServer;
+#[cfg(feature = "igmp")]
+pub use igmp::actions::IgmpProtocol;
+
+#[cfg(feature = "syslog")]
+pub mod syslog;
+#[cfg(feature = "syslog")]
+pub use syslog::SyslogServer;
+#[cfg(feature = "syslog")]
+pub use syslog::actions::SyslogProtocol;
 
 #[cfg(feature = "ssh")]
 pub mod ssh;
@@ -240,6 +296,13 @@ pub use imap::ImapServer;
 #[cfg(feature = "imap")]
 pub use imap::actions::ImapProtocol;
 
+#[cfg(feature = "nntp")]
+pub mod nntp;
+#[cfg(feature = "nntp")]
+pub use nntp::NntpServer;
+#[cfg(feature = "nntp")]
+pub use nntp::actions::NntpProtocol;
+
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "mqtt")]
@@ -274,6 +337,13 @@ pub mod sqs;
 pub use sqs::SqsServer;
 #[cfg(feature = "sqs")]
 pub use sqs::actions::SqsProtocol;
+
+#[cfg(feature = "npm")]
+pub mod npm;
+#[cfg(feature = "npm")]
+pub use npm::NpmServer;
+#[cfg(feature = "npm")]
+pub use npm::actions::NpmProtocol;
 
 #[cfg(feature = "openai")]
 pub mod openai;
@@ -320,12 +390,33 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "ospf")]
+pub mod ospf;
+#[cfg(feature = "ospf")]
+pub use ospf::OspfServer;
+#[cfg(feature = "ospf")]
+pub use ospf::actions::OspfProtocol;
+
+#[cfg(feature = "isis")]
+pub mod isis;
+#[cfg(feature = "isis")]
+pub use isis::IsisServer;
+#[cfg(feature = "isis")]
+pub use isis::actions::IsisProtocol;
+
 #[cfg(feature = "rip")]
 pub mod rip;
 #[cfg(feature = "rip")]
 pub use rip::RipServer;
 #[cfg(feature = "rip")]
 pub use rip::actions::RipProtocol;
+
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::BitcoinServer;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::actions::BitcoinProtocol;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
@@ -396,6 +487,34 @@ pub mod kafka;
 pub use kafka::KafkaServer;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaProtocol;
+
+#[cfg(feature = "http3")]
+pub mod http3;
+#[cfg(feature = "http3")]
+pub use http3::Http3Server;
+#[cfg(feature = "http3")]
+pub use http3::actions::Http3Protocol;
+
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::TorrentTrackerServer;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::actions::TorrentTrackerProtocol;
+
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::TorrentDhtServer;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::actions::TorrentDhtProtocol;
+
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::TorrentPeerServer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::actions::TorrentPeerProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
