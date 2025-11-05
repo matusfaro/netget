@@ -47,12 +47,20 @@ impl ProtocolRegistry {
         #[cfg(feature = "pypi")]
         self.register(Arc::new(crate::server::PypiProtocol::new()));
 
+        #[cfg(feature = "maven")]
+        self.register(Arc::new(crate::server::MavenProtocol::new()));
+
         #[cfg(feature = "udp")]
         self.register(Arc::new(crate::server::UdpProtocol::new()));
 
         #[cfg(feature = "datalink")]
         self.register(
             Arc::new(crate::server::DataLinkProtocol::new()),
+        );
+
+        #[cfg(feature = "arp")]
+        self.register(
+            Arc::new(crate::server::ArpProtocol::new()),
         );
 
         #[cfg(feature = "dns")]
@@ -72,6 +80,9 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "snmp")]
         self.register(Arc::new(crate::server::SnmpProtocol::new()));
+
+        #[cfg(feature = "syslog")]
+        self.register(Arc::new(crate::server::SyslogProtocol::new()));
 
         #[cfg(feature = "ssh")]
         self.register(Arc::new(crate::server::SshProtocol::new()));
@@ -239,6 +250,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
 
+        #[cfg(feature = "isis")]
+        self.register(Arc::new(crate::server::IsisProtocol::new()));
+
         #[cfg(feature = "rip")]
         self.register(Arc::new(crate::server::RipProtocol::new()));
 
@@ -290,6 +304,16 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
+
+        // BitTorrent protocols
+        #[cfg(feature = "torrent-tracker")]
+        self.register(Arc::new(crate::server::TorrentTrackerProtocol::new()));
+
+        #[cfg(feature = "torrent-dht")]
+        self.register(Arc::new(crate::server::TorrentDhtProtocol::new()));
+
+        #[cfg(feature = "torrent-peer")]
+        self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
