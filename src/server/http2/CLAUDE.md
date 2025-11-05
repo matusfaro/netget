@@ -7,21 +7,25 @@ HTTP/2 server implementing RFC 7540 (HTTP/2) using the hyper library. The LLM co
 **RFC**: RFC 7540 (HTTP/2)
 
 ## Library Choices
-- **hyper v1.0** - Modern async HTTP library with HTTP/2 support
-- **hyper-util** - Additional utilities for Tokio integration
-- **http-body-util** - Body handling utilities (Full, Empty, Incoming)
+- **h2 crate** - Direct HTTP/2 implementation for full protocol control
+- **hyper v1.0** - Modern async HTTP library (used for HTTP/1.1 compatibility)
+- **http crate** - HTTP types (Request, Response, StatusCode, headers)
 - **http_common** - Shared internal module with HTTP/HTTP2 common logic (request extraction, response building)
 - **Manual response construction** - LLM generates status, headers, body
 
-**Rationale**: Hyper is the de-facto standard for HTTP in Rust. For HTTP/2, it handles:
-- HTTP/2 protocol framing and binary encoding
-- Request header decompression (HPACK)
-- Connection multiplexing (multiple concurrent streams)
-- Flow control and stream prioritization
-- Server connection preface and settings negotiation
-- Async I/O with Tokio integration
+**Rationale**:
+- **h2 crate** provides direct access to HTTP/2 primitives (server push, stream control)
+- Hyper's service pattern doesn't expose connection-level APIs needed for push
+- h2 handles:
+  - HTTP/2 protocol framing and binary encoding
+  - Request header decompression (HPACK)
+  - Connection multiplexing (multiple concurrent streams)
+  - Flow control and stream prioritization
+  - Server connection preface and settings negotiation
+  - Server push promises and push streams
+  - Async I/O with Tokio integration
 
-The LLM focuses on application logic (routing, business logic, response generation) rather than protocol implementation details.
+The LLM focuses on application logic (routing, business logic, response generation, resource pushing) rather than protocol implementation details.
 
 ## Architecture Decisions
 
@@ -199,12 +203,12 @@ Unlike TCP, no write_half or queued_data - hyper manages the socket internally.
 - Hyper handles priority frames
 - Current implementation doesn't expose prioritization to LLM
 
-### 6. Server Push (Limited Implementation)
+### 6. Server Push (Fully Implemented)
 - HTTP/2 supports server-initiated push of resources
-- `push_resource` action defined but not fully functional
-- Requires connection-level access (not available in service pattern)
-- Hyper supports server push via extended connection API
-- Future: Restructure to use connection-level handler for full push support
+- `push_resource` action allows LLM to proactively send resources
+- Uses h2 crate directly for connection-level access
+- Push promises sent before main response
+- Supports custom status, headers, and body for pushed resources
 
 ## Known Limitations
 
@@ -214,14 +218,11 @@ Unlike TCP, no write_half or queued_data - hyper manages the socket internally.
 - For production, would need to wrap listener with rustls
 - See future enhancement section for HTTPS implementation plan
 
-### 2. Server Push Partially Implemented
-- `push_resource` action defined but doesn't execute actual pushes
-- Service pattern doesn't provide connection-level access needed for pushes
-- Logs warning when push is requested
-- Full implementation requires:
-  - Restructure HTTP/2 handler to use connection API instead of service pattern
-  - Manage push streams manually
-  - Store pending pushes and send via connection object
+### 2. Request Body Reading (Implemented)
+- Request bodies are now fully read using h2::RecvStream API
+- Proper flow control with capacity release after each chunk
+- Handles POST/PUT requests with bodies correctly
+- Error handling for body read failures
 
 ### 3. No Streaming
 - Request bodies fully buffered before LLM processing
@@ -246,10 +247,13 @@ Unlike TCP, no write_half or queued_data - hyper manages the socket internally.
 - No LLM control over stream priorities
 - No way to influence response ordering
 
-### 7. No Upgrade from HTTP/1.1
-- Server only speaks HTTP/2 directly (h2c)
-- No support for HTTP/1.1 Upgrade to HTTP/2
-- Clients must connect with HTTP/2 directly
+### 7. HTTP/1.1 Upgrade (Fully Implemented)
+- HTTP server supports "Upgrade: h2c" header for protocol upgrade
+- Validates HTTP2-Settings header (required by RFC 7540)
+- Returns 101 Switching Protocols response
+- Upgrades connection to HTTP/2 using h2 handshake
+- Seamlessly handles requests after upgrade
+- Feature-gated: requires both http and http2 features enabled
 
 ## Example Prompts
 
@@ -342,35 +346,15 @@ http2::Builder::new(TokioExecutor::new())
     .await?;
 ```
 
-### Server Push Full Implementation
-Complete HTTP/2 server push implementation (currently partially implemented):
+### Server Push (Completed)
+✅ **Implemented in h2_server.rs**
 
-**Current Status**: Action defined but doesn't execute pushes (service pattern limitation)
-
-**Full Implementation Approach**:
-```rust
-// Replace service pattern with connection-level handling
-let conn = http2::Builder::new(TokioExecutor::new())
-    .serve_connection(io, service);
-
-// Access connection object to send push promises
-let mut sender = conn.send_request(
-    Request::builder()
-        .method("GET")
-        .uri("/style.css")
-        .body(())
-        .unwrap()
-)?;
-
-// Send push promise headers and body
-sender.send_data(Bytes::from("body { margin: 0; }"), true)?;
-```
-
-**Requirements**:
-- Restructure handler to use `Connection` API instead of `service_fn`
-- Store pending pushes in connection state
-- Match incoming requests to push promises
-- Handle client rejection of pushes
+HTTP/2 server push is now fully implemented:
+- Uses h2 crate directly for connection-level access
+- LLM can use `push_resource` action to send resources proactively
+- Push promises sent before main response
+- Supports custom status, headers, and body for each push
+- Proper flow control and error handling
 
 ### Stream Prioritization Control
 Allow LLM to influence stream priorities:
@@ -389,11 +373,17 @@ Support chunked responses generated incrementally:
 - Allow LLM to generate response chunks asynchronously
 - Stream large files without buffering entire file
 
-### HTTP/1.1 to HTTP/2 Upgrade
-Support upgrade from HTTP/1.1:
-- Detect `Upgrade: h2c` header
-- Perform upgrade handshake
-- Switch to HTTP/2 on same connection
+### HTTP/1.1 to HTTP/2 Upgrade (Completed)
+✅ **Implemented in http/mod.rs**
+
+HTTP/1.1 upgrade to HTTP/2 (h2c) is now fully supported:
+- HTTP server detects `Upgrade: h2c` header in requests
+- Validates required `HTTP2-Settings` header
+- Returns 101 Switching Protocols response
+- Uses hyper::upgrade to extract underlying connection
+- Performs h2 handshake on upgraded connection
+- Seamlessly handles subsequent HTTP/2 requests
+- Feature-gated: only available when both http and http2 features enabled
 
 ### ALPN Negotiation
 Support ALPN for protocol negotiation over TLS:

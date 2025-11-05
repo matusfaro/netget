@@ -150,7 +150,7 @@ async fn handle_h2_connection(
 }
 
 /// Handle a single HTTP/2 request with server push support
-async fn handle_h2_request(
+pub async fn handle_h2_request(
     request: Request<h2::RecvStream>,
     mut send_response: SendResponse<Bytes>,
     connection_id: ConnectionId,
@@ -173,11 +173,28 @@ async fn handle_h2_request(
         }
     }
 
-    // Note: Body reading with h2::RecvStream is complex and requires careful Stream handling.
-    // For now, we focus on server push functionality which doesn't require body reading.
-    // Most HTTP/2 requests (GET, HEAD, etc.) have empty bodies anyway.
-    // TODO: Implement proper body reading using h2::RecvStream polling API for POST/PUT requests
-    let body_bytes = Vec::new();
+    // Read request body from h2::RecvStream
+    let mut body_stream = request.into_body();
+    let mut body_bytes = Vec::new();
+
+    loop {
+        match body_stream.data().await {
+            Some(Ok(chunk)) => {
+                body_bytes.extend_from_slice(&chunk);
+                // Release flow control capacity for this chunk
+                let _ = body_stream.flow_control().release_capacity(chunk.len());
+            }
+            Some(Err(e)) => {
+                warn!("Error reading request body: {}", e);
+                let _ = status_tx.send(format!("[WARN] Error reading body: {}", e));
+                break;
+            }
+            None => {
+                // End of stream
+                break;
+            }
+        }
+    }
 
     // Log request
     debug!(

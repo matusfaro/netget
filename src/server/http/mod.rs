@@ -102,8 +102,12 @@ impl HttpServer {
                                 )
                             });
 
-                            // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            // Serve HTTP/1 on this connection with upgrade support
+                            if let Err(err) = http1::Builder::new()
+                                .serve_connection(io, service)
+                                .with_upgrades()
+                                .await
+                            {
                                 error!("Error serving HTTP connection: {:?}", err);
                             }
 
@@ -135,6 +139,99 @@ async fn handle_http_request_with_llm_actions(
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<HttpProtocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Check for HTTP/2 upgrade request (h2c) - only when http2 feature is enabled
+    #[cfg(feature = "http2")]
+    {
+        if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
+            if let Ok(upgrade_value) = upgrade_header.to_str() {
+                if upgrade_value.contains("h2c") {
+                    info!("HTTP/2 upgrade (h2c) request detected from connection {}", connection_id);
+                    let _ = status_tx.send(format!("[INFO] HTTP/2 upgrade (h2c) requested"));
+
+                    // Check for HTTP2-Settings header (required for h2c upgrade)
+                    if req.headers().get("HTTP2-Settings").is_none() {
+                        let response = Response::builder()
+                            .status(400) // Bad Request
+                            .body(Full::new(Bytes::from(
+                                "HTTP/2 upgrade requires HTTP2-Settings header"
+                            )))
+                            .unwrap();
+                        return Ok(response);
+                    }
+
+                    // Spawn task to handle upgrade after 101 response
+                    let llm_clone = llm_client.clone();
+                    let app_state_clone = app_state.clone();
+                    let status_tx_clone = status_tx.clone();
+                    let protocol_clone = protocol.clone();
+
+                    tokio::spawn(async move {
+                        // Wait for upgrade to complete
+                        match hyper::upgrade::on(req).await {
+                            Ok(upgraded) => {
+                                info!("HTTP/2 upgrade successful for connection {}", connection_id);
+                                let _ = status_tx_clone.send(format!("[INFO] Upgraded connection {} to HTTP/2", connection_id));
+
+                                // Perform h2 handshake on the upgraded connection
+                                use hyper_util::rt::TokioIo;
+                                let io = TokioIo::new(upgraded);
+
+                                // Use h2 server to handle the upgraded connection
+                                if let Err(e) = handle_upgraded_h2c_connection(
+                                    io,
+                                    connection_id,
+                                    server_id,
+                                    llm_clone,
+                                    app_state_clone,
+                                    status_tx_clone,
+                                    protocol_clone,
+                                ).await {
+                                    error!("Error handling upgraded h2c connection: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                error!("HTTP/2 upgrade failed: {}", e);
+                                let _ = status_tx_clone.send(format!("[ERROR] HTTP/2 upgrade failed: {}", e));
+                            }
+                        }
+                    });
+
+                    // Return 101 Switching Protocols
+                    let response = Response::builder()
+                        .status(101) // 101 Switching Protocols
+                        .header(hyper::header::UPGRADE, "h2c")
+                        .header(hyper::header::CONNECTION, "Upgrade")
+                        .body(Full::new(Bytes::new()))
+                        .unwrap();
+
+                    return Ok(response);
+                }
+            }
+        }
+    }
+
+    // If http2 feature is not enabled, reject upgrade requests
+    #[cfg(not(feature = "http2"))]
+    {
+        if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
+            if let Ok(upgrade_value) = upgrade_header.to_str() {
+                if upgrade_value.contains("h2c") {
+                    info!("HTTP/2 upgrade requested but http2 feature not enabled");
+                    let _ = status_tx.send(format!("[INFO] HTTP/2 upgrade not supported (http2 feature disabled)"));
+
+                    let response = Response::builder()
+                        .status(501) // Not Implemented
+                        .body(Full::new(Bytes::from(
+                            "HTTP/2 upgrade not supported. Server built without http2 feature."
+                        )))
+                        .unwrap();
+
+                    return Ok(response);
+                }
+            }
+        }
+    }
+
     // Use shared request extraction logic
     let request_data = crate::server::http_common::handler::extract_request_data(
         req,
@@ -188,4 +285,66 @@ async fn handle_http_request_with_llm_actions(
             )
         }
     }
+}
+
+/// Handle an upgraded h2c connection (only available with http2 feature)
+#[cfg(feature = "http2")]
+async fn handle_upgraded_h2c_connection<T>(
+    io: T,
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
+    llm_client: OllamaClient,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+    _protocol: Arc<HttpProtocol>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use h2::server;
+    use crate::server::Http2Protocol;
+
+    info!("Starting h2c connection for {}", connection_id);
+
+    // Perform h2 server handshake
+    let mut h2_conn = server::handshake(io).await?;
+
+    let protocol = Arc::new(Http2Protocol::new());
+
+    // Accept requests on the h2 connection
+    loop {
+        match h2_conn.accept().await {
+            Some(result) => {
+                let (request, send_response) = result?;
+
+                let llm_clone = llm_client.clone();
+                let app_state_clone = app_state.clone();
+                let status_tx_clone = status_tx.clone();
+                let protocol_clone = protocol.clone();
+
+                // Spawn task to handle this HTTP/2 request
+                tokio::spawn(async move {
+                    if let Err(e) = crate::server::http2::h2_server::handle_h2_request(
+                        request,
+                        send_response,
+                        connection_id,
+                        server_id,
+                        llm_clone,
+                        app_state_clone,
+                        status_tx_clone,
+                        protocol_clone,
+                    ).await {
+                        error!("Error handling h2c request: {}", e);
+                    }
+                });
+            }
+            None => {
+                // Connection closed
+                info!("H2C connection {} closed", connection_id);
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
