@@ -233,6 +233,13 @@ pub use imap::ImapServer;
 #[cfg(feature = "imap")]
 pub use imap::actions::ImapProtocol;
 
+#[cfg(feature = "nntp")]
+pub mod nntp;
+#[cfg(feature = "nntp")]
+pub use nntp::NntpServer;
+#[cfg(feature = "nntp")]
+pub use nntp::actions::NntpProtocol;
+
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "mqtt")]
