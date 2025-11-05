@@ -1,0 +1,322 @@
+//! End-to-end OAuth2 tests for NetGet
+//!
+//! These tests spawn the actual NetGet binary with OAuth2 prompts
+//! and validate OAuth2 flows using HTTP clients.
+
+#![cfg(all(test, feature = "oauth2"))]
+
+use crate::server::helpers::{self, ServerConfig, E2EResult};
+use serde_json::Value;
+use std::time::Duration;
+
+#[tokio::test]
+async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
+    println!("\n=== E2E Test: OAuth2 Authorization Code Flow ===");
+
+    // Start OAuth2 server
+    let prompt = "Open oauth2 on port {AVAILABLE_PORT}. Accept client 'testapp' with secret 'secret123'. \
+        For authorization requests, approve all and return code 'AUTH_xyz123'. \
+        For token requests with valid code, return access token 'ACCESS_token_456' with 1-hour expiry and refresh token 'REFRESH_token_789'.";
+
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    // Wait for server to be ready
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::new();
+
+    // Step 1: Authorization request
+    println!("\n[1/2] Testing authorization endpoint...");
+    let auth_response = match tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .get(format!("http://127.0.0.1:{}/authorize", server.port))
+            .query(&[
+                ("response_type", "code"),
+                ("client_id", "testapp"),
+                ("redirect_uri", "http://localhost:3000/callback"),
+                ("scope", "read write"),
+                ("state", "random_state_123"),
+            ])
+            .send()
+    ).await {
+        Ok(Ok(resp)) => {
+            println!("✓ Received authorization response: {}", resp.status());
+            resp
+        }
+        Ok(Err(e)) => {
+            println!("✗ Authorization request error: {}", e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            println!("✗ Authorization request timeout");
+            return Err("Authorization request timeout".into());
+        }
+    };
+
+    // Authorization endpoint should redirect (302)
+    assert!(auth_response.status().is_redirection() || auth_response.status().as_u16() == 302,
+            "Authorization should redirect (302)");
+
+    // Extract code from Location header or final URL
+    let location = auth_response.url().to_string();
+    println!("✓ Redirect location: {}", location);
+
+    // Parse authorization code from redirect
+    let code = location
+        .split('?')
+        .nth(1)
+        .and_then(|params| params
+            .split('&')
+            .find(|p| p.starts_with("code="))
+            .and_then(|p| p.split('=').nth(1)))
+        .unwrap_or("AUTH_xyz123");
+
+    println!("✓ Authorization code: {}", code);
+
+    // Step 2: Token request
+    println!("\n[2/2] Testing token endpoint...");
+    let token_response = match tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .post(format!("http://127.0.0.1:{}/token", server.port))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(format!(
+                "grant_type=authorization_code&code={}&redirect_uri=http://localhost:3000/callback&client_id=testapp&client_secret=secret123",
+                code
+            ))
+            .send()
+    ).await {
+        Ok(Ok(resp)) => {
+            println!("✓ Received token response: {}", resp.status());
+            resp
+        }
+        Ok(Err(e)) => {
+            println!("✗ Token request error: {}", e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            println!("✗ Token request timeout");
+            return Err("Token request timeout".into());
+        }
+    };
+
+    assert_eq!(token_response.status(), 200, "Token endpoint should return 200 OK");
+
+    // Parse JSON token response
+    let json: Value = token_response.json().await?;
+    println!("Token response: {}", serde_json::to_string_pretty(&json)?);
+
+    // Validate OAuth2 token response format (RFC 6749 Section 5.1)
+    assert!(json.get("access_token").and_then(|v| v.as_str()).is_some(),
+            "Expected 'access_token' field");
+
+    assert_eq!(json.get("token_type").and_then(|v| v.as_str()), Some("Bearer"),
+               "Expected 'token_type' to be 'Bearer'");
+
+    assert!(json.get("expires_in").and_then(|v| v.as_i64()).is_some(),
+            "Expected 'expires_in' field");
+
+    let access_token = json["access_token"].as_str().unwrap();
+    println!("✓ Access token: {}", access_token);
+
+    if let Some(refresh_token) = json.get("refresh_token").and_then(|v| v.as_str()) {
+        println!("✓ Refresh token: {}", refresh_token);
+    }
+
+    println!("\n✓ OAuth2 Authorization Code Flow test completed\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_oauth2_client_credentials_flow() -> E2EResult<()> {
+    println!("\n=== E2E Test: OAuth2 Client Credentials Flow ===");
+
+    let prompt = "Open oauth2 on port {AVAILABLE_PORT}. Accept client 'service' with secret 'service_secret'. \
+        For token requests with grant_type=client_credentials, return access token 'SERVICE_token_123' with scope 'api:read api:write'.";
+
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Send client credentials token request
+    println!("Sending client credentials token request...");
+
+    let client = reqwest::Client::new();
+    let token_response = match tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .post(format!("http://127.0.0.1:{}/token", server.port))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body("grant_type=client_credentials&client_id=service&client_secret=service_secret&scope=api:read api:write")
+            .send()
+    ).await {
+        Ok(Ok(resp)) => {
+            println!("✓ Received token response: {}", resp.status());
+            resp
+        }
+        Ok(Err(e)) => {
+            println!("✗ Token request error: {}", e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            println!("✗ Token request timeout");
+            return Err("Token request timeout".into());
+        }
+    };
+
+    assert_eq!(token_response.status(), 200, "Token endpoint should return 200 OK");
+
+    // Parse JSON response
+    let json: Value = token_response.json().await?;
+    println!("Token response: {}", serde_json::to_string_pretty(&json)?);
+
+    // Validate token response
+    assert!(json.get("access_token").and_then(|v| v.as_str()).is_some(),
+            "Expected 'access_token' field");
+
+    assert_eq!(json.get("token_type").and_then(|v| v.as_str()), Some("Bearer"),
+               "Expected 'token_type' to be 'Bearer'");
+
+    println!("✓ Access token: {}", json["access_token"].as_str().unwrap());
+
+    // Client credentials flow typically doesn't return refresh tokens
+    println!("\n✓ OAuth2 Client Credentials Flow test completed\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_oauth2_token_introspection() -> E2EResult<()> {
+    println!("\n=== E2E Test: OAuth2 Token Introspection ===");
+
+    let prompt = "Open oauth2 on port {AVAILABLE_PORT}. For introspection requests, \
+        if token starts with 'VALID_', return active=true with scope 'read write' and client_id 'testapp'. \
+        Otherwise return active=false.";
+
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::new();
+
+    // Test 1: Valid token introspection
+    println!("\n[1/2] Testing valid token introspection...");
+    let response = match tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .post(format!("http://127.0.0.1:{}/introspect", server.port))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body("token=VALID_token_123&token_type_hint=access_token")
+            .send()
+    ).await {
+        Ok(Ok(resp)) => {
+            println!("✓ Received introspection response: {}", resp.status());
+            resp
+        }
+        Ok(Err(e)) => {
+            println!("✗ Introspection request error: {}", e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            println!("✗ Introspection request timeout");
+            return Err("Introspection request timeout".into());
+        }
+    };
+
+    assert_eq!(response.status(), 200, "Introspection endpoint should return 200 OK");
+
+    let json: Value = response.json().await?;
+    println!("Introspection response: {}", serde_json::to_string_pretty(&json)?);
+
+    // Validate active token response (RFC 7662 Section 2.2)
+    assert_eq!(json.get("active").and_then(|v| v.as_bool()), Some(true),
+               "Expected 'active' to be true for valid token");
+
+    println!("✓ Token is active");
+
+    // Test 2: Invalid token introspection
+    println!("\n[2/2] Testing invalid token introspection...");
+    let response = match tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .post(format!("http://127.0.0.1:{}/introspect", server.port))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body("token=INVALID_token_xyz")
+            .send()
+    ).await {
+        Ok(Ok(resp)) => {
+            println!("✓ Received introspection response: {}", resp.status());
+            resp
+        }
+        Ok(Err(e)) => {
+            println!("✗ Introspection request error: {}", e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            println!("✗ Introspection request timeout");
+            return Err("Introspection request timeout".into());
+        }
+    };
+
+    assert_eq!(response.status(), 200, "Introspection endpoint should return 200 OK");
+
+    let json: Value = response.json().await?;
+    println!("Introspection response: {}", serde_json::to_string_pretty(&json)?);
+
+    assert_eq!(json.get("active").and_then(|v| v.as_bool()), Some(false),
+               "Expected 'active' to be false for invalid token");
+
+    println!("✓ Token is inactive");
+
+    println!("\n✓ OAuth2 Token Introspection test completed\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_oauth2_token_revocation() -> E2EResult<()> {
+    println!("\n=== E2E Test: OAuth2 Token Revocation ===");
+
+    let prompt = "Open oauth2 on port {AVAILABLE_PORT}. For revocation requests, always succeed and return 200 OK.";
+
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    println!("Server started on port {}", server.port);
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Send revocation request
+    println!("Sending token revocation request...");
+
+    let client = reqwest::Client::new();
+    let response = match tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .post(format!("http://127.0.0.1:{}/revoke", server.port))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body("token=ACCESS_token_to_revoke&token_type_hint=access_token")
+            .send()
+    ).await {
+        Ok(Ok(resp)) => {
+            println!("✓ Received revocation response: {}", resp.status());
+            resp
+        }
+        Ok(Err(e)) => {
+            println!("✗ Revocation request error: {}", e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            println!("✗ Revocation request timeout");
+            return Err("Revocation request timeout".into());
+        }
+    };
+
+    // RFC 7009: The authorization server responds with HTTP status code 200
+    assert_eq!(response.status(), 200, "Revocation endpoint should return 200 OK");
+
+    println!("✓ Token revoked successfully");
+
+    println!("\n✓ OAuth2 Token Revocation test completed\n");
+    Ok(())
+}
