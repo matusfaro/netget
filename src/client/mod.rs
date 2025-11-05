@@ -4,22 +4,19 @@
 //! Each protocol provides LLM-controlled client behavior for connecting
 //! to remote servers and exchanging data.
 
-// Client protocols will be added here as they are implemented
-// Each protocol will be feature-gated
-
 // Phase 3: TCP client
-// #[cfg(feature = "tcp")]
-// pub mod tcp;
-// #[cfg(feature = "tcp")]
-// pub use tcp::TcpClientProtocol;
+#[cfg(feature = "tcp")]
+pub mod tcp;
+#[cfg(feature = "tcp")]
+pub use tcp::actions::TcpClientProtocol;
 
-// Phase 4: HTTP client
+// Phase 4: HTTP client (not yet implemented)
 // #[cfg(feature = "http")]
 // pub mod http;
 // #[cfg(feature = "http")]
 // pub use http::HttpClientProtocol;
 
-// Phase 5: Redis client
+// Phase 5: Redis client (not yet implemented)
 // #[cfg(feature = "redis")]
 // pub mod redis;
 // #[cfg(feature = "redis")]
