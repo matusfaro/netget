@@ -2,6 +2,8 @@
 
 #[cfg(feature = "bgp")]
 pub mod bgp;
+#[cfg(feature = "rip")]
+pub mod rip;
 #[cfg(feature = "cassandra")]
 pub mod cassandra;
 // DataLink doesn't have a feature flag, it's always available
