@@ -1,15 +1,16 @@
 //! IS-IS (Intermediate System to Intermediate System) routing protocol server
 //!
 //! Implementation of ISO/IEC 10589 and RFC 1195 (IS-IS over IP).
+//! Operates at Layer 2 using raw sockets/pcap for true IS-IS protocol operation.
 //! The LLM controls routing decisions, neighbor adjacencies, and LSP generation.
 
 pub mod actions;
 
 use crate::server::connection::ConnectionId;
-use anyhow::Result;
-use std::net::SocketAddr;
+use anyhow::{Context, Result};
+use bytes::Bytes;
+use pcap::{Capture, Device};
 use std::sync::Arc;
-use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
@@ -35,6 +36,15 @@ const ISIS_CSNP_L2: u8 = 25;      // Level 2 Complete Sequence Number PDU
 const ISIS_PSNP_L1: u8 = 26;      // Level 1 Partial Sequence Number PDU
 const ISIS_PSNP_L2: u8 = 27;      // Level 2 Partial Sequence Number PDU
 
+// IS-IS Multicast MAC Addresses
+const ISIS_ALL_L1_IS: [u8; 6] = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x14]; // All Level 1 ISs
+const ISIS_ALL_L2_IS: [u8; 6] = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x15]; // All Level 2 ISs
+
+// LLC/SNAP headers for IS-IS over Ethernet
+const LLC_DSAP_ISO: u8 = 0xFE; // ISO CLNS
+const LLC_SSAP_ISO: u8 = 0xFE;
+const LLC_CTRL: u8 = 0x03; // Unnumbered Information
+
 // IS-IS TLV Types (commonly used)
 const ISIS_TLV_AREA_ADDRESSES: u8 = 1;
 const ISIS_TLV_NEIGHBORS: u8 = 6;
@@ -46,23 +56,35 @@ const ISIS_TLV_IP_INTERNAL_REACHABILITY: u8 = 128;
 const ISIS_TLV_EXTENDED_REACHABILITY: u8 = 22;
 const ISIS_TLV_HOSTNAME: u8 = 137;
 
-/// IS-IS server that handles routing protocol operations with LLM
+/// IS-IS server that handles routing protocol operations with LLM at Layer 2
 pub struct IsisServer;
 
 impl IsisServer {
-    /// Spawn IS-IS server with integrated LLM actions
+    /// List available network interfaces
+    pub fn list_devices() -> Result<Vec<Device>> {
+        Device::list().context("Failed to list network devices")
+    }
+
+    /// Find a device by name
+    pub fn find_device(name: &str) -> Result<Device> {
+        let devices = Self::list_devices()?;
+        devices
+            .into_iter()
+            .find(|d| d.name == name)
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found", name))
+    }
+
+    /// Spawn IS-IS server with integrated LLM actions (Layer 2 with pcap)
     pub async fn spawn_with_llm_actions(
-        listen_addr: SocketAddr,
+        interface: String,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
-    ) -> Result<SocketAddr> {
-        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
-        let local_addr = socket.local_addr()?;
-        info!("IS-IS server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] IS-IS server listening on {}", local_addr));
+    ) -> Result<String> {
+        info!("IS-IS server starting on interface: {}", interface);
+        let _ = status_tx.send(format!("[INFO] IS-IS server starting on interface: {}", interface));
 
         // Extract configuration from startup params
         let (system_id, area_id, level) = if let Some(ref params) = startup_params {
@@ -85,95 +107,205 @@ impl IsisServer {
         };
 
         let protocol = Arc::new(IsisProtocol::new());
+        let interface_clone = interface.clone();
+        let protocol_clone = protocol.clone();
 
-        tokio::spawn(async move {
-            let mut buffer = vec![0u8; 1500]; // MTU size for IS-IS packets
+        // pcap is blocking, so we run it in a blocking task
+        tokio::task::spawn_blocking(move || {
+            // Find device
+            let device = match Self::find_device(&interface_clone) {
+                Ok(d) => d,
+                Err(e) => {
+                    error!("Failed to find device: {}", e);
+                    let _ = status_tx.send(format!("[ERROR] Failed to find device: {}", e));
+                    return;
+                }
+            };
 
+            // Get device MAC address (needed for source MAC in responses)
+            let local_mac = match Self::get_interface_mac(&interface_clone) {
+                Ok(mac) => mac,
+                Err(e) => {
+                    warn!("Failed to get interface MAC address: {}, using default", e);
+                    [0x02, 0x00, 0x00, 0x00, 0x00, 0x01] // Local admin MAC
+                }
+            };
+
+            // Open capture for IS-IS packets
+            let mut cap = match Capture::from_device(device)
+                .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
+                .and_then(|c| c.open())
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Failed to open capture: {}", e);
+                    let _ = status_tx.send(format!("[ERROR] Failed to open capture: {}", e));
+                    return;
+                }
+            };
+
+            // BPF filter for IS-IS packets (LLC DSAP/SSAP 0xFE)
+            // This matches packets with IS-IS LLC headers
+            let filter = "ether proto 0xfefe or (ether[14:2] = 0xfefe and ether[16:1] = 0x03)";
+            if let Err(e) = cap.filter(filter, true) {
+                warn!("Failed to apply IS-IS filter: {}", e);
+                let _ = status_tx.send(format!("[WARN] Failed to apply IS-IS filter: {}", e));
+            }
+
+            info!("IS-IS listening on {}, MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                  interface_clone,
+                  local_mac[0], local_mac[1], local_mac[2],
+                  local_mac[3], local_mac[4], local_mac[5]);
+            let _ = status_tx.send(format!("→ IS-IS ready on interface {}", interface_clone));
+
+            let runtime = tokio::runtime::Handle::current();
+
+            // Store capture handle in Arc for packet injection
+            let cap_arc = Arc::new(std::sync::Mutex::new(cap));
+
+            // Capture loop
             loop {
-                match socket.recv_from(&mut buffer).await {
-                    Ok((n, peer_addr)) => {
-                        let data = buffer[..n].to_vec();
+                let mut cap_guard = cap_arc.lock().unwrap();
+                match cap_guard.next_packet() {
+                    Ok(packet) => {
+                        let data = Bytes::copy_from_slice(packet.data);
+                        drop(cap_guard); // Release lock before async processing
+
+                        // Parse Ethernet frame
+                        if data.len() < 14 {
+                            continue; // Too short for Ethernet header
+                        }
+
+                        let _dst_mac = &data[0..6];
+                        let src_mac = &data[6..12];
+                        let eth_type = u16::from_be_bytes([data[12], data[13]]);
+
+                        // Check for IS-IS: LLC/SNAP headers after Ethernet
+                        // Ethernet (14) + LLC (3) = 17 bytes minimum
+                        if data.len() < 17 {
+                            continue;
+                        }
+
+                        // Skip Ethernet header (14 bytes), check LLC
+                        let llc_offset = 14;
+                        let dsap = data[llc_offset];
+                        let ssap = data[llc_offset + 1];
+                        let ctrl = data[llc_offset + 2];
+
+                        // IS-IS uses LLC DSAP/SSAP = 0xFE, Control = 0x03
+                        if dsap != LLC_DSAP_ISO || ssap != LLC_SSAP_ISO || ctrl != LLC_CTRL {
+                            continue; // Not IS-IS
+                        }
+
+                        // IS-IS PDU starts after LLC header (at offset 17)
+                        if data.len() < 17 + ISIS_HEADER_LEN {
+                            continue; // Too short for IS-IS header
+                        }
+
+                        // Clone the IS-IS PDU and source MAC for async task
+                        let isis_pdu = data.slice(17..);
+                        let src_mac_bytes: [u8; 6] = [
+                            src_mac[0], src_mac[1], src_mac[2],
+                            src_mac[3], src_mac[4], src_mac[5]
+                        ];
+
                         let connection_id = ConnectionId::new();
 
-                        // Parse IS-IS PDU
-                        if let Err(e) = Self::handle_isis_pdu(
-                            &data,
-                            peer_addr,
-                            connection_id,
-                            server_id,
-                            &llm_client,
-                            &app_state,
-                            &status_tx,
-                            &socket,
-                            local_addr,
-                            &protocol,
-                            &system_id,
-                            &area_id,
-                            &level,
-                        ).await {
-                            error!("IS-IS PDU handling error: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] IS-IS PDU error: {}", e));
-                        }
+                        // DEBUG: Log summary
+                        debug!("IS-IS received {} bytes from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                               data.len(),
+                               src_mac[0], src_mac[1], src_mac[2],
+                               src_mac[3], src_mac[4], src_mac[5]);
+                        let _ = status_tx.send(format!("[DEBUG] IS-IS received {} bytes", data.len()));
+
+                        // TRACE: Log full payload
+                        let hex_str = hex::encode(&data);
+                        trace!("IS-IS frame (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] IS-IS frame (hex): {}", hex_str));
+
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let protocol_task_clone = protocol_clone.clone();
+                        let system_id_clone = system_id.clone();
+                        let area_id_clone = area_id.clone();
+                        let level_clone = level.clone();
+                        let cap_clone = cap_arc.clone();
+                        let local_mac_clone = local_mac.clone();
+
+                        // Spawn async task to handle PDU with LLM
+                        runtime.spawn(async move {
+                            if let Err(e) = Self::handle_isis_pdu(
+                                &isis_pdu,
+                                &src_mac_bytes,
+                                connection_id,
+                                server_id,
+                                &llm_clone,
+                                &state_clone,
+                                &status_clone,
+                                &protocol_task_clone,
+                                &system_id_clone,
+                                &area_id_clone,
+                                &level_clone,
+                                cap_clone,
+                                local_mac_clone,
+                            ).await {
+                                error!("IS-IS PDU handling error: {}", e);
+                                let _ = status_clone.send(format!("[ERROR] IS-IS PDU error: {}", e));
+                            }
+                        });
+                    }
+                    Err(pcap::Error::TimeoutExpired) => {
+                        drop(cap_guard);
+                        continue;
                     }
                     Err(e) => {
-                        error!("IS-IS receive error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] IS-IS receive error: {}", e));
+                        error!("IS-IS capture error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] IS-IS capture error: {}", e));
                         break;
                     }
                 }
             }
         });
 
-        Ok(local_addr)
+        Ok(interface)
     }
 
     /// Handle incoming IS-IS PDU
     async fn handle_isis_pdu(
-        data: &[u8],
-        peer_addr: SocketAddr,
+        isis_pdu: &[u8],
+        src_mac: &[u8],
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        socket: &Arc<UdpSocket>,
-        local_addr: SocketAddr,
         protocol: &Arc<IsisProtocol>,
         system_id: &str,
         area_id: &str,
         level: &str,
+        cap: Arc<std::sync::Mutex<Capture<pcap::Active>>>,
+        local_mac: [u8; 6],
     ) -> Result<()> {
-        // Validate minimum header length
-        if data.len() < ISIS_HEADER_LEN {
-            warn!("IS-IS packet too short: {} bytes", data.len());
-            let _ = status_tx.send(format!("[WARN] IS-IS packet too short: {} bytes", data.len()));
-            return Ok(());
-        }
-
         // Parse common header
-        let intradomain_routing_protocol_discriminator = data[0];
-        let length_indicator = data[1];
-        let version_protocol_id_extension = data[2];
-        let id_length = data[3];
-        let pdu_type = data[4];
-        let version = data[5];
-        let _reserved = data[6];
-        let max_area_addresses = data[7];
+        let intradomain_routing_protocol_discriminator = isis_pdu[0];
+        let _length_indicator = isis_pdu[1];
+        let _version_protocol_id_extension = isis_pdu[2];
+        let _id_length = isis_pdu[3];
+        let pdu_type = isis_pdu[4];
+        let version = isis_pdu[5];
+        let _reserved = isis_pdu[6];
+        let _max_area_addresses = isis_pdu[7];
 
         // Validate protocol discriminator
         if intradomain_routing_protocol_discriminator != ISIS_INTRADOMAIN_ROUTING_PROTOCOL_DISCRIMINATOR {
             warn!("IS-IS invalid protocol discriminator: 0x{:02x}", intradomain_routing_protocol_discriminator);
-            let _ = status_tx.send(format!(
-                "[WARN] IS-IS invalid protocol discriminator: 0x{:02x}",
-                intradomain_routing_protocol_discriminator
-            ));
             return Ok(());
         }
 
         // Validate version (should be 1)
         if version != 1 {
             warn!("IS-IS unsupported version: {}", version);
-            let _ = status_tx.send(format!("[WARN] IS-IS unsupported version: {}", version));
             return Ok(());
         }
 
@@ -191,27 +323,32 @@ impl IsisServer {
             _ => "Unknown",
         };
 
-        debug!("IS-IS received {} ({}) from {}, {} bytes",
-               pdu_type_name, pdu_type, peer_addr, data.len());
-        let _ = status_tx.send(format!(
-            "[DEBUG] IS-IS received {} from {}, {} bytes",
-            pdu_type_name, peer_addr, data.len()
-        ));
-
-        // TRACE: Log full payload
-        let hex_str = hex::encode(data);
-        trace!("IS-IS PDU (hex): {}", hex_str);
-        let _ = status_tx.send(format!("[TRACE] IS-IS PDU (hex): {}", hex_str));
+        info!("IS-IS received {} ({}) from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+              pdu_type_name, pdu_type,
+              src_mac[0], src_mac[1], src_mac[2],
+              src_mac[3], src_mac[4], src_mac[5]);
+        let _ = status_tx.send(format!("→ IS-IS {} from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                        pdu_type_name,
+                                        src_mac[0], src_mac[1], src_mac[2],
+                                        src_mac[3], src_mac[4], src_mac[5]));
 
         // Add connection to ServerInstance
         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
         let now = std::time::Instant::now();
         let conn_state = ServerConnectionState {
             id: connection_id,
-            remote_addr: peer_addr,
-            local_addr,
+            remote_addr: format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:0",
+                                src_mac[0], src_mac[1], src_mac[2],
+                                src_mac[3], src_mac[4], src_mac[5])
+                .parse()
+                .unwrap_or("0.0.0.0:0".parse().unwrap()),
+            local_addr: format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:0",
+                               local_mac[0], local_mac[1], local_mac[2],
+                               local_mac[3], local_mac[4], local_mac[5])
+                .parse()
+                .unwrap_or("0.0.0.0:0".parse().unwrap()),
             bytes_sent: 0,
-            bytes_received: data.len() as u64,
+            bytes_received: isis_pdu.len() as u64,
             packets_sent: 0,
             packets_received: 1,
             last_activity: now,
@@ -226,54 +363,38 @@ impl IsisServer {
         app_state.add_connection_to_server(server_id, conn_state).await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Parse TLVs (start after common header + PDU-specific header)
-        let tlv_start = length_indicator as usize;
-        let tlvs = if tlv_start < data.len() {
-            Self::parse_tlvs(&data[tlv_start..])
-        } else {
-            Vec::new()
-        };
-
-        debug!("IS-IS parsed {} TLVs", tlvs.len());
-        let _ = status_tx.send(format!("[DEBUG] IS-IS parsed {} TLVs", tlvs.len()));
-
-        // Handle based on PDU type
+        // Handle based on PDU type (for now, only Hello)
         match pdu_type {
             ISIS_HELLO_LAN_L1 | ISIS_HELLO_LAN_L2 | ISIS_HELLO_P2P => {
                 Self::handle_hello_pdu(
-                    data,
-                    pdu_type,
+                    isis_pdu,
+                    src_mac,
                     pdu_type_name,
-                    &tlvs,
-                    peer_addr,
                     connection_id,
                     server_id,
                     llm_client,
                     app_state,
                     status_tx,
-                    socket,
                     protocol,
                     system_id,
                     area_id,
                     level,
+                    cap,
+                    local_mac,
                 ).await?;
             }
             ISIS_LSP_L1 | ISIS_LSP_L2 => {
                 info!("IS-IS LSP received (not yet handled)");
-                let _ = status_tx.send("[INFO] IS-IS LSP received (forwarding to LLM)".to_string());
-                // Future: Parse LSP and forward to LLM
+                let _ = status_tx.send("[INFO] IS-IS LSP received".to_string());
             }
             ISIS_CSNP_L1 | ISIS_CSNP_L2 => {
                 info!("IS-IS CSNP received (not yet handled)");
-                let _ = status_tx.send("[INFO] IS-IS CSNP received".to_string());
             }
             ISIS_PSNP_L1 | ISIS_PSNP_L2 => {
                 info!("IS-IS PSNP received (not yet handled)");
-                let _ = status_tx.send("[INFO] IS-IS PSNP received".to_string());
             }
             _ => {
                 warn!("IS-IS unsupported PDU type: {}", pdu_type);
-                let _ = status_tx.send(format!("[WARN] IS-IS unsupported PDU type: {}", pdu_type));
             }
         }
 
@@ -282,24 +403,30 @@ impl IsisServer {
 
     /// Handle IS-IS Hello PDU
     async fn handle_hello_pdu(
-        data: &[u8],
-        pdu_type: u8,
+        isis_pdu: &[u8],
+        src_mac: &[u8],
         pdu_type_name: &str,
-        tlvs: &[(u8, Vec<u8>)],
-        peer_addr: SocketAddr,
-        connection_id: ConnectionId,
+        _connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        socket: &Arc<UdpSocket>,
         protocol: &Arc<IsisProtocol>,
-        system_id: &str,
-        area_id: &str,
+        _system_id: &str,
+        _area_id: &str,
         level: &str,
+        cap: Arc<std::sync::Mutex<Capture<pcap::Active>>>,
+        local_mac: [u8; 6],
     ) -> Result<()> {
-        info!("IS-IS {} from {}", pdu_type_name, peer_addr);
-        let _ = status_tx.send(format!("→ IS-IS {} from {}", pdu_type_name, peer_addr));
+        // Parse TLVs from Hello PDU
+        // Hello header varies by type, but TLVs start after fixed header
+        // For LAN Hello: header is 27 bytes, for P2P: 20 bytes
+        let tlv_start = if isis_pdu[4] == ISIS_HELLO_P2P { 20 } else { 27 };
+        let tlvs = if tlv_start < isis_pdu.len() {
+            Self::parse_tlvs(&isis_pdu[tlv_start..])
+        } else {
+            Vec::new()
+        };
 
         // Extract information from TLVs
         let mut area_addresses = Vec::new();
@@ -307,20 +434,17 @@ impl IsisServer {
         let mut ip_addresses = Vec::new();
         let mut hostname = None;
 
-        for (tlv_type, tlv_value) in tlvs {
+        for (tlv_type, tlv_value) in &tlvs {
             match *tlv_type {
                 ISIS_TLV_AREA_ADDRESSES => {
-                    // Parse area addresses
                     area_addresses.push(hex::encode(tlv_value));
                 }
                 ISIS_TLV_PROTOCOLS_SUPPORTED => {
-                    // Protocol IDs: 0xCC = IPv4, 0x8E = IPv6
                     for proto in tlv_value {
                         protocols_supported.push(format!("0x{:02x}", proto));
                     }
                 }
                 ISIS_TLV_IP_INTERFACE_ADDRESSES => {
-                    // Parse IPv4 addresses (4 bytes each)
                     let mut i = 0;
                     while i + 3 < tlv_value.len() {
                         let ip = format!("{}.{}.{}.{}",
@@ -331,23 +455,21 @@ impl IsisServer {
                     }
                 }
                 ISIS_TLV_HOSTNAME => {
-                    // Parse hostname
                     if let Ok(name) = String::from_utf8(tlv_value.clone()) {
                         hostname = Some(name);
                     }
                 }
-                _ => {
-                    // Other TLVs not parsed
-                }
+                _ => {}
             }
         }
 
         // Create event for LLM
         let mut event_data = serde_json::json!({
             "pdu_type": pdu_type_name,
-            "pdu_type_code": pdu_type,
-            "peer_addr": peer_addr.to_string(),
-            "packet_hex": hex::encode(data),
+            "packet_hex": hex::encode(isis_pdu),
+            "src_mac": format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                              src_mac[0], src_mac[1], src_mac[2],
+                              src_mac[3], src_mac[4], src_mac[5]),
         });
 
         if !area_addresses.is_empty() {
@@ -365,15 +487,15 @@ impl IsisServer {
 
         let event = Event::new(&ISIS_HELLO_EVENT, event_data);
 
-        debug!("IS-IS calling LLM for Hello from {}", peer_addr);
-        let _ = status_tx.send(format!("[DEBUG] IS-IS calling LLM for Hello from {}", peer_addr));
+        debug!("IS-IS calling LLM for Hello");
+        let _ = status_tx.send("[DEBUG] IS-IS calling LLM for Hello".to_string());
 
         // Call LLM to decide response
         match call_llm(
             llm_client,
             app_state,
             server_id,
-            Some(connection_id),
+            None,
             &event,
             protocol.as_ref(),
         ).await {
@@ -384,21 +506,22 @@ impl IsisServer {
                     let _ = status_tx.send(format!("[INFO] {}", message));
                 }
 
-                debug!("IS-IS parsed {} actions", execution_result.raw_actions.len());
-                let _ = status_tx.send(format!("[DEBUG] IS-IS parsed {} actions", execution_result.raw_actions.len()));
-
-                // Process protocol results
+                // Process protocol results - send frames via pcap
                 for protocol_result in execution_result.protocol_results {
                     if let Some(output_data) = protocol_result.get_all_output().first() {
-                        let _ = socket.send_to(output_data, peer_addr).await;
+                        // output_data is the IS-IS PDU, we need to wrap in Ethernet + LLC
+                        let frame = Self::build_ethernet_frame(output_data, local_mac, level)?;
 
-                        debug!("IS-IS sent {} bytes to {}", output_data.len(), peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] IS-IS sent {} bytes to {}", output_data.len(), peer_addr));
-
-                        trace!("IS-IS sent (hex): {}", hex::encode(output_data));
-                        let _ = status_tx.send(format!("[TRACE] IS-IS sent (hex): {}", hex::encode(output_data)));
-
-                        let _ = status_tx.send(format!("→ IS-IS response to {} ({} bytes)", peer_addr, output_data.len()));
+                        // Send frame via pcap
+                        let mut cap_guard = cap.lock().unwrap();
+                        if let Err(e) = cap_guard.sendpacket(frame.as_ref()) {
+                            error!("Failed to send IS-IS frame: {}", e);
+                            let _ = status_tx.send(format!("[ERROR] Failed to send IS-IS frame: {}", e));
+                        } else {
+                            debug!("IS-IS sent {} bytes", frame.len());
+                            let _ = status_tx.send(format!("[DEBUG] IS-IS sent {} bytes", frame.len()));
+                            trace!("IS-IS sent (hex): {}", hex::encode(&frame));
+                        }
                     }
                 }
             }
@@ -422,7 +545,6 @@ impl IsisServer {
             offset += 2;
 
             if offset + tlv_len > data.len() {
-                // Malformed TLV
                 break;
             }
 
@@ -432,5 +554,60 @@ impl IsisServer {
         }
 
         tlvs
+    }
+
+    /// Build Ethernet frame with LLC header and IS-IS PDU
+    fn build_ethernet_frame(isis_pdu: &[u8], src_mac: [u8; 6], level: &str) -> Result<Vec<u8>> {
+        let mut frame = Vec::new();
+
+        // Destination MAC (multicast based on level)
+        let dst_mac = if level.contains("level-1") {
+            ISIS_ALL_L1_IS
+        } else {
+            ISIS_ALL_L2_IS
+        };
+        frame.extend_from_slice(&dst_mac);
+
+        // Source MAC
+        frame.extend_from_slice(&src_mac);
+
+        // Ethernet Type: Length field (for 802.3 with LLC)
+        let length = (3 + isis_pdu.len()) as u16; // LLC (3) + IS-IS PDU
+        frame.extend_from_slice(&length.to_be_bytes());
+
+        // LLC Header (3 bytes)
+        frame.push(LLC_DSAP_ISO); // DSAP = 0xFE (ISO CLNS)
+        frame.push(LLC_SSAP_ISO); // SSAP = 0xFE
+        frame.push(LLC_CTRL);     // Control = 0x03 (UI)
+
+        // IS-IS PDU
+        frame.extend_from_slice(isis_pdu);
+
+        Ok(frame)
+    }
+
+    /// Get MAC address of interface (platform-specific)
+    fn get_interface_mac(interface: &str) -> Result<[u8; 6]> {
+        // Try to get MAC from system
+        #[cfg(target_os = "linux")]
+        {
+            use std::fs;
+            let path = format!("/sys/class/net/{}/address", interface);
+            if let Ok(contents) = fs::read_to_string(&path) {
+                let parts: Vec<&str> = contents.trim().split(':').collect();
+                if parts.len() == 6 {
+                    let mut mac = [0u8; 6];
+                    for (i, part) in parts.iter().enumerate() {
+                        if let Ok(byte) = u8::from_str_radix(part, 16) {
+                            mac[i] = byte;
+                        }
+                    }
+                    return Ok(mac);
+                }
+            }
+        }
+
+        // Fallback: use locally administered MAC
+        Err(anyhow::anyhow!("Could not determine interface MAC address"))
     }
 }
