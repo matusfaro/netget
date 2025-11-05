@@ -153,6 +153,10 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// HTTP/2 connection (recent requests with multiplexing)
+    Http2 {
+        recent_requests: Vec<(String, String, Instant)>, // method, path, time
+    },
     /// PyPI connection (recent requests)
     Pypi {
         recent_requests: Vec<String>, // URIs
