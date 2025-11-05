@@ -177,6 +177,12 @@ impl ProtocolRegistry {
             Arc::new(crate::server::ElasticsearchProtocol::new()),
         );
 
+        // Package Management
+        #[cfg(feature = "npm")]
+        self.register(
+            Arc::new(crate::server::NpmProtocol::new()),
+        );
+
         // Web & File protocols
         #[cfg(feature = "ipp")]
         self.register(Arc::new(crate::server::IppProtocol::new()));
