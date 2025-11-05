@@ -320,6 +320,13 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "rip")]
+pub mod rip;
+#[cfg(feature = "rip")]
+pub use rip::RipServer;
+#[cfg(feature = "rip")]
+pub use rip::actions::RipProtocol;
+
 #[cfg(feature = "mcp")]
 pub mod mcp;
 #[cfg(feature = "mcp")]
