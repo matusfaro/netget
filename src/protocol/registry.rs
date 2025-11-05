@@ -52,6 +52,9 @@ impl ProtocolRegistry {
             Arc::new(crate::server::DataLinkProtocol::new()),
         );
 
+        #[cfg(feature = "dc")]
+        self.register(Arc::new(crate::server::DcProtocol::new()));
+
         #[cfg(feature = "dns")]
         self.register(Arc::new(crate::server::DnsProtocol::new()));
 

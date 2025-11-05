@@ -9,6 +9,7 @@ tcp = ["async-trait"]
 http = []
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
+dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
@@ -55,7 +56,7 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd"]
+all-protocols = ["tcp", "http", "udp", "datalink", "dc", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd"]
 e2e-tests = []  # Feature flag for E2E tests
 
 [dependencies]
