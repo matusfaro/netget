@@ -7,6 +7,7 @@ edition = "2021"
 default = ["all-protocols"]
 tcp = ["async-trait"]
 http = []
+pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
@@ -72,6 +73,7 @@ torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-p
 all-protocols = [
     "tcp",
     "http",
+    "pypi",
     "maven",
     "udp",
     "datalink",
