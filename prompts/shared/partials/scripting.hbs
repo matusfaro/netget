@@ -2,7 +2,7 @@
 
 # Script-Based Responses
 
-**Selected environment:** {{scripting_environment}}
+**Selected environment:** {{selected_mode}}
 
 ## When to Use Scripts
 
@@ -42,3 +42,39 @@ Scripts receive JSON via stdin:
 ```
 
 Use the **same action types** available to you as the LLM (e.g., `ssh_auth_decision`, `send_http_response`).
+
+**DO NOT** write raw protocol code (like `res.writeHead()` or socket operations).
+
+### Examples
+
+**Example 1 - SSH Authentication (Python):**
+```python
+import json, sys
+data = json.load(sys.stdin)
+username = data['event']['username']
+allowed = (username == 'alice')
+print(json.dumps({"actions": [{"type": "ssh_auth_decision", "allowed": allowed}]}))
+```
+
+**Example 2 - HTTP Response (JavaScript):**
+```javascript
+const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+const pathname = data.event.path;
+const response = pathname.endsWith('.html')
+  ? {"status": 200, "headers": {"Content-Type": "text/html"}, "body": "<h1>Hello</h1>"}
+  : {"status": 404, "body": "Not Found"};
+console.log(JSON.stringify({"actions": [{"type": "send_http_response", ...response}]}));
+```
+
+### Configuration
+
+To use scripts in `open_server`, include:
+- `script_runtime`: "{{selected_mode}}" (REQUIRED when script_inline is provided - choose the appropriate runtime)
+- `script_inline`: Your script code as a string (when provided, script_runtime MUST also be specified)
+- `script_handles`: Array of event types to handle (e.g., `["ssh_auth", "ssh_banner"]` or `["all"]`). Defaults to `["all"]`.
+
+### Constraints
+
+- Scripts must complete within **5 seconds** or they will be terminated
+- Scripts can return `{"fallback_to_llm": true}` to delegate complex cases back to you
+- Use `update_script` action to modify scripts on running servers
