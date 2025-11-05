@@ -1,6 +1,9 @@
 //! IPSec/IKEv2 protocol actions implementation
 //!
-//! Defines LLM-controllable actions for IPSec/IKEv2 honeypot
+//! Defines LLM-controllable actions for IPSec/IKEv2 enhanced honeypot
+//!
+//! **Status**: Experimental (enhanced detection with manual parsing)
+//! **Future**: Full VPN implementation when swanny library reaches 1.0
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Server},
@@ -113,21 +116,21 @@ impl Server for IpsecProtocol {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Incomplete)
+            .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
-            .implementation("Manual IKE header parsing, honeypot only")
-            .llm_control("Reconnaissance logging")
+            .implementation("Enhanced IKE parsing with payload chain analysis")
+            .llm_control("Detailed protocol analysis, security parameter extraction")
             .e2e_testing("strongSwan client (detection only)")
-            .notes("Honeypot - no actual VPN tunnels, IKEv1/v2 detection")
+            .notes("Enhanced honeypot - extracts payloads, flags, SPIs. Full VPN planned when swanny reaches 1.0 (mid-2025)")
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "IPSec/IKEv2 VPN honeypot server"
+        "IPSec/IKEv2 enhanced honeypot with detailed protocol analysis"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Start an IPSec VPN honeypot on port 500"
+        "Start an IPSec/IKEv2 honeypot on port 500 to analyze VPN reconnaissance attempts"
     }
 
     fn group_name(&self) -> &'static str {
