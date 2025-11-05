@@ -134,6 +134,10 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// PyPI connection (recent requests)
+    Pypi {
+        recent_requests: Vec<String>, // URIs
+    },
     /// Maven repository connection (recent artifact requests)
     Maven {
         recent_artifacts: Vec<String>,
