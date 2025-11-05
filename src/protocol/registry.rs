@@ -227,6 +227,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
 
+        #[cfg(feature = "bitcoin")]
+        self.register(Arc::new(crate::server::BitcoinProtocol::new()));
+
         #[cfg(feature = "mcp")]
         self.register(Arc::new(crate::server::McpProtocol::new()));
 

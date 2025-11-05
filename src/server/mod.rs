@@ -313,6 +313,13 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::BitcoinServer;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::actions::BitcoinProtocol;
+
 #[cfg(feature = "mcp")]
 pub mod mcp;
 #[cfg(feature = "mcp")]
