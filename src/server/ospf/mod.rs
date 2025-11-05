@@ -17,6 +17,7 @@ use std::time::Instant;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
+use hex;
 
 #[cfg(feature = "ospf")]
 use crate::llm::action_helper::call_llm;
@@ -420,11 +421,44 @@ impl OspfServer {
         )
         .await
         {
-            Ok(_result) => {
-                // LLM response handled via actions
+            Ok(execution_result) => {
+                // Log LLM messages
+                for message in &execution_result.messages {
+                    info!("{}", message);
+                    let _ = _status_tx.send(format!("[INFO] {}", message));
+                }
+
+                debug!("OSPF got {} protocol results", execution_result.protocol_results.len());
+                let _ = _status_tx.send(format!("[DEBUG] OSPF got {} protocol results", execution_result.protocol_results.len()));
+
+                // Process each protocol result (OSPF packets to send)
+                for protocol_result in execution_result.protocol_results {
+                    if let Some(output_data) = protocol_result.get_all_output().first() {
+                        // Send OSPF packet to multicast (AllSPFRouters)
+                        // TODO: Support unicast destinations from LLM action
+                        match Self::send_ospf_packet(ospf_state.socket_fd, OSPF_ALL_SPF_ROUTERS, output_data) {
+                            Ok(()) => {
+                                debug!("OSPF sent {} bytes to multicast", output_data.len());
+                                let _ = _status_tx.send(format!("[DEBUG] OSPF sent {} bytes to multicast (224.0.0.5)", output_data.len()));
+
+                                // TRACE: Log packet hex
+                                trace!("OSPF sent (hex): {}", hex::encode(output_data));
+                                let _ = _status_tx.send(format!("[TRACE] OSPF sent (hex): {}", hex::encode(output_data)));
+                            }
+                            Err(e) => {
+                                error!("Failed to send OSPF packet: {}", e);
+                                let _ = _status_tx.send(format!("✗ OSPF send error: {}", e));
+                            }
+                        }
+                    } else {
+                        debug!("OSPF protocol result has no output data");
+                        let _ = _status_tx.send("[DEBUG] OSPF protocol result has no output data".to_string());
+                    }
+                }
             }
             Err(e) => {
                 error!("LLM call failed: {}", e);
+                let _ = _status_tx.send(format!("✗ OSPF LLM error: {}", e));
             }
         }
 
