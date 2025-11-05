@@ -38,6 +38,7 @@ turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
+nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
@@ -99,6 +100,7 @@ all-protocols = [
     "sip",
     "ldap",
     "imap",
+    "nntp",
     "mqtt",
     "socks5",
     "elasticsearch",

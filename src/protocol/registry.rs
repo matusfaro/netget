@@ -102,6 +102,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "imap")]
         self.register(Arc::new(crate::server::ImapProtocol::new()));
 
+        #[cfg(feature = "nntp")]
+        self.register(Arc::new(crate::server::NntpProtocol::new()));
+
         #[cfg(feature = "mqtt")]
         self.register(Arc::new(crate::server::MqttProtocol::new()));
 
