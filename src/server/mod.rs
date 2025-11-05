@@ -492,6 +492,13 @@ pub use openapi::OpenApiServer;
 #[cfg(feature = "openapi")]
 pub use openapi::actions::OpenApiProtocol;
 
+#[cfg(feature = "openid")]
+pub mod openid;
+#[cfg(feature = "openid")]
+pub use openid::OpenIdServer;
+#[cfg(feature = "openid")]
+pub use openid::actions::OpenIdProtocol;
+
 #[cfg(feature = "git")]
 pub mod git;
 #[cfg(feature = "git")]
