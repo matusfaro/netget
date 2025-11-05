@@ -27,6 +27,13 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "pypi")]
+pub mod pypi;
+#[cfg(feature = "pypi")]
+pub use pypi::PypiServer;
+#[cfg(feature = "pypi")]
+pub use pypi::actions::PypiProtocol;
+
 #[cfg(feature = "maven")]
 pub mod maven;
 #[cfg(feature = "maven")]
@@ -47,6 +54,13 @@ pub mod arp;
 pub use arp::ArpServer;
 #[cfg(feature = "arp")]
 pub use arp::actions::ArpProtocol;
+
+#[cfg(feature = "dc")]
+pub mod dc;
+#[cfg(feature = "dc")]
+pub use dc::DcServer;
+#[cfg(feature = "dc")]
+pub use dc::actions::DcProtocol;
 
 #[cfg(feature = "udp")]
 pub mod udp;
@@ -83,6 +97,13 @@ pub use dhcp::DhcpServer;
 #[cfg(feature = "dhcp")]
 pub use dhcp::actions::DhcpProtocol;
 
+#[cfg(feature = "bootp")]
+pub mod bootp;
+#[cfg(feature = "bootp")]
+pub use bootp::BootpServer;
+#[cfg(feature = "bootp")]
+pub use bootp::actions::BootpProtocol;
+
 #[cfg(feature = "ntp")]
 pub mod ntp;
 #[cfg(feature = "ntp")]
@@ -90,12 +111,26 @@ pub use ntp::NtpServer;
 #[cfg(feature = "ntp")]
 pub use ntp::actions::NtpProtocol;
 
+#[cfg(feature = "whois")]
+pub mod whois;
+#[cfg(feature = "whois")]
+pub use whois::WhoisServer;
+#[cfg(feature = "whois")]
+pub use whois::actions::WhoisProtocol;
+
 #[cfg(feature = "snmp")]
 pub mod snmp;
 #[cfg(feature = "snmp")]
 pub use snmp::SnmpServer;
 #[cfg(feature = "snmp")]
 pub use snmp::actions::SnmpProtocol;
+
+#[cfg(feature = "igmp")]
+pub mod igmp;
+#[cfg(feature = "igmp")]
+pub use igmp::IgmpServer;
+#[cfg(feature = "igmp")]
+pub use igmp::actions::IgmpProtocol;
 
 #[cfg(feature = "syslog")]
 pub mod syslog;
@@ -261,6 +296,13 @@ pub use imap::ImapServer;
 #[cfg(feature = "imap")]
 pub use imap::actions::ImapProtocol;
 
+#[cfg(feature = "nntp")]
+pub mod nntp;
+#[cfg(feature = "nntp")]
+pub use nntp::NntpServer;
+#[cfg(feature = "nntp")]
+pub use nntp::actions::NntpProtocol;
+
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "mqtt")]
@@ -361,6 +403,13 @@ pub mod rip;
 pub use rip::RipServer;
 #[cfg(feature = "rip")]
 pub use rip::actions::RipProtocol;
+
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::BitcoinServer;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::actions::BitcoinProtocol;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;

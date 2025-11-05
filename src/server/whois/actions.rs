@@ -1,0 +1,291 @@
+//! WHOIS protocol actions implementation
+
+use crate::llm::actions::{
+    protocol_trait::{ActionResult, Server},
+    ActionDefinition, Parameter,
+};
+use crate::protocol::EventType;
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use serde_json::json;
+use std::sync::LazyLock;
+
+pub struct WhoisProtocol;
+
+impl WhoisProtocol {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Server for WhoisProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::whois::WhoisServer;
+            WhoisServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new() // WHOIS has no async actions
+    }
+
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_whois_response_action(),
+            send_whois_record_action(),
+            send_error_action(),
+            close_connection_action(),
+        ]
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_whois_response" => self.execute_send_whois_response(action),
+            "send_whois_record" => self.execute_send_whois_record(action),
+            "send_error" => self.execute_send_error(action),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown WHOIS action: {}", action_type)),
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "WHOIS"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_whois_event_types()
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>WHOIS"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["whois"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(43))
+            .implementation("Manual TCP connection handling")
+            .llm_control("WHOIS query responses (domain, registrant, contact info)")
+            .e2e_testing("whois command-line client")
+            .notes("Simple line-based protocol")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "WHOIS domain lookup server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "WHOIS server on port 43 - respond with fake registrar information for any domain"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
+}
+
+impl WhoisProtocol {
+    fn execute_send_whois_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let response = action
+            .get("response")
+            .and_then(|v| v.as_str())
+            .context("Missing 'response' parameter")?;
+
+        // WHOIS protocol ends responses with CRLF
+        let mut data = response.to_string();
+        if !data.ends_with('\n') {
+            data.push_str("\r\n");
+        }
+
+        Ok(ActionResult::Output(data.into_bytes()))
+    }
+
+    fn execute_send_whois_record(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let domain = action
+            .get("domain")
+            .and_then(|v| v.as_str())
+            .context("Missing 'domain' parameter")?;
+
+        let registrar = action
+            .get("registrar")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Example Registrar, Inc.");
+
+        let registrant = action
+            .get("registrant")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Registrant Contact");
+
+        let admin_contact = action
+            .get("admin_contact")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Admin Contact");
+
+        let name_servers = action
+            .get("name_servers")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let mut response = String::new();
+        response.push_str(&format!("Domain Name: {}\r\n", domain));
+        response.push_str(&format!("Registrar: {}\r\n", registrar));
+        response.push_str(&format!("Registrant Name: {}\r\n", registrant));
+        response.push_str(&format!("Admin Name: {}\r\n", admin_contact));
+
+        for ns in name_servers {
+            response.push_str(&format!("Name Server: {}\r\n", ns));
+        }
+
+        response.push_str("\r\n");
+        Ok(ActionResult::Output(response.into_bytes()))
+    }
+
+    fn execute_send_error(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let error_msg = action
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Domain not found");
+
+        let response = format!("Error: {}\r\n\r\n", error_msg);
+        Ok(ActionResult::Output(response.into_bytes()))
+    }
+}
+
+fn send_whois_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_whois_response".to_string(),
+        description: "Send custom WHOIS response".to_string(),
+        parameters: vec![Parameter {
+            name: "response".to_string(),
+            type_hint: "string".to_string(),
+            description: "Response text to send".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "send_whois_response",
+            "response": "Domain Name: example.com\nRegistrar: Example Inc.\n"
+        }),
+    }
+}
+
+fn send_whois_record_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_whois_record".to_string(),
+        description: "Send formatted WHOIS record".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "domain".to_string(),
+                type_hint: "string".to_string(),
+                description: "Domain name".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "registrar".to_string(),
+                type_hint: "string".to_string(),
+                description: "Registrar name".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "registrant".to_string(),
+                type_hint: "string".to_string(),
+                description: "Registrant name".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "admin_contact".to_string(),
+                type_hint: "string".to_string(),
+                description: "Admin contact name".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "name_servers".to_string(),
+                type_hint: "array".to_string(),
+                description: "List of nameservers".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_whois_record",
+            "domain": "example.com",
+            "registrar": "VeriSign Registry",
+            "registrant": "Example Inc.",
+            "name_servers": ["ns1.example.com", "ns2.example.com"]
+        }),
+    }
+}
+
+fn send_error_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_error".to_string(),
+        description: "Send error message for domain not found".to_string(),
+        parameters: vec![Parameter {
+            name: "message".to_string(),
+            type_hint: "string".to_string(),
+            description: "Error message".to_string(),
+            required: false,
+        }],
+        example: json!({
+            "type": "send_error",
+            "message": "Domain not found in database"
+        }),
+    }
+}
+
+fn close_connection_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_connection".to_string(),
+        description: "Close the WHOIS connection".to_string(),
+        parameters: vec![],
+        example: json!({"type": "close_connection"}),
+    }
+}
+
+/// WHOIS query event - triggered when client sends a query
+pub static WHOIS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("whois_query", "Client sent a WHOIS domain lookup query")
+        .with_parameters(vec![Parameter {
+            name: "query".to_string(),
+            type_hint: "string".to_string(),
+            description: "The WHOIS query string".to_string(),
+            required: true,
+        }])
+        .with_actions(vec![
+            send_whois_response_action(),
+            send_whois_record_action(),
+            send_error_action(),
+            close_connection_action(),
+        ])
+});
+
+pub fn get_whois_event_types() -> Vec<EventType> {
+    vec![WHOIS_QUERY_EVENT.clone()]
+}

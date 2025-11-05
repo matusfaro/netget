@@ -15,11 +15,41 @@
 - Actions execute in order
 - You can mix tools and actions in the same response
 
+## Optional Reasoning
+
+You may include a `<reasoning>` tag to explain your thought process:
+
+```xml
+<reasoning>
+Brief explanation of your understanding and decision (1-3 sentences)
+</reasoning>
+{
+  "actions": [...]
+}
+```
+
+**When to include reasoning:**
+- **User input commands**: Strongly encouraged, especially for ambiguous requests, port conflicts, update vs create decisions, multi-step operations
+- **Network events**: Optional, use when helpful for complex logic, authentication decisions, error handling
+- Explain: what you understand, what you checked, why you chose this action
+
+**Reasoning rules:**
+1. **Tag is optional** - You can omit it for simple, straightforward cases
+2. **Keep it brief** - 1-3 sentences explaining key points
+3. **Tag can be anywhere** - Before or after JSON (will be extracted and logged)
+4. **Valid JSON still required** - After removing reasoning tag, valid JSON must remain
+
 ## Examples
 
-✓ **Valid:**
+✓ **Valid (simple):**
 ```json
 {"actions": [{"type": "show_message", "message": "Hello"}]}
+```
+
+✓ **Valid (with reasoning):**
+```
+<reasoning>User wants HTTP server on port 8080. No conflicts detected.</reasoning>
+{"actions": [{"type": "open_server", "port": 8080, "base_stack": "http"}]}
 ```
 
 ✓ **Valid (multiple actions):**
@@ -42,3 +72,11 @@ Here's what I'll do:
 {"actions": [...]}
 ```
 ```
+
+## JSON Rules
+
+1. **Valid JSON required** - Must be valid JSON after reasoning tag removed
+2. **Actions array required** - Even if empty: `{"actions": []}`
+3. **One action per object** - Each action in a separate object in the array
+4. **Exact parameter names** - Use the parameter names exactly as documented
+5. **Appropriate types** - Numbers should be numbers, not strings
