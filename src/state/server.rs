@@ -369,14 +369,11 @@ pub enum ProtocolConnectionInfo {
         allowed_ips: Vec<String>,                // Allowed IPs for this peer
         last_handshake: Option<std::time::SystemTime>, // Last successful handshake time
     },
-    /// OpenVPN connection
+    /// OpenVPN VPN connection
     Openvpn {
-        endpoint: SocketAddr,              // Client endpoint address
-        session_id: Option<String>,        // Session ID from handshake (hex)
-        protocol_version: u8,              // Protocol version (1 or 2)
-        last_packet: Option<Instant>,      // Last packet received time
-        tx_bytes: u64,                     // Bytes transmitted
-        rx_bytes: u64,                     // Bytes received
+        session_id: String,                // Session ID (hex)
+        vpn_ip: Option<String>,            // Assigned VPN IP address
+        cipher: String,                    // Encryption cipher (e.g., "AES-256-GCM")
     },
     /// IPSec/IKEv2 connection
     Ipsec {
