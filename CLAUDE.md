@@ -5,7 +5,7 @@ Rust CLI where an LLM (via Ollama) controls 40+ network protocols. The LLM const
 ## Protocols (50+)
 
 **Beta**: TCP, HTTP, UDP, DataLink, DNS, DoT, DoH, DHCP, NTP, SNMP, SSH, OpenAI
-**Experimental**: IRC, Telnet, SMTP, IMAP, mDNS, LDAP, MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch, IPP, WebDAV, NFS, SMB, HTTP Proxy, SOCKS5, STUN, TURN, Tor Directory, gRPC, MCP, JSON-RPC, XML-RPC, VNC, etcd, Kafka, MQTT, Git, S3, SQS
+**Experimental**: IRC, Telnet, SMTP, IMAP, mDNS, LDAP, MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch, IPP, WebDAV, NFS, SMB, HTTP Proxy, SOCKS5, STUN, TURN, Tor Directory, gRPC, MCP, JSON-RPC, XML-RPC, VNC, etcd, Kafka, MQTT, Git, S3, SQS, BOOTP
 **Stable**: WireGuard (full VPN), Tor Relay
 **Incomplete**: OpenVPN (honeypot), IPSec (honeypot), BGP
 
@@ -15,15 +15,17 @@ See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<pr
 
 ## Architecture Principles
 
-**Decentralization (CRITICAL)**: Never create centralized protocol registries. Use trait-based patterns where each protocol implements traits independently. Exceptions: `BaseStack` enum, `Cargo.toml` features, `server_startup.rs` match statements.
+**Decentralization (CRITICAL)**: Never create centralized protocol registries. Use trait-based patterns where each protocol implements traits independently. Exceptions: Protocol registry (`protocol/registry.rs`), `Cargo.toml` features, `server_startup.rs` match statements.
 
-**Modules**: `cli/` (TUI), `server/<protocol>/` (implementations), `protocol/` (BaseStack), `state/` (app state), `llm/` (Ollama), `events/` (coordination), `llm/actions/` (action system)
+**Modules**: `cli/` (TUI), `server/<protocol>/` (implementations), `protocol/` (registry, metadata), `state/` (app state), `llm/` (Ollama), `events/` (coordination), `llm/actions/` (action system)
 
 **Connection**: TcpStream split with `tokio::io::split()`. Never hold Mutex during I/O (deadlock risk).
 
 **Data Queueing**: Per-connection state machine (Idle → Processing → Accumulating) prevents concurrent LLM calls.
 
 **Actions**: Protocols implement `ProtocolActions` trait with async (user-triggered) and sync (network event) actions. Files: `src/server/<protocol>/actions.rs`
+
+**Actions/Events Design (CRITICAL)**: NEVER use bytes (`Vec<u8>`) or base64-encoded strings in action parameters or event data. LLMs cannot effectively parse or construct binary data. Instead, use structured data (JSON objects, fields, enums) that you construct into bytes. Example: Instead of `{"data": "SGVsbG8="}`, use `{"method": "GET", "path": "/", "headers": {...}}`.
 
 ## Protocol Documentation (CRITICAL)
 
@@ -35,16 +37,14 @@ Each protocol has TWO CLAUDE.md files:
 
 ## Testing Philosophy
 
-Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients.
-
-**Status**: Unit tests: 12/12 passing. E2E: Infrastructure fixed, all compile. See `TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`.
+Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients. **Status**: Unit 12/12 passing, E2E infrastructure fixed. See `TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`.
 
 ### Organization & Feature Gating (CRITICAL)
 
 - All tests in `tests/` (never `src/`), access public APIs only
 - Protocol E2E tests: `tests/server/<protocol>/e2e_test.rs`
 - **ALL tests MUST be feature-gated**: `#[cfg(all(test, feature = "<protocol>"))]` in mod.rs
-- Unit tests (no Ollama): `tests/base_stack_test.rs`, etc.
+- Unit tests (no Ollama): `tests/base_stack_test.rs` (registry parsing), etc.
 - E2E tests (Ollama required): Real clients, use `{AVAILABLE_PORT}` placeholder
 
 ### Running Tests
@@ -59,150 +59,40 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 
 ### E2E Test Efficiency (CRITICAL)
 
-**Minimize LLM calls** (target < 10 per suite):
-1. Reuse server instances across test cases (one comprehensive prompt vs. multiple servers)
-2. Use scripting mode when available (0 LLM calls per request after startup)
-3. Bundle related test scenarios
-
-**Setup**: Build release binary first: `./cargo-isolated.sh build --release --all-features`
-
-**Privacy**: All tests MUST use localhost only (127.0.0.1/::1), no external endpoints, works offline.
+**Minimize LLM calls** (< 10 per suite): Reuse servers, use scripting mode, bundle scenarios. **Setup**: `./cargo-isolated.sh build --release --all-features`. **Privacy**: Localhost only (127.0.0.1/::1), no external endpoints.
 
 ## Multi-Instance Concurrency
 
-**Ollama Lock**: `--ollama-lock` flag serializes LLM API access (enabled by default in tests). Prevents Ollama overload when running concurrent tests.
-
-**Safe**: Multiple E2E tests, multiple NetGet instances with `--ollama-lock`
-**Unsafe**: Building to same `target/` (use `cargo-isolated.sh`), concurrent git operations (use worktrees)
+**Ollama Lock**: `--ollama-lock` serializes LLM API (default in tests). **Safe**: Multiple E2E tests/instances with lock. **Unsafe**: Same `target/` (use `cargo-isolated.sh`), concurrent git (use worktrees).
 
 ### Build Isolation (CRITICAL)
 
-**Always use `./cargo-isolated.sh`** instead of `cargo` - creates session-specific build dirs (`target-claude/claude-$$`)
-
-**Kill builds safely**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo` - kills all instances!)
-
-**Feature flags for speed**:
-- ✅ Fast (10-30s): `--no-default-features --features <protocol>`
-- ❌ Slow (1-2min): `--all-features` (only for releases/full tests)
-
-**Cleanup**: `rm -rf target-claude/` or `find target-claude/ -mtime +10 -exec rm -rf {} \;`
+**Use `./cargo-isolated.sh`** (session-specific `target-claude/claude-$$`). **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`). **Speed**: Fast with `--no-default-features --features <protocol>` (10-30s), slow with `--all-features` (1-2min). **Cleanup**: `rm -rf target-claude/`.
 
 ## Logging (CRITICAL)
 
-**Dual logging required** - ALL logs to BOTH tracing macros (`debug!`, `trace!`, etc.) → `netget.log` AND `status_tx.send()` → TUI
-
-```rust
-debug!("TCP sent {} bytes", len);
-let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes", len));
-```
-
-**Levels**: ERROR (critical), WARN (non-fatal), INFO (lifecycle), DEBUG (summaries), TRACE (full payloads)
+**Dual logging**: ALL logs to tracing macros (`debug!`, `trace!`, etc.) → `netget.log` AND `status_tx.send()` → TUI. **Levels**: ERROR (critical), WARN (non-fatal), INFO (lifecycle), DEBUG (summaries), TRACE (payloads).
 
 ## UI & Technical Details
 
-**TUI**: Rolling terminal (scrolls like `tail -f`), sticky footer, Ctrl+L (log levels), Ctrl+W (web search), command history, multi-line input (Shift+Enter)
-
-**Key Tech**:
-- TcpStream: `tokio::io::split()`, never clone
-- Mutex: Never hold during I/O (deadlock risk)
-- Default model: `qwen3-coder:30b`
-- Event flow: UserCommand → Parse → EventHandler → LLM → Protocol action
+**TUI**: Rolling terminal, sticky footer, Ctrl+L (log levels), Ctrl+W (web search), multi-line (Shift+Enter). **Tech**: TcpStream via `tokio::io::split()` (never clone), never hold Mutex during I/O, default model `qwen3-coder:30b`, flow: UserCommand → Parse → EventHandler → LLM → Protocol action.
 
 ## Scheduled Tasks
 
-NetGet supports scheduled tasks that execute at specified intervals or delays. Tasks can be attached at three levels:
+Tasks execute at intervals/delays. Three scopes: **Global** (any server, all actions), **Server** (specific server, auto-cleaned on close), **Connection** (specific connection, auto-cleaned on close).
 
-### Task Attachment Levels
+**Connection tasks** for long-lived connections (SSH, WebSocket): idle timeouts, session cleanup, rate limiting, monitoring. Short-lived (HTTP GET) use server-level instead.
 
-1. **Global Tasks** - Can interact with any server, create new servers, use all common actions
-2. **Server-Scoped Tasks** - Attached to specific server, uses server's instruction and protocol actions, auto-cleaned when server closes
-3. **Connection-Scoped Tasks** - Attached to specific connection within a server, auto-cleaned when connection closes
-
-### Connection-Level Tasks
-
-Use connection-scoped tasks for:
-- **Idle timeouts**: "Close this SSH connection if no activity for 5 minutes"
-- **Session cleanup**: "Delete session data for this HTTP connection after 1 hour"
-- **Rate limiting**: "Reset rate limit counter for this connection every 5 minutes"
-- **Connection monitoring**: "Log connection stats every 30 seconds"
-
-**Example** (SSH idle timeout):
-```json
-{
-  "type": "schedule_task",
-  "task_id": "idle_timeout",
-  "server_id": 1,
-  "connection_id": "conn-456",
-  "recurring": true,
-  "interval_secs": 60,
-  "instruction": "Check if connection has been idle for >5 minutes. If so, close it with close_connection action."
-}
-```
-
-**Best Practices**:
-- Connection tasks are for long-lived connections (SSH, WebSocket, persistent TCP)
-- For short-lived connections (HTTP GET), use server-level tasks instead
-- Tasks automatically cleaned up when connection closes
-- Connection context (bytes sent/received, last activity, etc.) included in task execution prompt
-
-### Creating Tasks
-
-**At server creation** (via `open_server` action):
-```json
-{
-  "type": "open_server",
-  "port": 8080,
-  "base_stack": "http",
-  "instruction": "HTTP server",
-  "scheduled_tasks": [
-    {
-      "task_id": "heartbeat",
-      "recurring": true,
-      "interval_secs": 30,
-      "instruction": "Send heartbeat to all connections"
-    }
-  ]
-}
-```
-
-**Post-creation** (via `schedule_task` action):
-```json
-{
-  "type": "schedule_task",
-  "task_id": "cleanup",
-  "server_id": 1,
-  "recurring": false,
-  "delay_secs": 3600,
-  "instruction": "Clean up idle connections"
-}
-```
-
-**Connection-scoped** (requires `connection_id`):
-```json
-{
-  "type": "schedule_task",
-  "task_id": "session_expire",
-  "server_id": 1,
-  "connection_id": "conn-123",
-  "recurring": false,
-  "delay_secs": 1800,
-  "instruction": "Expire session and close connection"
-}
-```
+**Creation**: Via `open_server` action (`scheduled_tasks` array) or `schedule_task` action. Add `connection_id` for connection-scoped tasks. Parameters: `task_id`, `recurring`, `interval_secs`/`delay_secs`, `instruction`.
 
 ## Protocol Planning (Before Implementation)
 
-Before implementing, research and document:
-1. **Server library** - Rust crate evaluation (compliance, maturity, LLM control flexibility)
-2. **Client library** - For E2E testing
-3. **LLM control points** - Async (user-triggered) vs Sync (network event) actions
-4. **Logging strategy** - What to log at each level
-5. **Example prompts** - Comprehensive prompt covering main features (basis for E2E tests)
+Research: **Server library** (crate eval: compliance, maturity, LLM control), **Client library** (E2E testing), **LLM control points** (async vs sync actions), **Logging strategy**, **Example prompts** (comprehensive, basis for E2E).
 
 ## Protocol Implementation Checklist (CRITICAL: ALL protocols MUST be feature gated)
 
 **12-Step Implementation**:
-1. **base_stack.rs**: Add `BaseStack` variant, parsing, unit tests
+1. **protocol/registry.rs**: Register protocol implementation (feature-gated)
 2. **rolling_tui.rs**: Add welcome message (state will be Experimental by default)
 3. **src/server/<protocol>/mod.rs**: Implement server with dual logging, track connections
 4. **src/server/<protocol>/actions.rs**: Implement `ProtocolActions` trait (async/sync actions)
@@ -221,11 +111,7 @@ Before implementing, research and document:
 
 ## Multi-Instance Collaboration (CRITICAL)
 
-**Compilation errors**: PAUSE if error in code you didn't modify (another instance may be working on it). Only fix errors in your own edits.
-
-**Shared files** (`Cargo.toml`, `base_stack.rs`, `server/mod.rs`, `server_startup.rs`, `state/server.rs`): NEVER overwrite. ALWAYS use Edit tool for surgical changes. Add incrementally without removing others' work.
-
-**Kill builds**: Use `./cargo-isolated-kill.sh` (NEVER `pkill cargo` - kills all instances!)
+**Errors**: PAUSE if error in unmodified code. **Shared files** (`Cargo.toml`, `protocol/registry.rs`, `server/mod.rs`, `server_startup.rs`, `state/server.rs`): NEVER overwrite, use Edit tool, add incrementally. **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`).
 
 ## Git Commits
 
