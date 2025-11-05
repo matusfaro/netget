@@ -10,6 +10,8 @@ pub mod rip;
 pub mod cassandra;
 // DataLink doesn't have a feature flag, it's always available
 pub mod datalink;
+#[cfg(feature = "dc")]
+pub mod dc;
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
 #[cfg(feature = "bootp")]
