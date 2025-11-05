@@ -7,9 +7,12 @@ You are handling a network event for an active server. Your job is to:
 3. **Generate appropriate response**: Use protocol-specific actions to respond
 4. **Maintain state if needed**: Use `update_memory` to track state between requests
 
+You may optionally include `<reasoning>` tags to explain complex decisions (authentication logic, error handling, routing decisions).
+
 ### Key Points
 
 - The server is already running - you're handling incoming events
 - Use protocol-specific actions (e.g., `send_http_response` for HTTP)
 - Follow the server's instruction field for behavior
 - You can update memory to track state across requests
+- Keep reasoning brief (1-2 sentences) when included

@@ -134,6 +134,10 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// PyPI connection (recent requests)
+    Pypi {
+        recent_requests: Vec<String>, // URIs
+    },
     /// Maven repository connection (recent artifact requests)
     Maven {
         recent_artifacts: Vec<String>,
@@ -141,6 +145,10 @@ pub enum ProtocolConnectionInfo {
     /// SNMP connection (recent requests)
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
+    },
+    /// IGMP connection (multicast group management)
+    Igmp {
+        joined_groups: Vec<std::net::Ipv4Addr>,
     },
     /// Syslog connection (recent messages)
     Syslog {
@@ -164,15 +172,29 @@ pub enum ProtocolConnectionInfo {
     Dhcp {
         recent_requests: Vec<(String, Instant)>, // client MAC, time
     },
+    /// BOOTP connection (recent requests)
+    Bootp {
+        recent_requests: Vec<(String, Instant)>, // request type, time
+    },
     /// NTP connection (recent clients)
     Ntp {
         recent_clients: Vec<(SocketAddr, Instant)>,
+    },
+    /// WHOIS connection (recent queries)
+    Whois {
+        recent_queries: Vec<(String, Instant)>, // domain, time
     },
     /// SSH connection (managed by russh library)
     Ssh {
         authenticated: bool,
         username: Option<String>,
         channels: Vec<String>, // Active channel types (shell, sftp)
+    },
+    /// DC (Direct Connect) connection with write half
+    Dc {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
     },
     /// IRC connection with write half
     Irc {
@@ -269,6 +291,12 @@ pub enum ProtocolConnectionInfo {
         authenticated_user: Option<String>,
         selected_mailbox: Option<String>,
         mailbox_read_only: bool,
+    },
+    /// NNTP connection (Network News Transfer Protocol)
+    Nntp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
     },
     /// MQTT connection (client session)
     Mqtt {
@@ -423,6 +451,11 @@ pub enum ProtocolConnectionInfo {
     /// HTTP/3 connection (multiplexed streams over UDP)
     Http3 {
         stream_count: usize,  // Number of active bidirectional streams
+    },
+    /// Bitcoin P2P connection
+    Bitcoin {
+        handshake_complete: bool,
+        last_message_type: Option<String>, // Last message type received (version, ping, etc.)
     },
     /// BitTorrent Tracker connection
     TorrentTracker {
