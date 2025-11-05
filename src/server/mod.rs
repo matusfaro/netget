@@ -527,5 +527,19 @@ pub use torrent_peer::TorrentPeerServer;
 #[cfg(feature = "torrent-peer")]
 pub use torrent_peer::actions::TorrentPeerProtocol;
 
+#[cfg(feature = "saml-idp")]
+pub mod saml_idp;
+#[cfg(feature = "saml-idp")]
+pub use saml_idp::SamlIdpServer;
+#[cfg(feature = "saml-idp")]
+pub use saml_idp::actions::SamlIdpProtocol;
+
+#[cfg(feature = "saml-sp")]
+pub mod saml_sp;
+#[cfg(feature = "saml-sp")]
+pub use saml_sp::SamlSpServer;
+#[cfg(feature = "saml-sp")]
+pub use saml_sp::actions::SamlSpProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

@@ -54,6 +54,8 @@ sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
+saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
+saml-sp = []  # SAML Service Provider (assertion validation, session management)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -146,6 +148,8 @@ all-protocols = [
     "torrent-tracker",
     "torrent-dht",
     "torrent-peer",
+    "saml-idp",
+    "saml-sp",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests

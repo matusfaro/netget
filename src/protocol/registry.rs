@@ -341,6 +341,13 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "torrent-peer")]
         self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
+
+        // SAML protocols
+        #[cfg(feature = "saml-idp")]
+        self.register(Arc::new(crate::server::SamlIdpProtocol::new()));
+
+        #[cfg(feature = "saml-sp")]
+        self.register(Arc::new(crate::server::SamlSpProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
