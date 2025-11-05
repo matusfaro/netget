@@ -62,6 +62,8 @@ pub mod openvpn;
 pub mod postgresql;
 #[cfg(feature = "proxy")]
 pub mod proxy;
+#[cfg(feature = "http3")]
+pub mod http3;
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "smb")]

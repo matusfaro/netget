@@ -383,5 +383,12 @@ pub use kafka::KafkaServer;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaProtocol;
 
+#[cfg(feature = "http3")]
+pub mod http3;
+#[cfg(feature = "http3")]
+pub use http3::Http3Server;
+#[cfg(feature = "http3")]
+pub use http3::actions::Http3Protocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

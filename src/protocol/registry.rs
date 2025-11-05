@@ -275,6 +275,9 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
+
+        #[cfg(feature = "http3")]
+        self.register(Arc::new(crate::server::Http3Protocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
