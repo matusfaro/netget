@@ -32,12 +32,20 @@ impl H2Server {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> anyhow::Result<SocketAddr> {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("HTTP/2 server (h2 with push support) listening on {}", local_addr);
+
+        let protocol_name = if tls_config.is_some() { "HTTP/2 (TLS, h2 with push)" } else { "HTTP/2 (h2c with push)" };
+        info!("{} server listening on {}", protocol_name, local_addr);
 
         let protocol = Arc::new(Http2Protocol::new());
+
+        // Create TLS acceptor if TLS is enabled
+        let tls_acceptor = tls_config.map(|config| {
+            tokio_rustls::TlsAcceptor::from(config)
+        });
 
         // Spawn server loop
         tokio::spawn(async move {
@@ -46,7 +54,7 @@ impl H2Server {
                     Ok((tcp_stream, remote_addr)) => {
                         let connection_id = ConnectionId::new();
                         let local_addr_conn = tcp_stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted HTTP/2 connection {} from {}", connection_id, remote_addr);
+                        info!("Accepted {} connection {} from {}", protocol_name, connection_id, remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -62,9 +70,9 @@ impl H2Server {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Http2 {
-                                recent_requests: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
+                                "recent_requests": []
+                            })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -73,24 +81,52 @@ impl H2Server {
                         let app_state_clone = app_state.clone();
                         let status_tx_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
+                        let tls_acceptor_clone = tls_acceptor.clone();
 
                         // Spawn task to handle this connection
                         tokio::spawn(async move {
-                            if let Err(e) = handle_h2_connection(
-                                tcp_stream,
-                                connection_id,
-                                server_id,
-                                llm_client_clone,
-                                app_state_clone.clone(),
-                                status_tx_clone.clone(),
-                                protocol_clone,
-                            ).await {
-                                error!("HTTP/2 connection error: {}", e);
+                            // Perform TLS handshake if TLS is enabled
+                            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if let Some(acceptor) = tls_acceptor_clone {
+                                match acceptor.accept(tcp_stream).await {
+                                    Ok(tls_stream) => {
+                                        debug!("{} TLS handshake complete with {}", protocol_name, remote_addr);
+                                        let _ = status_tx_clone.send(format!("[DEBUG] {} TLS handshake complete with {}", protocol_name, remote_addr));
+                                        handle_h2_connection(
+                                            tls_stream,
+                                            connection_id,
+                                            server_id,
+                                            llm_client_clone,
+                                            app_state_clone.clone(),
+                                            status_tx_clone.clone(),
+                                            protocol_clone,
+                                        ).await
+                                    }
+                                    Err(e) => {
+                                        error!("{} TLS handshake failed: {}", protocol_name, e);
+                                        let _ = status_tx_clone.send(format!("[ERROR] {} TLS handshake failed: {}", protocol_name, e));
+                                        Err(Box::new(e))
+                                    }
+                                }
+                            } else {
+                                // No TLS, use plain TCP (h2c)
+                                handle_h2_connection(
+                                    tcp_stream,
+                                    connection_id,
+                                    server_id,
+                                    llm_client_clone,
+                                    app_state_clone.clone(),
+                                    status_tx_clone.clone(),
+                                    protocol_clone,
+                                ).await
+                            };
+
+                            if let Err(e) = result {
+                                error!("{} connection error: {}", protocol_name, e);
                             }
 
                             // Mark connection as closed
                             app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ HTTP/2 connection {connection_id} closed"));
+                            let _ = status_tx_clone.send(format!("✗ {} connection {connection_id} closed", protocol_name));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -107,15 +143,18 @@ impl H2Server {
 }
 
 /// Handle a single HTTP/2 connection with full server push support
-async fn handle_h2_connection(
-    tcp_stream: tokio::net::TcpStream,
+async fn handle_h2_connection<T>(
+    tcp_stream: T,
     connection_id: ConnectionId,
     server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<Http2Protocol>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     // Create h2 connection
     let mut h2_conn = server::handshake(tcp_stream).await?;
     debug!("HTTP/2 handshake complete for connection {}", connection_id);
