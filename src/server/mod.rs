@@ -383,5 +383,26 @@ pub use kafka::KafkaServer;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaProtocol;
 
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::TorrentTrackerServer;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::actions::TorrentTrackerProtocol;
+
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::TorrentDhtServer;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::actions::TorrentDhtProtocol;
+
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::TorrentPeerServer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::actions::TorrentPeerProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
