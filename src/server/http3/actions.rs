@@ -70,18 +70,48 @@ impl Server for Http3Protocol {
     > {
         Box::pin(async move {
             use crate::server::http3::Http3Server;
+
+            // Parse TLS configuration from startup_params (HTTP/3 always uses TLS)
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                // For HTTP/3, extract TLS config or use default
+                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
+                    Ok(Some(config)) => Some(config),
+                    Ok(None) => {
+                        // If tls_enabled is false or not set, use default for HTTP/3
+                        match crate::server::tls_cert_manager::generate_default_tls_config() {
+                            Ok(config) => Some(config),
+                            Err(e) => {
+                                return Err(anyhow::anyhow!("Failed to generate default TLS config: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                    }
+                }
+            } else {
+                // Use default self-signed certificate
+                match crate::server::tls_cert_manager::generate_default_tls_config() {
+                    Ok(config) => Some(config),
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to generate default TLS config: {}", e));
+                    }
+                }
+            };
+
             Http3Server::spawn_with_llm_actions(
                 ctx.listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                tls_config,
             ).await
         })
     }
 
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![]
+        crate::server::tls_cert_manager::get_tls_startup_parameters()
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
