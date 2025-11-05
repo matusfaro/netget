@@ -134,8 +134,16 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// Maven repository connection (recent artifact requests)
+    Maven {
+        recent_artifacts: Vec<String>,
+    },
     /// SNMP connection (recent requests)
     Snmp {
+        recent_peers: Vec<(SocketAddr, Instant)>,
+    },
+    /// Syslog connection (recent messages)
+    Syslog {
         recent_peers: Vec<(SocketAddr, Instant)>,
     },
     /// DNS connection (recent queries)
@@ -340,6 +348,12 @@ pub enum ProtocolConnectionInfo {
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
     },
+    /// IS-IS routing protocol connection (Layer 2 neighbor adjacency)
+    Isis {
+        adjacency_state: String,           // init, up, down
+        neighbor_system_id: Option<String>, // e.g., "0000.0000.0002"
+        level: String,                     // level-1, level-2, level-1+2
+    },
     /// RIP connection (recent peers)
     Rip {
         recent_peers: Vec<(SocketAddr, Instant)>,
@@ -409,6 +423,23 @@ pub enum ProtocolConnectionInfo {
     /// HTTP/3 connection (multiplexed streams over UDP)
     Http3 {
         stream_count: usize,  // Number of active bidirectional streams
+    },
+    /// BitTorrent Tracker connection
+    TorrentTracker {
+        recent_requests: Vec<(String, Instant)>, // request type (announce/scrape), time
+    },
+    /// BitTorrent DHT connection
+    TorrentDht {
+        recent_queries: Vec<(String, Instant)>, // query type (ping/find_node/get_peers/announce_peer), time
+    },
+    /// BitTorrent Peer Wire Protocol connection
+    TorrentPeer {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        handshake_complete: bool,
+        peer_id: Option<String>,
+        info_hash: Option<String>,
     },
 }
 
