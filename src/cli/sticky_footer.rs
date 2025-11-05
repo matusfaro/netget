@@ -219,6 +219,7 @@ impl StickyFooter {
     fn calculate_normal_content_lines(
         &self,
         servers: &[ServerDisplayInfo],
+        clients: &[ClientDisplayInfo],
         connections: &[ConnectionDisplayInfo],
         expand_all: bool,
         conversations: &[ConversationInfo],
@@ -286,8 +287,15 @@ impl StickyFooter {
             }
         }
 
-        // Return the max of the two columns (or 0 if both empty)
-        inputs_height.max(servers_height)
+        // Calculate clients column height
+        let mut clients_height = 0u16;
+        if !clients.is_empty() {
+            clients_height += 1; // Header line
+            clients_height += clients.len() as u16; // Each client is 1 line
+        }
+
+        // Return the max of the three columns (or 0 if all empty)
+        inputs_height.max(servers_height).max(clients_height)
     }
 
     /// Calculate lines needed for input (or approval prompt if pending)
@@ -429,10 +437,11 @@ impl StickyFooter {
         let content_lines = match &self.content {
             FooterContent::Normal {
                 servers,
+                clients,
                 connections,
                 expand_all,
                 conversations,
-            } => self.calculate_normal_content_lines(servers, connections, *expand_all, conversations),
+            } => self.calculate_normal_content_lines(servers, clients, connections, *expand_all, conversations),
             FooterContent::SlashCommands { suggestions } => {
                 suggestions.len().min(10) as u16
             }
@@ -446,10 +455,11 @@ impl StickyFooter {
             match &self.content {
                 FooterContent::Normal {
                     servers,
+                    clients,
                     connections,
                     expand_all,
                     conversations,
-                } => self.render_normal_content(stdout, content_start, servers, connections, *expand_all, conversations)?,
+                } => self.render_normal_content(stdout, content_start, servers, clients, connections, *expand_all, conversations)?,
                 FooterContent::SlashCommands { suggestions } => {
                     // Slash commands still need a separator
                     let separator_before_content = content_start - 1;
@@ -547,10 +557,11 @@ impl StickyFooter {
         let content_lines = match &self.content {
             FooterContent::Normal {
                 servers,
+                clients,
                 connections,
                 expand_all,
                 conversations,
-            } => self.calculate_normal_content_lines(servers, connections, *expand_all, conversations),
+            } => self.calculate_normal_content_lines(servers, clients, connections, *expand_all, conversations),
             FooterContent::SlashCommands { suggestions } => {
                 suggestions.len().min(10) as u16
             }
@@ -578,6 +589,7 @@ impl StickyFooter {
         stdout: &mut impl Write,
         start_line: u16,
         servers: &[ServerDisplayInfo],
+        clients: &[ClientDisplayInfo],
         connections: &[ConnectionDisplayInfo],
         expand_all: bool,
         conversations: &[ConversationInfo],
@@ -635,13 +647,17 @@ impl StickyFooter {
             }
         }
 
-        // If both columns are empty, don't render anything
-        if inputs_height == 0 && servers_height == 0 {
+        // Calculate clients height
+        let clients_height = if clients.is_empty() { 0 } else { 1 + clients.len() as u16 };
+
+        // If all columns are empty, don't render anything
+        if inputs_height == 0 && servers_height == 0 && clients_height == 0 {
             return Ok(start_line);
         }
 
-        let total_height = inputs_height.max(servers_height);
+        let total_height = inputs_height.max(servers_height).max(clients_height);
         let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+        let clients_column_start = servers_column_start + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
 
         // Render line by line
         for line_offset in 0..total_height {
@@ -654,6 +670,10 @@ impl StickyFooter {
             // Determine if we should render servers column content for this line
             let servers_start_offset = total_height.saturating_sub(servers_height);
             let render_servers = line_offset >= servers_start_offset;
+
+            // Determine if we should render clients column content for this line
+            let clients_start_offset = total_height.saturating_sub(clients_height);
+            let render_clients = line_offset >= clients_start_offset;
 
             // Clear the line first
             execute!(stdout, cursor::MoveTo(0, current_line), Clear(ClearType::CurrentLine))?;
@@ -816,6 +836,41 @@ impl StickyFooter {
                             }
                             content_line_idx -= 1;
                         }
+                    }
+                }
+            }
+
+            // Render clients column
+            if render_clients {
+                let clients_line_idx = line_offset - clients_start_offset;
+                if clients_line_idx == 0 {
+                    // Header line
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(clients_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("┌──── "),
+                        ResetColor,
+                        Print("Clients")
+                    )?;
+                } else {
+                    // Content line - render client
+                    let client_idx = (clients_line_idx - 1) as usize;
+                    if client_idx < clients.len() {
+                        let client = &clients[client_idx];
+                        let text = format!("{} {} → {} ({})", client.id, client.protocol, client.remote_addr, client.status);
+                        let is_inactive = client.status == "Disconnected" || client.status.starts_with("Error:");
+                        execute!(
+                            stdout,
+                            cursor::MoveTo(clients_column_start, current_line),
+                            SetForegroundColor(self.palette.separator),
+                            Print("│ "),
+                            ResetColor,
+                        )?;
+                        if is_inactive {
+                            execute!(stdout, SetForegroundColor(self.palette.dimmed))?;
+                        }
+                        execute!(stdout, Print(&text), ResetColor)?;
                     }
                 }
             }
