@@ -9,6 +9,10 @@ pub mod packet;
 pub mod server_trait;
 pub mod socket_helpers;
 
+// Shared HTTP/HTTP2 implementation components
+#[cfg(any(feature = "http", feature = "http2"))]
+pub mod http_common;
+
 // TLS certificate management for DoT and DoH
 #[cfg(any(feature = "dot", feature = "doh"))]
 pub mod tls_cert_manager;
@@ -26,6 +30,13 @@ pub mod http;
 pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
+
+#[cfg(feature = "http2")]
+pub mod http2;
+#[cfg(feature = "http2")]
+pub use http2::Http2Server;
+#[cfg(feature = "http2")]
+pub use http2::actions::Http2Protocol;
 
 #[cfg(feature = "pypi")]
 pub mod pypi;

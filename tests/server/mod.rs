@@ -34,6 +34,8 @@ pub mod grpc;
 pub mod etcd;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "http2")]
+pub mod http2;
 #[cfg(feature = "pypi")]
 pub mod pypi;
 #[cfg(feature = "maven")]
