@@ -17,7 +17,7 @@ use tracing::debug;
 use tokio::sync::oneshot;
 
 use crate::state::app_state::{ConversationInfo, WebApprovalResponse, WebSearchMode};
-use crate::ui::app::{ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo};
+use crate::ui::app::{ClientDisplayInfo, ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo};
 
 use super::input_state::InputState;
 use super::theme::ColorPalette;
@@ -36,9 +36,10 @@ pub struct PendingApproval {
 /// Content mode for the sticky footer
 #[derive(Debug, Clone)]
 pub enum FooterContent {
-    /// Normal mode: show servers and connections
+    /// Normal mode: show servers, clients, and connections
     Normal {
         servers: Vec<ServerDisplayInfo>,
+        clients: Vec<ClientDisplayInfo>,
         connections: Vec<ConnectionDisplayInfo>,
         expand_all: bool,
         conversations: Vec<ConversationInfo>,
