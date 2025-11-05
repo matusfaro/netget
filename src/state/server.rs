@@ -117,6 +117,25 @@ pub enum BgpSessionState {
     Established,
 }
 
+/// OSPF neighbor state (RFC 2328 Section 10.1)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OspfNeighborState {
+    /// Down - initial state, no Hello received
+    Down,
+    /// Init - Hello received from neighbor
+    Init,
+    /// 2-Way - bidirectional communication established
+    TwoWay,
+    /// ExStart - master/slave negotiation for database exchange
+    ExStart,
+    /// Exchange - database description packets exchanged
+    Exchange,
+    /// Loading - link state requests sent
+    Loading,
+    /// Full - adjacency complete, databases synchronized
+    Full,
+}
+
 /// Protocol-specific connection information
 #[derive(Debug, Clone)]
 pub enum ProtocolConnectionInfo {
@@ -134,8 +153,24 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// PyPI connection (recent requests)
+    Pypi {
+        recent_requests: Vec<String>, // URIs
+    },
+    /// Maven repository connection (recent artifact requests)
+    Maven {
+        recent_artifacts: Vec<String>,
+    },
     /// SNMP connection (recent requests)
     Snmp {
+        recent_peers: Vec<(SocketAddr, Instant)>,
+    },
+    /// IGMP connection (multicast group management)
+    Igmp {
+        joined_groups: Vec<std::net::Ipv4Addr>,
+    },
+    /// Syslog connection (recent messages)
+    Syslog {
         recent_peers: Vec<(SocketAddr, Instant)>,
     },
     /// DNS connection (recent queries)
@@ -156,15 +191,29 @@ pub enum ProtocolConnectionInfo {
     Dhcp {
         recent_requests: Vec<(String, Instant)>, // client MAC, time
     },
+    /// BOOTP connection (recent requests)
+    Bootp {
+        recent_requests: Vec<(String, Instant)>, // request type, time
+    },
     /// NTP connection (recent clients)
     Ntp {
         recent_clients: Vec<(SocketAddr, Instant)>,
+    },
+    /// WHOIS connection (recent queries)
+    Whois {
+        recent_queries: Vec<(String, Instant)>, // domain, time
     },
     /// SSH connection (managed by russh library)
     Ssh {
         authenticated: bool,
         username: Option<String>,
         channels: Vec<String>, // Active channel types (shell, sftp)
+    },
+    /// DC (Direct Connect) connection with write half
+    Dc {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
     },
     /// IRC connection with write half
     Irc {
@@ -262,6 +311,12 @@ pub enum ProtocolConnectionInfo {
         selected_mailbox: Option<String>,
         mailbox_read_only: bool,
     },
+    /// NNTP connection (Network News Transfer Protocol)
+    Nntp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
     /// MQTT connection (client session)
     Mqtt {
         client_id: String,
@@ -290,6 +345,10 @@ pub enum ProtocolConnectionInfo {
     /// SQS connection (recent operations)
     Sqs {
         recent_operations: Vec<(String, String, Instant)>, // operation, queue_url, time
+    },
+    /// NPM registry connection (recent requests)
+    Npm {
+        recent_requests: Vec<String>, // Recent package requests
     },
     /// OpenAI API connection (recent requests)
     OpenAi {
@@ -332,6 +391,12 @@ pub enum ProtocolConnectionInfo {
         hold_time: u16,                    // Negotiated hold time (seconds)
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
+    },
+    /// IS-IS routing protocol connection (Layer 2 neighbor adjacency)
+    Isis {
+        adjacency_state: String,           // init, up, down
+        neighbor_system_id: Option<String>, // e.g., "0000.0000.0002"
+        level: String,                     // level-1, level-2, level-1+2
     },
     /// RIP connection (recent peers)
     Rip {
@@ -398,6 +463,40 @@ pub enum ProtocolConnectionInfo {
     /// Kafka connection (recent requests)
     Kafka {
         recent_requests: Vec<(String, Instant)>, // API type, time
+    },
+    /// HTTP/3 connection (multiplexed streams over UDP)
+    Http3 {
+        stream_count: usize,  // Number of active bidirectional streams
+    },
+    /// OSPF connection (neighbor relationship)
+    Ospf {
+        neighbor_state: OspfNeighborState,
+        router_id: String,
+        area_id: String,
+        dr: String,  // Designated Router
+        bdr: String, // Backup Designated Router
+    },
+    /// Bitcoin P2P connection
+    Bitcoin {
+        handshake_complete: bool,
+        last_message_type: Option<String>, // Last message type received (version, ping, etc.)
+    },
+    /// BitTorrent Tracker connection
+    TorrentTracker {
+        recent_requests: Vec<(String, Instant)>, // request type (announce/scrape), time
+    },
+    /// BitTorrent DHT connection
+    TorrentDht {
+        recent_queries: Vec<(String, Instant)>, // query type (ping/find_node/get_peers/announce_peer), time
+    },
+    /// BitTorrent Peer Wire Protocol connection
+    TorrentPeer {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        handshake_complete: bool,
+        peer_id: Option<String>,
+        info_hash: Option<String>,
     },
 }
 

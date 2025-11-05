@@ -59,6 +59,9 @@ pub enum ToolAction {
         protocol: String,
     },
 
+    /// List available network interfaces for DataLink/IP layer protocols
+    ListNetworkInterfaces,
+
     /// List available models from Ollama
     ListModels,
 }
@@ -72,8 +75,8 @@ impl ToolAction {
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         // Check if the tool type is recognized first
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_models") {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_models", action_type);
+            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models") {
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_network_interfaces, list_models", action_type);
             }
         }
 
@@ -83,7 +86,7 @@ impl ToolAction {
     /// Check if a JSON value is a tool action
     pub fn is_tool_action(value: &serde_json::Value) -> bool {
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_models")
+            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models")
         } else {
             false
         }
@@ -123,6 +126,9 @@ impl ToolAction {
             }
             ToolAction::ReadBaseStackDocs { protocol } => {
                 format!("read_base_stack_docs: \"{}\"", protocol)
+            }
+            ToolAction::ListNetworkInterfaces => {
+                "list_network_interfaces".to_string()
             }
             ToolAction::ListModels => {
                 "list_models: query available Ollama models".to_string()
@@ -783,6 +789,18 @@ pub fn read_base_stack_docs_action() -> ActionDefinition {
     }
 }
 
+/// Get list network interfaces action definition
+pub fn list_network_interfaces_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_network_interfaces".to_string(),
+        description: "List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_network_interfaces"
+        }),
+    }
+}
+
 /// Get list models action definition
 pub fn list_models_action() -> ActionDefinition {
     ActionDefinition {
@@ -802,6 +820,7 @@ pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchM
     let mut actions = vec![
         read_file_action(),
         read_base_stack_docs_action(),
+        list_network_interfaces_action(),
         list_models_action(),
     ];
 
@@ -816,6 +835,72 @@ pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchM
     }
 
     actions
+}
+
+/// Execute list_network_interfaces tool
+async fn execute_list_network_interfaces() -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: list_network_interfaces");
+    debug!("Listing available network interfaces");
+
+    // Check if datalink feature is enabled (required for pcap)
+    #[cfg(not(feature = "datalink"))]
+    {
+        warn!("DataLink feature not enabled, cannot list network interfaces");
+        info!("  ✗ DataLink feature not enabled");
+        return ToolResult::error(
+            "list_network_interfaces",
+            "list interfaces",
+            "DataLink feature not enabled. Rebuild with --features datalink to use this tool.".to_string(),
+        );
+    }
+
+    #[cfg(feature = "datalink")]
+    {
+        // Use the DataLinkServer to list devices
+        match crate::server::datalink::DataLinkServer::list_devices() {
+            Ok(devices) => {
+                if devices.is_empty() {
+                    info!("  ⚠ No network interfaces found");
+                    return ToolResult::success(
+                        "list_network_interfaces",
+                        "list interfaces",
+                        "No network interfaces found. This may be due to permissions or pcap not being installed.",
+                    );
+                }
+
+                // Format device information
+                let mut result = String::from("Available network interfaces:\n\n");
+                for (i, device) in devices.iter().enumerate() {
+                    result.push_str(&format!("{}. {}\n", i + 1, device.name));
+                    if let Some(ref desc) = device.desc {
+                        if !desc.is_empty() {
+                            result.push_str(&format!("   Description: {}\n", desc));
+                        }
+                    }
+                    result.push('\n');
+                }
+
+                // Add helpful note
+                result.push_str("Note: Use these interface names when starting DataLink servers.\n");
+                result.push_str("Example: \"listen on interface eth0 via datalink\"\n");
+
+                debug!("Found {} network interfaces", devices.len());
+                info!("  ✓ Found {} network interfaces", devices.len());
+                ToolResult::success("list_network_interfaces", "list interfaces", result)
+            }
+            Err(e) => {
+                error!("Failed to list network interfaces: {}", e);
+                info!("  ✗ Failed to list interfaces: {}", e);
+                ToolResult::error(
+                    "list_network_interfaces",
+                    "list interfaces",
+                    format!("Failed to list network interfaces: {}. This may be due to missing permissions or pcap not being installed.", e),
+                )
+            }
+        }
+    }
 }
 
 /// Execute a tool action
@@ -914,6 +999,9 @@ pub async fn execute_tool(
         }
         ToolAction::ReadBaseStackDocs { protocol } => {
             execute_read_base_stack_docs(protocol).await
+        }
+        ToolAction::ListNetworkInterfaces => {
+            execute_list_network_interfaces().await
         }
         ToolAction::ListModels => {
             execute_list_models().await
