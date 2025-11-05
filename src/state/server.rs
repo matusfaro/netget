@@ -291,6 +291,10 @@ pub enum ProtocolConnectionInfo {
     Sqs {
         recent_operations: Vec<(String, String, Instant)>, // operation, queue_url, time
     },
+    /// NPM registry connection (recent requests)
+    Npm {
+        recent_requests: Vec<String>, // Recent package requests
+    },
     /// OpenAI API connection (recent requests)
     OpenAi {
         recent_requests: Vec<String>, // Recent endpoints accessed

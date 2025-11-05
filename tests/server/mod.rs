@@ -52,6 +52,8 @@ pub mod mysql;
 pub mod nfs;
 #[cfg(feature = "ntp")]
 pub mod ntp;
+#[cfg(feature = "npm")]
+pub mod npm;
 #[cfg(feature = "openai")]
 pub mod openai;
 #[cfg(feature = "openapi")]
