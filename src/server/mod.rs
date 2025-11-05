@@ -488,6 +488,13 @@ pub use kafka::KafkaServer;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaProtocol;
 
+#[cfg(feature = "http3")]
+pub mod http3;
+#[cfg(feature = "http3")]
+pub use http3::Http3Server;
+#[cfg(feature = "http3")]
+pub use http3::actions::Http3Protocol;
+
 #[cfg(feature = "torrent-tracker")]
 pub mod torrent_tracker;
 #[cfg(feature = "torrent-tracker")]
