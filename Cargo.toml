@@ -54,6 +54,7 @@ ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
 isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
+bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
@@ -116,6 +117,7 @@ all-protocols = [
     "bgp",
     "isis",
     "rip",
+    "bitcoin",
     "mcp",
     "grpc",
     "xmlrpc",
@@ -288,6 +290,9 @@ rumqttd = { version = "0.20", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
+
+# Bitcoin P2P protocol (blockchain P2P network)
+bitcoin = { version = "0.32", optional = true }
 
 # WireGuard VPN server (full implementation with LLM control)
 defguard_wireguard_rs = { version = "0.7", optional = true, features = ["serde"] }

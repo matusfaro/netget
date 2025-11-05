@@ -369,6 +369,13 @@ pub use rip::RipServer;
 #[cfg(feature = "rip")]
 pub use rip::actions::RipProtocol;
 
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::BitcoinServer;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::actions::BitcoinProtocol;
+
 #[cfg(feature = "mcp")]
 pub mod mcp;
 #[cfg(feature = "mcp")]
