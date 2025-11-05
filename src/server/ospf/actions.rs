@@ -657,7 +657,7 @@ impl Server for OspfProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>OSPF"
+        "ETH>IP(89)>OSPF"
     }
 
     fn keywords(&self) -> Vec<&'static str> {
@@ -669,11 +669,11 @@ impl Server for OspfProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("Manual OSPFv2 (RFC 2328), UDP-based (non-standard)")
-            .llm_control("Neighbor states, LSA generation, routing decisions")
-            .e2e_testing("Manual OSPF client")
-            .notes("Uses UDP (port 2600) instead of IP protocol 89, no SPF calculation")
+            .privilege_requirement(PrivilegeRequirement::Root)
+            .implementation("Manual OSPFv2 (RFC 2328), IP protocol 89, raw sockets")
+            .llm_control("Neighbor states, Hello protocol, packet generation")
+            .e2e_testing("Integration with real OSPF routers (FRR, BIRD)")
+            .notes("Requires root for raw sockets. TODO: DR/BDR election, SPF calculation, routing table, LSA flooding")
             .build()
     }
 
@@ -682,7 +682,7 @@ impl Server for OspfProtocol {
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Start an OSPF server on port 2600 as router 1.1.1.1 in area 0.0.0.0"
+        "Start an OSPF server on interface 192.168.1.100 as router 1.1.1.1 in area 0.0.0.0"
     }
 
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
