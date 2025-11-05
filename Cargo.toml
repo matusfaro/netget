@@ -7,8 +7,10 @@ edition = "2021"
 default = ["all-protocols"]
 tcp = ["async-trait"]
 http = []
+maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
+arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
@@ -16,6 +18,7 @@ doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-ht
 dhcp = ["dhcproto"]
 ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
+syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
@@ -49,6 +52,7 @@ wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard 
 openvpn = []  # OpenVPN honeypot (packet detection only, no full crypto)
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
+isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
@@ -59,11 +63,16 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
+torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
+torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
+torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 all-protocols = [
     "tcp",
     "http",
+    "maven",
     "udp",
     "datalink",
+    "arp",
     "dc",
     "dns",
     "dot",
@@ -71,6 +80,7 @@ all-protocols = [
     "dhcp",
     "ntp",
     "snmp",
+    "syslog",
     "ssh",
     "irc",
     "xmpp",
@@ -104,6 +114,7 @@ all-protocols = [
     "openvpn",
     "ipsec",
     "bgp",
+    "isis",
     "rip",
     "mcp",
     "grpc",
@@ -114,6 +125,9 @@ all-protocols = [
     "git",
     "kafka",
     "etcd",
+    "torrent-tracker",
+    "torrent-dht",
+    "torrent-peer",
 ]
 e2e-tests = []  # Feature flag for E2E tests
 
@@ -187,6 +201,9 @@ dirs = "5.0"
 # Packet capture (libpcap)
 pcap = "2.2"
 
+# ARP (Address Resolution Protocol) packet handling
+pnet = { version = "0.35", optional = true }
+
 # DNS server (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
@@ -204,6 +221,9 @@ dhcproto = { version = "0.12", optional = true }
 # SNMP agent
 rasn-snmp = { version = "0.18", optional = true }
 rasn = { version = "0.18", optional = true }
+
+# Syslog server
+syslog_loose = { version = "0.22", optional = true }
 
 # SSH server
 russh = { version = "0.45", optional = true }
@@ -320,6 +340,9 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
 
+# BitTorrent protocols (bencode encoding/decoding)
+serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -395,6 +418,9 @@ git2 = "0.19"
 rumqttc = "0.24"
 # Kafka client for e2e integration tests
 rdkafka = "0.36"
+# BitTorrent client for e2e integration tests
+# Using cratetorrent library for programmatic testing, also supports transmission-cli/aria2
+sha1 = "0.10"  # For info_hash calculation
 
 [build-dependencies]
 # Protocol buffer compiler for etcd gRPC service
