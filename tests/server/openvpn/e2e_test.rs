@@ -86,10 +86,10 @@ async fn test_openvpn_client_availability() {
 
 #[tokio::test]
 async fn test_openvpn_server_startup() {
-    if !is_openvpn_available().await {
-        println!("⚠️  Skipping test: OpenVPN client not available");
-        return;
-    }
+    assert!(
+        is_openvpn_available().await,
+        "OpenVPN client not available. Install with: sudo apt-get install openvpn (Ubuntu/Debian) or brew install openvpn (macOS)"
+    );
 
     let config = ServerConfig::new("Start an OpenVPN VPN server on port 0");
 
@@ -121,20 +121,19 @@ async fn test_openvpn_server_startup() {
 
 #[tokio::test]
 async fn test_openvpn_handshake_with_client() {
-    if !is_openvpn_available().await {
-        println!("⚠️  Skipping test: OpenVPN client not available");
-        return;
-    }
+    assert!(
+        is_openvpn_available().await,
+        "OpenVPN client not available. Install with: sudo apt-get install openvpn (Ubuntu/Debian) or brew install openvpn (macOS)"
+    );
 
     // Check if running with sufficient privileges
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let is_root = unsafe { libc::geteuid() } == 0;
-        if !is_root {
-            println!("⚠️  Skipping test: Requires root/sudo for TUN interface");
-            return;
-        }
+        assert!(
+            is_root,
+            "This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test"
+        );
     }
 
     let config = ServerConfig::new("Start an OpenVPN VPN server on port 0");
@@ -234,10 +233,10 @@ async fn test_openvpn_handshake_with_client() {
 
 #[tokio::test]
 async fn test_openvpn_protocol_compatibility() {
-    if !is_openvpn_available().await {
-        println!("⚠️  Skipping test: OpenVPN client not available");
-        return;
-    }
+    assert!(
+        is_openvpn_available().await,
+        "OpenVPN client not available. Install with: sudo apt-get install openvpn (Ubuntu/Debian) or brew install openvpn (macOS)"
+    );
 
     let config = ServerConfig::new("Start an OpenVPN VPN server on port 0");
 

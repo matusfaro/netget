@@ -42,14 +42,14 @@ Tests full OpenVPN VPN server functionality by connecting with the native `openv
 
 **Total: 4 LLM calls** (well under 10 limit)
 
-### Graceful Degradation
+### Hard Failure Requirements
 
-Tests automatically skip if:
+Tests will **fail** (not skip) if:
 - `openvpn` command not available
-- Not running with sufficient privileges (Unix)
+- Not running with sufficient privileges for tests requiring root (Unix)
 - TUN interface creation fails
 
-**Result**: Tests won't fail in CI unless explicitly configured.
+**Result**: Tests require proper environment setup. Install openvpn and run handshake test with sudo.
 
 ## Client Library
 
@@ -121,11 +121,11 @@ sudo dnf install openvpn
 - **Medium** for handshake test (requires sudo, external process coordination)
 
 **Common failures**:
-- `openvpn` not installed (expected, test skips)
-- Not running with sudo (expected, test skips)
+- `openvpn` not installed (test fails with assertion error)
+- Not running with sudo for handshake test (test fails with assertion error)
 - Client connection timeout (our simplified protocol may not complete full handshake)
 
-**Stability**: Tests are designed to be lenient - they pass if handshake is detected on server side, even if full connection doesn't complete.
+**Stability**: Tests are designed to be lenient on handshake completion - they pass if handshake is detected on server side, even if full connection doesn't complete.
 
 ## Test Cases
 
@@ -185,10 +185,10 @@ assert!(output.contains("TUN interface created") || output.contains("netget_ovpn
 #[cfg(unix)]
 {
     let is_root = unsafe { libc::geteuid() } == 0;
-    if !is_root {
-        println!("⚠️  Skipping test: Requires root/sudo for TUN interface");
-        return;
-    }
+    assert!(
+        is_root,
+        "This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test"
+    );
 }
 ```
 
@@ -267,9 +267,9 @@ assert!(output.contains("AES") || output.contains("cipher"));
 
 **Issue**: TUN interface creation requires root/sudo.
 
-**Solution**: Tests skip gracefully if not running with sufficient privileges.
+**Solution**: Handshake test will fail with assertion error if not running with sufficient privileges.
 
-**For CI**: Either run tests with sudo or skip handshake test.
+**For CI**: Either run handshake test with sudo or exclude it from test runs using `--skip handshake`.
 
 ### Platform-Specific TUN Names
 
@@ -361,11 +361,16 @@ sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_tes
 running 5 tests
 test test_openvpn_client_availability ... ok
 test test_openvpn_server_startup ... ok
-test test_openvpn_handshake_with_client ... ok (skipped: requires sudo)
+test test_openvpn_handshake_with_client ... FAILED
 test test_openvpn_protocol_compatibility ... ok
 test test_openvpn_manual_handshake_v2 ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 12.34s
+failures:
+
+---- test_openvpn_handshake_with_client stdout ----
+thread 'test_openvpn_handshake_with_client' panicked at 'assertion failed: This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test'
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.34s
 ```
 
 ### Expected Output (With Sudo)
