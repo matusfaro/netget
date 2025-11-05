@@ -60,7 +60,13 @@ impl OspfProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        debug!("OSPF sending Hello: router_id={}, area={}, priority={}", router_id, area_id, priority);
+        let destination = action
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .unwrap_or("multicast")
+            .to_string();
+
+        debug!("OSPF sending Hello: router_id={}, area={}, priority={}, dest={}", router_id, area_id, priority, destination);
 
         // Build OSPF Hello packet
         let mut msg = Vec::new();
@@ -117,7 +123,13 @@ impl OspfProtocol {
         let checksum = Self::calculate_checksum(&msg);
         msg[12..14].copy_from_slice(&checksum.to_be_bytes());
 
-        Ok(ActionResult::Output(msg))
+        Ok(ActionResult::Custom {
+            name: "ospf_packet".to_string(),
+            data: json!({
+                "packet": msg,
+                "destination": destination,
+            }),
+        })
     }
 
     fn execute_send_database_description(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -140,7 +152,13 @@ impl OspfProtocol {
         let more = action.get("more").and_then(|v| v.as_bool()).unwrap_or(false);
         let master = action.get("master").and_then(|v| v.as_bool()).unwrap_or(false);
 
-        debug!("OSPF sending Database Description: seq={}, init={}, more={}, master={}", sequence, init, more, master);
+        let destination = action
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .unwrap_or("multicast")
+            .to_string();
+
+        debug!("OSPF sending Database Description: seq={}, init={}, more={}, master={}, dest={}", sequence, init, more, master, destination);
 
         // Build OSPF Database Description packet
         let mut msg = Vec::new();
@@ -181,7 +199,13 @@ impl OspfProtocol {
         let checksum = Self::calculate_checksum(&msg);
         msg[12..14].copy_from_slice(&checksum.to_be_bytes());
 
-        Ok(ActionResult::Output(msg))
+        Ok(ActionResult::Custom {
+            name: "ospf_packet".to_string(),
+            data: json!({
+                "packet": msg,
+                "destination": destination,
+            }),
+        })
     }
 
     fn execute_send_link_state_request(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -195,7 +219,13 @@ impl OspfProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        debug!("OSPF sending Link State Request");
+        let destination = action
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .unwrap_or("multicast")
+            .to_string();
+
+        debug!("OSPF sending Link State Request to {}", destination);
 
         // Build OSPF Link State Request packet
         let mut msg = Vec::new();
@@ -223,7 +253,13 @@ impl OspfProtocol {
         let checksum = Self::calculate_checksum(&msg);
         msg[12..14].copy_from_slice(&checksum.to_be_bytes());
 
-        Ok(ActionResult::Output(msg))
+        Ok(ActionResult::Custom {
+            name: "ospf_packet".to_string(),
+            data: json!({
+                "packet": msg,
+                "destination": destination,
+            }),
+        })
     }
 
     fn execute_send_link_state_update(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -237,7 +273,13 @@ impl OspfProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        debug!("OSPF sending Link State Update");
+        let destination = action
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .unwrap_or("multicast")
+            .to_string();
+
+        debug!("OSPF sending Link State Update to {}", destination);
 
         // Build OSPF Link State Update packet
         let mut msg = Vec::new();
@@ -268,7 +310,13 @@ impl OspfProtocol {
         let checksum = Self::calculate_checksum(&msg);
         msg[12..14].copy_from_slice(&checksum.to_be_bytes());
 
-        Ok(ActionResult::Output(msg))
+        Ok(ActionResult::Custom {
+            name: "ospf_packet".to_string(),
+            data: json!({
+                "packet": msg,
+                "destination": destination,
+            }),
+        })
     }
 
     fn execute_send_link_state_ack(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -282,7 +330,13 @@ impl OspfProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        debug!("OSPF sending Link State Acknowledgment");
+        let destination = action
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .unwrap_or("multicast")
+            .to_string();
+
+        debug!("OSPF sending Link State Acknowledgment to {}", destination);
 
         // Build OSPF Link State Acknowledgment packet
         let mut msg = Vec::new();
@@ -310,7 +364,13 @@ impl OspfProtocol {
         let checksum = Self::calculate_checksum(&msg);
         msg[12..14].copy_from_slice(&checksum.to_be_bytes());
 
-        Ok(ActionResult::Output(msg))
+        Ok(ActionResult::Custom {
+            name: "ospf_packet".to_string(),
+            data: json!({
+                "packet": msg,
+                "destination": destination,
+            }),
+        })
     }
 
     // Helper: Parse IPv4 address string to bytes
@@ -486,13 +546,20 @@ impl Server for OspfProtocol {
                         description: "List of neighbor router IDs".to_string(),
                         required: false,
                     },
+                    Parameter {
+                        name: "destination".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Destination IP: 'multicast' (default, 224.0.0.5), 'dr_multicast' (224.0.0.6), or unicast IP".to_string(),
+                        required: false,
+                    },
                 ],
                 example: json!({
                     "type": "send_hello",
                     "router_id": "1.1.1.1",
                     "area_id": "0.0.0.0",
                     "priority": 1,
-                    "neighbors": ["2.2.2.2"]
+                    "neighbors": ["2.2.2.2"],
+                    "destination": "multicast"
                 }),
             },
             ActionDefinition {
@@ -535,6 +602,12 @@ impl Server for OspfProtocol {
                         description: "Master flag (true if this router is master)".to_string(),
                         required: false,
                     },
+                    Parameter {
+                        name: "destination".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                        required: false,
+                    },
                 ],
                 example: json!({
                     "type": "send_database_description",
@@ -542,7 +615,8 @@ impl Server for OspfProtocol {
                     "area_id": "0.0.0.0",
                     "sequence": 1,
                     "init": true,
-                    "master": true
+                    "master": true,
+                    "destination": "192.168.1.2"
                 }),
             },
             ActionDefinition {
@@ -561,11 +635,18 @@ impl Server for OspfProtocol {
                         description: "OSPF area ID".to_string(),
                         required: true,
                     },
+                    Parameter {
+                        name: "destination".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                        required: false,
+                    },
                 ],
                 example: json!({
                     "type": "send_link_state_request",
                     "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0"
+                    "area_id": "0.0.0.0",
+                    "destination": "192.168.1.2"
                 }),
             },
             ActionDefinition {
@@ -584,11 +665,18 @@ impl Server for OspfProtocol {
                         description: "OSPF area ID".to_string(),
                         required: true,
                     },
+                    Parameter {
+                        name: "destination".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                        required: false,
+                    },
                 ],
                 example: json!({
                     "type": "send_link_state_update",
                     "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0"
+                    "area_id": "0.0.0.0",
+                    "destination": "multicast"
                 }),
             },
             ActionDefinition {
@@ -607,11 +695,18 @@ impl Server for OspfProtocol {
                         description: "OSPF area ID".to_string(),
                         required: true,
                     },
+                    Parameter {
+                        name: "destination".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                        required: false,
+                    },
                 ],
                 example: json!({
                     "type": "send_link_state_ack",
                     "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0"
+                    "area_id": "0.0.0.0",
+                    "destination": "192.168.1.2"
                 }),
             },
             ActionDefinition {
