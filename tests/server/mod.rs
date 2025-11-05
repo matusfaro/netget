@@ -36,6 +36,8 @@ pub mod ipp;
 pub mod ipsec;
 #[cfg(feature = "irc")]
 pub mod irc;
+#[cfg(feature = "xmpp")]
+pub mod xmpp;
 #[cfg(feature = "ldap")]
 pub mod ldap;
 #[cfg(feature = "mcp")]
