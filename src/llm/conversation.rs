@@ -286,17 +286,17 @@ impl ConversationHandler {
             );
 
             // Generate response from LLM
-            let response_text = self
+            let (original_response, cleaned_response) = self
                 .generate_with_retry()
                 .await
                 .context("Failed to generate valid response after retries")?;
 
-            // Add assistant's response to conversation history
+            // Add assistant's response to conversation history (with reasoning preserved)
             self.messages
-                .push(Message::assistant(response_text.clone()));
+                .push(Message::assistant(original_response.clone()));
 
-            // Parse as action response
-            let action_response = ActionResponse::from_str(&response_text)
+            // Parse as action response (using cleaned response without reasoning tags)
+            let action_response = ActionResponse::from_str(&cleaned_response)
                 .context("Failed to parse action response (should not happen after retry)")?;
 
             // Separate tool calls from regular actions
@@ -445,7 +445,11 @@ impl ConversationHandler {
     ///
     /// Attempts to get a valid ActionResponse from the LLM. If parsing fails,
     /// sends a corrective message and retries once.
-    async fn generate_with_retry(&mut self) -> Result<String> {
+    ///
+    /// Returns (original_response, cleaned_response):
+    /// - original_response: Response with reasoning tags (for conversation history)
+    /// - cleaned_response: Response with reasoning stripped (for JSON parsing)
+    async fn generate_with_retry(&mut self) -> Result<(String, String)> {
         for attempt in 1..=self.max_retries + 1 {
             info!("LLM request (attempt {}/{})", attempt, self.max_retries + 1);
             debug!("Message count: {}", self.messages.len());
@@ -595,8 +599,8 @@ impl ConversationHandler {
                     } else {
                         info!("✓ Valid response format on first attempt");
                     }
-                    // Return normalized response (it's valid JSON without extra whitespace)
-                    return Ok(normalized_response);
+                    // Return both original (with reasoning) and normalized (for parsing)
+                    return Ok((response_text.clone(), normalized_response));
                 }
                 Err(e) => {
                     if attempt <= self.max_retries {
