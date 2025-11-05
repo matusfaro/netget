@@ -138,6 +138,10 @@ pub enum ProtocolConnectionInfo {
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
     },
+    /// Syslog connection (recent messages)
+    Syslog {
+        recent_peers: Vec<(SocketAddr, Instant)>,
+    },
     /// DNS connection (recent queries)
     Dns {
         recent_queries: Vec<(String, Instant)>, // query, time
