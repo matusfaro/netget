@@ -268,6 +268,13 @@ pub use sqs::SqsServer;
 #[cfg(feature = "sqs")]
 pub use sqs::actions::SqsProtocol;
 
+#[cfg(feature = "npm")]
+pub mod npm;
+#[cfg(feature = "npm")]
+pub use npm::NpmServer;
+#[cfg(feature = "npm")]
+pub use npm::actions::NpmProtocol;
+
 #[cfg(feature = "openai")]
 pub mod openai;
 #[cfg(feature = "openai")]
