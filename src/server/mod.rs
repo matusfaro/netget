@@ -27,6 +27,13 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "http2")]
+pub mod http2;
+#[cfg(feature = "http2")]
+pub use http2::Http2Server;
+#[cfg(feature = "http2")]
+pub use http2::actions::Http2Protocol;
+
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "datalink")]
