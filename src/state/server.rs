@@ -328,6 +328,12 @@ pub enum ProtocolConnectionInfo {
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
     },
+    /// IS-IS routing protocol connection (UDP-based neighbor adjacency)
+    Isis {
+        adjacency_state: String,           // init, up, down
+        neighbor_system_id: Option<String>, // e.g., "0000.0000.0002"
+        level: String,                     // level-1, level-2, level-1+2
+    },
     /// gRPC connection (HTTP/2)
     Grpc {
         service_name: String,              // Service being called
