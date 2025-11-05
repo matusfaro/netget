@@ -18,6 +18,7 @@ ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
+xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
 telnet = ["nectar"]
 smtp = ["rust-smtp-server"]
 mdns = ["mdns-sd"]
@@ -41,12 +42,14 @@ elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
+npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = []  # OpenVPN honeypot (packet detection only, no full crypto)
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
+rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
@@ -56,7 +59,62 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-all-protocols = ["tcp", "http", "maven", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd"]
+all-protocols = [
+    "tcp",
+    "http",
+    "maven",
+    "udp",
+    "datalink",
+    "dns",
+    "dot",
+    "doh",
+    "dhcp",
+    "ntp",
+    "snmp",
+    "ssh",
+    "irc",
+    "xmpp",
+    "telnet",
+    "smtp",
+    "mdns",
+    "mysql",
+    "ipp",
+    "postgresql",
+    "redis",
+    "proxy",
+    "webdav",
+    "nfs",
+    "cassandra",
+    "smb",
+    "stun",
+    "turn",
+    "sip",
+    "ldap",
+    "imap",
+    "mqtt",
+    "socks5",
+    "elasticsearch",
+    "dynamo",
+    "s3",
+    "sqs",
+    "npm",
+    "openai",
+    "jsonrpc",
+    "wireguard",
+    "openvpn",
+    "ipsec",
+    "bgp",
+    "rip",
+    "mcp",
+    "grpc",
+    "xmlrpc",
+    "tor",
+    "vnc",
+    "openapi",
+    "git",
+    "kafka",
+    "etcd",
+]
 e2e-tests = []  # Feature flag for E2E tests
 
 [dependencies]
@@ -118,6 +176,7 @@ once_cell = "1.20"
 rand = "0.8"  # Random number generation for crypto
 handlebars = "5.1"
 walkdir = "2.4"
+include_dir = "0.7"  # Embed template directory in binary
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
