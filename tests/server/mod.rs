@@ -70,6 +70,8 @@ pub mod ntp;
 pub mod npm;
 #[cfg(feature = "openai")]
 pub mod openai;
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
 #[cfg(feature = "openapi")]
 pub mod openapi;
 #[cfg(feature = "jsonrpc")]
