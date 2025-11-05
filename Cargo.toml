@@ -57,6 +57,7 @@ wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard 
 openvpn = []  # OpenVPN honeypot (packet detection only, no full crypto)
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
+ospf = []  # OSPF routing protocol (IP protocol 89, raw sockets, requires root/CAP_NET_RAW)
 isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
@@ -125,6 +126,7 @@ all-protocols = [
     "openvpn",
     "ipsec",
     "bgp",
+    "ospf",
     "isis",
     "rip",
     "bitcoin",
@@ -147,6 +149,9 @@ e2e-tests = []  # Feature flag for E2E tests
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
+
+# Low-level system bindings
+libc = "0.2"
 
 # Terminal UI - using crossterm for rolling terminal
 crossterm = { version = "0.28", features = ["event-stream"] }

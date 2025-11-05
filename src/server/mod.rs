@@ -390,6 +390,13 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "ospf")]
+pub mod ospf;
+#[cfg(feature = "ospf")]
+pub use ospf::OspfServer;
+#[cfg(feature = "ospf")]
+pub use ospf::actions::OspfProtocol;
+
 #[cfg(feature = "isis")]
 pub mod isis;
 #[cfg(feature = "isis")]

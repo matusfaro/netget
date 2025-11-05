@@ -1,9 +1,19 @@
 //! Socket helper utilities for creating sockets with proper options
 
 use anyhow::Result;
-use socket2::{Domain, Socket, Type};
-use std::net::SocketAddr;
+use socket2::{Domain, Socket, Type, Protocol, SockAddr};
+use std::net::{SocketAddr, Ipv4Addr};
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use tokio::net::{TcpListener, UdpSocket};
+
+/// OSPF protocol number (IPPROTO_OSPFIGP)
+const IPPROTO_OSPF: i32 = 89;
+
+/// AllSPFRouters multicast group
+const OSPF_ALL_SPF_ROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 5);
+
+/// AllDRouters multicast group
+const OSPF_ALL_DROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 6);
 
 /// Create a TCP listener with SO_REUSEADDR enabled
 ///
@@ -55,4 +65,59 @@ pub async fn create_reusable_udp_socket(addr: SocketAddr) -> Result<UdpSocket> {
     let tokio_socket = UdpSocket::from_std(std_socket)?;
 
     Ok(tokio_socket)
+}
+
+/// Create a raw IP socket for OSPF (protocol 89)
+///
+/// This creates a raw socket that receives OSPF packets directly from IP layer.
+/// Requires root/CAP_NET_RAW privileges.
+///
+/// # Arguments
+/// * `interface_addr` - IP address of the interface to bind to
+/// * `join_all_routers` - Whether to join AllSPFRouters multicast group (224.0.0.5)
+/// * `join_dr_routers` - Whether to join AllDRouters multicast group (224.0.0.6)
+///
+/// # Returns
+/// A non-blocking raw socket configured for OSPF
+pub fn create_ospf_raw_socket(
+    interface_addr: Ipv4Addr,
+    join_all_routers: bool,
+    join_dr_routers: bool,
+) -> Result<Socket> {
+    // Create raw IP socket for OSPF protocol (89)
+    // Using unsafe to create SOCK_RAW socket via libc
+    let socket = unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_RAW, IPPROTO_OSPF);
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Socket::from_raw_fd(fd)
+    };
+
+    // Set socket to non-blocking mode
+    socket.set_nonblocking(true)?;
+
+    // Set SO_REUSEADDR for address reuse
+    socket.set_reuse_address(true)?;
+
+    // Join AllSPFRouters multicast group (224.0.0.5) if requested
+    if join_all_routers {
+        socket.join_multicast_v4(&OSPF_ALL_SPF_ROUTERS, &interface_addr)?;
+    }
+
+    // Join AllDRouters multicast group (224.0.0.6) if requested (for DR/BDR)
+    if join_dr_routers {
+        socket.join_multicast_v4(&OSPF_ALL_DROUTERS, &interface_addr)?;
+    }
+
+    // Set multicast TTL to 1 (link-local only per RFC 2328)
+    socket.set_multicast_ttl_v4(1)?;
+
+    // Set multicast loopback to true (receive our own multicasts)
+    socket.set_multicast_loop_v4(true)?;
+
+    // Set multicast interface to the specified interface
+    socket.set_multicast_if_v4(&interface_addr)?;
+
+    Ok(socket)
 }
