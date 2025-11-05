@@ -111,16 +111,16 @@ impl TorrentDhtProtocol {
         let transaction_id = hex::decode(action.get("transaction_id").and_then(|v| v.as_str()).context("Missing transaction_id")?)?;
         let node_id = hex::decode(action.get("node_id").and_then(|v| v.as_str()).unwrap_or("0000000000000000000000000000000000000000"))?;
 
-        let mut response = std::collections::BTreeMap::new();
+        let mut response = std::collections::HashMap::new();
         response.insert(b"t".to_vec(), serde_bencode::value::Value::Bytes(transaction_id));
         response.insert(b"y".to_vec(), serde_bencode::value::Value::Bytes(b"r".to_vec()));
 
-        let mut r_dict = std::collections::BTreeMap::new();
+        let mut r_dict = std::collections::HashMap::new();
         r_dict.insert(b"id".to_vec(), serde_bencode::value::Value::Bytes(node_id));
         response.insert(b"r".to_vec(), serde_bencode::value::Value::Dict(r_dict));
 
         let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response))?;
-        Ok(ActionResult::Output(vec![bencode_data]))
+        Ok(ActionResult::Output(bencode_data))
     }
 
     fn execute_send_find_node_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -144,17 +144,17 @@ impl TorrentDhtProtocol {
 
         let nodes_bytes: Vec<u8> = nodes.into_iter().flatten().collect();
 
-        let mut response = std::collections::BTreeMap::new();
+        let mut response = std::collections::HashMap::new();
         response.insert(b"t".to_vec(), serde_bencode::value::Value::Bytes(transaction_id));
         response.insert(b"y".to_vec(), serde_bencode::value::Value::Bytes(b"r".to_vec()));
 
-        let mut r_dict = std::collections::BTreeMap::new();
+        let mut r_dict = std::collections::HashMap::new();
         r_dict.insert(b"id".to_vec(), serde_bencode::value::Value::Bytes(node_id));
         r_dict.insert(b"nodes".to_vec(), serde_bencode::value::Value::Bytes(nodes_bytes));
         response.insert(b"r".to_vec(), serde_bencode::value::Value::Dict(r_dict));
 
         let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response))?;
-        Ok(ActionResult::Output(vec![bencode_data]))
+        Ok(ActionResult::Output(bencode_data))
     }
 
     fn execute_send_get_peers_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -162,11 +162,11 @@ impl TorrentDhtProtocol {
         let node_id = hex::decode(action.get("node_id").and_then(|v| v.as_str()).unwrap_or("0000000000000000000000000000000000000000"))?;
         let token = action.get("token").and_then(|v| v.as_str()).unwrap_or("token").as_bytes().to_vec();
 
-        let mut response = std::collections::BTreeMap::new();
+        let mut response = std::collections::HashMap::new();
         response.insert(b"t".to_vec(), serde_bencode::value::Value::Bytes(transaction_id));
         response.insert(b"y".to_vec(), serde_bencode::value::Value::Bytes(b"r".to_vec()));
 
-        let mut r_dict = std::collections::BTreeMap::new();
+        let mut r_dict = std::collections::HashMap::new();
         r_dict.insert(b"id".to_vec(), serde_bencode::value::Value::Bytes(node_id));
         r_dict.insert(b"token".to_vec(), serde_bencode::value::Value::Bytes(token));
 
@@ -186,7 +186,7 @@ impl TorrentDhtProtocol {
         response.insert(b"r".to_vec(), serde_bencode::value::Value::Dict(r_dict));
 
         let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response))?;
-        Ok(ActionResult::Output(vec![bencode_data]))
+        Ok(ActionResult::Output(bencode_data))
     }
 }
 

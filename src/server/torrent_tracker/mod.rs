@@ -143,10 +143,12 @@ impl TorrentTrackerServer {
         let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker request type: {}", request_type));
 
         // Create event for LLM
-        let event = Event::new(
-            &format!("tracker_{}_request", request_type),
-            serde_json::json!(request_params),
-        );
+        let event_type = match request_type.as_str() {
+            "announce" => &actions::TRACKER_ANNOUNCE_REQUEST_EVENT,
+            "scrape" => &actions::TRACKER_SCRAPE_REQUEST_EVENT,
+            _ => &actions::TRACKER_ANNOUNCE_REQUEST_EVENT, // Default to announce
+        };
+        let event = Event::new(event_type, serde_json::json!(request_params));
 
         debug!("BitTorrent Tracker calling LLM for {} request", request_type);
         let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker calling LLM for {} request", request_type));
@@ -172,7 +174,7 @@ impl TorrentTrackerServer {
 
                 // Send responses
                 for protocol_result in execution_result.protocol_results {
-                    for output_data in protocol_result.get_all_output() {
+                    if let Some(output_data) = protocol_result.get_all_output().first() {
                         write_half.write_all(output_data).await?;
 
                         debug!("BitTorrent Tracker sent {} bytes to {}", output_data.len(), peer_addr);

@@ -57,14 +57,14 @@ impl Server for TorrentPeerProtocol {
 
         match action_type {
             "send_handshake" => self.execute_send_handshake(action),
-            "send_choke" => Ok(ActionResult::Output(vec![vec![0, 0, 0, 1, 0]])),
-            "send_unchoke" => Ok(ActionResult::Output(vec![vec![0, 0, 0, 1, 1]])),
-            "send_interested" => Ok(ActionResult::Output(vec![vec![0, 0, 0, 1, 2]])),
-            "send_not_interested" => Ok(ActionResult::Output(vec![vec![0, 0, 0, 1, 3]])),
+            "send_choke" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 0])),
+            "send_unchoke" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 1])),
+            "send_interested" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 2])),
+            "send_not_interested" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 3])),
             "send_have" => self.execute_send_have(action),
             "send_bitfield" => self.execute_send_bitfield(action),
             "send_piece" => self.execute_send_piece(action),
-            "send_keepalive" => Ok(ActionResult::Output(vec![vec![0, 0, 0, 0]])),
+            "send_keepalive" => Ok(ActionResult::Output(vec![0, 0, 0, 0])),
             _ => Err(anyhow::anyhow!("Unknown Peer action: {}", action_type)),
         }
     }
@@ -135,7 +135,7 @@ impl TorrentPeerProtocol {
         handshake.extend_from_slice(&info_hash);
         handshake.extend_from_slice(peer_id.as_bytes());
 
-        Ok(ActionResult::Output(vec![handshake]))
+        Ok(ActionResult::Output(handshake))
     }
 
     fn execute_send_have(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -146,7 +146,7 @@ impl TorrentPeerProtocol {
         message.push(4);
         message.extend_from_slice(&piece_index.to_be_bytes());
 
-        Ok(ActionResult::Output(vec![message]))
+        Ok(ActionResult::Output(message))
     }
 
     fn execute_send_bitfield(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -159,7 +159,7 @@ impl TorrentPeerProtocol {
         message.push(5);
         message.extend_from_slice(&bitfield);
 
-        Ok(ActionResult::Output(vec![message]))
+        Ok(ActionResult::Output(message))
     }
 
     fn execute_send_piece(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -176,7 +176,7 @@ impl TorrentPeerProtocol {
         message.extend_from_slice(&begin.to_be_bytes());
         message.extend_from_slice(&block);
 
-        Ok(ActionResult::Output(vec![message]))
+        Ok(ActionResult::Output(message))
     }
 }
 
