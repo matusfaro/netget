@@ -26,6 +26,8 @@ pub mod grpc;
 pub mod etcd;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "maven")]
+pub mod maven;
 #[cfg(feature = "imap")]
 pub mod imap;
 #[cfg(feature = "ipp")]

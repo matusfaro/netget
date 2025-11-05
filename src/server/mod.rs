@@ -27,6 +27,13 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "maven")]
+pub mod maven;
+#[cfg(feature = "maven")]
+pub use maven::MavenServer;
+#[cfg(feature = "maven")]
+pub use maven::actions::MavenProtocol;
+
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "datalink")]

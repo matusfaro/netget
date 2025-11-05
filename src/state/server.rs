@@ -134,6 +134,10 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// Maven repository connection (recent artifact requests)
+    Maven {
+        recent_artifacts: Vec<String>,
+    },
     /// SNMP connection (recent requests)
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
