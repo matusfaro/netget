@@ -289,6 +289,11 @@ impl ProtocolRegistry {
             Arc::new(crate::server::OpenAiProtocol::new()),
         );
 
+        #[cfg(feature = "oauth2")]
+        self.register(
+            Arc::new(crate::server::OAuth2Protocol::new()),
+        );
+
         #[cfg(feature = "jsonrpc")]
         self.register(
             Arc::new(crate::server::JsonRpcProtocol::new()),

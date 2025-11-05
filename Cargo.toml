@@ -53,6 +53,7 @@ s3 = []  # S3-compatible object storage server (LLM-controlled responses, no sto
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
+oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
@@ -125,6 +126,7 @@ all-protocols = [
     "sqs",
     "npm",
     "openai",
+    "oauth2",
     "jsonrpc",
     "wireguard",
     "openvpn",
