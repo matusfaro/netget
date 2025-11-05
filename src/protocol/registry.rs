@@ -44,6 +44,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::server::HttpProtocol::new()));
 
+        #[cfg(feature = "http2")]
+        self.register(Arc::new(crate::server::Http2Protocol::new()));
+
         #[cfg(feature = "pypi")]
         self.register(Arc::new(crate::server::PypiProtocol::new()));
 
