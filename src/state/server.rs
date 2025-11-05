@@ -328,6 +328,10 @@ pub enum ProtocolConnectionInfo {
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
     },
+    /// RIP connection (recent peers)
+    Rip {
+        recent_peers: Vec<(SocketAddr, Instant)>,
+    },
     /// gRPC connection (HTTP/2)
     Grpc {
         service_name: String,              // Service being called
