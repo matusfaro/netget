@@ -27,12 +27,26 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "maven")]
+pub mod maven;
+#[cfg(feature = "maven")]
+pub use maven::MavenServer;
+#[cfg(feature = "maven")]
+pub use maven::actions::MavenProtocol;
+
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "datalink")]
 pub use datalink::DataLinkServer;
 #[cfg(feature = "datalink")]
 pub use datalink::actions::DataLinkProtocol;
+
+#[cfg(feature = "arp")]
+pub mod arp;
+#[cfg(feature = "arp")]
+pub use arp::ArpServer;
+#[cfg(feature = "arp")]
+pub use arp::actions::ArpProtocol;
 
 #[cfg(feature = "udp")]
 pub mod udp;
@@ -82,6 +96,13 @@ pub mod snmp;
 pub use snmp::SnmpServer;
 #[cfg(feature = "snmp")]
 pub use snmp::actions::SnmpProtocol;
+
+#[cfg(feature = "syslog")]
+pub mod syslog;
+#[cfg(feature = "syslog")]
+pub use syslog::SyslogServer;
+#[cfg(feature = "syslog")]
+pub use syslog::actions::SyslogProtocol;
 
 #[cfg(feature = "ssh")]
 pub mod ssh;
@@ -327,6 +348,13 @@ pub use bgp::BgpServer;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpProtocol;
 
+#[cfg(feature = "isis")]
+pub mod isis;
+#[cfg(feature = "isis")]
+pub use isis::IsisServer;
+#[cfg(feature = "isis")]
+pub use isis::actions::IsisProtocol;
+
 #[cfg(feature = "rip")]
 pub mod rip;
 #[cfg(feature = "rip")]
@@ -403,6 +431,27 @@ pub mod kafka;
 pub use kafka::KafkaServer;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaProtocol;
+
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::TorrentTrackerServer;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::actions::TorrentTrackerProtocol;
+
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::TorrentDhtServer;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::actions::TorrentDhtProtocol;
+
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::TorrentPeerServer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::actions::TorrentPeerProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
