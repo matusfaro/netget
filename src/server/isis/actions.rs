@@ -27,15 +27,61 @@ impl Server for IsisProtocol {
     > {
         Box::pin(async move {
             use crate::server::isis::IsisServer;
-            IsisServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+
+            // IS-IS doesn't use SocketAddr, it uses interface name
+            // Extract interface from startup_params
+            let params = ctx.startup_params
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("IS-IS requires startup parameters (interface)"))?;
+
+            let interface = params.get_string("interface");
+
+            // Spawn the IS-IS server
+            let _interface_name = IsisServer::spawn_with_llm_actions(
+                interface,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
                 ctx.startup_params,
-            ).await
+            ).await?;
+
+            // IS-IS doesn't bind to a socket, so return a dummy address
+            Ok(ctx.listen_addr)
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
+            crate::llm::actions::ParameterDefinition {
+                name: "interface".to_string(),
+                type_hint: "string".to_string(),
+                description: "Network interface name for IS-IS operation (e.g., 'eth0', 'en0', 'wlan0'). Requires root privileges.".to_string(),
+                required: true,
+                example: json!("eth0"),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "system_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "IS-IS System ID in format: 0000.0000.0001 (6 bytes in dotted hex notation)".to_string(),
+                required: false,
+                example: json!("0000.0000.0001"),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "area_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "IS-IS Area ID in format: 49.0001 (NSAP format, 49 for private networks)".to_string(),
+                required: false,
+                example: json!("49.0001"),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "level".to_string(),
+                type_hint: "string".to_string(),
+                description: "IS-IS level: 'level-1' (intra-area), 'level-2' (inter-area backbone), or 'level-1+2' (both)".to_string(),
+                required: false,
+                example: json!("level-2"),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -87,20 +133,20 @@ impl Server for IsisProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("Manual IS-IS PDU construction (ISO/IEC 10589, RFC 1195)")
-            .llm_control("Hello PDUs, LSPs, neighbor adjacencies")
-            .e2e_testing("Manual IS-IS packet construction")
-            .notes("UDP encapsulated IS-IS, experimental routing protocol")
+            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")
+            .llm_control("Hello PDUs, LSPs, neighbor adjacencies, multicast MAC")
+            .e2e_testing("Raw socket packet injection with pcap")
+            .notes("True Layer 2 IS-IS, interoperable with real routers (FRR, Cisco, etc.)")
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "IS-IS (Intermediate System to Intermediate System) routing protocol server"
+        "IS-IS (Intermediate System to Intermediate System) Layer 2 routing protocol server"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "start an is-is router on port 3784 with system-id 0000.0000.0001 in area 49.0001"
+        "start an is-is router on interface eth0 with system-id 0000.0000.0001 in area 49.0001 at level-2"
     }
 
     fn group_name(&self) -> &'static str {
