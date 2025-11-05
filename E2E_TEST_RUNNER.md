@@ -6,10 +6,10 @@ A comprehensive script for running NetGet's end-to-end tests in isolation with p
 
 ```bash
 # List all available E2E test features
-./e2e-test.sh --list
+./e2e-test.sh
 
 # Run all E2E tests (caution: may take a long time!)
-./e2e-test.sh
+./e2e-test.sh all
 
 # Run specific protocol tests
 ./e2e-test.sh whois dns http
@@ -44,12 +44,28 @@ A comprehensive script for running NetGet's end-to-end tests in isolation with p
 
 ## Options
 
-- `--list`, `-l`: List all available E2E test features with their test directories
 - `--verbose`, `-v`: Show detailed test output (passes `--nocapture --test-threads=1` to cargo)
 - `--dry-run`, `-n`: Show what would be executed without actually running tests
 - `--help`, `-h`: Display help message
 
+## Special Arguments
+
+- *No arguments*: Lists all available E2E test features (default behavior)
+- `all`: Runs all E2E tests with valid feature flags
+
 ## Examples
+
+### List Available Features (Default)
+```bash
+./e2e-test.sh
+```
+Shows all features with checkmarks for available features and their associated test directories.
+
+### Run All E2E Tests
+```bash
+./e2e-test.sh all
+```
+Runs all E2E tests with valid feature flags (excludes features without Cargo.toml entries).
 
 ### Test a Single Protocol
 ```bash
@@ -78,11 +94,11 @@ Features enabled: whois
 [DRY RUN] Would execute: ./cargo-isolated.sh test --no-default-features --features whois
 ```
 
-### List Available Features
+### Preview All Tests
 ```bash
-./e2e-test.sh --list
+./e2e-test.sh --dry-run all
 ```
-Shows all features with checkmarks for available features and their associated test directories.
+Shows what would be executed for all valid E2E tests without actually running them.
 
 ## Special Cases
 
@@ -123,16 +139,16 @@ The script is designed to work well in CI environments:
 ./e2e-test.sh whois dns http || exit 1
 
 # Run all tests (may take significant time)
-./e2e-test.sh || exit 1
+./e2e-test.sh all || exit 1
 ```
 
 ## Troubleshooting
 
 ### "Feature does not have feature gate in Cargo.toml"
 
-The feature flag doesn't exist in `Cargo.toml`. Use `--list` to see available features:
+The feature flag doesn't exist in `Cargo.toml`. Run without arguments to see available features:
 ```bash
-./e2e-test.sh --list
+./e2e-test.sh
 ```
 
 ### "No runnable tests found for protocol"

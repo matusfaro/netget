@@ -28,15 +28,11 @@ cd "$PROJECT_ROOT"
 
 # Parse arguments
 PROTOCOLS=()
-LIST_MODE=false
 VERBOSE=false
 DRY_RUN=false
 
 for arg in "$@"; do
     case "$arg" in
-        --list|-l)
-            LIST_MODE=true
-            ;;
         --verbose|-v)
             VERBOSE=true
             ;;
@@ -50,15 +46,15 @@ for arg in "$@"; do
             echo "  $0 [OPTIONS] [PROTOCOLS...]"
             echo ""
             echo "Options:"
-            echo "  --list, -l       List all available E2E test protocols"
             echo "  --verbose, -v    Show detailed test output"
             echo "  --dry-run, -n    Show what would be run without executing"
             echo "  --help, -h       Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                    # Run all E2E tests"
+            echo "  $0                    # List available E2E test protocols"
+            echo "  $0 all                # Run all E2E tests"
             echo "  $0 whois dns http     # Run specific protocol tests"
-            echo "  $0 --list             # List available protocols"
+            echo "  $0 --dry-run tor      # Preview what would be executed"
             exit 0
             ;;
         -*)
@@ -116,8 +112,8 @@ feature_exists() {
     get_available_features | grep -q "^${feature}$"
 }
 
-# List mode: show available protocols and exit
-if [ "$LIST_MODE" = true ]; then
+# If no protocols specified, show list and exit
+if [ ${#PROTOCOLS[@]} -eq 0 ]; then
     echo -e "${BLUE}Available E2E Test Features:${NC}"
     echo ""
 
@@ -144,13 +140,25 @@ if [ "$LIST_MODE" = true ]; then
 
     echo ""
     echo -e "${BLUE}Total:${NC} $(echo "$e2e_features" | wc -l) unique features"
+    echo ""
+    echo -e "${BLUE}Usage:${NC}"
+    echo "  $0 all                # Run all E2E tests"
+    echo "  $0 whois dns tor      # Run specific protocol tests"
     exit 0
 fi
 
-# If no protocols specified, run all E2E tests
-if [ ${#PROTOCOLS[@]} -eq 0 ]; then
-    echo -e "${BLUE}No protocols specified, running all E2E tests...${NC}"
-    PROTOCOLS=($(get_e2e_features))
+# Handle "all" keyword to run all tests
+if [ ${#PROTOCOLS[@]} -eq 1 ] && [ "${PROTOCOLS[0]}" = "all" ]; then
+    echo -e "${BLUE}Running all E2E tests...${NC}"
+    # Only include features that actually exist in Cargo.toml
+    PROTOCOLS=()
+    available_features=$(get_available_features)
+    for feature in $(get_e2e_features); do
+        if echo "$available_features" | grep -q "^${feature}$"; then
+            PROTOCOLS+=("$feature")
+        fi
+    done
+    echo -e "${BLUE}Found ${#PROTOCOLS[@]} valid E2E test features${NC}"
 fi
 
 # Validate all protocols have feature gates BEFORE running any tests
