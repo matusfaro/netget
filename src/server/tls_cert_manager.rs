@@ -152,6 +152,185 @@ pub fn generate_custom_tls_config(
     create_rustls_server_config(&cert, &key_pair)
 }
 
+/// Load TLS configuration from certificate and key files
+pub fn load_tls_config_from_files(cert_path: &str, key_path: &str) -> Result<Arc<ServerConfig>> {
+    info!("Loading TLS certificate from files");
+    debug!("Certificate path: {}", cert_path);
+    debug!("Key path: {}", key_path);
+
+    // Read certificate file
+    let cert_pem = std::fs::read_to_string(cert_path)
+        .with_context(|| format!("Failed to read certificate file: {}", cert_path))?;
+
+    // Read key file
+    let key_pem = std::fs::read_to_string(key_path)
+        .with_context(|| format!("Failed to read private key file: {}", key_path))?;
+
+    // Parse certificate
+    let cert_der = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to parse certificate PEM")?;
+
+    if cert_der.is_empty() {
+        return Err(anyhow::anyhow!("No certificates found in certificate file"));
+    }
+
+    // Parse private key
+    let mut key_reader = key_pem.as_bytes();
+    let key_der = rustls_pemfile::private_key(&mut key_reader)
+        .context("Failed to parse private key PEM")?
+        .ok_or_else(|| anyhow::anyhow!("No private key found in key file"))?;
+
+    // Build rustls ServerConfig
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_der, key_der)
+        .context("Failed to create rustls ServerConfig from loaded certificate")?;
+
+    info!("Successfully loaded TLS certificate from files");
+
+    Ok(Arc::new(config))
+}
+
+/// Create TLS configuration from startup parameters
+///
+/// If cert_path and key_path are provided, loads certificate from files.
+/// Otherwise, generates a self-signed certificate with optional customization.
+pub fn create_tls_config(
+    cert_path: Option<&str>,
+    key_path: Option<&str>,
+    common_name: Option<String>,
+    san_dns_names: Option<Vec<String>>,
+    validity_days: Option<i64>,
+    organization: Option<String>,
+    organizational_unit: Option<String>,
+) -> Result<Arc<ServerConfig>> {
+    match (cert_path, key_path) {
+        (Some(cert), Some(key)) => {
+            // Load from files
+            load_tls_config_from_files(cert, key)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            Err(anyhow::anyhow!("Both cert_path and key_path must be provided together"))
+        }
+        (None, None) => {
+            // Generate self-signed certificate
+            if common_name.is_some() || san_dns_names.is_some() || validity_days.is_some()
+                || organization.is_some() || organizational_unit.is_some() {
+                // Use custom parameters
+                generate_custom_tls_config(
+                    common_name,
+                    san_dns_names,
+                    validity_days,
+                    organization,
+                    organizational_unit,
+                )
+            } else {
+                // Use defaults
+                generate_default_tls_config()
+            }
+        }
+    }
+}
+
+/// Get TLS startup parameters for protocols
+pub fn get_tls_startup_parameters() -> Vec<crate::llm::actions::ParameterDefinition> {
+    use crate::llm::actions::ParameterDefinition;
+
+    vec![
+        ParameterDefinition {
+            name: "tls_enabled".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Enable TLS/SSL encryption (default: false for HTTP/HTTP2, always true for HTTP3)".to_string(),
+            required: false,
+            example: serde_json::json!(true),
+        },
+        ParameterDefinition {
+            name: "cert_path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path to TLS certificate file (PEM format). If not provided, a self-signed certificate will be generated.".to_string(),
+            required: false,
+            example: serde_json::json!("/path/to/cert.pem"),
+        },
+        ParameterDefinition {
+            name: "key_path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path to TLS private key file (PEM format). Required if cert_path is provided.".to_string(),
+            required: false,
+            example: serde_json::json!("/path/to/key.pem"),
+        },
+        ParameterDefinition {
+            name: "common_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Common Name (CN) for self-signed certificate (default: netget-dns-server)".to_string(),
+            required: false,
+            example: serde_json::json!("example.com"),
+        },
+        ParameterDefinition {
+            name: "san_dns_names".to_string(),
+            type_hint: "array".to_string(),
+            description: "Subject Alternative Names (DNS names) for self-signed certificate (default: [\"localhost\", \"*.local\"])".to_string(),
+            required: false,
+            example: serde_json::json!(["example.com", "*.example.com"]),
+        },
+        ParameterDefinition {
+            name: "validity_days".to_string(),
+            type_hint: "number".to_string(),
+            description: "Certificate validity period in days for self-signed certificate (default: 365)".to_string(),
+            required: false,
+            example: serde_json::json!(365),
+        },
+        ParameterDefinition {
+            name: "organization".to_string(),
+            type_hint: "string".to_string(),
+            description: "Organization name for self-signed certificate (default: NetGet)".to_string(),
+            required: false,
+            example: serde_json::json!("My Organization"),
+        },
+        ParameterDefinition {
+            name: "organizational_unit".to_string(),
+            type_hint: "string".to_string(),
+            description: "Organizational unit for self-signed certificate".to_string(),
+            required: false,
+            example: serde_json::json!("IT Department"),
+        },
+    ]
+}
+
+/// Extract TLS configuration from startup parameters
+pub fn extract_tls_config_from_params(
+    params: &crate::protocol::StartupParams,
+) -> Result<Option<Arc<ServerConfig>>> {
+    // Check if TLS is enabled
+    let tls_enabled = params.get_optional_bool("tls_enabled")
+        .unwrap_or(false);
+
+    if !tls_enabled {
+        return Ok(None);
+    }
+
+    // Extract TLS parameters
+    let cert_path = params.get_optional_string("cert_path");
+    let key_path = params.get_optional_string("key_path");
+    let common_name = params.get_optional_string("common_name");
+    let san_dns_names = params.get_optional_array("san_dns_names")
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+    let validity_days = params.get_optional_i64("validity_days");
+    let organization = params.get_optional_string("organization");
+    let organizational_unit = params.get_optional_string("organizational_unit");
+
+    // Create TLS config
+    create_tls_config(
+        cert_path.as_deref(),
+        key_path.as_deref(),
+        common_name,
+        san_dns_names,
+        validity_days,
+        organization,
+        organizational_unit,
+    ).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

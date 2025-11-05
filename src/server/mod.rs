@@ -13,8 +13,8 @@ pub mod socket_helpers;
 #[cfg(any(feature = "http", feature = "http2"))]
 pub mod http_common;
 
-// TLS certificate management for DoT, DoH, and TLS protocols
-#[cfg(any(feature = "dot", feature = "doh", feature = "smtp", feature = "tls"))]
+// TLS certificate management for DoT, DoH, HTTP, HTTP/2, HTTP/3, SMTP, and TLS protocols
+#[cfg(any(feature = "dot", feature = "doh", feature = "http", feature = "http2", feature = "http3", feature = "smtp", feature = "tls"))]
 pub mod tls_cert_manager;
 
 #[cfg(feature = "tcp")]

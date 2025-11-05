@@ -6,8 +6,8 @@ edition = "2021"
 [features]
 default = ["all-protocols"]
 tcp = ["async-trait"]
-http = []
-http2 = ["dep:h2"]
+http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
+http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
@@ -15,8 +15,8 @@ datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
-dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
-doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
+dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
+doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
@@ -75,7 +75,7 @@ openid = []  # OpenID Connect authentication provider with LLM-controlled token 
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-http3 = ["dep:quinn"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
+http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
@@ -244,6 +244,7 @@ hickory-proto = { version = "0.24", optional = true }
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2.0", optional = true }
 
 # HTTP/2 support for DoH
 h2 = { version = "0.4", optional = true }
