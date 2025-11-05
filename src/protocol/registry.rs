@@ -339,6 +339,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "git")]
         self.register(Arc::new(crate::server::GitProtocol::new()));
 
+        #[cfg(feature = "mercurial")]
+        self.register(Arc::new(crate::server::MercurialProtocol::new()));
+
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
 

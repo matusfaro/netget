@@ -73,6 +73,7 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
+mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
@@ -148,6 +149,7 @@ all-protocols = [
     "openapi",
     "openid",
     "git",
+    "mercurial",
     "kafka",
     "etcd",
     "torrent-tracker",
