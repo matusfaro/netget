@@ -1,10 +1,10 @@
-//! OSPF server implementation
+//! OSPF protocol simulator - LLM-controlled OSPF responses
 //!
-//! Open Shortest Path First (OSPFv2) server that allows LLM control over routing protocol operations.
-//! Implements RFC 2328 with neighbor state machine and DR/BDR election.
+//! This is an OSPF protocol simulator that speaks real OSPF (IP protocol 89)
+//! but has LLM-generated responses instead of real routing logic.
 //!
-//! **Production Implementation**: Uses IP protocol 89 for real OSPF router interoperability.
-//! **Requires**: Root/CAP_NET_RAW privileges for raw socket access.
+//! **Use cases**: Testing, honeypots, route injection, OSPF reconnaissance
+//! **Requires**: Root/CAP_NET_RAW privileges for raw socket access
 
 pub mod actions;
 
@@ -43,7 +43,7 @@ const OSPF_VERSION: u8 = 2;
 const OSPF_HEADER_LEN: usize = 24;
 const IP_HEADER_MIN_LEN: usize = 20;
 
-// OSPF Packet Types (RFC 2328 Section A.3.1)
+// OSPF Packet Types
 const OSPF_TYPE_HELLO: u8 = 1;
 const OSPF_TYPE_DATABASE_DESCRIPTION: u8 = 2;
 const OSPF_TYPE_LINK_STATE_REQUEST: u8 = 3;
@@ -52,6 +52,7 @@ const OSPF_TYPE_LINK_STATE_ACK: u8 = 5;
 
 // OSPF Multicast addresses
 const OSPF_ALL_SPF_ROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 5);
+#[allow(dead_code)]
 const OSPF_ALL_DROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 6);
 
 /// OSPF neighbor information
@@ -65,18 +66,24 @@ struct OspfNeighbor {
     dr: String,
     bdr: String,
     last_hello: Instant,
-    dd_sequence: u32,
-    master: bool,
 }
 
-/// OSPF server that handles routing protocol operations with LLM
+/// Shared OSPF server state
+#[cfg(feature = "ospf")]
+struct OspfState {
+    socket_fd: i32,
+    interface_ip: Ipv4Addr,
+    router_id: String,
+    area_id: String,
+    neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>>,
+}
+
+/// OSPF server
 pub struct OspfServer;
 
 #[cfg(feature = "ospf")]
 impl OspfServer {
-    /// Spawn OSPF server with integrated LLM actions
-    ///
-    /// **Requires root/CAP_NET_RAW privileges** for raw socket access.
+    /// Spawn OSPF server with LLM control
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -85,75 +92,54 @@ impl OspfServer {
         server_id: crate::state::ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
-        // Extract interface IP from listen_addr
+        // Extract interface IP
         let interface_ip = match listen_addr.ip() {
             IpAddr::V4(ip) => ip,
-            IpAddr::V6(_) => {
-                return Err(anyhow!("OSPF only supports IPv4"));
-            }
+            IpAddr::V6(_) => return Err(anyhow!("OSPF only supports IPv4")),
         };
 
-        // Create raw OSPF socket (requires root)
+        // Create raw OSPF socket
         let raw_socket = create_ospf_raw_socket(interface_ip, true, false)?;
+        let socket_fd = raw_socket.as_raw_fd();
 
-        info!("OSPF server listening on interface {} (IP protocol 89)", interface_ip);
-        let _ = status_tx.send(format!("[INFO] OSPF server on interface {} (requires root)", interface_ip));
+        info!("OSPF server on interface {} (IP protocol 89)", interface_ip);
+        let _ = status_tx.send(format!("[INFO] OSPF server on {} (requires root)", interface_ip));
 
-        // Extract OSPF configuration from startup params
-        let (router_id, area_id, _network_mask, _hello_interval, _router_dead_interval, _router_priority) =
-            if let Some(ref params) = startup_params {
-                let router_id = params
-                    .get_optional_string("router_id")
-                    .unwrap_or_else(|| interface_ip.to_string());
-                let area_id = params
-                    .get_optional_string("area_id")
-                    .unwrap_or_else(|| "0.0.0.0".to_string());
-                let network_mask = params
-                    .get_optional_string("network_mask")
-                    .unwrap_or_else(|| "255.255.255.0".to_string());
-                let hello_interval = params.get_optional_u32("hello_interval").unwrap_or(10);
-                let router_dead_interval = params.get_optional_u32("router_dead_interval").unwrap_or(40);
-                let router_priority = params.get_optional_u32("router_priority").unwrap_or(1) as u8;
+        // Extract configuration
+        let (router_id, area_id) = if let Some(ref params) = startup_params {
+            let router_id = params
+                .get_optional_string("router_id")
+                .unwrap_or_else(|| interface_ip.to_string());
+            let area_id = params
+                .get_optional_string("area_id")
+                .unwrap_or_else(|| "0.0.0.0".to_string());
 
-                info!(
-                    "OSPF configured: router_id={}, area={}, mask={}, hello={}s, dead={}s, priority={}",
-                    router_id, area_id, network_mask, hello_interval, router_dead_interval, router_priority
-                );
-                let _ = status_tx.send(format!(
-                    "[INFO] OSPF: router_id={}, area={}, priority={}",
-                    router_id, area_id, router_priority
-                ));
+            info!("OSPF: router_id={}, area={}", router_id, area_id);
+            let _ = status_tx.send(format!("[INFO] OSPF: router_id={}, area={}", router_id, area_id));
 
-                (
-                    router_id,
-                    area_id,
-                    network_mask,
-                    hello_interval,
-                    router_dead_interval,
-                    router_priority,
-                )
-            } else {
-                (
-                    interface_ip.to_string(),
-                    "0.0.0.0".to_string(),
-                    "255.255.255.0".to_string(),
-                    10,
-                    40,
-                    1,
-                )
-            };
+            (router_id, area_id)
+        } else {
+            (interface_ip.to_string(), "0.0.0.0".to_string())
+        };
 
         let protocol = Arc::new(OspfProtocol::new());
         let neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>> = Arc::new(Mutex::new(HashMap::new()));
 
-        // Wrap raw socket in AsyncFd for tokio integration
+        let ospf_state = Arc::new(OspfState {
+            socket_fd,
+            interface_ip,
+            router_id: router_id.clone(),
+            area_id: area_id.clone(),
+            neighbors: neighbors.clone(),
+        });
+
+        // Wrap socket for async I/O
         let async_socket = AsyncFd::new(raw_socket)?;
 
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
 
             loop {
-                // Wait for socket to be readable
                 let mut guard = match async_socket.readable().await {
                     Ok(guard) => guard,
                     Err(e) => {
@@ -162,65 +148,53 @@ impl OspfServer {
                     }
                 };
 
-                // Try to read from socket
                 match guard.try_io(|inner| {
-                    // Use libc recvfrom on the raw fd
                     let fd = inner.as_raw_fd();
                     unsafe {
-                        let mut addr: libc::sockaddr_in = std::mem::zeroed();
-                        let mut addr_len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-
-                        let n = libc::recvfrom(
+                        let n = libc::recv(
                             fd,
                             buffer.as_mut_ptr() as *mut libc::c_void,
                             buffer.len(),
                             0,
-                            &mut addr as *mut _ as *mut libc::sockaddr,
-                            &mut addr_len,
                         );
 
                         if n < 0 {
                             Err(std::io::Error::last_os_error())
                         } else {
-                            // Extract source IP from sockaddr_in
-                            let src_ip = Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
-                            Ok((n as usize, src_ip))
+                            Ok(n as usize)
                         }
                     }
                 }) {
-                    Ok(Ok((n, src_ip))) => {
+                    Ok(Ok(n)) => {
                         if n == 0 {
                             continue;
                         }
 
-                        trace!("OSPF received {} bytes from {}", n, src_ip);
-                        let _ = status_tx.send(format!("[TRACE] OSPF received {} bytes from {}", n, src_ip));
-
-                        // Skip IP header (minimum 20 bytes, check IHL for actual length)
+                        // Skip IP header
                         if n < IP_HEADER_MIN_LEN {
-                            warn!("Packet too short for IP header: {} bytes", n);
                             continue;
                         }
 
                         let ip_header_len = ((buffer[0] & 0x0F) * 4) as usize;
                         if n < ip_header_len + OSPF_HEADER_LEN {
-                            warn!("Packet too short for OSPF: {} bytes (IP header: {})", n, ip_header_len);
                             continue;
                         }
 
-                        // Extract OSPF packet (after IP header)
-                        let ospf_data = &buffer[ip_header_len..n];
+                        // Extract source IP from IP header
+                        let src_ip = Ipv4Addr::new(
+                            buffer[12], buffer[13], buffer[14], buffer[15]
+                        );
 
-                        // Parse OSPF header
+                        // Extract OSPF packet
+                        let ospf_data = &buffer[ip_header_len..n];
                         let version = ospf_data[0];
                         let packet_type = ospf_data[1];
 
                         if version != OSPF_VERSION {
-                            warn!("OSPF unsupported version: {}", version);
                             continue;
                         }
 
-                        // Extract router ID and area ID from OSPF header
+                        // Extract router ID and area ID
                         let sender_router_id = format!(
                             "{}.{}.{}.{}",
                             ospf_data[4], ospf_data[5], ospf_data[6], ospf_data[7]
@@ -231,20 +205,15 @@ impl OspfServer {
                             ospf_data[8], ospf_data[9], ospf_data[10], ospf_data[11]
                         );
 
-                        debug!(
-                            "OSPF packet type={} from {} (router_id={}, area={})",
-                            packet_type, src_ip, sender_router_id, sender_area_id
-                        );
+                        debug!("OSPF type={} from {} ({})", packet_type, src_ip, sender_router_id);
 
-                        // Handle packet (spawn task to avoid blocking)
+                        // Handle packet
                         let ospf_data_owned = ospf_data.to_vec();
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
-                        let neighbors_clone = neighbors.clone();
-                        let router_id_clone = router_id.clone();
-                        let area_id_clone = area_id.clone();
+                        let ospf_state_clone = ospf_state.clone();
 
                         tokio::spawn(async move {
                             if let Err(e) = Self::handle_ospf_packet(
@@ -257,31 +226,25 @@ impl OspfServer {
                                 state_clone,
                                 status_clone,
                                 protocol_clone,
-                                neighbors_clone,
+                                ospf_state_clone,
                                 server_id,
-                                router_id_clone,
-                                area_id_clone,
                             )
                             .await
                             {
-                                error!("OSPF packet handling error: {}", e);
+                                error!("OSPF packet error: {}", e);
                             }
                         });
                     }
                     Ok(Err(e)) => {
                         error!("OSPF recv error: {}", e);
                     }
-                    Err(_would_block) => {
-                        // Socket not ready yet, will retry
-                        continue;
-                    }
+                    Err(_would_block) => continue,
                 }
             }
 
             warn!("OSPF receive loop terminated");
         });
 
-        // Return a dummy address since raw sockets don't have ports
         Ok(SocketAddr::new(IpAddr::V4(interface_ip), 0))
     }
 
@@ -296,15 +259,13 @@ impl OspfServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<OspfProtocol>,
-        neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>>,
+        ospf_state: Arc<OspfState>,
         server_id: crate::state::ServerId,
-        router_id: String,
-        area_id: String,
     ) -> Result<()> {
-        // Get or create connection ID for this neighbor
+        // Get or create connection ID
         let connection_id = {
-            let mut neighbors_lock = neighbors.lock().await;
-            if let Some(neighbor) = neighbors_lock.get_mut(&sender_router_id) {
+            let mut neighbors = ospf_state.neighbors.lock().await;
+            if let Some(neighbor) = neighbors.get_mut(&sender_router_id) {
                 neighbor.last_hello = Instant::now();
                 neighbor.connection_id
             } else {
@@ -318,10 +279,8 @@ impl OspfServer {
                     dr: "0.0.0.0".to_string(),
                     bdr: "0.0.0.0".to_string(),
                     last_hello: Instant::now(),
-                    dd_sequence: 0,
-                    master: false,
                 };
-                neighbors_lock.insert(sender_router_id.clone(), neighbor);
+                neighbors.insert(sender_router_id.clone(), neighbor);
                 connection_id
             }
         };
@@ -338,31 +297,28 @@ impl OspfServer {
                     app_state,
                     status_tx,
                     protocol,
-                    neighbors,
+                    ospf_state,
                     server_id,
-                    router_id,
-                    area_id,
                 )
                 .await?;
             }
             OSPF_TYPE_DATABASE_DESCRIPTION => {
-                info!("OSPF Database Description from {}", sender_router_id);
-                // TODO: Implement DD handling
+                info!("OSPF DD from {}", sender_router_id);
+                // TODO: LLM handles DD
             }
             OSPF_TYPE_LINK_STATE_REQUEST => {
-                info!("OSPF Link State Request from {}", sender_router_id);
-                // TODO: Implement LSR handling
+                info!("OSPF LSR from {}", sender_router_id);
+                // TODO: LLM generates fake LSAs
             }
             OSPF_TYPE_LINK_STATE_UPDATE => {
-                info!("OSPF Link State Update from {}", sender_router_id);
-                // TODO: Implement LSU handling
+                info!("OSPF LSU from {}", sender_router_id);
+                // TODO: LLM logs LSAs
             }
             OSPF_TYPE_LINK_STATE_ACK => {
-                trace!("OSPF Link State Ack from {}", sender_router_id);
-                // TODO: Implement LSAck handling
+                trace!("OSPF LSAck from {}", sender_router_id);
             }
             _ => {
-                warn!("OSPF unknown packet type: {}", packet_type);
+                warn!("OSPF unknown type: {}", packet_type);
             }
         }
 
@@ -378,35 +334,24 @@ impl OspfServer {
         connection_id: ConnectionId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
+        _status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<OspfProtocol>,
-        neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>>,
+        ospf_state: Arc<OspfState>,
         server_id: crate::state::ServerId,
-        _router_id: String,
-        _area_id: String,
     ) -> Result<()> {
         if data.len() < OSPF_HEADER_LEN + 20 {
-            return Err(anyhow!("Hello packet too short"));
+            return Err(anyhow!("Hello too short"));
         }
 
-        // Parse Hello packet fields
-        let network_mask = format!(
-            "{}.{}.{}.{}",
-            data[24], data[25], data[26], data[27]
-        );
+        // Parse Hello fields
+        let network_mask = format!("{}.{}.{}.{}", data[24], data[25], data[26], data[27]);
         let hello_interval = u16::from_be_bytes([data[28], data[29]]);
         let priority = data[31];
         let router_dead_interval = u32::from_be_bytes([data[32], data[33], data[34], data[35]]);
-        let dr = format!(
-            "{}.{}.{}.{}",
-            data[36], data[37], data[38], data[39]
-        );
-        let bdr = format!(
-            "{}.{}.{}.{}",
-            data[40], data[41], data[42], data[43]
-        );
+        let dr = format!("{}.{}.{}.{}", data[36], data[37], data[38], data[39]);
+        let bdr = format!("{}.{}.{}.{}", data[40], data[41], data[42], data[43]);
 
-        // Parse neighbor list
+        // Parse neighbors
         let mut neighbor_list = Vec::new();
         let mut offset = 44;
         while offset + 4 <= data.len() {
@@ -419,14 +364,14 @@ impl OspfServer {
         }
 
         info!(
-            "OSPF Hello from {} (router_id={}, area={}, priority={}, DR={}, BDR={})",
-            src_ip, sender_router_id, sender_area_id, priority, dr, bdr
+            "OSPF Hello from {} (priority={}, DR={}, BDR={})",
+            sender_router_id, priority, dr, bdr
         );
 
         // Update neighbor state
         {
-            let mut neighbors_lock = neighbors.lock().await;
-            if let Some(neighbor) = neighbors_lock.get_mut(&sender_router_id) {
+            let mut neighbors = ospf_state.neighbors.lock().await;
+            if let Some(neighbor) = neighbors.get_mut(&sender_router_id) {
                 neighbor.priority = priority;
                 neighbor.dr = dr.clone();
                 neighbor.bdr = bdr.clone();
@@ -436,19 +381,18 @@ impl OspfServer {
                 match neighbor.state {
                     OspfNeighborState::Down => {
                         neighbor.state = OspfNeighborState::Init;
-                        info!("OSPF neighbor {} state: Down -> Init", sender_router_id);
+                        info!("OSPF neighbor {} -> Init", sender_router_id);
                     }
                     OspfNeighborState::Init => {
-                        // Check if our router ID is in neighbor list
                         neighbor.state = OspfNeighborState::TwoWay;
-                        info!("OSPF neighbor {} state: Init -> 2-Way", sender_router_id);
+                        info!("OSPF neighbor {} -> 2-Way", sender_router_id);
                     }
                     _ => {}
                 }
             }
         }
 
-        // Ask LLM how to respond
+        // Send structured event to LLM
         let event = Event {
             event_type: &OSPF_HELLO_EVENT,
             data: serde_json::json!({
@@ -476,9 +420,45 @@ impl OspfServer {
         )
         .await
         {
-            Ok(_result) => {}
+            Ok(_result) => {
+                // LLM response handled via actions
+            }
             Err(e) => {
-                error!("LLM call failed for OSPF Hello: {}", e);
+                error!("LLM call failed: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Send OSPF packet to destination
+    #[cfg(feature = "ospf")]
+    pub fn send_ospf_packet(
+        socket_fd: i32,
+        dest_ip: Ipv4Addr,
+        ospf_data: &[u8],
+    ) -> Result<()> {
+        unsafe {
+            let dest_addr = libc::sockaddr_in {
+                sin_family: libc::AF_INET as u16,
+                sin_port: 0, // Raw IP, no port
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from(dest_ip).to_be(),
+                },
+                sin_zero: [0; 8],
+            };
+
+            let n = libc::sendto(
+                socket_fd,
+                ospf_data.as_ptr() as *const libc::c_void,
+                ospf_data.len(),
+                0,
+                &dest_addr as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as u32,
+            );
+
+            if n < 0 {
+                return Err(std::io::Error::last_os_error().into());
             }
         }
 
