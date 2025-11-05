@@ -69,6 +69,13 @@ pub use dhcp::DhcpServer;
 #[cfg(feature = "dhcp")]
 pub use dhcp::actions::DhcpProtocol;
 
+#[cfg(feature = "bootp")]
+pub mod bootp;
+#[cfg(feature = "bootp")]
+pub use bootp::BootpServer;
+#[cfg(feature = "bootp")]
+pub use bootp::actions::BootpProtocol;
+
 #[cfg(feature = "ntp")]
 pub mod ntp;
 #[cfg(feature = "ntp")]
