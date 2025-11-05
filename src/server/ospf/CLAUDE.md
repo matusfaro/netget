@@ -1,472 +1,416 @@
-# OSPF Server Implementation
+# OSPF Protocol Simulator
 
 ## Overview
 
-Open Shortest Path First (OSPF) server implementing RFC 2328 (OSPFv2) with LLM-controlled routing logic. The LLM controls neighbor state management, LSA generation, and routing decisions.
+**OSPF protocol simulator** that speaks real OSPF (IP protocol 89) but has **LLM-generated responses** instead of real routing logic.
 
-**Status**: Experimental (initial implementation)
-**Protocol Spec**: [RFC 2328 (OSPFv2)](https://datatracker.ietf.org/doc/html/rfc2328)
-**Port**: UDP 2600 (configurable) - Note: Standard OSPF uses IP protocol 89
+**Philosophy**: NetGet handles protocol details, LLM controls behavior
+- ✅ Real OSPF protocol (IP 89)
+- ✅ Multicast support (224.0.0.5)
+- ✅ LLM generates responses
+- ❌ NO real SPF calculation
+- ❌ NO real routing table
+- ❌ NO actual packet forwarding
 
-## Library Choices
+**Status**: Experimental (protocol simulator)
+**Spec**: [RFC 2328 (OSPFv2)](https://datatracker.ietf.org/doc/html/rfc2328)
+**Requires**: Root/CAP_NET_RAW privileges
 
-### Manual Protocol Implementation with ospf-parser for Parsing
+## Use Cases
 
-**Primary approach**: Manual packet construction + ospf-parser for parsing
+### 1. OSPF Honeypot
+Detect OSPF reconnaissance and attacks:
+```
+netget> Listen on interface 192.168.1.100 as OSPF router 10.0.0.1 in area 0
+LLM: "Respond to Hellos but log all LSA requests. Advertise fake routes."
+```
 
-**Why manual implementation**:
-- ospf-parser only supports parsing, not serialization
-- No mature Rust OSPF server library with controllable logic
-- OSPF protocol is complex but well-specified (RFC 2328)
-- Manual implementation provides full LLM control over routing decisions
+### 2. Protocol Testing
+Test real OSPF routers with controlled responses:
+```
+netget> OSPF on 10.0.1.1, area 0, be the DR
+LLM: "Claim DR priority 255, advertise 3 fake routes, vary LSA ages"
+```
 
-**Libraries used**:
-- `ospf-parser` - For parsing incoming OSPF packets (OSPFv2 and OSPFv3)
-- Manual serialization for outgoing packets
+### 3. Route Injection
+Inject test routes into OSPF networks:
+```
+netget> OSPF router, inject route 192.168.99.0/24
+LLM: "Generate Router LSA with fake link to 192.168.99.0/24, metric 10"
+```
 
-**What we implement manually**:
-- OSPF packet construction (Hello, Database Description, LSR, LSU, LSAck)
-- Neighbor state machine (Down, Init, 2-Way, ExStart, Exchange, Loading, Full)
-- Link State Database management
-- LSA generation and flooding
-- Area configuration
+### 4. OSPF Education
+Learn OSPF without setting up real routers:
+```
+netget> Be an OSPF router, explain what you're doing
+LLM: "Received Hello from 2.2.2.2. Sending Hello back with priority 1..."
+```
 
-**Why not alternatives**:
-- `holo` - Full routing suite, too heavyweight and not designed for external control
-- External OSPF daemon (bird, frr) - Violates NetGet architecture
-- Raw IP sockets (protocol 89) - Requires root privileges, less portable
+## Architecture
 
-## Architecture Decisions
+### Raw Socket Implementation
 
-### UDP-Based Transport (Not Standard)
-
-**Important**: Standard OSPF uses IP protocol 89. This implementation uses UDP for practical reasons:
+Uses IP protocol 89 (not UDP):
 
 ```rust
-let socket = UdpSocket::bind(listen_addr).await?;
+let socket = create_ospf_raw_socket(interface_ip, true, false)?;
+// - IP protocol 89
+// - Joins multicast 224.0.0.5 (AllSPFRouters)
+// - Requires root/CAP_NET_RAW
 ```
 
-**Why UDP instead of raw IP**:
-- No root/admin privileges required
-- More portable across platforms
-- Easier testing and development
-- Consistent with NetGet's experimentation focus
+### Packet Flow
 
-**Limitations**:
-- Cannot interoperate with real OSPF routers (they use IP protocol 89)
-- Suitable for learning, testing, honeypots - NOT production routing
-- Multicast addresses (224.0.0.5, 224.0.0.6) work differently over UDP
-
-### Neighbor State Machine
-
-OSPF neighbors go through states (RFC 2328 Section 10.1):
-
-1. **Down**: Initial state, no Hello received
-2. **Init**: Hello received from neighbor
-3. **2-Way**: Bidirectional communication established, can elect DR/BDR
-4. **ExStart**: Master/Slave negotiation for database exchange
-5. **Exchange**: Database Description packets exchanged
-6. **Loading**: Link State Requests sent
-7. **Full**: Adjacency complete, databases synchronized
-
-Current implementation handles:
-- ✅ Down (initial state)
-- ✅ Init (receive Hello)
-- ✅ 2-Way (bidirectional Hello exchange)
-- ✅ ExStart (DD sequence number negotiation)
-- ✅ Exchange (DD packet exchange)
-- ⚠️  Loading (basic LSR/LSU handling)
-- ⚠️  Full (adjacency established)
-
-### OSPF Packet Format
-
-All OSPF packets have 24-byte header:
+**Incoming**:
 ```
-+------------------+------------------+
-| Version (1) = 2  | Type (1)         |
-+------------------+------------------+
-| Packet Length (2 bytes)             |
-+-------------------------------------+
-| Router ID (4 bytes)                 |
-+-------------------------------------+
-| Area ID (4 bytes)                   |
-+-------------------------------------+
-| Checksum (2)     | AuType (2)       |
-+-------------------------------------+
-| Authentication (8 bytes)            |
-+-------------------------------------+
+Real Router → OSPF packet (IP proto 89) → NetGet
+                                           ↓
+                               Parse IP header, extract OSPF
+                                           ↓
+                               Parse OSPF header (ver, type, router_id)
+                                           ↓
+                               Create structured JSON event
+                                           ↓
+                               Send to LLM with context
 ```
 
-**Packet types**:
-1. Hello - Discover/maintain neighbors
-2. Database Description - Summarize LSDB
-3. Link State Request - Request specific LSAs
-4. Link State Update - Flood LSAs
-5. Link State Acknowledgment - Acknowledge LSAs
+**Outgoing**:
+```
+LLM → JSON action → Build OSPF packet → Send to multicast/unicast
+```
 
-### Hello Protocol
+### No Real Routing
 
-Hello packets maintain neighbor relationships:
+**What we DON'T implement**:
+- SPF (Dijkstra) calculation
+- Real routing table
+- Route installation (netlink)
+- DR/BDR election algorithm
+- LSA aging timers
+- Proper LSDB synchronization
 
-**Hello interval**: 10 seconds (default)
-**Router Dead interval**: 40 seconds (default, 4× Hello interval)
-
-**Multicast addresses**:
-- AllSPFRouters: 224.0.0.5 (all OSPF routers)
-- AllDRouters: 224.0.0.6 (DR and BDR only)
-
-**Hello packet fields**:
-- Network mask
-- Hello interval
-- Router priority (for DR/BDR election)
-- Router Dead interval
-- Designated Router (DR)
-- Backup Designated Router (BDR)
-- Neighbor list
-
-### Link State Database
-
-Each router maintains LSDB with LSA types:
-
-1. **Router LSA (Type 1)**: Router's links
-2. **Network LSA (Type 2)**: Network links (generated by DR)
-3. **Summary LSA (Type 3)**: Inter-area routes
-4. **ASBR Summary LSA (Type 4)**: AS boundary routers
-5. **AS External LSA (Type 5)**: External routes
-
-**LSA structure**:
-- LS age
-- Options
-- LS type
-- Link State ID
-- Advertising Router
-- LS Sequence Number
-- LS Checksum
-- Length
-
-### Area Support
-
-OSPF supports multiple areas:
-- **Area 0 (Backbone)**: All areas must connect to Area 0
-- **Regular areas**: Non-backbone areas
-- **Stub areas**: No external LSAs (not implemented)
+**What LLM controls**:
+- Whether to respond to Hellos
+- What routes to advertise (fake or real)
+- DR/BDR claim (just set priority)
+- LSA content (manually crafted)
+- Neighbor acceptance/rejection
 
 ## LLM Integration
 
-### Startup Parameters
+### Event Structure (Input to LLM)
 
-Server configured with:
-```json
-{
-  "router_id": "1.1.1.1",
-  "area_id": "0.0.0.0",
-  "network_mask": "255.255.255.0",
-  "hello_interval": 10,
-  "router_dead_interval": 40,
-  "router_priority": 1
-}
-```
+When OSPF Hello received:
 
-Extracted from LLM-generated startup prompt.
-
-### Async Actions (User-triggered)
-
-1. **list_neighbors**: View all OSPF neighbors and their states
-2. **list_lsdb**: View Link State Database
-3. **generate_lsa**: Generate and flood new LSA
-4. **shutdown_neighbor**: Gracefully shut down neighbor relationship
-5. **set_router_priority**: Change router priority (affects DR election)
-
-### Sync Actions (Network event triggered)
-
-1. **send_hello**: Send Hello packet to neighbors
-2. **send_database_description**: Send Database Description packet
-3. **send_link_state_request**: Request specific LSAs
-4. **send_link_state_update**: Send LSA updates
-5. **send_link_state_ack**: Acknowledge received LSAs
-6. **accept_neighbor**: Accept neighbor relationship
-7. **reject_neighbor**: Reject neighbor (e.g., mismatched area)
-
-### Event Types
-
-- `ospf_hello`: Neighbor sent Hello packet
-- `ospf_database_description`: Neighbor sent Database Description
-- `ospf_link_state_request`: Neighbor requested LSAs
-- `ospf_link_state_update`: Neighbor sent LSA update
-- `ospf_link_state_ack`: Neighbor acknowledged LSAs
-
-**Event data example** (Hello):
-```json
-{
-  "neighbor_id": "2.2.2.2",
-  "neighbor_addr": "192.168.1.2:2600",
-  "area_id": "0.0.0.0",
-  "network_mask": "255.255.255.0",
-  "router_priority": 1,
-  "dr": "0.0.0.0",
-  "bdr": "0.0.0.0",
-  "neighbors": ["1.1.1.1"]
-}
-```
-
-## Connection Management
-
-### Per-Neighbor State
-
-Each OSPF neighbor tracked with:
-```rust
-struct OspfNeighbor {
-    router_id: String,
-    neighbor_addr: SocketAddr,
-    state: OspfNeighborState,
-    priority: u8,
-    dr: String,
-    bdr: String,
-    last_hello: Instant,
-    dd_sequence: u32,
-    master: bool,
-}
-```
-
-### Message Loop
-
-UDP socket receives OSPF packets:
-```rust
-loop {
-    let (len, peer_addr) = socket.recv_from(&mut buf).await?;
-    let packet = &buf[..len];
-
-    // Parse OSPF header
-    // Validate version, area, authentication
-    // Handle based on packet type and neighbor state
-}
-```
-
-### Neighbor Lifecycle
-
-1. **Receive Hello**: Neighbor sends Hello → create/update neighbor entry
-2. **2-Way**: Bidirectional communication → elect DR/BDR if needed
-3. **ExStart**: Negotiate master/slave for DD exchange
-4. **Exchange**: Exchange Database Description packets
-5. **Loading**: Request missing LSAs
-6. **Full**: Adjacency complete, synchronized LSDB
-7. **Dead Timer**: If no Hello received for 40s → neighbor down
-
-## State Management
-
-### Server State
-
-```rust
-pub struct OspfServer {
-    router_id: String,
-    area_id: String,
-    neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>>,
-    lsdb: Arc<Mutex<HashMap<String, Lsa>>>,
-}
-```
-
-Shared state for neighbors and LSDB.
-
-### Neighbor State Enum
-
-```rust
-pub enum OspfNeighborState {
-    Down,
-    Init,
-    TwoWay,
-    ExStart,
-    Exchange,
-    Loading,
-    Full,
-}
-```
-
-### Protocol Connection Info
-
-```rust
-ProtocolConnectionInfo::Ospf {
-    neighbor_state: OspfNeighborState,
-    router_id: String,
-    area_id: String,
-    dr: String,
-    bdr: String,
-}
-```
-
-## Limitations
-
-### Partial Implementation
-
-**Implemented**:
-- ✅ Hello protocol (neighbor discovery)
-- ✅ Neighbor state machine (Down → Full)
-- ✅ Basic Database Description exchange
-- ✅ LSA parsing (using ospf-parser)
-- ✅ Simple LSDB storage
-
-**Not Implemented**:
-- ❌ SPF (Shortest Path First) calculation
-- ❌ Routing table generation
-- ❌ Route installation into OS routing table
-- ❌ DR/BDR election logic (tracked but not enforced)
-- ❌ LSA aging and refreshing
-- ❌ Stub areas, NSSA
-- ❌ Virtual links
-- ❌ Authentication (header field present but not validated)
-- ❌ Graceful restart
-- ❌ Multiple areas (single area only)
-
-### No Routing Functionality
-
-Server doesn't perform actual routing:
-- LSAs are stored but not used for path calculation
-- No routing table or forwarding
-- Cannot forward IP packets
-- LLM sees LSAs but cannot make routing decisions without SPF
-
-### Non-Standard Transport
-
-Uses UDP instead of IP protocol 89:
-- Cannot communicate with real OSPF routers
-- Multicast behavior differs
-- No IP-level TTL checks
-- Not suitable for production networks
-
-### Testing Limitations
-
-OSPF protocol is extremely complex:
-- Full testing requires multiple interconnected routers
-- E2E tests cover basic neighbor establishment but not convergence
-- No tests for SPF calculation, route redistribution, or multi-area
-- DR/BDR election not fully tested
-
-## Examples
-
-### Server Startup
-
-```
-netget> Listen on port 2600 via OSPF. You are router 1.1.1.1 in area 0.0.0.0.
-```
-
-Server output:
-```
-[INFO] OSPF server listening on 0.0.0.0:2600
-[INFO] OSPF configured: router_id=1.1.1.1, area=0.0.0.0
-→ OSPF server ready on 0.0.0.0:2600
-```
-
-### Hello Packet Received
-
-Neighbor sends Hello:
-```
-[INFO] OSPF Hello from 2.2.2.2 (192.168.1.2:2600)
-→ OSPF neighbor 2.2.2.2 discovered
-```
-
-LLM receives Hello event:
 ```json
 {
   "event": "ospf_hello",
   "data": {
+    "connection_id": "conn-12345",
     "neighbor_id": "2.2.2.2",
-    "neighbor_addr": "192.168.1.2:2600",
+    "neighbor_ip": "192.168.1.2",
     "area_id": "0.0.0.0",
-    "router_priority": 1
+    "network_mask": "255.255.255.0",
+    "hello_interval": 10,
+    "router_dead_interval": 40,
+    "router_priority": 1,
+    "dr": "0.0.0.0",
+    "bdr": "0.0.0.0",
+    "neighbors": ["1.1.1.1", "3.3.3.3"]
   }
 }
 ```
 
-LLM responds by sending Hello back:
+### Action Structure (Output from LLM)
+
+**Send Hello Response**:
 ```json
 {
-  "actions": [
-    {
-      "type": "send_hello",
-      "destination": "192.168.1.2:2600"
-    }
-  ]
+  "type": "send_hello",
+  "router_id": "1.1.1.1",
+  "area_id": "0.0.0.0",
+  "network_mask": "255.255.255.0",
+  "priority": 100,
+  "dr": "1.1.1.1",
+  "bdr": "0.0.0.0",
+  "neighbors": ["2.2.2.2"],
+  "destination": "multicast"
 }
 ```
 
-Server sends Hello:
-```
-[INFO] OSPF Hello sent to 192.168.1.2:2600
-[DEBUG] OSPF neighbor 2.2.2.2 state: Down -> Init
-```
-
-### Neighbor State Transitions
-
-Neighbor transitions through states:
-```
-[DEBUG] OSPF neighbor 2.2.2.2: Init -> 2-Way
-[DEBUG] OSPF neighbor 2.2.2.2: 2-Way -> ExStart
-[DEBUG] OSPF neighbor 2.2.2.2: ExStart -> Exchange
-[DEBUG] OSPF neighbor 2.2.2.2: Exchange -> Loading
-[DEBUG] OSPF neighbor 2.2.2.2: Loading -> Full
-✓ OSPF adjacency with 2.2.2.2 established
-```
-
-### LSA Update
-
-Neighbor sends LSA:
-```
-[TRACE] OSPF LSU received: 1 LSA
-```
-
-LLM receives LSU event:
+**Generate Fake Router LSA** (TODO):
 ```json
 {
-  "event": "ospf_link_state_update",
-  "data": {
-    "neighbor_id": "2.2.2.2",
-    "lsa_count": 1,
-    "lsas": [
-      {
-        "type": "router",
-        "link_state_id": "2.2.2.2",
-        "advertising_router": "2.2.2.2",
-        "sequence": 2147483649
-      }
-    ]
-  }
+  "type": "send_lsa",
+  "lsa_type": "router",
+  "router_id": "1.1.1.1",
+  "links": [
+    {"type": "stub", "id": "10.0.0.0", "mask": "255.255.255.0", "metric": 10},
+    {"type": "stub", "id": "10.0.1.0", "mask": "255.255.255.0", "metric": 20}
+  ],
+  "destination": "multicast"
 }
 ```
 
-LLM can analyze and store LSA in LSDB.
+## State Management
 
-## Use Cases
+### Neighbor Tracking
 
-### Learning OSPF Protocol
+```rust
+struct OspfNeighbor {
+    router_id: String,
+    neighbor_ip: Ipv4Addr,
+    state: OspfNeighborState,  // Down/Init/2-Way/...
+    priority: u8,
+    dr: String,
+    bdr: String,
+    last_hello: Instant,
+}
+```
 
-- Understand OSPF packet flow
-- Experiment with neighbor state machine
-- Practice OSPF configuration
+**State Transitions** (simplified):
+- Down → Init (receive first Hello)
+- Init → 2-Way (bidirectional Hello)
+- 2-Way → ExStart (form adjacency - TODO)
+- ExStart → Exchange (DD packets - TODO)
+- Exchange → Loading (LSR/LSU - TODO)
+- Loading → Full (synchronized - TODO)
 
-### Network Monitoring/Honeypot
+**Currently**: Only Down → Init → 2-Way implemented
 
-- Detect unauthorized OSPF routers
-- Log OSPF reconnaissance
-- Monitor for routing attacks
+### No LSDB
 
-### Testing
+No real Link State Database. LLM generates LSAs on demand:
+- LLM remembers what it advertised (via conversation history)
+- LLM generates fake LSAs when requested
+- No LSA aging, no MaxAge, no refresh timers
 
-- Test OSPF client implementations
-- Validate OSPF packet parsing
-- Simulate OSPF router behavior
+## Packet Construction
 
-### NOT for Production Routing
+### Hello Packet
 
-OSPF server should **not** be used for production routing:
-- No SPF calculation or routing table
-- No actual packet forwarding
-- Non-standard UDP transport (not IP protocol 89)
-- No route convergence or failover
+Built from LLM JSON action:
 
-For production routing, use established OSPF implementations (BIRD, FRR, Quagga).
+```rust
+// OSPF Header (24 bytes)
+- Version: 2
+- Type: 1 (Hello)
+- Packet Length: calculated
+- Router ID: from LLM
+- Area ID: from LLM
+- Checksum: Fletcher checksum
+- Auth Type: 0 (none)
+- Authentication: zeros
+
+// Hello Body
+- Network Mask: from LLM
+- Hello Interval: from LLM (default 10s)
+- Options: 0
+- Router Priority: from LLM
+- Router Dead Interval: from LLM (default 40s)
+- Designated Router: from LLM
+- Backup DR: from LLM
+- Neighbors: list from LLM
+```
+
+### LSA Packets (TODO)
+
+Router LSA, Network LSA, Summary LSA - all generated from LLM JSON.
+
+## Sending Packets
+
+### Multicast vs Unicast
+
+```rust
+// Send to AllSPFRouters (224.0.0.5)
+send_ospf_packet(socket_fd, Ipv4Addr::new(224, 0, 0, 5), packet_bytes)?;
+
+// Send to specific neighbor
+send_ospf_packet(socket_fd, neighbor_ip, packet_bytes)?;
+```
+
+### Raw Socket Sendto
+
+```rust
+unsafe {
+    let dest_addr = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 0,  // Raw IP, no port
+        sin_addr: libc::in_addr {
+            s_addr: u32::from(dest_ip).to_be(),
+        },
+        sin_zero: [0; 8],
+    };
+
+    libc::sendto(
+        socket_fd,
+        packet.as_ptr() as *const libc::c_void,
+        packet.len(),
+        0,
+        &dest_addr as *const _ as *const libc::sockaddr,
+        std::mem::size_of::<libc::sockaddr_in>() as u32,
+    );
+}
+```
+
+## Current Implementation Status
+
+### ✅ Completed
+- Raw IP socket creation (protocol 89)
+- Multicast group join (224.0.0.5)
+- IP header parsing
+- OSPF header parsing
+- Hello packet parsing
+- Neighbor state tracking (Down/Init/2-Way)
+- Structured JSON events to LLM
+- Hello packet construction
+- Packet transmission function
+
+### ⏳ In Progress
+- Connect LLM actions to packet sending
+  - Need architecture for passing socket_fd to actions
+  - Options: Global state, app_state extension, callback pattern
+
+### 📋 TODO
+- LSA packet construction (Router, Network, Summary)
+- Database Description handling
+- LSR/LSU/LSAck handling
+- Periodic Hello timer
+- Dead neighbor detection (40s timeout)
+- DR/BDR claim logic
+
+## Testing
+
+### With Real OSPF Router (FRR)
+
+**Setup FRR**:
+```bash
+# On Linux router
+sudo apt install frr
+sudo vi /etc/frr/ospfd.conf
+
+router ospf
+  network 192.168.1.0/24 area 0
+
+interface eth0
+  ip ospf hello-interval 10
+  ip ospf dead-interval 40
+```
+
+**Start NetGet** (requires root):
+```bash
+sudo ./netget
+netget> Listen on interface 192.168.1.100 as OSPF router 192.168.1.100 in area 0
+
+# FRR will send Hellos to 224.0.0.5
+# NetGet receives, parses, sends event to LLM
+# LLM decides response
+# NetGet sends Hello back
+```
+
+**Observe FRR**:
+```bash
+sudo vtysh -c "show ip ospf neighbor"
+# Should see NetGet router if LLM responds correctly
+```
+
+### Current Limitations
+
+**Cannot test yet**:
+- Full adjacency formation (need DD/LSR/LSU)
+- Route advertisement (need LSA generation)
+- Route redistribution
+- SPF calculation (we don't do this)
+- Multi-area OSPF
+
+**Can test**:
+- Hello packet exchange
+- Neighbor discovery
+- State transitions (Down/Init/2-Way)
+- Multicast reception
+- Protocol parsing
+
+## Security Considerations
+
+### Honeypot Mode
+
+Detect OSPF attacks:
+- Neighbor scanning
+- Route poisoning attempts
+- LSA flooding
+- Area spoofing
+
+LLM can log malicious behavior and respond defensively.
+
+### Route Injection Risks
+
+**Be careful**: Advertising fake routes in production networks can:
+- Cause routing loops
+- Black-hole traffic
+- Break connectivity
+- Trigger security alerts
+
+**Use only**:
+- Test networks
+- Isolated environments
+- With network admin permission
+
+## Examples
+
+### Passive OSPF Listener
+
+```
+netget> OSPF on 10.0.0.1, area 0, priority 0, log all packets
+
+LLM receives Hellos, logs them, doesn't respond (priority 0 = never DR)
+```
+
+### Aggressive DR Claim
+
+```
+netget> OSPF router 10.0.0.1, area 0, become DR immediately
+
+LLM responds with:
+{
+  "type": "send_hello",
+  "priority": 255,
+  "dr": "10.0.0.1",
+  "bdr": "0.0.0.0"
+}
+```
+
+### Fake Route Advertisement (TODO)
+
+```
+netget> OSPF router, advertise fake routes to 192.168.99.0/24
+
+LLM generates:
+{
+  "type": "send_lsa",
+  "lsa_type": "router",
+  "links": [{"id": "192.168.99.0", "mask": "255.255.255.0", "metric": 1}]
+}
+```
 
 ## References
 
 - [RFC 2328 - OSPFv2](https://datatracker.ietf.org/doc/html/rfc2328)
-- [RFC 5340 - OSPFv3 for IPv6](https://datatracker.ietf.org/doc/html/rfc5340)
 - [OSPF Design Guide (Cisco)](https://www.cisco.com/c/en/us/support/docs/ip/open-shortest-path-first-ospf/7039-1.html)
-- [ospf-parser crate](https://docs.rs/ospf-parser)
+- [FRR OSPF Documentation](https://docs.frrouting.org/en/latest/ospfd.html)
+
+## Comparison: Full Router vs Simulator
+
+| Feature | Full OSPF Router | NetGet Simulator |
+|---------|------------------|------------------|
+| Packet RX/TX | ✅ | ✅ |
+| Neighbor states | ✅ | ✅ (partial) |
+| DR/BDR election | ✅ Algorithm | ❌ LLM claims |
+| LSA flooding | ✅ Automatic | ❌ LLM manual |
+| LSDB sync | ✅ Real sync | ❌ No LSDB |
+| SPF calculation | ✅ Dijkstra | ❌ None |
+| Routing table | ✅ Real routes | ❌ Fake routes |
+| Route install | ✅ Kernel | ❌ None |
+| Code complexity | ~10,000 lines | ~500 lines |
+| Use case | Production routing | Testing/honeypot |
+
+**Winner**: Simulator for NetGet's use cases! 🎉
