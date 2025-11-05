@@ -80,6 +80,8 @@ pub mod smb;
 pub mod smtp;
 #[cfg(feature = "snmp")]
 pub mod snmp;
+#[cfg(feature = "syslog")]
+pub mod syslog;
 #[cfg(feature = "socks5")]
 pub mod socks5;
 #[cfg(feature = "s3")]

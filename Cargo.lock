@@ -6355,6 +6355,7 @@ dependencies = [
  "suppaftp",
  "syntect",
  "sys-locale",
+ "syslog_loose",
  "tempfile",
  "termbg",
  "textwrap",
@@ -10461,6 +10462,16 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-io-kit",
  "windows 0.61.3",
+]
+
+[[package]]
+name = "syslog_loose"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6ec4df26907adce53e94eac201a9ba38744baea3bc97f34ffd591d5646231a6"
+dependencies = [
+ "chrono",
+ "nom 8.0.0",
 ]
 
 [[package]]
