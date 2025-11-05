@@ -102,6 +102,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "ssh")]
         self.register(Arc::new(crate::server::SshProtocol::new()));
 
+        #[cfg(feature = "svn")]
+        self.register(Arc::new(crate::server::SvnProtocol::new()));
+
         // Application protocols
         #[cfg(feature = "irc")]
         self.register(Arc::new(crate::server::IrcProtocol::new()));

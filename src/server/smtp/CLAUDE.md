@@ -7,6 +7,8 @@ SMTP (Simple Mail Transfer Protocol) server implementing basic RFC 5321 function
 - **Manual Implementation** - No external SMTP library used
 - Raw TCP handling with tokio for async I/O
 - Line-based protocol parsing using `AsyncBufReadExt`
+- **TLS Support** - rustls and tokio-rustls for optional SMTPS (implicit TLS)
+- **Certificate Generation** - rcgen for self-signed certificates
 - Chosen for maximum flexibility and LLM control over protocol behavior
 
 ## Architecture Decisions
@@ -51,8 +53,31 @@ The LLM controls SMTP responses through these actions:
 - Connection lifecycle managed by tokio tasks
 - Session state implicit in LLM conversation context
 
+## TLS Support (SMTPS)
+- **Implicit TLS** - SMTPS on port 465 (connection starts with TLS handshake)
+- **Configurable** - Enable via `enable_tls: true` in open_server action options
+- **Self-signed certificates** - Auto-generated using rcgen
+- **Customizable certificates** - LLM can specify CN, SAN, validity, organization
+- **Backward compatible** - TLS is optional, defaults to plain SMTP
+
+### Enabling SMTPS
+Use the `open_server` action with TLS options:
+```json
+{
+  "type": "open_server",
+  "protocol": "smtp",
+  "port": 465,
+  "options": {
+    "enable_tls": true,
+    "tls_common_name": "mail.example.com",
+    "tls_san_dns_names": ["mail.example.com", "localhost"],
+    "tls_validity_days": 365
+  }
+}
+```
+
 ## Limitations
-- **No STARTTLS support** - Plain text only (port 25)
+- **No STARTTLS support** - Only implicit TLS (SMTPS) is supported, not STARTTLS upgrade
 - **No SMTP AUTH** - Authentication not implemented
 - **No message persistence** - Messages logged but not stored
 - **No PIPELINING** - Commands processed sequentially
@@ -61,9 +86,17 @@ The LLM controls SMTP responses through these actions:
 
 ## Examples
 
-### Example LLM Prompt
+### Example LLM Prompt (Plain SMTP)
 ```
 listen on port 25 via smtp. Send greeting '220 mail.example.com ESMTP'.
+Respond to EHLO with '250 8BITMIME'.
+Accept all MAIL FROM and RCPT TO commands with '250 OK'.
+For DATA, respond with '354 Start mail input' then '250 Message accepted'.
+```
+
+### Example LLM Prompt (SMTPS with TLS)
+```
+listen on port 465 via smtp with TLS enabled. Send greeting '220 secure.mail.example.com ESMTPS'.
 Respond to EHLO with '250 8BITMIME'.
 Accept all MAIL FROM and RCPT TO commands with '250 OK'.
 For DATA, respond with '354 Start mail input' then '250 Message accepted'.
