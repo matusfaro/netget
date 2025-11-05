@@ -75,6 +75,7 @@ http3 = ["dep:quinn"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted,
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
 all-protocols = [
     "tcp",
     "http",
@@ -146,6 +147,7 @@ all-protocols = [
     "torrent-tracker",
     "torrent-dht",
     "torrent-peer",
+    "tls",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
