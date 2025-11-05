@@ -138,8 +138,24 @@ pub enum ProtocolConnectionInfo {
     Http2 {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// PyPI connection (recent requests)
+    Pypi {
+        recent_requests: Vec<String>, // URIs
+    },
+    /// Maven repository connection (recent artifact requests)
+    Maven {
+        recent_artifacts: Vec<String>,
+    },
     /// SNMP connection (recent requests)
     Snmp {
+        recent_peers: Vec<(SocketAddr, Instant)>,
+    },
+    /// IGMP connection (multicast group management)
+    Igmp {
+        joined_groups: Vec<std::net::Ipv4Addr>,
+    },
+    /// Syslog connection (recent messages)
+    Syslog {
         recent_peers: Vec<(SocketAddr, Instant)>,
     },
     /// DNS connection (recent queries)
@@ -160,9 +176,17 @@ pub enum ProtocolConnectionInfo {
     Dhcp {
         recent_requests: Vec<(String, Instant)>, // client MAC, time
     },
+    /// BOOTP connection (recent requests)
+    Bootp {
+        recent_requests: Vec<(String, Instant)>, // request type, time
+    },
     /// NTP connection (recent clients)
     Ntp {
         recent_clients: Vec<(SocketAddr, Instant)>,
+    },
+    /// WHOIS connection (recent queries)
+    Whois {
+        recent_queries: Vec<(String, Instant)>, // domain, time
     },
     /// SSH connection (managed by russh library)
     Ssh {
@@ -170,11 +194,25 @@ pub enum ProtocolConnectionInfo {
         username: Option<String>,
         channels: Vec<String>, // Active channel types (shell, sftp)
     },
+    /// DC (Direct Connect) connection with write half
+    Dc {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
     /// IRC connection with write half
     Irc {
         write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
         state: ProtocolState,
         queued_data: Vec<u8>,
+    },
+    /// XMPP connection with write half
+    Xmpp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        jid: Option<String>,
+        authenticated: bool,
     },
     /// Telnet connection with write half
     Telnet {
@@ -258,6 +296,12 @@ pub enum ProtocolConnectionInfo {
         selected_mailbox: Option<String>,
         mailbox_read_only: bool,
     },
+    /// NNTP connection (Network News Transfer Protocol)
+    Nntp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+    },
     /// MQTT connection (client session)
     Mqtt {
         client_id: String,
@@ -286,6 +330,10 @@ pub enum ProtocolConnectionInfo {
     /// SQS connection (recent operations)
     Sqs {
         recent_operations: Vec<(String, String, Instant)>, // operation, queue_url, time
+    },
+    /// NPM registry connection (recent requests)
+    Npm {
+        recent_requests: Vec<String>, // Recent package requests
     },
     /// OpenAI API connection (recent requests)
     OpenAi {
@@ -331,6 +379,16 @@ pub enum ProtocolConnectionInfo {
         hold_time: u16,                    // Negotiated hold time (seconds)
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
+    },
+    /// IS-IS routing protocol connection (Layer 2 neighbor adjacency)
+    Isis {
+        adjacency_state: String,           // init, up, down
+        neighbor_system_id: Option<String>, // e.g., "0000.0000.0002"
+        level: String,                     // level-1, level-2, level-1+2
+    },
+    /// RIP connection (recent peers)
+    Rip {
+        recent_peers: Vec<(SocketAddr, Instant)>,
     },
     /// gRPC connection (HTTP/2)
     Grpc {
@@ -393,6 +451,28 @@ pub enum ProtocolConnectionInfo {
     /// Kafka connection (recent requests)
     Kafka {
         recent_requests: Vec<(String, Instant)>, // API type, time
+    },
+    /// Bitcoin P2P connection
+    Bitcoin {
+        handshake_complete: bool,
+        last_message_type: Option<String>, // Last message type received (version, ping, etc.)
+    },
+    /// BitTorrent Tracker connection
+    TorrentTracker {
+        recent_requests: Vec<(String, Instant)>, // request type (announce/scrape), time
+    },
+    /// BitTorrent DHT connection
+    TorrentDht {
+        recent_queries: Vec<(String, Instant)>, // query type (ping/find_node/get_peers/announce_peer), time
+    },
+    /// BitTorrent Peer Wire Protocol connection
+    TorrentPeer {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        handshake_complete: bool,
+        peer_id: Option<String>,
+        info_hash: Option<String>,
     },
 }
 
