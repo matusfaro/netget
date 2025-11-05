@@ -172,6 +172,14 @@ pub enum ProtocolConnectionInfo {
         state: ProtocolState,
         queued_data: Vec<u8>,
     },
+    /// XMPP connection with write half
+    Xmpp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        jid: Option<String>,
+        authenticated: bool,
+    },
     /// Telnet connection with write half
     Telnet {
         write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
