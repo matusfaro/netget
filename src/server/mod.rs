@@ -97,6 +97,13 @@ pub use snmp::SnmpServer;
 #[cfg(feature = "snmp")]
 pub use snmp::actions::SnmpProtocol;
 
+#[cfg(feature = "syslog")]
+pub mod syslog;
+#[cfg(feature = "syslog")]
+pub use syslog::SyslogServer;
+#[cfg(feature = "syslog")]
+pub use syslog::actions::SyslogProtocol;
+
 #[cfg(feature = "ssh")]
 pub mod ssh;
 #[cfg(feature = "ssh")]

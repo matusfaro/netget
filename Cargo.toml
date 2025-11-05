@@ -17,6 +17,7 @@ doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-ht
 dhcp = ["dhcproto"]
 ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
+syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
@@ -77,6 +78,7 @@ all-protocols = [
     "dhcp",
     "ntp",
     "snmp",
+    "syslog",
     "ssh",
     "irc",
     "xmpp",
@@ -217,6 +219,9 @@ dhcproto = { version = "0.12", optional = true }
 # SNMP agent
 rasn-snmp = { version = "0.18", optional = true }
 rasn = { version = "0.18", optional = true }
+
+# Syslog server
+syslog_loose = { version = "0.22", optional = true }
 
 # SSH server
 russh = { version = "0.45", optional = true }
