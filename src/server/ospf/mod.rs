@@ -433,26 +433,71 @@ impl OspfServer {
 
                 // Process each protocol result (OSPF packets to send)
                 for protocol_result in execution_result.protocol_results {
+                    // Check if this is a Custom result with OSPF packet + destination
+                    if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = &protocol_result {
+                        if name == "ospf_packet" {
+                            // Extract packet bytes and destination
+                            let packet_bytes = data.get("packet")
+                                .and_then(|p| p.as_array())
+                                .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect::<Vec<u8>>());
+
+                            let destination_str = data.get("destination")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("multicast");
+
+                            if let Some(packet) = packet_bytes {
+                                // Parse destination: "multicast", "dr_multicast", or IP address
+                                let dest_ip = match destination_str {
+                                    "multicast" => OSPF_ALL_SPF_ROUTERS,
+                                    "dr_multicast" => OSPF_ALL_DROUTERS,
+                                    ip_str => {
+                                        // Try to parse as IPv4 address
+                                        match ip_str.parse::<Ipv4Addr>() {
+                                            Ok(ip) => ip,
+                                            Err(_) => {
+                                                warn!("Invalid destination '{}', using multicast", ip_str);
+                                                OSPF_ALL_SPF_ROUTERS
+                                            }
+                                        }
+                                    }
+                                };
+
+                                // Send packet to destination
+                                match Self::send_ospf_packet(ospf_state.socket_fd, dest_ip, &packet) {
+                                    Ok(()) => {
+                                        debug!("OSPF sent {} bytes to {}", packet.len(), dest_ip);
+                                        let _ = _status_tx.send(format!("[DEBUG] OSPF sent {} bytes to {}", packet.len(), dest_ip));
+
+                                        // TRACE: Log packet hex
+                                        trace!("OSPF sent (hex): {}", hex::encode(&packet));
+                                        let _ = _status_tx.send(format!("[TRACE] OSPF sent (hex): {}", hex::encode(&packet)));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to send OSPF packet: {}", e);
+                                        let _ = _status_tx.send(format!("✗ OSPF send error: {}", e));
+                                    }
+                                }
+                            } else {
+                                warn!("OSPF Custom result has invalid packet data");
+                                let _ = _status_tx.send("[WARN] OSPF Custom result has invalid packet data".to_string());
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Fallback: Check for legacy Output results
                     if let Some(output_data) = protocol_result.get_all_output().first() {
-                        // Send OSPF packet to multicast (AllSPFRouters)
-                        // TODO: Support unicast destinations from LLM action
+                        // Send to default multicast
                         match Self::send_ospf_packet(ospf_state.socket_fd, OSPF_ALL_SPF_ROUTERS, output_data) {
                             Ok(()) => {
-                                debug!("OSPF sent {} bytes to multicast", output_data.len());
+                                debug!("OSPF sent {} bytes to multicast (legacy)", output_data.len());
                                 let _ = _status_tx.send(format!("[DEBUG] OSPF sent {} bytes to multicast (224.0.0.5)", output_data.len()));
-
-                                // TRACE: Log packet hex
-                                trace!("OSPF sent (hex): {}", hex::encode(output_data));
-                                let _ = _status_tx.send(format!("[TRACE] OSPF sent (hex): {}", hex::encode(output_data)));
                             }
                             Err(e) => {
                                 error!("Failed to send OSPF packet: {}", e);
                                 let _ = _status_tx.send(format!("✗ OSPF send error: {}", e));
                             }
                         }
-                    } else {
-                        debug!("OSPF protocol result has no output data");
-                        let _ = _status_tx.send("[DEBUG] OSPF protocol result has no output data".to_string());
                     }
                 }
             }

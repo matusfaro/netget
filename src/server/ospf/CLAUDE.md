@@ -146,6 +146,20 @@ When OSPF Hello received:
 }
 ```
 
+**Send Database Description (unicast to specific neighbor)**:
+```json
+{
+  "type": "send_database_description",
+  "router_id": "1.1.1.1",
+  "area_id": "0.0.0.0",
+  "sequence": 12345,
+  "init": false,
+  "more": true,
+  "master": true,
+  "destination": "192.168.1.2"
+}
+```
+
 **Generate Fake Router LSA** (TODO):
 ```json
 {
@@ -277,9 +291,11 @@ unsafe {
   - LLM JSON responses converted to OSPF packets
   - Packets sent to multicast (224.0.0.5) by default
   - Full logging (dual tracing + status_tx)
+- Unicast destination support
+  - LLM can specify "multicast" (224.0.0.5), "dr_multicast" (224.0.0.6), or unicast IP (e.g., "192.168.1.2")
+  - Useful for targeted Database Description/LSU exchanges with specific neighbors
 
 ### 📋 TODO
-- Unicast destination support (send to specific neighbor instead of multicast)
 - LSA packet construction (Router, Network, Summary)
 - Database Description handling
 - LSR/LSU/LSAck handling
@@ -399,6 +415,198 @@ LLM generates:
   "links": [{"id": "192.168.99.0", "mask": "255.255.255.0", "metric": 1}]
 }
 ```
+
+## Missing Features & Implementation Guide
+
+### 1. LSA Packet Construction (Router, Network, Summary)
+
+**What's Missing**: Actions can send empty LSU packets, but can't construct LSA contents.
+
+**How to Implement**:
+1. Add LSA parameters to `send_link_state_update` action:
+   ```json
+   {
+     "type": "send_link_state_update",
+     "router_id": "1.1.1.1",
+     "lsas": [
+       {
+         "type": "router",  // Router LSA (Type 1)
+         "age": 0,
+         "sequence": 0x80000001,
+         "links": [
+           {"type": "stub", "id": "10.0.0.0", "data": "255.255.255.0", "metric": 10},
+           {"type": "transit", "id": "192.168.1.1", "data": "192.168.1.2", "metric": 1}
+         ]
+       }
+     ],
+     "destination": "multicast"
+   }
+   ```
+
+2. Update `execute_send_link_state_update()` in actions.rs:
+   - Parse `lsas` array from JSON
+   - For each LSA, serialize to OSPF LSA format:
+     - LSA header (20 bytes): age, options, type, link state ID, advertising router, sequence, checksum, length
+     - LSA body varies by type
+   - Router LSA (Type 1): links array with type, ID, data, metric
+   - Network LSA (Type 2): network mask + attached routers
+   - Summary LSA (Type 3): network + mask + metric
+
+3. LSA checksum: Use Fletcher checksum over LSA header+body (same as packet checksum but excludes age field)
+
+**Effort**: Medium (2-3 hours). Main challenge is LSA format serialization.
+
+**Priority**: Medium. Needed for full OSPF database exchange, but simulator works without it.
+
+### 2. Database Description Handling (DD Exchange)
+
+**What's Missing**: Can receive DD packets, but LLM doesn't track exchange state or LSA headers.
+
+**How to Implement**:
+1. Add DD event parsing in mod.rs:
+   - Extract DD flags (I, M, MS), sequence number, MTU
+   - Parse LSA headers from DD body (20 bytes each)
+   - Send structured JSON to LLM with LSA summaries
+
+2. Add connection state tracking:
+   - Current: `OspfNeighborState` is an enum (Down/Init/2-Way/...)
+   - Add: `dd_sequence: u32`, `dd_master: bool`, `lsa_requests: Vec<LsaHeader>`
+
+3. LLM prompt additions:
+   - "You received Database Description with LSA headers: ..."
+   - "You are master/slave in DD exchange"
+   - "Respond with your LSA headers or send LSR for missing LSAs"
+
+**Effort**: Low (1-2 hours). Mostly parsing + state tracking.
+
+**Priority**: High. Required for neighbor adjacency formation.
+
+### 3. LSR/LSU/LSAck Handling
+
+**What's Missing**: Can send these packet types (empty), but doesn't parse incoming ones or maintain state.
+
+**How to Implement**:
+1. Parse incoming LSR in mod.rs:
+   - Extract requested LSA identifiers (type, ID, advertising router)
+   - Send JSON event to LLM: `{"event": "ospf_lsr", "requests": [...]}`
+
+2. LLM decides:
+   - If we "have" the LSA → `send_link_state_update` with LSA content
+   - If we don't → ignore or log
+
+3. Parse incoming LSU:
+   - Extract LSAs from packet body
+   - Send to LLM: `{"event": "ospf_lsu", "lsas": [...]}`
+   - LLM can log, respond with LSAck, or ignore
+
+4. Parse incoming LSAck:
+   - Extract acknowledged LSA headers
+   - Send to LLM for logging
+
+**Effort**: Medium (2-3 hours). Parsing is straightforward, but LLM guidance needs refinement.
+
+**Priority**: Medium. Nice for completeness, but not critical for basic simulator.
+
+### 4. Periodic Hello Timer
+
+**What's Missing**: Server only responds to incoming packets. Doesn't proactively send Hellos.
+
+**How to Implement**:
+1. Use NetGet's scheduled tasks system (see CLAUDE.md § Scheduled Tasks):
+   ```rust
+   // In spawn_with_llm_actions, add server-scoped task
+   let hello_task = ScheduledTask {
+       task_id: "hello_broadcast".to_string(),
+       server_id: Some(server_id),
+       connection_id: None,  // Server-scoped
+       recurring: true,
+       interval_secs: Some(10),  // Every 10s
+       instruction: "Send OSPF Hello to multicast (224.0.0.5) with current DR/BDR state".to_string(),
+   };
+   ```
+
+2. LLM receives periodic prompt, responds with `send_hello` action
+
+3. Alternative: Implement in mod.rs with tokio::interval:
+   ```rust
+   let mut hello_timer = tokio::time::interval(Duration::from_secs(10));
+   loop {
+       tokio::select! {
+           _ = hello_timer.tick() => {
+               // Send multicast Hello
+           }
+           // ... packet receive logic
+       }
+   }
+   ```
+
+**Effort**: Low (1 hour with scheduled tasks, 2 hours with tokio::select).
+
+**Priority**: High. Required for maintaining neighbor relationships (40s dead timer).
+
+### 5. Dead Neighbor Detection (40s Timeout)
+
+**What's Missing**: Neighbors never time out. last_hello timestamp tracked but not checked.
+
+**How to Implement**:
+1. Add connection-scoped task for each neighbor:
+   ```rust
+   // When neighbor transitions to Init/2-Way
+   let timeout_task = ScheduledTask {
+       task_id: format!("neighbor_timeout_{}", neighbor_id),
+       server_id: Some(server_id),
+       connection_id: Some(connection_id),
+       recurring: false,
+       delay_secs: Some(40),
+       instruction: format!("Check if neighbor {} has sent Hello in last 40s. If not, mark Down.", neighbor_id),
+   };
+   ```
+
+2. Alternative: Background task in mod.rs:
+   ```rust
+   tokio::spawn(async move {
+       let mut check_timer = tokio::time::interval(Duration::from_secs(10));
+       loop {
+           check_timer.tick().await;
+           let now = Instant::now();
+           neighbors.lock().await.retain(|id, neighbor| {
+               if now.duration_since(neighbor.last_hello).as_secs() > 40 {
+                   warn!("Neighbor {} timed out", id);
+                   false
+               } else {
+                   true
+               }
+           });
+       }
+   });
+   ```
+
+**Effort**: Low (1 hour).
+
+**Priority**: High. Prevents stale neighbor state.
+
+### 6. DR/BDR Election Logic
+
+**What's Missing**: LLM manually claims DR/BDR via Hello priority. No automatic election.
+
+**How to Implement**:
+1. After receiving Hello from all neighbors, run election:
+   - Highest priority router with no DR → becomes DR
+   - Second-highest → becomes BDR
+   - In tie, highest router ID wins
+
+2. Update Hello responses:
+   - If we won election → send Hello with dr="our_ip"
+   - If we lost → send Hello with dr="winner_ip"
+
+3. Implementation options:
+   - **Pure LLM**: Send neighbor list + priorities to LLM, let it decide
+   - **Hybrid**: Run election in Rust, send result to LLM for approval
+   - **Manual**: Keep current behavior (LLM decides in prompts)
+
+**Effort**: Medium (2-3 hours for full election, 30min for hybrid).
+
+**Priority**: Low. Manual DR claiming works for simulator use case.
 
 ## References
 
