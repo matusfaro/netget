@@ -390,6 +390,10 @@ pub enum ProtocolConnectionInfo {
     Kafka {
         recent_requests: Vec<(String, Instant)>, // API type, time
     },
+    /// HTTP/3 connection (multiplexed streams over UDP)
+    Http3 {
+        stream_count: usize,  // Number of active bidirectional streams
+    },
 }
 
 /// VNC pixel format

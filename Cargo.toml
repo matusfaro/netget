@@ -55,7 +55,8 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd"]
+http3 = ["dep:quinn"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
+all-protocols = ["tcp", "http", "udp", "datalink", "dns", "dot", "doh", "dhcp", "ntp", "snmp", "ssh", "irc", "telnet", "smtp", "mdns", "mysql", "ipp", "postgresql", "redis", "proxy", "webdav", "nfs", "cassandra", "smb", "stun", "turn", "sip", "ldap", "imap", "mqtt", "socks5", "elasticsearch", "dynamo", "s3", "sqs", "openai", "jsonrpc", "wireguard", "openvpn", "ipsec", "bgp", "mcp", "grpc", "xmlrpc", "tor", "vnc", "openapi", "git", "kafka", "etcd", "http3"]
 e2e-tests = []  # Feature flag for E2E tests
 
 [dependencies]
@@ -260,6 +261,9 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
 
+# HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed - RFC 9114)
+quinn = { version = "0.11", optional = true }  # Async QUIC implementation for HTTP/3
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -335,6 +339,9 @@ git2 = "0.19"
 rumqttc = "0.24"
 # Kafka client for e2e integration tests
 rdkafka = "0.36"
+# HTTP/3 (QUIC) client for e2e integration tests
+quinn = "0.11"
+webpki-roots = "0.26"  # Root certificates for TLS verification
 
 [build-dependencies]
 # Protocol buffer compiler for etcd gRPC service
