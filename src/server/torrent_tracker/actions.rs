@@ -120,7 +120,7 @@ impl TorrentTrackerProtocol {
                 let ip = peer.get("ip").and_then(|v| v.as_str())?.to_string();
                 let port = peer.get("port").and_then(|v| v.as_u64())? as i64;
 
-                let mut dict = std::collections::BTreeMap::new();
+                let mut dict = std::collections::HashMap::new();
                 dict.insert(b"peer id".to_vec(), serde_bencode::value::Value::Bytes(peer_id));
                 dict.insert(b"ip".to_vec(), serde_bencode::value::Value::Bytes(ip.into_bytes()));
                 dict.insert(b"port".to_vec(), serde_bencode::value::Value::Int(port));
@@ -128,7 +128,7 @@ impl TorrentTrackerProtocol {
             }).collect::<Vec<_>>()
         }).unwrap_or_default();
 
-        let mut response_dict = std::collections::BTreeMap::new();
+        let mut response_dict = std::collections::HashMap::new();
         response_dict.insert(b"interval".to_vec(), serde_bencode::value::Value::Int(interval));
         response_dict.insert(b"complete".to_vec(), serde_bencode::value::Value::Int(complete));
         response_dict.insert(b"incomplete".to_vec(), serde_bencode::value::Value::Int(incomplete));
@@ -139,7 +139,7 @@ impl TorrentTrackerProtocol {
         let mut full_response = http_response.into_bytes();
         full_response.extend_from_slice(&bencode_data);
 
-        Ok(ActionResult::Output(vec![full_response]))
+        Ok(ActionResult::Output(full_response))
     }
 
     fn execute_send_scrape_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -150,15 +150,15 @@ impl TorrentTrackerProtocol {
                 let downloaded = stats.get("downloaded").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
                 let incomplete = stats.get("incomplete").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
 
-                let mut stats_dict = std::collections::BTreeMap::new();
+                let mut stats_dict = std::collections::HashMap::new();
                 stats_dict.insert(b"complete".to_vec(), serde_bencode::value::Value::Int(complete));
                 stats_dict.insert(b"downloaded".to_vec(), serde_bencode::value::Value::Int(downloaded));
                 stats_dict.insert(b"incomplete".to_vec(), serde_bencode::value::Value::Int(incomplete));
                 Some((info_hash, serde_bencode::value::Value::Dict(stats_dict)))
-            }).collect::<std::collections::BTreeMap<_, _>>()
+            }).collect::<std::collections::HashMap<_, _>>()
         }).unwrap_or_default();
 
-        let mut response_dict = std::collections::BTreeMap::new();
+        let mut response_dict = std::collections::HashMap::new();
         response_dict.insert(b"files".to_vec(), serde_bencode::value::Value::Dict(files));
 
         let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response_dict))?;
@@ -166,13 +166,13 @@ impl TorrentTrackerProtocol {
         let mut full_response = http_response.into_bytes();
         full_response.extend_from_slice(&bencode_data);
 
-        Ok(ActionResult::Output(vec![full_response]))
+        Ok(ActionResult::Output(full_response))
     }
 
     fn execute_send_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let error_message = action.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
 
-        let mut response_dict = std::collections::BTreeMap::new();
+        let mut response_dict = std::collections::HashMap::new();
         response_dict.insert(b"failure reason".to_vec(), serde_bencode::value::Value::Bytes(error_message.as_bytes().to_vec()));
 
         let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response_dict))?;
@@ -180,7 +180,7 @@ impl TorrentTrackerProtocol {
         let mut full_response = http_response.into_bytes();
         full_response.extend_from_slice(&bencode_data);
 
-        Ok(ActionResult::Output(vec![full_response]))
+        Ok(ActionResult::Output(full_response))
     }
 }
 

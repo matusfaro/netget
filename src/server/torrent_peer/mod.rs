@@ -155,7 +155,7 @@ impl TorrentPeerServer {
 
                         // Create event for LLM
                         let event = Event::new(
-                            "peer_handshake",
+                            &actions::PEER_HANDSHAKE_EVENT,
                             serde_json::json!({
                                 "info_hash": info_hash,
                                 "peer_id": peer_id,
@@ -202,10 +202,13 @@ impl TorrentPeerServer {
                         let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer message type: {}", message_type));
 
                         // Create event for LLM
-                        let event = Event::new(
-                            &format!("peer_{}_message", message_type),
-                            message_data,
-                        );
+                        let event_type = match message_type.as_str() {
+                            "choke" => &actions::PEER_CHOKE_MESSAGE_EVENT,
+                            "request" => &actions::PEER_REQUEST_MESSAGE_EVENT,
+                            "bitfield" => &actions::PEER_BITFIELD_MESSAGE_EVENT,
+                            _ => &actions::PEER_CHOKE_MESSAGE_EVENT, // Default
+                        };
+                        let event = Event::new(event_type, message_data);
 
                         debug!("BitTorrent Peer calling LLM for {} message", message_type);
                         let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer calling LLM for {} message", message_type));
@@ -245,7 +248,7 @@ impl TorrentPeerServer {
     }
 
     async fn process_llm_response(
-        execution_result: crate::llm::action_helper::ActionExecutionResult,
+        execution_result: crate::llm::actions::executor::ExecutionResult,
         write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
         peer_addr: SocketAddr,
         status_tx: &mpsc::UnboundedSender<String>,
@@ -263,7 +266,7 @@ impl TorrentPeerServer {
 
         // Send responses
         for protocol_result in execution_result.protocol_results {
-            for output_data in protocol_result.get_all_output() {
+            if let Some(output_data) = protocol_result.get_all_output().first() {
                 let mut write = write_half.lock().await;
                 write.write_all(output_data).await?;
 

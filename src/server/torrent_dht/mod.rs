@@ -89,10 +89,13 @@ impl TorrentDhtServer {
                                     let _ = status_clone.send(format!("[DEBUG] BitTorrent DHT query type: {}", query_type));
 
                                     // Create event for LLM
-                                    let event = Event::new(
-                                        &format!("dht_{}_query", query_type),
-                                        serde_json::json!(params),
-                                    );
+                                    let event_type = match query_type.as_str() {
+                                        "ping" => &actions::DHT_PING_QUERY_EVENT,
+                                        "find_node" => &actions::DHT_FIND_NODE_QUERY_EVENT,
+                                        "get_peers" => &actions::DHT_GET_PEERS_QUERY_EVENT,
+                                        _ => &actions::DHT_PING_QUERY_EVENT, // Default to ping
+                                    };
+                                    let event = Event::new(event_type, serde_json::json!(params));
 
                                     debug!("BitTorrent DHT calling LLM for {} query", query_type);
                                     let _ = status_clone.send(format!("[DEBUG] BitTorrent DHT calling LLM for {} query", query_type));
