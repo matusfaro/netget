@@ -6272,6 +6272,7 @@ dependencies = [
  "ldap3",
  "ldap3_proto",
  "lettre",
+ "libc",
  "matchit 0.8.6",
  "mdns-sd",
  "mysql_async",

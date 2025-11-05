@@ -112,32 +112,39 @@ Tests manually construct IGMPv2 packets:
 
 ### Transport
 
-Since the current IGMP implementation uses UDP as a placeholder for raw sockets:
-- Tests use `std::net::UdpSocket`
-- Packets sent to server's bound port
-- Production would use raw IP sockets (protocol 2)
+**Implementation**: IGMP server uses raw IP sockets (IPPROTO_IGMP)
+
+**Testing**: Tests use `std::net::UdpSocket` for simplicity
+- Tests send raw IGMP packets via UDP to server port
+- Server implementation uses actual raw sockets with root privileges
+- Test approach validates protocol logic without requiring root for test execution
+
+**Production**: Server uses `libc::socket()` with SOCK_RAW and IPPROTO_IGMP
 
 ## Known Limitations
 
-### 1. UDP Transport vs Raw Sockets
+### 1. Test Transport
 
-**Issue**: Tests use UDP instead of raw IP sockets with IPPROTO_IGMP
+**Note**: Tests use UDP sockets while server uses raw IP sockets
 
-**Reason**: Raw sockets require root privileges and are platform-specific
+**Reason**:
+- Avoids requiring root privileges for test execution
+- Simplifies test setup and CI/CD integration
+- Server still receives/processes packets correctly
 
-**Impact**: Tests verify protocol logic but not true raw socket handling
+**Impact**: Tests verify protocol logic and LLM decision-making
 
-**Workaround**: Current implementation uses UDP socket for testing. Production deployment would use `socket2::Socket` with `SOCK_RAW`.
+**Production Deployment**: Server requires root or CAP_NET_RAW capability
 
-### 2. Multicast Join/Leave
+### 2. Real Network Testing
 
-**Issue**: Tests don't verify actual multicast socket operations
+**Limitation**: Tests use localhost loopback
 
-**Reason**: Current implementation simulates join/leave in state tracking
+**Reason**: Privacy and offline operation requirements
 
-**Impact**: Tests verify LLM decision-making but not kernel multicast membership
+**Impact**: Doesn't test actual multicast routing on real networks
 
-**Future**: When raw socket support is added, tests should verify multicast group membership via socket options.
+**For Production**: Test on real multicast-enabled network with routers sending queries
 
 ### 3. Report Suppression Timing
 
