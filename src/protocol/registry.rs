@@ -72,6 +72,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "dhcp")]
         self.register(Arc::new(crate::server::DhcpProtocol::new()));
 
+        #[cfg(feature = "bootp")]
+        self.register(Arc::new(crate::server::BootpProtocol::new()));
+
         #[cfg(feature = "ntp")]
         self.register(Arc::new(crate::server::NtpProtocol::new()));
 

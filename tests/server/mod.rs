@@ -12,6 +12,8 @@ pub mod cassandra;
 pub mod datalink;
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
+#[cfg(feature = "bootp")]
+pub mod bootp;
 #[cfg(feature = "dns")]
 pub mod dns;
 #[cfg(feature = "dot")]
