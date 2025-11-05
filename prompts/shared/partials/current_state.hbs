@@ -8,7 +8,7 @@
 - **Port**: {{active_server.port}}
 - **Status**: {{active_server.status}}
 - **Memory**: {{#if active_server.memory}}{{active_server.memory}}{{else}}(empty){{/if}}
-{{else if servers}}
+{{else if servers.length}}
 ## Running Servers
 
 You may be asked to update these servers and you need to refer to them by number:
@@ -17,31 +17,19 @@ You may be asked to update these servers and you need to refer to them by number
 - Server #{{this.id}}: **{{this.protocol_name}}** on port {{this.port}} ({{this.status}})
 {{/each}}
 {{else}}
-## No Active Servers
-
-The application is in {{mode}} mode with no active servers.
+No servers currently running.
 {{/if}}
 
-{{#if system_capabilities}}
 ## System Capabilities
 
-{{#if system_capabilities.is_root}}
-- **Running as root** - Can bind to privileged ports (< 1024)
+{{#if can_bind_privileged_ports}}
+- **Privileged ports (<1024)**: ✓ Available
 {{else}}
-- **Not running as root** - Cannot bind to privileged ports (< 1024)
+- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 {{/if}}
 
-{{#if system_capabilities.available_ports}}
-Available ports for binding:
-{{#each system_capabilities.available_ports}}
-- {{this}}
-{{/each}}
-{{/if}}
-
-{{#if system_capabilities.unavailable_ports}}
-Ports that cannot be used (already in use or restricted):
-{{#each system_capabilities.unavailable_ports}}
-- {{this}}: {{this.reason}}
-{{/each}}
-{{/if}}
+{{#if has_raw_socket_access}}
+- **Raw socket access**: ✓ Available
+{{else}}
+- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
 {{/if}}
