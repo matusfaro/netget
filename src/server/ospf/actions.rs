@@ -68,67 +68,10 @@ impl OspfProtocol {
 
         debug!("OSPF sending Hello: router_id={}, area={}, priority={}, dest={}", router_id, area_id, priority, destination);
 
-        // Build OSPF Hello packet
-        let mut msg = Vec::new();
-
-        // OSPF Header (24 bytes)
-        msg.push(2); // Version = 2 (OSPFv2)
-        msg.push(1); // Type = 1 (Hello)
-        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
-
-        // Router ID
-        let router_id_bytes = Self::parse_ipv4(router_id)?;
-        msg.extend_from_slice(&router_id_bytes);
-
-        // Area ID
-        let area_id_bytes = Self::parse_ipv4(area_id)?;
-        msg.extend_from_slice(&area_id_bytes);
-
-        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
-        msg.extend_from_slice(&[0, 0]); // AuType = 0 (no authentication)
-        msg.extend_from_slice(&[0; 8]); // Authentication (8 bytes, zeros)
-
-        // Hello packet body
-        let network_mask_bytes = Self::parse_ipv4(network_mask)?;
-        msg.extend_from_slice(&network_mask_bytes);
-
-        msg.extend_from_slice(&hello_interval.to_be_bytes());
-        msg.push(0); // Options (0 for now)
-        msg.push(priority);
-        msg.extend_from_slice(&router_dead_interval.to_be_bytes());
-
-        // Designated Router
-        let dr_bytes = Self::parse_ipv4(dr)?;
-        msg.extend_from_slice(&dr_bytes);
-
-        // Backup Designated Router
-        let bdr_bytes = Self::parse_ipv4(bdr)?;
-        msg.extend_from_slice(&bdr_bytes);
-
-        // Neighbor list (from action if provided)
-        if let Some(neighbors) = action.get("neighbors").and_then(|v| v.as_array()) {
-            for neighbor in neighbors {
-                if let Some(neighbor_id) = neighbor.as_str() {
-                    let neighbor_bytes = Self::parse_ipv4(neighbor_id)?;
-                    msg.extend_from_slice(&neighbor_bytes);
-                }
-            }
-        }
-
-        // Update packet length
-        let packet_len = msg.len() as u16;
-        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
-
-        // Calculate and update checksum
-        let checksum = Self::calculate_checksum(&msg);
-        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
-
+        // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
-            name: "ospf_packet".to_string(),
-            data: json!({
-                "packet": msg,
-                "destination": destination,
-            }),
+            name: "ospf_action".to_string(),
+            data: action.clone(),
         })
     }
 
@@ -160,51 +103,10 @@ impl OspfProtocol {
 
         debug!("OSPF sending Database Description: seq={}, init={}, more={}, master={}, dest={}", sequence, init, more, master, destination);
 
-        // Build OSPF Database Description packet
-        let mut msg = Vec::new();
-
-        // OSPF Header
-        msg.push(2); // Version
-        msg.push(2); // Type = 2 (Database Description)
-        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
-
-        let router_id_bytes = Self::parse_ipv4(router_id)?;
-        msg.extend_from_slice(&router_id_bytes);
-
-        let area_id_bytes = Self::parse_ipv4(area_id)?;
-        msg.extend_from_slice(&area_id_bytes);
-
-        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
-        msg.extend_from_slice(&[0, 0]); // AuType
-        msg.extend_from_slice(&[0; 8]); // Authentication
-
-        // DD packet body
-        msg.extend_from_slice(&[0, 0]); // Interface MTU
-        msg.push(0); // Options
-
-        // Flags byte
-        let mut flags: u8 = 0;
-        if init { flags |= 0x04; }
-        if more { flags |= 0x02; }
-        if master { flags |= 0x01; }
-        msg.push(flags);
-
-        msg.extend_from_slice(&sequence.to_be_bytes());
-
-        // LSA headers would go here (simplified - empty for now)
-
-        // Update packet length and checksum
-        let packet_len = msg.len() as u16;
-        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
-        let checksum = Self::calculate_checksum(&msg);
-        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
-
+        // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
-            name: "ospf_packet".to_string(),
-            data: json!({
-                "packet": msg,
-                "destination": destination,
-            }),
+            name: "ospf_action".to_string(),
+            data: action.clone(),
         })
     }
 
@@ -227,38 +129,10 @@ impl OspfProtocol {
 
         debug!("OSPF sending Link State Request to {}", destination);
 
-        // Build OSPF Link State Request packet
-        let mut msg = Vec::new();
-
-        // OSPF Header
-        msg.push(2); // Version
-        msg.push(3); // Type = 3 (Link State Request)
-        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
-
-        let router_id_bytes = Self::parse_ipv4(router_id)?;
-        msg.extend_from_slice(&router_id_bytes);
-
-        let area_id_bytes = Self::parse_ipv4(area_id)?;
-        msg.extend_from_slice(&area_id_bytes);
-
-        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
-        msg.extend_from_slice(&[0, 0]); // AuType
-        msg.extend_from_slice(&[0; 8]); // Authentication
-
-        // LSR body (simplified - would contain list of requested LSAs)
-
-        // Update packet length and checksum
-        let packet_len = msg.len() as u16;
-        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
-        let checksum = Self::calculate_checksum(&msg);
-        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
-
+        // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
-            name: "ospf_packet".to_string(),
-            data: json!({
-                "packet": msg,
-                "destination": destination,
-            }),
+            name: "ospf_action".to_string(),
+            data: action.clone(),
         })
     }
 
@@ -281,41 +155,10 @@ impl OspfProtocol {
 
         debug!("OSPF sending Link State Update to {}", destination);
 
-        // Build OSPF Link State Update packet
-        let mut msg = Vec::new();
-
-        // OSPF Header
-        msg.push(2); // Version
-        msg.push(4); // Type = 4 (Link State Update)
-        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
-
-        let router_id_bytes = Self::parse_ipv4(router_id)?;
-        msg.extend_from_slice(&router_id_bytes);
-
-        let area_id_bytes = Self::parse_ipv4(area_id)?;
-        msg.extend_from_slice(&area_id_bytes);
-
-        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
-        msg.extend_from_slice(&[0, 0]); // AuType
-        msg.extend_from_slice(&[0; 8]); // Authentication
-
-        // Number of LSAs
-        msg.extend_from_slice(&[0, 0, 0, 0]); // 0 LSAs (simplified)
-
-        // LSAs would go here
-
-        // Update packet length and checksum
-        let packet_len = msg.len() as u16;
-        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
-        let checksum = Self::calculate_checksum(&msg);
-        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
-
+        // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
-            name: "ospf_packet".to_string(),
-            data: json!({
-                "packet": msg,
-                "destination": destination,
-            }),
+            name: "ospf_action".to_string(),
+            data: action.clone(),
         })
     }
 
@@ -338,38 +181,10 @@ impl OspfProtocol {
 
         debug!("OSPF sending Link State Acknowledgment to {}", destination);
 
-        // Build OSPF Link State Acknowledgment packet
-        let mut msg = Vec::new();
-
-        // OSPF Header
-        msg.push(2); // Version
-        msg.push(5); // Type = 5 (Link State Acknowledgment)
-        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
-
-        let router_id_bytes = Self::parse_ipv4(router_id)?;
-        msg.extend_from_slice(&router_id_bytes);
-
-        let area_id_bytes = Self::parse_ipv4(area_id)?;
-        msg.extend_from_slice(&area_id_bytes);
-
-        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
-        msg.extend_from_slice(&[0, 0]); // AuType
-        msg.extend_from_slice(&[0; 8]); // Authentication
-
-        // LSA headers to acknowledge would go here
-
-        // Update packet length and checksum
-        let packet_len = msg.len() as u16;
-        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
-        let checksum = Self::calculate_checksum(&msg);
-        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
-
+        // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
-            name: "ospf_packet".to_string(),
-            data: json!({
-                "packet": msg,
-                "destination": destination,
-            }),
+            name: "ospf_action".to_string(),
+            data: action.clone(),
         })
     }
 
@@ -406,6 +221,185 @@ impl OspfProtocol {
         let y = (510 - c0 - x) % 255;
 
         ((x as u16) << 8) | (y as u16)
+    }
+
+    /// Build OSPF Hello packet from action data
+    pub fn build_hello_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
+        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let network_mask = action.get("network_mask").and_then(|v| v.as_str()).unwrap_or("255.255.255.0");
+        let hello_interval = action.get("hello_interval").and_then(|v| v.as_u64()).unwrap_or(10) as u16;
+        let router_dead_interval = action.get("router_dead_interval").and_then(|v| v.as_u64()).unwrap_or(40) as u32;
+        let priority = action.get("priority").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+        let dr = action.get("dr").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let bdr = action.get("bdr").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+
+        let mut msg = Vec::new();
+
+        // OSPF Header (24 bytes)
+        msg.push(2); // Version = 2 (OSPFv2)
+        msg.push(1); // Type = 1 (Hello)
+        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
+        msg.extend_from_slice(&Self::parse_ipv4(router_id)?);
+        msg.extend_from_slice(&Self::parse_ipv4(area_id)?);
+        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
+        msg.extend_from_slice(&[0, 0]); // AuType = 0 (no authentication)
+        msg.extend_from_slice(&[0; 8]); // Authentication (8 bytes, zeros)
+
+        // Hello packet body
+        msg.extend_from_slice(&Self::parse_ipv4(network_mask)?);
+        msg.extend_from_slice(&hello_interval.to_be_bytes());
+        msg.push(0); // Options
+        msg.push(priority);
+        msg.extend_from_slice(&router_dead_interval.to_be_bytes());
+        msg.extend_from_slice(&Self::parse_ipv4(dr)?);
+        msg.extend_from_slice(&Self::parse_ipv4(bdr)?);
+
+        // Neighbor list
+        if let Some(neighbors) = action.get("neighbors").and_then(|v| v.as_array()) {
+            for neighbor in neighbors {
+                if let Some(neighbor_id) = neighbor.as_str() {
+                    msg.extend_from_slice(&Self::parse_ipv4(neighbor_id)?);
+                }
+            }
+        }
+
+        // Update packet length and checksum
+        let packet_len = msg.len() as u16;
+        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
+        let checksum = Self::calculate_checksum(&msg);
+        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
+
+        Ok(msg)
+    }
+
+    /// Build OSPF Database Description packet from action data
+    pub fn build_database_description_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
+        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let sequence = action.get("sequence").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let init = action.get("init").and_then(|v| v.as_bool()).unwrap_or(false);
+        let more = action.get("more").and_then(|v| v.as_bool()).unwrap_or(false);
+        let master = action.get("master").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let mut msg = Vec::new();
+
+        // OSPF Header
+        msg.push(2); // Version
+        msg.push(2); // Type = 2 (Database Description)
+        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
+        msg.extend_from_slice(&Self::parse_ipv4(router_id)?);
+        msg.extend_from_slice(&Self::parse_ipv4(area_id)?);
+        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
+        msg.extend_from_slice(&[0, 0]); // AuType
+        msg.extend_from_slice(&[0; 8]); // Authentication
+
+        // DD packet body
+        msg.extend_from_slice(&[0, 0]); // Interface MTU
+        msg.push(0); // Options
+        let mut flags: u8 = 0;
+        if init { flags |= 0x04; }
+        if more { flags |= 0x02; }
+        if master { flags |= 0x01; }
+        msg.push(flags);
+        msg.extend_from_slice(&sequence.to_be_bytes());
+
+        // LSA headers would go here (simplified - empty for now)
+
+        // Update packet length and checksum
+        let packet_len = msg.len() as u16;
+        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
+        let checksum = Self::calculate_checksum(&msg);
+        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
+
+        Ok(msg)
+    }
+
+    /// Build OSPF Link State Request packet from action data
+    pub fn build_link_state_request_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
+        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+
+        let mut msg = Vec::new();
+
+        // OSPF Header
+        msg.push(2); // Version
+        msg.push(3); // Type = 3 (Link State Request)
+        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
+        msg.extend_from_slice(&Self::parse_ipv4(router_id)?);
+        msg.extend_from_slice(&Self::parse_ipv4(area_id)?);
+        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
+        msg.extend_from_slice(&[0, 0]); // AuType
+        msg.extend_from_slice(&[0; 8]); // Authentication
+
+        // LSR body (simplified - would contain list of requested LSAs)
+
+        // Update packet length and checksum
+        let packet_len = msg.len() as u16;
+        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
+        let checksum = Self::calculate_checksum(&msg);
+        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
+
+        Ok(msg)
+    }
+
+    /// Build OSPF Link State Update packet from action data
+    pub fn build_link_state_update_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
+        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+
+        let mut msg = Vec::new();
+
+        // OSPF Header
+        msg.push(2); // Version
+        msg.push(4); // Type = 4 (Link State Update)
+        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
+        msg.extend_from_slice(&Self::parse_ipv4(router_id)?);
+        msg.extend_from_slice(&Self::parse_ipv4(area_id)?);
+        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
+        msg.extend_from_slice(&[0, 0]); // AuType
+        msg.extend_from_slice(&[0; 8]); // Authentication
+
+        // Number of LSAs
+        msg.extend_from_slice(&[0, 0, 0, 0]); // 0 LSAs (simplified)
+
+        // LSAs would go here
+
+        // Update packet length and checksum
+        let packet_len = msg.len() as u16;
+        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
+        let checksum = Self::calculate_checksum(&msg);
+        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
+
+        Ok(msg)
+    }
+
+    /// Build OSPF Link State Acknowledgment packet from action data
+    pub fn build_link_state_ack_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
+        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+
+        let mut msg = Vec::new();
+
+        // OSPF Header
+        msg.push(2); // Version
+        msg.push(5); // Type = 5 (Link State Acknowledgment)
+        msg.extend_from_slice(&[0, 0]); // Packet Length (placeholder)
+        msg.extend_from_slice(&Self::parse_ipv4(router_id)?);
+        msg.extend_from_slice(&Self::parse_ipv4(area_id)?);
+        msg.extend_from_slice(&[0, 0]); // Checksum (placeholder)
+        msg.extend_from_slice(&[0, 0]); // AuType
+        msg.extend_from_slice(&[0; 8]); // Authentication
+
+        // LSA headers to acknowledge would go here
+
+        // Update packet length and checksum
+        let packet_len = msg.len() as u16;
+        msg[2..4].copy_from_slice(&packet_len.to_be_bytes());
+        let checksum = Self::calculate_checksum(&msg);
+        msg[12..14].copy_from_slice(&checksum.to_be_bytes());
+
+        Ok(msg)
     }
 }
 
