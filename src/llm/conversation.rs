@@ -14,6 +14,36 @@ use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+/// Extract reasoning from LLM response and return (reasoning, cleaned_response)
+///
+/// Looks for `<reasoning>...</reasoning>` tags in the response, extracts the content,
+/// and returns a cleaned response with the tags removed.
+///
+/// # Arguments
+/// * `response` - The raw LLM response text
+///
+/// # Returns
+/// * `(Option<String>, String)` - Reasoning content (if found) and cleaned response
+fn extract_reasoning(response: &str) -> (Option<String>, String) {
+    let reasoning_start = response.find("<reasoning>");
+    let reasoning_end = response.find("</reasoning>");
+
+    match (reasoning_start, reasoning_end) {
+        (Some(start), Some(end)) if end > start => {
+            // Extract reasoning content (between tags)
+            let reasoning_content = response[start + 11..end].trim().to_string();
+
+            // Remove the entire reasoning tag (including tags themselves)
+            let before = &response[..start];
+            let after = &response[end + 12..];
+            let cleaned = format!("{}{}", before, after).trim().to_string();
+
+            (Some(reasoning_content), cleaned)
+        }
+        _ => (None, response.to_string()),
+    }
+}
+
 /// Conversation handler for multi-turn LLM interactions
 pub struct ConversationHandler {
     /// Unique conversation ID for tracking
@@ -256,17 +286,17 @@ impl ConversationHandler {
             );
 
             // Generate response from LLM
-            let response_text = self
+            let (original_response, cleaned_response) = self
                 .generate_with_retry()
                 .await
                 .context("Failed to generate valid response after retries")?;
 
-            // Add assistant's response to conversation history
+            // Add assistant's response to conversation history (with reasoning preserved)
             self.messages
-                .push(Message::assistant(response_text.clone()));
+                .push(Message::assistant(original_response.clone()));
 
-            // Parse as action response
-            let action_response = ActionResponse::from_str(&response_text)
+            // Parse as action response (using cleaned response without reasoning tags)
+            let action_response = ActionResponse::from_str(&cleaned_response)
                 .context("Failed to parse action response (should not happen after retry)")?;
 
             // Separate tool calls from regular actions
@@ -416,7 +446,11 @@ impl ConversationHandler {
     ///
     /// Attempts to get a valid ActionResponse from the LLM. If parsing fails,
     /// sends a corrective message and retries once.
-    async fn generate_with_retry(&mut self) -> Result<String> {
+    ///
+    /// Returns (original_response, cleaned_response):
+    /// - original_response: Response with reasoning tags (for conversation history)
+    /// - cleaned_response: Response with reasoning stripped (for JSON parsing)
+    async fn generate_with_retry(&mut self) -> Result<(String, String)> {
         for attempt in 1..=self.max_retries + 1 {
             info!("LLM request (attempt {}/{})", attempt, self.max_retries + 1);
             debug!("Message count: {}", self.messages.len());
@@ -504,9 +538,20 @@ impl ConversationHandler {
                 response_text.len()
             );
 
-            // Normalize the response: collapse whitespace and remove extra newlines
+            // Extract reasoning if present (before normalization to preserve formatting)
+            let (reasoning, cleaned_response) = extract_reasoning(&response_text);
+
+            // Log reasoning at TRACE level if present
+            if let Some(ref reasoning_text) = reasoning {
+                trace!("LLM Reasoning: {}", reasoning_text);
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!("[TRACE] Reasoning: {}", reasoning_text));
+                }
+            }
+
+            // Normalize the cleaned response: collapse whitespace and remove extra newlines
             // This handles cases where LLM returns formatted JSON with lots of whitespace
-            let normalized_response = response_text
+            let normalized_response = cleaned_response
                 .lines()
                 .map(|line| line.trim())
                 .collect::<Vec<_>>()
@@ -555,8 +600,8 @@ impl ConversationHandler {
                     } else {
                         info!("✓ Valid response format on first attempt");
                     }
-                    // Return normalized response (it's valid JSON without extra whitespace)
-                    return Ok(normalized_response);
+                    // Return both original (with reasoning) and normalized (for parsing)
+                    return Ok((response_text.clone(), normalized_response));
                 }
                 Err(e) => {
                     if attempt <= self.max_retries {
@@ -737,5 +782,131 @@ impl ConversationHandler {
         } else {
             warn!("Could not find '# Current State' section in system message");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_reasoning_with_tag() {
+        let response = r#"<reasoning>User wants HTTP server on port 8080</reasoning>
+{"actions": [{"type": "open_server", "port": 8080}]}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        assert_eq!(
+            reasoning,
+            Some("User wants HTTP server on port 8080".to_string())
+        );
+        assert!(cleaned.contains(r#"{"actions"#));
+        assert!(!cleaned.contains("<reasoning>"));
+        assert!(!cleaned.contains("</reasoning>"));
+    }
+
+    #[test]
+    fn test_extract_reasoning_without_tag() {
+        let response = r#"{"actions": [{"type": "show_message"}]}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        assert_eq!(reasoning, None);
+        assert_eq!(cleaned, response);
+    }
+
+    #[test]
+    fn test_extract_reasoning_multiline() {
+        let response = r#"<reasoning>
+User wants HTTP server.
+Port 8080 specified.
+No conflicts.
+</reasoning>
+{"actions": []}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        assert!(reasoning.is_some());
+        let reasoning_text = reasoning.unwrap();
+        assert!(reasoning_text.contains("User wants HTTP server"));
+        assert!(reasoning_text.contains("Port 8080 specified"));
+        assert!(reasoning_text.contains("No conflicts"));
+        assert!(cleaned.contains(r#"{"actions"#));
+        assert!(!cleaned.contains("<reasoning>"));
+    }
+
+    #[test]
+    fn test_extract_reasoning_after_json() {
+        let response = r#"{"actions": []}
+<reasoning>This came after the JSON</reasoning>"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        assert_eq!(reasoning, Some("This came after the JSON".to_string()));
+        assert_eq!(cleaned.trim(), r#"{"actions": []}"#);
+    }
+
+    #[test]
+    fn test_extract_reasoning_in_middle() {
+        let response = r#"Some text before
+<reasoning>Explanation here</reasoning>
+Some text after"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        assert_eq!(reasoning, Some("Explanation here".to_string()));
+        assert!(cleaned.contains("Some text before"));
+        assert!(cleaned.contains("Some text after"));
+        assert!(!cleaned.contains("<reasoning>"));
+    }
+
+    #[test]
+    fn test_malformed_reasoning_tag_no_closing() {
+        let response = r#"<reasoning>Missing closing tag
+{"actions": []}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        // Should not extract if tag is malformed
+        assert_eq!(reasoning, None);
+        assert_eq!(cleaned, response);
+    }
+
+    #[test]
+    fn test_malformed_reasoning_tag_no_opening() {
+        let response = r#"Missing opening tag
+</reasoning>
+{"actions": []}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        // Should not extract if tag is malformed
+        assert_eq!(reasoning, None);
+        assert_eq!(cleaned, response);
+    }
+
+    #[test]
+    fn test_extract_reasoning_with_whitespace() {
+        let response = r#"  <reasoning>  Lots of whitespace  </reasoning>
+{"actions": []}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        // Reasoning content should be trimmed
+        assert_eq!(reasoning, Some("Lots of whitespace".to_string()));
+        // Cleaned response should have reasoning removed and be trimmed
+        assert!(cleaned.starts_with("{\"actions"));
+    }
+
+    #[test]
+    fn test_extract_reasoning_empty_tag() {
+        let response = r#"<reasoning></reasoning>
+{"actions": []}"#;
+
+        let (reasoning, cleaned) = extract_reasoning(response);
+
+        // Empty reasoning is valid but will be empty string after trim
+        assert_eq!(reasoning, Some("".to_string()));
+        assert!(cleaned.contains(r#"{"actions"#));
     }
 }
