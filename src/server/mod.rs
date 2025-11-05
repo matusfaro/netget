@@ -14,7 +14,7 @@ pub mod socket_helpers;
 pub mod http_common;
 
 // TLS certificate management for DoT, DoH, and TLS protocols
-#[cfg(any(feature = "dot", feature = "doh", feature = "tls"))]
+#[cfg(any(feature = "dot", feature = "doh", feature = "smtp", feature = "tls"))]
 pub mod tls_cert_manager;
 
 #[cfg(feature = "tcp")]
@@ -158,6 +158,13 @@ pub use ssh::sftp_handler::LlmSftpHandler;
 pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshProtocol;
+
+#[cfg(feature = "svn")]
+pub mod svn;
+#[cfg(feature = "svn")]
+pub use svn::SvnServer;
+#[cfg(feature = "svn")]
+pub use svn::actions::SvnProtocol;
 
 #[cfg(feature = "irc")]
 pub mod irc;
