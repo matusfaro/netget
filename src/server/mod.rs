@@ -27,6 +27,13 @@ pub use http::HttpServer;
 #[cfg(feature = "http")]
 pub use http::actions::HttpProtocol;
 
+#[cfg(feature = "pypi")]
+pub mod pypi;
+#[cfg(feature = "pypi")]
+pub use pypi::PypiServer;
+#[cfg(feature = "pypi")]
+pub use pypi::actions::PypiProtocol;
+
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "datalink")]

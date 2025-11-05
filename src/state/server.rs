@@ -134,6 +134,10 @@ pub enum ProtocolConnectionInfo {
     Http {
         recent_requests: Vec<(String, String, Instant)>, // method, path, time
     },
+    /// PyPI connection (recent requests)
+    Pypi {
+        recent_requests: Vec<String>, // URIs
+    },
     /// SNMP connection (recent requests)
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
