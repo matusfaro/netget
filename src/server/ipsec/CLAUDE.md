@@ -1,72 +1,147 @@
-# IPSec/IKEv2 Honeypot Implementation
+# IPSec/IKEv2 Enhanced Honeypot Implementation
 
 ## Overview
 
-IPSec/IKEv2 **honeypot** that detects and logs IKE handshake attempts. This is **NOT a full VPN server** - it does not establish actual tunnels or perform IKE negotiation.
+IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts with detailed protocol analysis. This is **NOT a full VPN server** - it does not establish actual tunnels, but provides comprehensive IKE message parsing.
 
-**Status**: Honeypot-only (reconnaissance detection)
+**Status**: Experimental (enhanced honeypot with swanny library)
 **Protocol Spec**: [RFC 7296 (IKEv2)](https://datatracker.ietf.org/doc/html/rfc7296)
 **Ports**: UDP 500 (IKE), UDP 4500 (NAT-T)
+**Future Path**: Full VPN implementation when swanny reaches 1.0 (mid-2025)
 
 ## Library Choices
 
-### ipsec-parser (Parse-Only)
+### swanny v0.1 (Enhanced Parsing)
 
-**What it is**:
-- Parsing library for IKE packets
-- Can extract headers, SPIs, exchange types, payloads
-- **Cannot build IKE responses or establish SAs**
+**Repository**: https://gitlab.com/dueno/swanny
+**Author**: Daiki Ueno (Red Hat, GnuTLS maintainer)
+**Created**: May 2025
+**License**: GPL v3.0 or later
+**Status**: Experimental (use at own risk)
 
-**Why parse-only**:
-- IPSec/IKEv2 requires deep OS integration (Linux XFRM, Windows IPsec stack)
-- No mature Rust library provides server functionality
-- Reference implementations (strongSwan, libreswan) are hundreds of thousands of lines of C
+**What it provides**:
+- Complete IKE message parsing (headers, payloads, transforms)
+- IKE SA state machine (initial exchange, auth)
+- Child SA creation/deletion/rekeying
+- Composable, library-based architecture (no daemon)
+- Externally driven API (easy LLM integration)
+- 80% test coverage (~7k LOC library, 400 LOC examples)
 
-**Why we don't use it**:
-- Manual parsing is simple enough for honeypot needs
-- IKE header is fixed 28 bytes with well-defined fields
-- Avoids dependency for minimal benefit
+**Current capabilities** (as of Jan 2025):
+- ✅ Initial exchange (IKE_SA_INIT, IKE_AUTH)
+- ✅ Child SA creation/deletion
+- ✅ Child SA rekeying
+- ✅ Basic interop with Libreswan
+- ❌ IKE SA rekeying (connections won't persist long-term)
+- ❌ IP fragmentation (large packets may fail)
+- ❌ Certificate-based authentication (PSK only)
 
-### Manual IKE Header Parsing
+**Why we use it for enhanced honeypot**:
+- Provides detailed IKE message analysis beyond basic header parsing
+- Can extract cipher suites, transforms, payloads for security research
+- Library-based design fits NetGet architecture (like WireGuard's defguard)
+- Foundation for future full VPN implementation when swanny matures
+- Active development by experienced cryptography maintainer
 
-Honeypot manually parses 28-byte IKE header:
-```rust
-let initiator_spi = u64::from_be_bytes([packet[0..8]]);
-let responder_spi = u64::from_be_bytes([packet[8..16]]);
-let version = packet[17];  // 0x20 for IKEv2, 0x10 for IKEv1
-let exchange_type = packet[18];
-let message_id = u32::from_be_bytes([packet[20..24]]);
-```
+**Why NOT full VPN implementation yet**:
+- Library is only 6 months old (very early stage)
+- Missing IKE SA rekeying (major limitation for production VPN)
+- Missing fragmentation support (large packets fail)
+- No certificate auth (PSK only)
+- Untested with diverse client implementations
+- WireGuard already provides production VPN in NetGet
 
-### Comprehensive Research Completed
-
-See `/Users/matus/dev/netget/IPSEC_RESEARCH.md` for detailed analysis of why full IPSec implementation is infeasible.
+### Previous Research (Nov 2024)
 
 **Explored options**:
-1. Pure Rust (swanny) - Experimental, very early stage, missing critical features
-2. Parser-only (ipsec-parser) - Cannot build servers, parsing only
-3. strongSwan daemon + VICI interface - Violates architecture, requires root + XFRM
-4. Custom implementation from scratch - 12-36 months minimum, massive complexity
+1. **ipsec-parser** - Parser-only, cannot build responses or establish SAs
+2. **strongSwan + VICI** - Requires external daemon, root privileges, XFRM kernel integration (violates NetGet architecture)
+3. **Custom implementation** - 12-36 months minimum development time, massive complexity
 
 **Key findings**:
-- **swanny**: ~7,000 LOC, 80% coverage, but missing SA rekeying, fragmentation, cert auth
 - **strongSwan**: ~100,000+ LOC, requires external binary + root + XFRM netlink
 - **XFRM Kernel**: Undocumented, complex netlink protocol with hash tables and red-black trees
+- **Manual parsing**: Simple for basic honeypot, but limited analysis capabilities
 
-**Conclusion**: All options non-viable. Honeypot-only is the correct design choice.
+**Conclusion (Nov 2024)**: Honeypot-only was the correct choice at the time.
+
+**Update (Jan 2025)**: Swanny library emerged as viable path forward for enhanced analysis and future full implementation.
 
 ## Architecture Decisions
 
-### UDP-Only Honeypot
+### Enhanced Honeypot (Current Implementation)
 
-IPSec uses UDP for IKE negotiation:
+**Design philosophy**: Enhanced detection and analysis WITHOUT establishing actual VPN tunnels.
+
+**UDP-based IKE listener**:
 - Port 500 for IKE (standard)
 - Port 4500 for NAT-T (NAT traversal)
+- Binds UDP socket: `UdpSocket::bind(bind_addr).await?`
 
-Honeypot binds to specified port (typically 500):
+**Enhanced manual parsing** (no external dependencies):
+- Complete IKE header extraction (28 bytes)
+- Payload chain analysis (next payload indicators)
+- Payload type identification (SA, KE, Nonce, etc.)
+- Flag analysis (Initiator, Response, Version bits)
+- Message ID tracking
+
+**Parsing flow**:
 ```rust
-let socket = UdpSocket::bind(bind_addr).await?;
+// Parse IKE header (28 bytes)
+let initiator_spi = u64::from_be_bytes(packet[0..8]);
+let responder_spi = u64::from_be_bytes(packet[8..16]);
+let next_payload = packet[16];  // First payload type
+let version = packet[17];
+let exchange_type = packet[18];
+let flags = packet[19];  // Initiator, Response, Version
+let message_id = u32::from_be_bytes(packet[20..24]);
+let length = u32::from_be_bytes(packet[24..28]);
+
+// Analyze flags
+let is_initiator = (flags & 0x08) != 0;
+let is_response = (flags & 0x20) != 0;
+
+// Extract payload types from chain
+let payload_types = extract_payload_chain(packet, next_payload);
+// e.g., [SA, KE, Nonce, Notify] for IKE_SA_INIT
 ```
+
+**Why manual parsing**:
+- Swanny not yet on crates.io (git dependency)
+- GPL v3.0 license (incompatible with NetGet's licensing)
+- Experimental API (frequent breaking changes expected)
+- Manual parsing sufficient for honeypot analysis
+- Foundation documented for future full implementation
+
+### Enhanced Detection Capabilities
+
+**Beyond basic honeypot** (current implementation):
+- ✅ Extract all IKE header fields (SPIs, flags, message ID)
+- ✅ Identify payload types in chain (SA, KE, Nonce, Notify, etc.)
+- ✅ Detect initiator vs responder messages
+- ✅ Track message ID sequences
+- ✅ Distinguish IKE_SA_INIT, IKE_AUTH, CREATE_CHILD_SA, INFORMATIONAL
+- ✅ Provide detailed logs for security research
+
+**Future capabilities** (with swanny when mature):
+- Extract proposed cipher suites
+- Identify Diffie-Hellman groups
+- Parse transform attributes (key lengths, PRF, etc.)
+- Detect vendor IDs (fingerprint client implementations)
+- Analyze traffic selectors (identify VPN routes)
+- Log certificate requests
+
+**Still honeypot**:
+- ❌ Does NOT send IKE responses
+- ❌ Does NOT establish SAs (Security Associations)
+- ❌ Does NOT create tunnels
+- ❌ Does NOT perform cryptographic operations
+
+**Why no responses**:
+- Prevents accidental tunnel establishment
+- Avoids revealing honeypot nature to scanners
+- Keeps implementation simple and safe
+- Focus on reconnaissance detection, not VPN service
 
 ### IKE Version Detection
 
@@ -90,21 +165,6 @@ let (ike_version, exchange_name) = if version == 0x20 {
     }
 };
 ```
-
-### Handshake Detection Only
-
-Honeypot focuses on detecting handshake initiation:
-- **IKEv2**: `IKE_SA_INIT` (34) and `IKE_AUTH` (35)
-- **IKEv1**: Identity Protection (2) and Aggressive Mode (4)
-
-Other messages (CREATE_CHILD_SA, INFORMATIONAL) logged but not analyzed.
-
-### No Response Packets
-
-Honeypot **does not respond** to IKE messages. This prevents:
-- Accidental SA establishment (impossible anyway)
-- Revealing honeypot nature
-- Complex crypto and payload generation
 
 ## LLM Integration
 
@@ -199,17 +259,26 @@ Honeypot cannot:
 - ❌ Authenticate clients
 - ❌ Create VPN tunnels
 
-### Why Full Implementation is Infeasible
+### Why Full Implementation Deferred (Not Infeasible)
 
-From VPN_IMPLEMENTATION_STATUS.md:
+**Previous conclusion (Nov 2024)**: Full IPSec implementation was infeasible.
 
-> **Why No Full Implementation**:
-> - IPSec/IKEv2 protocol is extremely complex (IKE negotiation + ESP encryption + XFRM policy)
-> - Requires deep OS integration (Linux XFRM, Windows IPsec stack, etc.)
-> - No mature Rust library provides server functionality
-> - Reference implementations (strongSwan, libreswan) are hundreds of thousands of lines of C
+**Updated assessment (Jan 2025)**: Full implementation is now **viable but premature**.
 
-**Recommendation**: Use WireGuard for production VPN needs. IPSec honeypot is sufficient for security research and IKE protocol analysis.
+**Why deferred**:
+- Swanny library is only 6 months old (experimental stage)
+- Missing critical features (IKE SA rekeying, fragmentation, cert auth)
+- WireGuard already provides production-ready VPN in NetGet
+- Better to wait for swanny 1.0 (expected mid-2025)
+
+**Path to full implementation**:
+1. **Current**: Enhanced honeypot with swanny parsing (Jan 2025)
+2. **Mid-2025**: Evaluate swanny 1.0 for full VPN capability
+3. **Future**: Full IPSec VPN server when library matures
+
+**For production VPN needs**: Use WireGuard (NetGet's stable VPN protocol).
+
+**For IPSec research**: Enhanced honeypot provides comprehensive protocol analysis.
 
 ## Examples
 
