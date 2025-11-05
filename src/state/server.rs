@@ -138,6 +138,10 @@ pub enum ProtocolConnectionInfo {
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
     },
+    /// IGMP connection (multicast group management)
+    Igmp {
+        joined_groups: Vec<std::net::Ipv4Addr>,
+    },
     /// DNS connection (recent queries)
     Dns {
         recent_queries: Vec<(String, Instant)>, // query, time
