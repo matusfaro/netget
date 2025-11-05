@@ -159,6 +159,13 @@ pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshProtocol;
 
+#[cfg(feature = "svn")]
+pub mod svn;
+#[cfg(feature = "svn")]
+pub use svn::SvnServer;
+#[cfg(feature = "svn")]
+pub use svn::actions::SvnProtocol;
+
 #[cfg(feature = "irc")]
 pub mod irc;
 #[cfg(feature = "irc")]
