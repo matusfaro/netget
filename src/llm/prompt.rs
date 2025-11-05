@@ -10,67 +10,17 @@ use crate::llm::actions::{
 };
 use crate::llm::ollama_client::Message;
 use crate::llm::template_engine::{TemplateDataBuilder, TEMPLATE_ENGINE};
-use crate::privilege::SystemCapabilities;
-use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use tracing::debug;
 
 /// Builder for constructing LLM prompts
 pub struct PromptBuilder;
 
 impl PromptBuilder {
     // ============================================================================
-    // TEMPLATE-BASED PROMPT BUILDING
-    // ============================================================================
-
-    /// Try to build prompt using templates, with fallback to hardcoded
-    fn try_template_prompt(
-        template_name: &str,
-        data: serde_json::Value,
-        fallback: impl FnOnce() -> String,
-    ) -> String {
-        if let Ok(result) = TEMPLATE_ENGINE.render_json(template_name, &data) {
-            if !result.is_empty() {
-                debug!("Using template: {}", template_name);
-                return result;
-            }
-        }
-        debug!("Template {} not found or empty, using fallback", template_name);
-        fallback()
-    }
-
-    // ============================================================================
     // SECTION BUILDERS - These build individual sections of prompts
+    // (Only used for programmatic generation, not in templates)
     // ============================================================================
-
-    /// Build the role/identity section
-    fn build_role_section() -> String {
-        r#"# Your Role
-
-You are **NetGet**, an intelligent network protocol server controlled by an LLM (you).
-
-## What You Control
-
-NetGet provides built-in server implementations for 50+ network protocols including:
-- Core protocols: HTTP, SSH, DNS, TCP, UDP, DHCP, NTP, SNMP
-- Databases: MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch
-- Cloud services: S3, SQS, OpenAI API, OpenAPI
-- Specialized: Tor, WireGuard, VNC, Git, WebDAV, MQTT, Kafka
-
-## How You Work
-
-You control these servers by returning JSON responses containing **actions**. Each action is a command that NetGet will execute (e.g., starting a server, sending data, updating memory).
-
-Your responses are parsed and executed immediately - you directly control the network behavior.
-
-"#.to_string()
-    }
-
-    /// Build the role section for legacy network events
-    fn build_legacy_role_section() -> String {
-        "You are controlling a network server application.".to_string()
-    }
 
     /// Build current state section (server state + system capabilities)
     async fn build_current_state_section(state: &AppState, server_id: Option<ServerId>) -> String {
@@ -132,82 +82,35 @@ Your responses are parsed and executed immediately - you directly control the ne
         }
 
         // Append system capabilities
-        current_state.push_str(&Self::build_system_capabilities_section(system_caps));
-        current_state
-    }
-
-    /// Build legacy server configuration section (for old network event prompts)
-    async fn build_legacy_server_config_section(state: &AppState, server_id: ServerId) -> String {
-        let server = state.get_server(server_id).await;
-
-        let (base_stack, port, memory) = if let Some(server) = server {
-            (server.protocol_name, server.port, server.memory)
-        } else {
-            ("Unknown".to_string(), 0, String::new())
-        };
-
-        format!(
-            r#"Server configuration:
-- Server ID: #{}
-- Stack: {}
-- Port: {}
-- Memory: {}
-"#,
-            server_id.as_u32(),
-            base_stack,
-            port,
-            if memory.is_empty() {
-                "(empty)"
-            } else {
-                &memory
-            }
-        )
-    }
-
-    /// Build system capabilities section
-    fn build_system_capabilities_section(caps: SystemCapabilities) -> String {
-        format!(
+        current_state.push_str(&format!(
             r#"## System Capabilities
 
 - **Privileged ports (<1024)**: {} {}
 - **Raw socket access**: {} {}
 
 "#,
-            if caps.can_bind_privileged_ports {
+            if system_caps.can_bind_privileged_ports {
                 "✓ Available"
             } else {
                 "✗ Not available"
             },
-            if caps.can_bind_privileged_ports {
+            if system_caps.can_bind_privileged_ports {
                 ""
             } else {
                 "— Warn user if they request port <1024"
             },
-            if caps.has_raw_socket_access {
+            if system_caps.has_raw_socket_access {
                 "✓ Available"
             } else {
                 "✗ Not available"
             },
-            if caps.has_raw_socket_access {
+            if system_caps.has_raw_socket_access {
                 ""
             } else {
                 "— DataLink protocol unavailable"
             }
-        )
-    }
-
-    /// Build instructions section
-    fn build_instructions_section(instructions: &str) -> String {
-        if instructions.is_empty() {
-            String::new()
-        } else {
-            format!("# Your Task\n\n{}\n\n", instructions)
-        }
-    }
-
-    /// Build actions section (formatted list of available actions)
-    fn build_actions_section(actions: &[ActionDefinition]) -> String {
-        Self::build_actions_section_public(actions)
+        ));
+        current_state
     }
 
     /// Public version of build_actions_section for use by conversation handler
@@ -256,180 +159,9 @@ so you may include multiple actions in a single response.
         text
     }
 
-    /// Build base stack documentation section
+    /// Build base stack documentation section (used for dynamic generation)
     fn build_base_stack_docs_section(include_disabled: bool) -> String {
         generate_base_stack_documentation(include_disabled)
-    }
-
-    /// Build scripting section (scripting mode capabilities)
-    fn build_scripting_section(selected_mode: crate::state::app_state::ScriptingMode) -> String {
-        let selected_env = match selected_mode {
-            crate::state::app_state::ScriptingMode::On => "Python, JavaScript, Go, or Perl (you choose based on the task)".to_string(),
-            _ => selected_mode.as_str().to_string(),
-        };
-
-        let selected_lang = match selected_mode {
-            crate::state::app_state::ScriptingMode::On => "Python, JavaScript, Go, or Perl".to_string(),
-            _ => selected_mode.as_str().to_string(),
-        };
-
-        format!(
-            r#"---
-
-# Script-Based Responses
-
-**Selected environment:** {}
-
-## When to Use Scripts
-
-**IMPORTANT:** Scripts should ONLY be used when:
-- The user explicitly requests scripting or programmatic behavior
-- Responses are **static and deterministic** (e.g., fixed file serving, simple routing with predefined rules)
-- **Complex authentication logic** with well-defined conditions (e.g., SSH auth with specific username/password combinations)
-
-**DO NOT use scripts for:**
-- **Creative or dynamic responses** - Continue using LLM for natural language, context-aware, or adaptive responses
-- Situations requiring reasoning, interpretation, or decision-making beyond simple rules
-- When responses should vary based on context or user behavior
-
-Scripts are for automation of static, repetitive tasks. Use LLM (your native mode) for everything else.
-
-## How Scripts Work
-
-### Input Format
-
-Scripts receive JSON via stdin:
-
-```json
-{{
-  "event_type_id": "ssh_auth",
-  "server": {{"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."}},
-  "connection": {{"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0}},
-  "event": {{"username": "alice", "auth_type": "password"}}
-}}
-```
-
-### Output Format
-
-**CRITICAL:** Scripts must output JSON with an `actions` array:
-
-```json
-{{"actions": [{{"type": "action_name", "param": "value"}}]}}
-```
-
-Use the **same action types** available to you as the LLM (e.g., `ssh_auth_decision`, `send_http_response`).
-
-**DO NOT** write raw protocol code (like `res.writeHead()` or socket operations).
-
-### Examples
-
-**Example 1 - SSH Authentication (Python):**
-```python
-import json, sys
-data = json.load(sys.stdin)
-username = data['event']['username']
-allowed = (username == 'alice')
-print(json.dumps({{"actions": [{{"type": "ssh_auth_decision", "allowed": allowed}}]}}))
-```
-
-**Example 2 - HTTP Response (JavaScript):**
-```javascript
-const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
-const pathname = data.event.path;
-const response = pathname.endsWith('.html')
-  ? {{"status": 200, "headers": {{"Content-Type": "text/html"}}, "body": "<h1>Hello</h1>"}}
-  : {{"status": 404, "body": "Not Found"}};
-console.log(JSON.stringify({{"actions": [{{"type": "send_http_response", ...response}}]}}));
-```
-
-### Configuration
-
-To use scripts in `open_server`, include:
-- `script_runtime`: "{}" (REQUIRED when script_inline is provided - choose the appropriate runtime)
-- `script_inline`: Your script code as a string (when provided, script_runtime MUST also be specified)
-- `script_handles`: Array of event types to handle (e.g., `["ssh_auth", "ssh_banner"]` or `["all"]`). Defaults to `["all"]`.
-
-### Constraints
-
-- Scripts must complete within **{} seconds** or they will be terminated
-- Scripts can return `{{"fallback_to_llm": true}}` to delegate complex cases back to you
-- Use `update_script` action to modify scripts on running servers
-
-"#,
-            selected_env,
-            selected_lang,
-            crate::scripting::SCRIPT_TIMEOUT_SECS
-        )
-    }
-
-    /// Build memory usage section (for network events)
-    fn build_memory_section() -> String {
-        r#"## Understanding Memory
-
-Memory lets you track state across network events (e.g., SSH current directory, session data, file listings).
-
-**Key Points:**
-- Memory is a **string** (not JSON). Use newlines to separate values
-- `set_memory` - Replace all memory (use for major state changes)
-- `append_memory` - Add to existing memory (use for incremental updates)
-
-**Example:** `"cwd: /home\nuser: alice\nfiles: a.txt,b.txt"`
-
-**Common uses:** Session state, connection counters, file system state, authentication tokens
-
-"#
-        .to_string()
-    }
-
-    /// Build response format section (JSON examples)
-    fn build_response_format_section() -> String {
-        r#"---
-
-# Response Format
-
-**CRITICAL:** Your response must be **valid JSON only**. No explanations, no markdown, no code blocks.
-
-## Required Format
-
-```
-{"actions": [{"type": "action_name", "param": "value"}, ...]}
-```
-
-- Must start with `{` and end with `}`
-- The `actions` array contains one or more action objects
-- Actions execute in order
-- You can mix tools and actions in the same response
-
-## Examples
-
-✓ **Valid:**
-```json
-{"actions": [{"type": "show_message", "message": "Hello"}]}
-```
-
-✓ **Valid (multiple actions):**
-```json
-{"actions": [
-  {"type": "read_file", "path": "config.json", "mode": "full"},
-  {"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}
-]}
-```
-
-✗ **Invalid** (explanation before JSON):
-```
-Here's what I'll do:
-{"actions": [...]}
-```
-
-✗ **Invalid** (markdown code block):
-```
-```json
-{"actions": [...]}
-```
-```
-
-"#
-            .to_string()
     }
 
     /// Build retry message for parse errors (minimal, reusable)
@@ -522,58 +254,7 @@ Your response must be **pure JSON** only:
     }
 
     // ============================================================================
-    // LEGACY NETWORK EVENT PROMPT (to be deprecated)
-    // ============================================================================
-
-    /// Build prompt for handling network events (LEGACY - uses old format)
-    ///
-    /// # Arguments
-    /// * `state` - Application state
-    /// * `server_id` - ID of the server handling this event
-    /// * `connection_id` - Connection identifier
-    /// * `event_description` - Description of the event (built by protocol-specific code)
-    /// * `protocol_prompt` - (stack_context, output_format) tuple from protocol's get_llm_protocol_prompt()
-    pub async fn build_network_event_prompt_for_server(
-        state: &AppState,
-        server_id: ServerId,
-        _connection_id: ConnectionId,
-        event_description: &str,
-        protocol_prompt: (&str, &str),
-    ) -> String {
-        let server = state.get_server(server_id).await;
-
-        let instruction = if let Some(server) = server {
-            server.instruction
-        } else {
-            String::new()
-        };
-
-        let (stack_context, output_format) = protocol_prompt;
-
-        // Build using section builders
-        let role = Self::build_legacy_role_section();
-        let server_config = Self::build_legacy_server_config_section(state, server_id).await;
-        let event_section = format!("\n{}\n\nEvent: {}\n", stack_context, event_description);
-        let instruction_text = if instruction.is_empty() {
-            "No specific instruction provided. Use your best judgment based on the protocol."
-        } else {
-            &instruction
-        };
-        let memory = Self::build_memory_section();
-
-        format!(
-            "{}\n\n{}{}\nUser's instruction for handling events:\n{}\n\nBased on the instruction and the event, determine the appropriate response.\n\n{}\n{}\n\nResponse (JSON only):",
-            role,
-            server_config,
-            event_section,
-            instruction_text,
-            memory,
-            output_format
-        )
-    }
-
-    // ============================================================================
-    // NEW ACTION-BASED PROMPT SYSTEM
+    // ACTION-BASED PROMPT SYSTEM
     // ============================================================================
 
     /// Build unified prompt with action system (SYSTEM PROMPT ONLY)
@@ -658,6 +339,9 @@ Your response must be **pure JSON** only:
             })
         }).collect();
 
+        // Get system capabilities
+        let system_caps = state.get_system_capabilities().await;
+
         // Convert servers to simple objects for templates
         let servers_data: Vec<serde_json::Value> = servers.iter().map(|s| {
             serde_json::json!({
@@ -702,50 +386,17 @@ Your response must be **pure JSON** only:
             .field("base_stack_docs", Self::build_base_stack_docs_section(include_disabled))
             .field("current_state", Self::build_current_state_section(state, server_id).await)
             .field("scripting_environment", selected_mode.as_str())
+            .field("can_bind_privileged_ports", system_caps.can_bind_privileged_ports)
+            .field("has_raw_socket_access", system_caps.has_raw_socket_access)
             .build();
 
-        // Pre-compute current state for fallback (async call can't be in closure)
-        let current_state_str = Self::build_current_state_section(state, server_id).await;
-
-        // Try template, fall back to hardcoded
-        Self::try_template_prompt(template_name, data, || {
-            // Fallback to hardcoded prompt building
-            let role = Self::build_role_section();
-            let current_state = current_state_str.clone();
-            let instructions_section = Self::build_instructions_section(instructions);
-            let actions_section = Self::build_actions_section(&filtered_actions);
-
-            let base_stack_docs = if include_base_stacks {
-                Self::build_base_stack_docs_section(include_disabled)
-            } else {
-                String::new()
-            };
-
-            let scripting_section = if include_base_stacks && has_scripting {
-                Self::build_scripting_section(selected_mode)
-            } else {
-                String::new()
-            };
-
-            let response_format = Self::build_response_format_section();
-            let history_section = if let Some(history) = &conversation_history {
-                format!("# Conversation History\n\n{}\n\n", history)
-            } else {
-                String::new()
-            };
-
-            format!(
-                "{}{}{}{}{}{}{}{}",
-                role,
-                history_section,
-                instructions_section,
-                actions_section,
-                base_stack_docs,
-                scripting_section,
-                response_format,
-                current_state
-            )
-        })
+        // Render template
+        TEMPLATE_ENGINE
+            .render_json(template_name, &data)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to render template {}: {}", template_name, e);
+                format!("# Error\n\nFailed to render prompt template: {}", e)
+            })
     }
 
     /// Build system prompt for user input using new action system
