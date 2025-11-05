@@ -7,6 +7,7 @@ edition = "2021"
 default = ["all-protocols"]
 tcp = ["async-trait"]
 http = []
+maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
@@ -63,6 +64,7 @@ kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled messag
 all-protocols = [
     "tcp",
     "http",
+    "maven",
     "udp",
     "datalink",
     "arp",
