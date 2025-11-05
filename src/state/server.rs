@@ -416,6 +416,23 @@ pub enum ProtocolConnectionInfo {
     Kafka {
         recent_requests: Vec<(String, Instant)>, // API type, time
     },
+    /// BitTorrent Tracker connection
+    TorrentTracker {
+        recent_requests: Vec<(String, Instant)>, // request type (announce/scrape), time
+    },
+    /// BitTorrent DHT connection
+    TorrentDht {
+        recent_queries: Vec<(String, Instant)>, // query type (ping/find_node/get_peers/announce_peer), time
+    },
+    /// BitTorrent Peer Wire Protocol connection
+    TorrentPeer {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        handshake_complete: bool,
+        peer_id: Option<String>,
+        info_hash: Option<String>,
+    },
 }
 
 /// VNC pixel format
