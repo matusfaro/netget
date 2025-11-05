@@ -344,6 +344,10 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "torrent-peer")]
         self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
+
+        // TLS - Generic encrypted transport for custom protocols
+        #[cfg(feature = "tls")]
+        self.register(Arc::new(crate::server::TlsProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
