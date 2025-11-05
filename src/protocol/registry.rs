@@ -87,6 +87,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "snmp")]
         self.register(Arc::new(crate::server::SnmpProtocol::new()));
 
+        #[cfg(feature = "igmp")]
+        self.register(Arc::new(crate::server::IgmpProtocol::new()));
+
         #[cfg(feature = "syslog")]
         self.register(Arc::new(crate::server::SyslogProtocol::new()));
 

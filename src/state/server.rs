@@ -146,6 +146,10 @@ pub enum ProtocolConnectionInfo {
     Snmp {
         recent_peers: Vec<(SocketAddr, Instant)>,
     },
+    /// IGMP connection (multicast group management)
+    Igmp {
+        joined_groups: Vec<std::net::Ipv4Addr>,
+    },
     /// Syslog connection (recent messages)
     Syslog {
         recent_peers: Vec<(SocketAddr, Instant)>,

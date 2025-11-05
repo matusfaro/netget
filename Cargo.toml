@@ -20,6 +20,7 @@ dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
 snmp = ["rasn-snmp", "rasn"]
+igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 irc = []  # IRC uses only TCP, no extra deps
@@ -86,6 +87,7 @@ all-protocols = [
     "bootp",
     "ntp",
     "snmp",
+    "igmp",
     "syslog",
     "ssh",
     "irc",
@@ -176,6 +178,9 @@ base64 = "0.22"
 
 # Socket options (SO_REUSEADDR)
 socket2 = "0.5"
+
+# System interface for raw sockets (IGMP)
+libc = "0.2"
 
 # File locking for cross-process synchronization
 fs2 = "0.4"
