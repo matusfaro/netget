@@ -178,6 +178,14 @@ pub enum ProtocolConnectionInfo {
         state: ProtocolState,
         queued_data: Vec<u8>,
     },
+    /// XMPP connection with write half
+    Xmpp {
+        write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
+        state: ProtocolState,
+        queued_data: Vec<u8>,
+        jid: Option<String>,
+        authenticated: bool,
+    },
     /// Telnet connection with write half
     Telnet {
         write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
@@ -289,6 +297,10 @@ pub enum ProtocolConnectionInfo {
     Sqs {
         recent_operations: Vec<(String, String, Instant)>, // operation, queue_url, time
     },
+    /// NPM registry connection (recent requests)
+    Npm {
+        recent_requests: Vec<String>, // Recent package requests
+    },
     /// OpenAI API connection (recent requests)
     OpenAi {
         recent_requests: Vec<String>, // Recent endpoints accessed
@@ -333,6 +345,10 @@ pub enum ProtocolConnectionInfo {
         hold_time: u16,                    // Negotiated hold time (seconds)
         keepalive_time: u16,               // Keepalive interval (seconds)
         announced_prefixes: Vec<String>,   // Announced route prefixes
+    },
+    /// RIP connection (recent peers)
+    Rip {
+        recent_peers: Vec<(SocketAddr, Instant)>,
     },
     /// gRPC connection (HTTP/2)
     Grpc {
