@@ -83,6 +83,13 @@ pub use snmp::SnmpServer;
 #[cfg(feature = "snmp")]
 pub use snmp::actions::SnmpProtocol;
 
+#[cfg(feature = "igmp")]
+pub mod igmp;
+#[cfg(feature = "igmp")]
+pub use igmp::IgmpServer;
+#[cfg(feature = "igmp")]
+pub use igmp::actions::IgmpProtocol;
+
 #[cfg(feature = "ssh")]
 pub mod ssh;
 #[cfg(feature = "ssh")]
