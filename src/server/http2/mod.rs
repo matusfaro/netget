@@ -1,5 +1,7 @@
-//! HTTP/2 server implementation using hyper
+//! HTTP/2 server implementation using hyper and h2
 pub mod actions;
+pub mod push;
+pub mod h2_server;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -20,9 +22,11 @@ use actions::HTTP2_REQUEST_EVENT;
 use crate::server::Http2Protocol;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+
+// Re-export for convenience
+pub use h2_server::H2Server;
 
 /// HTTP/2 server that delegates request handling to LLM
 pub struct Http2Server;

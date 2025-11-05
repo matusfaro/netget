@@ -27,8 +27,9 @@ impl Server for Http2Protocol {
         Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            use crate::server::http2::Http2Server;
-            Http2Server::spawn_with_llm_actions(
+            // Use h2-based server for full server push support
+            use crate::server::http2::H2Server;
+            H2Server::spawn_with_push_support(
                 ctx.listen_addr,
                 ctx.llm_client,
                 ctx.state,
@@ -113,35 +114,49 @@ impl Http2Protocol {
     /// Execute push_resource sync action (server push)
     fn execute_push_resource(&self, action: serde_json::Value) -> Result<ActionResult> {
         use anyhow::Context;
+        use serde_json::json;
 
-        let _path = action
+        let path = action
             .get("path")
             .and_then(|v| v.as_str())
             .context("Missing 'path' parameter")?;
 
-        let _status = action
+        let status = action
             .get("status")
             .and_then(|v| v.as_u64())
             .unwrap_or(200) as u16;
 
-        let _headers = action
+        let headers = action
             .get("headers")
             .and_then(|v| v.as_object())
-            .cloned();
+            .cloned()
+            .unwrap_or_default();
 
-        let _body = action
+        let body = action
             .get("body")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // NOTE: Server push requires architectural changes to hyper's service pattern
-        // Current implementation stores push intent but doesn't execute the push
-        // See CLAUDE.md for full implementation requirements
+        let method = action
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET");
 
-        // For now, return NoAction but log that push is not yet implemented
-        tracing::warn!("Server push requested but not yet implemented - requires connection-level access");
+        // Return push data as structured JSON that h2_server will recognize
+        let push_data = json!({
+            "_push_directive": true,
+            "path": path,
+            "method": method,
+            "status": status,
+            "headers": headers,
+            "body": body
+        });
 
-        Ok(ActionResult::NoAction)
+        tracing::debug!("Queued server push for {}", path);
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&push_data).context("Failed to serialize push data")?,
+        ))
     }
 }
 
