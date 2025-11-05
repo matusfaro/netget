@@ -390,6 +390,11 @@ pub enum ProtocolConnectionInfo {
     Kafka {
         recent_requests: Vec<(String, Instant)>, // API type, time
     },
+    /// Bitcoin P2P connection
+    Bitcoin {
+        handshake_complete: bool,
+        last_message_type: Option<String>, // Last message type received (version, ping, etc.)
+    },
 }
 
 /// VNC pixel format

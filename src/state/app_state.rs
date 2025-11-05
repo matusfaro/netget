@@ -970,6 +970,30 @@ impl AppState {
         }
     }
 
+    /// Update Bitcoin connection info
+    pub async fn update_bitcoin_connection_info(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        last_message_type: String,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let crate::state::server::ProtocolConnectionInfo::Bitcoin {
+                    last_message_type: ref mut msg_type,
+                    handshake_complete: ref mut handshake,
+                    ..
+                } = &mut conn.protocol_info {
+                    *msg_type = Some(last_message_type.clone());
+                    // Mark handshake complete if we've seen both version and verack
+                    if last_message_type == "verack" {
+                        *handshake = true;
+                    }
+                }
+            }
+        }
+    }
+
     /// Get VNC write half for sending framebuffer updates
     pub async fn get_vnc_write_half(
         &self,
