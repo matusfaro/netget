@@ -25,6 +25,7 @@ snmp = ["rasn-snmp", "rasn"]
 igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
+svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
 telnet = ["nectar"]
@@ -97,6 +98,7 @@ all-protocols = [
     "igmp",
     "syslog",
     "ssh",
+    "svn",
     "irc",
     "xmpp",
     "telnet",
