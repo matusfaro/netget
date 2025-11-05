@@ -9,6 +9,7 @@ tcp = ["async-trait"]
 http = []
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
+arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
@@ -63,6 +64,7 @@ all-protocols = [
     "http",
     "udp",
     "datalink",
+    "arp",
     "dns",
     "dot",
     "doh",
@@ -184,6 +186,9 @@ dirs = "5.0"
 
 # Packet capture (libpcap)
 pcap = "2.2"
+
+# ARP (Address Resolution Protocol) packet handling
+pnet = { version = "0.35", optional = true }
 
 # DNS server (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
