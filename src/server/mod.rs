@@ -118,6 +118,13 @@ pub use snmp::SnmpServer;
 #[cfg(feature = "snmp")]
 pub use snmp::actions::SnmpProtocol;
 
+#[cfg(feature = "igmp")]
+pub mod igmp;
+#[cfg(feature = "igmp")]
+pub use igmp::IgmpServer;
+#[cfg(feature = "igmp")]
+pub use igmp::actions::IgmpProtocol;
+
 #[cfg(feature = "syslog")]
 pub mod syslog;
 #[cfg(feature = "syslog")]
