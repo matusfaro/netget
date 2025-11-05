@@ -34,6 +34,13 @@ pub use datalink::DataLinkServer;
 #[cfg(feature = "datalink")]
 pub use datalink::actions::DataLinkProtocol;
 
+#[cfg(feature = "dc")]
+pub mod dc;
+#[cfg(feature = "dc")]
+pub use dc::DcServer;
+#[cfg(feature = "dc")]
+pub use dc::actions::DcProtocol;
+
 #[cfg(feature = "udp")]
 pub mod udp;
 #[cfg(feature = "udp")]
