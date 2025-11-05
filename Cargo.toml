@@ -61,6 +61,9 @@ vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display gener
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
+torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
+torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
+torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 all-protocols = [
     "tcp",
     "http",
@@ -118,6 +121,9 @@ all-protocols = [
     "git",
     "kafka",
     "etcd",
+    "torrent-tracker",
+    "torrent-dht",
+    "torrent-peer",
 ]
 e2e-tests = []  # Feature flag for E2E tests
 
@@ -327,6 +333,9 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
 
+# BitTorrent protocols (bencode encoding/decoding)
+serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -402,6 +411,9 @@ git2 = "0.19"
 rumqttc = "0.24"
 # Kafka client for e2e integration tests
 rdkafka = "0.36"
+# BitTorrent client for e2e integration tests
+# Using cratetorrent library for programmatic testing, also supports transmission-cli/aria2
+sha1 = "0.10"  # For info_hash calculation
 
 [build-dependencies]
 # Protocol buffer compiler for etcd gRPC service
