@@ -3,6 +3,7 @@
 //! This module provides a unified action system where both user input
 //! and network events return arrays of actions to execute.
 
+pub mod client_trait;
 pub mod common;
 pub mod executor;
 pub mod protocol_trait;
@@ -10,6 +11,7 @@ pub mod summary;
 pub mod tools;
 
 // Re-export commonly used functions and types
+pub use client_trait::Client; // Export the Client trait
 pub use common::{
     generate_base_stack_documentation, get_network_event_common_actions,
     get_user_input_common_actions,
