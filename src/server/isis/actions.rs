@@ -87,7 +87,7 @@ impl Server for IsisProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::Unprivileged)
+            .privilege_requirement(PrivilegeRequirement::None)
             .implementation("Manual IS-IS PDU construction (ISO/IEC 10589, RFC 1195)")
             .llm_control("Hello PDUs, LSPs, neighbor adjacencies")
             .e2e_testing("Manual IS-IS packet construction")
