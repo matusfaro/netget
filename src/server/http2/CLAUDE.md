@@ -10,6 +10,7 @@ HTTP/2 server implementing RFC 7540 (HTTP/2) using the hyper library. The LLM co
 - **hyper v1.0** - Modern async HTTP library with HTTP/2 support
 - **hyper-util** - Additional utilities for Tokio integration
 - **http-body-util** - Body handling utilities (Full, Empty, Incoming)
+- **http_common** - Shared internal module with HTTP/HTTP2 common logic (request extraction, response building)
 - **Manual response construction** - LLM generates status, headers, body
 
 **Rationale**: Hyper is the de-facto standard for HTTP in Rust. For HTTP/2, it handles:
@@ -73,6 +74,20 @@ LLM errors result in 500 Internal Server Error:
 - If LLM response is invalid, return 500
 - Hyper connection errors (protocol violations) close connection automatically
 
+### 8. Shared http_common Module
+HTTP and HTTP/2 share common implementation logic via `src/server/http_common/`:
+- **handler.rs** - Request extraction (headers, body, logging) and response building
+- **actions.rs** - Shared action execution (`execute_http_response_action`)
+- Reduces code duplication (~60% of logic shared between HTTP/HTTP2)
+- Maintains protocol-specific boundaries (separate modules, keywords, events)
+- Future HTTP/2-specific features (server push) remain in HTTP/2 module
+
+**Benefits**:
+- Single source of truth for request/response logic
+- Consistent logging and error handling
+- Easier maintenance (bug fixes apply to both protocols)
+- Clear separation: shared logic in `http_common`, protocol-specific in `http`/`http2`
+
 ## LLM Integration
 
 ### Action-Based Response Model
@@ -84,6 +99,7 @@ The LLM responds to HTTP/2 events with actions:
 
 **Available Actions**:
 - `send_http2_response` - Send HTTP/2 response (status, headers, body)
+- `push_resource` - Push resource to client proactively (server push - limited implementation)
 - Common actions: `show_message`, `update_instruction`, etc.
 - **No async actions** - HTTP/2 is purely request-response
 
@@ -183,11 +199,12 @@ Unlike TCP, no write_half or queued_data - hyper manages the socket internally.
 - Hyper handles priority frames
 - Current implementation doesn't expose prioritization to LLM
 
-### 6. Server Push (Not Implemented)
+### 6. Server Push (Limited Implementation)
 - HTTP/2 supports server-initiated push of resources
-- Hyper supports server push via `PushPromise`
-- Not exposed to LLM in current implementation
-- Future enhancement: Add `push_resource` action
+- `push_resource` action defined but not fully functional
+- Requires connection-level access (not available in service pattern)
+- Hyper supports server push via extended connection API
+- Future: Restructure to use connection-level handler for full push support
 
 ## Known Limitations
 
@@ -197,10 +214,14 @@ Unlike TCP, no write_half or queued_data - hyper manages the socket internally.
 - For production, would need to wrap listener with rustls
 - See future enhancement section for HTTPS implementation plan
 
-### 2. No Server Push
-- HTTP/2 server push not exposed to LLM
-- Hyper supports it, but not implemented here
-- Would require async action to push resources proactively
+### 2. Server Push Partially Implemented
+- `push_resource` action defined but doesn't execute actual pushes
+- Service pattern doesn't provide connection-level access needed for pushes
+- Logs warning when push is requested
+- Full implementation requires:
+  - Restructure HTTP/2 handler to use connection API instead of service pattern
+  - Manage push streams manually
+  - Store pending pushes and send via connection object
 
 ### 3. No Streaming
 - Request bodies fully buffered before LLM processing
@@ -299,7 +320,7 @@ Return appropriate gRPC status codes
 | Multiplexing | No (one request per connection) | Yes (many streams per connection) |
 | Connection Overhead | High (new TCP for each concurrent request) | Low (reuse single TCP connection) |
 | Prioritization | None | Stream priorities |
-| Server Push | No | Yes (not implemented here) |
+| Server Push | No | Yes (action defined, needs connection API) |
 | Use Case | Simple APIs, legacy clients | Modern APIs, high-concurrency |
 
 ## Future Enhancements
@@ -321,16 +342,35 @@ http2::Builder::new(TokioExecutor::new())
     .await?;
 ```
 
-### Server Push Support
-Support HTTP/2 server push via async action:
-```json
-{
-  "type": "push_resource",
-  "path": "/style.css",
-  "headers": {"Content-Type": "text/css"},
-  "body": "body { margin: 0; }"
-}
+### Server Push Full Implementation
+Complete HTTP/2 server push implementation (currently partially implemented):
+
+**Current Status**: Action defined but doesn't execute pushes (service pattern limitation)
+
+**Full Implementation Approach**:
+```rust
+// Replace service pattern with connection-level handling
+let conn = http2::Builder::new(TokioExecutor::new())
+    .serve_connection(io, service);
+
+// Access connection object to send push promises
+let mut sender = conn.send_request(
+    Request::builder()
+        .method("GET")
+        .uri("/style.css")
+        .body(())
+        .unwrap()
+)?;
+
+// Send push promise headers and body
+sender.send_data(Bytes::from("body { margin: 0; }"), true)?;
 ```
+
+**Requirements**:
+- Restructure handler to use `Connection` API instead of `service_fn`
+- Store pending pushes in connection state
+- Match incoming requests to push promises
+- Handle client rejection of pushes
 
 ### Stream Prioritization Control
 Allow LLM to influence stream priorities:

@@ -6,9 +6,8 @@ use crate::llm::actions::{
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// HTTP protocol action handler
@@ -103,38 +102,8 @@ impl Server for HttpProtocol {
 impl HttpProtocol {
     /// Execute send_http_response sync action
     fn execute_send_http_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let status = action
-            .get("status")
-            .and_then(|v| v.as_u64())
-            .context("Missing or invalid 'status' parameter")? as u16;
-
-        let headers = action
-            .get("headers")
-            .and_then(|v| v.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect::<HashMap<String, String>>()
-            })
-            .unwrap_or_default();
-
-        let body = action
-            .get("body")
-            .and_then(|v| v.as_str())
-            .context("Missing 'body' parameter")?;
-
-        // For HTTP, we need to return structured data
-        // The caller will handle converting this to an actual HTTP response
-        // For now, we'll encode this as JSON in the output
-        let response_data = json!({
-            "status": status,
-            "headers": headers,
-            "body": body
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&response_data).context("Failed to serialize HTTP response")?,
-        ))
+        // Use shared action execution logic
+        crate::server::http_common::execute_http_response_action(action)
     }
 }
 

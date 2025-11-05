@@ -8,7 +8,6 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// HTTP/2 protocol action handler
@@ -45,7 +44,10 @@ impl Server for Http2Protocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![send_http2_response_action()]
+        vec![
+            send_http2_response_action(),
+            push_resource_action(),
+        ]
     }
 
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -56,6 +58,7 @@ impl Server for Http2Protocol {
 
         match action_type {
             "send_http2_response" => self.execute_send_http2_response(action),
+            "push_resource" => self.execute_push_resource(action),
             _ => Err(anyhow::anyhow!("Unknown HTTP/2 action: {action_type}")),
         }
     }
@@ -103,37 +106,42 @@ impl Server for Http2Protocol {
 impl Http2Protocol {
     /// Execute send_http2_response sync action
     fn execute_send_http2_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let status = action
+        // Use shared action execution logic
+        crate::server::http_common::execute_http_response_action(action)
+    }
+
+    /// Execute push_resource sync action (server push)
+    fn execute_push_resource(&self, action: serde_json::Value) -> Result<ActionResult> {
+        use anyhow::Context;
+
+        let _path = action
+            .get("path")
+            .and_then(|v| v.as_str())
+            .context("Missing 'path' parameter")?;
+
+        let _status = action
             .get("status")
             .and_then(|v| v.as_u64())
-            .context("Missing or invalid 'status' parameter")? as u16;
+            .unwrap_or(200) as u16;
 
-        let headers = action
+        let _headers = action
             .get("headers")
             .and_then(|v| v.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect::<HashMap<String, String>>()
-            })
-            .unwrap_or_default();
+            .cloned();
 
-        let body = action
+        let _body = action
             .get("body")
             .and_then(|v| v.as_str())
-            .context("Missing 'body' parameter")?;
+            .unwrap_or("");
 
-        // For HTTP/2, we need to return structured data
-        // The caller will handle converting this to an actual HTTP/2 response
-        let response_data = json!({
-            "status": status,
-            "headers": headers,
-            "body": body
-        });
+        // NOTE: Server push requires architectural changes to hyper's service pattern
+        // Current implementation stores push intent but doesn't execute the push
+        // See CLAUDE.md for full implementation requirements
 
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&response_data).context("Failed to serialize HTTP/2 response")?,
-        ))
+        // For now, return NoAction but log that push is not yet implemented
+        tracing::warn!("Server push requested but not yet implemented - requires connection-level access");
+
+        Ok(ActionResult::NoAction)
     }
 }
 
@@ -173,11 +181,55 @@ fn send_http2_response_action() -> ActionDefinition {
     }
 }
 
+/// Action definition for push_resource (sync) - HTTP/2 server push
+fn push_resource_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "push_resource".to_string(),
+        description: "Push a resource to the client proactively (HTTP/2 server push - not yet fully implemented)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Resource path to push (e.g., /style.css)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "status".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status code (default: 200)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "headers".to_string(),
+                type_hint: "object".to_string(),
+                description: "Response headers as key-value pairs".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body".to_string(),
+                type_hint: "string".to_string(),
+                description: "Resource content to push".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "push_resource",
+            "path": "/style.css",
+            "status": 200,
+            "headers": {
+                "Content-Type": "text/css"
+            },
+            "body": "body { margin: 0; }"
+        }),
+    }
+}
+
 // ============================================================================
 // HTTP/2 Action Constants
 // ============================================================================
 
 pub static SEND_HTTP2_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_http2_response_action());
+pub static PUSH_RESOURCE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| push_resource_action());
 
 // ============================================================================
 // HTTP/2 Event Type Constants
@@ -223,6 +275,7 @@ pub static HTTP2_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     ])
     .with_actions(vec![
         SEND_HTTP2_RESPONSE_ACTION.clone(),
+        PUSH_RESOURCE_ACTION.clone(),
     ])
 });
 
