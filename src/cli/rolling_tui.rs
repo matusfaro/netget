@@ -260,18 +260,6 @@ pub async fn run_rolling_tui(
                 // Just triggers potential updates
             }
 
-            // Test timer - prints a message every second for debugging
-            _ = test_interval.tick() => {
-                let timestamp = Local::now().format("%H:%M:%S");
-                let msg = format!("[DEBUG] Test heartbeat #{} at {}", heartbeat_counter, timestamp);
-                info!("Test heartbeat firing: {}", msg);
-                print_output_line(&msg, &mut footer, &palette)?;
-                // Immediately re-render footer after printing
-                footer.render(&mut stdout())?;
-                heartbeat_counter += 1;
-                ui_needs_update = false; // Already rendered
-            }
-
             // Execute due tasks
             _ = task_execution_interval.tick() => {
                 execute_due_tasks(&state, &llm_client, &status_tx).await;
