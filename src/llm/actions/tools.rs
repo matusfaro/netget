@@ -439,16 +439,8 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
     }
 
     // Otherwise, use DuckDuckGo HTML search (no API key required)
-    let encoded_query = {
-        #[cfg(feature = "urlencoding")]
-        {
-            urlencoding::encode(query)
-        }
-        #[cfg(not(feature = "urlencoding"))]
-        {
-            query.replace(' ', "%20")
-        }
-    };
+    use url::form_urlencoded;
+    let encoded_query = form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
     let url = format!(
         "https://html.duckduckgo.com/html/?q={}",
         encoded_query
