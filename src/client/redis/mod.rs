@@ -2,6 +2,7 @@
 pub mod actions;
 
 use anyhow::{Context, Result};
+use crate::llm::actions::client_trait::Client;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

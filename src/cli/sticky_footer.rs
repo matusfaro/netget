@@ -111,6 +111,7 @@ impl StickyFooter {
             scroll_region_height: height.saturating_sub(10), // Initial guess
             content: FooterContent::Normal {
                 servers: Vec::new(),
+                clients: Vec::new(),
                 connections: Vec::new(),
                 expand_all: false,
                 conversations: Vec::new(),
