@@ -1,6 +1,8 @@
 //! HTTP client implementation
 pub mod actions;
 
+pub use actions::HttpClientProtocol;
+
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -162,7 +164,7 @@ impl HttpClient {
 
                     let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
 
-                    match call_llm(
+                    match call_llm_for_client(
                         &llm_client,
                         &app_state,
                         client_id.to_string(),
@@ -172,7 +174,7 @@ impl HttpClient {
                         &protocol,
                         &status_tx,
                     ).await {
-                        Ok(ActionResult { actions: _, memory_updates }) => {
+                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use super::client::{ClientId, ClientInstance};
-use super::server::{ServerId, ServerInstance};
+use super::server::{ProtocolConnectionInfo, ServerId, ServerInstance};
 use super::task::{ScheduledTask, TaskId};
 use crate::server::connection::ConnectionId;
 
