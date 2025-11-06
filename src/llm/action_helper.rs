@@ -596,14 +596,6 @@ pub async fn call_llm_for_client(
         "Waiting for instructions".to_string()
     };
 
-    // Create simple conversation
-    let mut conversation = crate::llm::ConversationHandler::new(
-        llm_client.clone(),
-        system_prompt,
-        format!("Client #{}", client_id),
-        None,
-    );
-
     // Add memory context if present
     let full_message = if !memory.is_empty() {
         format!("Memory: {}\n\n{}", memory, user_message)
@@ -611,24 +603,28 @@ pub async fn call_llm_for_client(
         user_message
     };
 
-    // Get LLM response
-    let response = conversation.send_message(&full_message, status_tx).await?;
+    // Get current model from state
+    let model = state.get_ollama_model().await;
 
-    // Parse actions from response
-    let actions = crate::llm::actions::ActionResponse::from_str(&response.content)?.actions;
+    // Create conversation with correct parameter order
+    let mut conversation = crate::llm::ConversationHandler::new(
+        system_prompt,
+        std::sync::Arc::new(llm_client.clone()),
+        model,
+    )
+    .with_status_tx(status_tx.clone());
 
-    // Extract memory updates
-    let memory_updates = if response.content.contains("MEMORY:") {
-        Some(response.content
-            .split("MEMORY:")
-            .nth(1)
-            .and_then(|s| s.split('\n').next())
-            .unwrap_or("")
-            .trim()
-            .to_string())
-    } else {
-        None
-    };
+    // Add user message
+    conversation.add_user_message(full_message);
+
+    // Generate response with actions (no web approval or tools for clients)
+    let actions = conversation
+        .generate_with_tools_and_retry(None, crate::state::app_state::WebSearchMode::Off, all_actions)
+        .await?;
+
+    // For now, memory updates are not extracted from client responses
+    // This can be enhanced later if needed
+    let memory_updates = None;
 
     Ok(ClientLlmResult {
         actions,
