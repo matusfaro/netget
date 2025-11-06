@@ -32,6 +32,7 @@ pub use actions::{
 // Re-export action helper functions
 pub use action_helper::{
     call_llm_with_actions, call_llm_with_custom_actions, call_llm_with_protocol,
+    call_llm_for_client, ClientLlmResult,
 };
 
 // Legacy re-exports (for backward compatibility during migration)

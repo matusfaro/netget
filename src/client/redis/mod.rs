@@ -1,6 +1,8 @@
 //! Redis client implementation
 pub mod actions;
 
+pub use actions::RedisClientProtocol;
+
 use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;
 use std::net::SocketAddr;
@@ -10,9 +12,9 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
-use crate::llm::action_helper::call_llm;
+use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
+use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -78,7 +80,7 @@ impl RedisClient {
 
                             let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
 
-                            match call_llm(
+                            match call_llm_for_client(
                                 &llm_client,
                                 &app_state,
                                 client_id.to_string(),
@@ -88,7 +90,7 @@ impl RedisClient {
                                 &protocol,
                                 &status_tx,
                             ).await {
-                                Ok(ActionResult { actions, memory_updates }) => {
+                                Ok(ClientLlmResult { actions, memory_updates }) => {
                                     // Update memory
                                     if let Some(mem) = memory_updates {
                                         app_state.set_memory_for_client(client_id, mem).await;

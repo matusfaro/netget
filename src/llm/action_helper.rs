@@ -555,3 +555,83 @@ pub async fn call_llm(
 
     Ok(result)
 }
+/// Call LLM for client protocol events (simplified version for MVP)
+
+/// Result from client LLM call
+#[derive(Debug, Clone)]
+pub struct ClientLlmResult {
+    pub actions: Vec<serde_json::Value>,
+    pub memory_updates: Option<String>,
+}
+
+/// Call LLM for client protocol events (simplified version for MVP)
+///
+/// This is a simplified version of call_llm for client protocols.
+/// Unlike servers, clients don't have complex scripting or connection tracking.
+pub async fn call_llm_for_client(
+    llm_client: &OllamaClient,
+    state: &AppState,
+    client_id: String,
+    instruction: &str,
+    memory: &str,
+    event: Option<&Event>,
+    protocol: &dyn crate::llm::actions::client_trait::Client,
+    status_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<ClientLlmResult> {
+    // Get client actions
+    let all_actions = protocol.get_async_actions(state);
+
+    // Build simple prompt for client
+    let system_prompt = format!(
+        "You are controlling a network client ({}). Your instruction: {}\n\nAvailable actions:\n{}",
+        protocol.protocol_name(),
+        instruction,
+        all_actions.iter().map(|a| a.to_prompt_text()).collect::<Vec<_>>().join("\n\n")
+    );
+
+    // Build user message
+    let user_message = if let Some(ev) = event {
+        format!("Event: {}\nData: {}", ev.id(), serde_json::to_string_pretty(&ev.data).unwrap_or_default())
+    } else {
+        "Waiting for instructions".to_string()
+    };
+
+    // Create simple conversation
+    let mut conversation = crate::llm::ConversationHandler::new(
+        llm_client.clone(),
+        system_prompt,
+        format!("Client #{}", client_id),
+        None,
+    );
+
+    // Add memory context if present
+    let full_message = if !memory.is_empty() {
+        format!("Memory: {}\n\n{}", memory, user_message)
+    } else {
+        user_message
+    };
+
+    // Get LLM response
+    let response = conversation.send_message(&full_message, status_tx).await?;
+
+    // Parse actions from response
+    let actions = crate::llm::actions::ActionResponse::from_str(&response.content)?.actions;
+
+    // Extract memory updates
+    let memory_updates = if response.content.contains("MEMORY:") {
+        Some(response.content
+            .split("MEMORY:")
+            .nth(1)
+            .and_then(|s| s.split('\n').next())
+            .unwrap_or("")
+            .trim()
+            .to_string())
+    } else {
+        None
+    };
+
+    Ok(ClientLlmResult {
+        actions,
+        memory_updates,
+    })
+}
