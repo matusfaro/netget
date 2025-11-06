@@ -209,6 +209,14 @@ async fn execute_common_action(
         | CommonAction::ListTasks => {
             // Task scheduling handled by event handler, not executor
         }
+
+        CommonAction::OpenClient { .. }
+        | CommonAction::CloseClient { .. }
+        | CommonAction::CloseAllClients
+        | CommonAction::ReconnectClient { .. }
+        | CommonAction::UpdateClientInstruction { .. } => {
+            // Client management handled by event handler, not executor
+        }
     }
 
     Ok(())

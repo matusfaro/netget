@@ -5,7 +5,6 @@
 //! while input and connection info remain sticky at the bottom.
 
 use anyhow::Result;
-use chrono::Local;
 use crossterm::{
     cursor,
     event::{Event, EventStream, KeyCode, KeyModifiers},
@@ -158,7 +157,7 @@ pub async fn run_rolling_tui(
     test_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Counter for test heartbeats
-    let mut heartbeat_counter = 0u64;
+    let mut _heartbeat_counter = 0u64;
 
     // Resize debouncing - store pending resize dimensions
     let mut pending_resize: Option<(u16, u16)> = None;
@@ -925,6 +924,7 @@ async fn handle_key_event(
                 if app.slash_suggestions.is_empty() {
                     footer.set_content(FooterContent::Normal {
                         servers: app.servers.clone(),
+                        clients: app.clients.clone(),
                         connections: app.connections.clone(),
                         expand_all: app.expand_all_connections,
                         conversations: app.conversations.clone(),
@@ -1414,6 +1414,7 @@ fn update_slash_suggestions_and_render(
         if app.slash_suggestions.is_empty() {
             footer.set_content(FooterContent::Normal {
                 servers: app.servers.clone(),
+                clients: app.clients.clone(),
                 connections: app.connections.clone(),
                 expand_all: app.expand_all_connections,
                 conversations: app.conversations.clone(),
@@ -1435,7 +1436,7 @@ fn update_slash_suggestions_and_render(
 
 /// Update UI with current application state
 async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut StickyFooter) {
-    use crate::ui::app::{ConnectionDisplayInfo, ServerDisplayInfo};
+    use crate::ui::app::{ClientDisplayInfo, ConnectionDisplayInfo, ServerDisplayInfo};
 
     // Track old footer height BEFORE updating content
     let old_scroll_height = footer.scroll_region_height();
@@ -1455,6 +1456,18 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
             port: s.port,
             status: s.status.to_string(),
             connections: s.connections.len(),
+        })
+        .collect();
+
+    // Update client list
+    let clients = state.get_all_clients().await;
+    app.clients = clients
+        .iter()
+        .map(|c| ClientDisplayInfo {
+            id: format!("#{}", c.id.as_u32()),
+            protocol: c.protocol_name.clone(),
+            remote_addr: c.remote_addr.clone(),
+            status: c.status.to_string(),
         })
         .collect();
 
@@ -1484,6 +1497,7 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     if app.slash_suggestions.is_empty() {
         footer.set_content(FooterContent::Normal {
             servers: app.servers.clone(),
+            clients: app.clients.clone(),
             connections: app.connections.clone(),
             expand_all: app.expand_all_connections,
             conversations: app.conversations.clone(),

@@ -119,6 +119,36 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::ListTasks => {
             "list_tasks".to_string()
         }
+        CommonAction::OpenClient {
+            protocol,
+            remote_addr,
+            instruction,
+            ..
+        } => {
+            let instr_preview = if instruction.len() > 30 {
+                format!("{}...", &instruction[..27])
+            } else {
+                instruction.clone()
+            };
+            format!("open_client: {} → {} \"{}\"", protocol, remote_addr, instr_preview)
+        }
+        CommonAction::CloseClient { client_id } => {
+            format!("close_client: #{}", client_id)
+        }
+        CommonAction::CloseAllClients => {
+            "close_all_clients".to_string()
+        }
+        CommonAction::ReconnectClient { client_id } => {
+            format!("reconnect_client: #{}", client_id)
+        }
+        CommonAction::UpdateClientInstruction { client_id, instruction } => {
+            let preview = if instruction.len() > 30 {
+                format!("{}...", &instruction[..27])
+            } else {
+                instruction.clone()
+            };
+            format!("update_client_instruction: #{} \"{}\"", client_id, preview)
+        }
     }
 }
 

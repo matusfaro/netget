@@ -555,3 +555,79 @@ pub async fn call_llm(
 
     Ok(result)
 }
+/// Call LLM for client protocol events (simplified version for MVP)
+
+/// Result from client LLM call
+#[derive(Debug, Clone)]
+pub struct ClientLlmResult {
+    pub actions: Vec<serde_json::Value>,
+    pub memory_updates: Option<String>,
+}
+
+/// Call LLM for client protocol events (simplified version for MVP)
+///
+/// This is a simplified version of call_llm for client protocols.
+/// Unlike servers, clients don't have complex scripting or connection tracking.
+pub async fn call_llm_for_client(
+    llm_client: &OllamaClient,
+    state: &AppState,
+    _client_id: String,
+    instruction: &str,
+    memory: &str,
+    event: Option<&Event>,
+    protocol: &dyn crate::llm::actions::client_trait::Client,
+    status_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<ClientLlmResult> {
+    // Get client actions
+    let all_actions = protocol.get_async_actions(state);
+
+    // Build simple prompt for client
+    let system_prompt = format!(
+        "You are controlling a network client ({}). Your instruction: {}\n\nAvailable actions:\n{}",
+        protocol.protocol_name(),
+        instruction,
+        all_actions.iter().map(|a| a.to_prompt_text()).collect::<Vec<_>>().join("\n\n")
+    );
+
+    // Build user message
+    let user_message = if let Some(ev) = event {
+        format!("Event: {}\nData: {}", ev.id(), serde_json::to_string_pretty(&ev.data).unwrap_or_default())
+    } else {
+        "Waiting for instructions".to_string()
+    };
+
+    // Add memory context if present
+    let full_message = if !memory.is_empty() {
+        format!("Memory: {}\n\n{}", memory, user_message)
+    } else {
+        user_message
+    };
+
+    // Get current model from state
+    let model = state.get_ollama_model().await;
+
+    // Create conversation with correct parameter order
+    let mut conversation = crate::llm::ConversationHandler::new(
+        system_prompt,
+        std::sync::Arc::new(llm_client.clone()),
+        model,
+    )
+    .with_status_tx(status_tx.clone());
+
+    // Add user message
+    conversation.add_user_message(full_message);
+
+    // Generate response with actions (no web approval or tools for clients)
+    let actions = conversation
+        .generate_with_tools_and_retry(None, crate::state::app_state::WebSearchMode::Off, all_actions)
+        .await?;
+
+    // For now, memory updates are not extracted from client responses
+    // This can be enhanced later if needed
+    let memory_updates = None;
+
+    Ok(ClientLlmResult {
+        actions,
+        memory_updates,
+    })
+}

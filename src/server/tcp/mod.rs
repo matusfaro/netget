@@ -71,7 +71,7 @@ impl TcpServer {
                         let write_half_arc = Arc::new(Mutex::new(write_half));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ProtocolState, ConnectionStatus};
+                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

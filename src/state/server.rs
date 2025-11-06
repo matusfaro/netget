@@ -329,6 +329,17 @@ pub enum ProtocolConnectionInfo {
     SamlSp {
         recent_requests: Vec<String>,
     },
+    /// Generic connection state for flexible JSON storage
+    Generic {
+        data: serde_json::Value,
+    },
+}
+
+impl ProtocolConnectionInfo {
+    /// Create a new generic connection info with flexible JSON data
+    pub fn new(data: serde_json::Value) -> Self {
+        Self::Generic { data }
+    }
 }
 
 /// Connection status
