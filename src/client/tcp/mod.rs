@@ -1,7 +1,7 @@
 //! TCP client implementation
 pub mod actions;
 
-pub use actions::TcpClientProtocol;
+pub use actions::{TcpClientProtocol, TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RECEIVED_EVENT};
 
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
@@ -17,6 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::client::tcp::{TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -100,13 +101,13 @@ impl TcpClient {
                                 // Call LLM
                                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                                     let protocol = Arc::new(crate::client::tcp::actions::TcpClientProtocol::new());
-                                    let event = Event {
-                                        event_type: "tcp_data_received".to_string(),
-                                        data: serde_json::json!({
+                                    let event = Event::new(
+                                        &TCP_CLIENT_DATA_RECEIVED_EVENT,
+                                        serde_json::json!({
                                             "data_hex": hex::encode(&data),
                                             "data_length": data.len(),
                                         }),
-                                    };
+                                    );
 
                                     match call_llm_for_client(
                                         &llm_client,
@@ -115,7 +116,7 @@ impl TcpClient {
                                         &instruction,
                                         &client_data.lock().await.memory,
                                         Some(&event),
-                                        &protocol,
+                                        protocol.as_ref(),
                                         &status_tx,
                                     ).await {
                                         Ok(ClientLlmResult { actions, memory_updates }) => {
@@ -126,7 +127,7 @@ impl TcpClient {
 
                                             // Execute actions
                                             for action in actions {
-                                                match protocol.execute_action(action) {
+                                                match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(mut write) = write_half_arc.lock().await.write_all(&bytes).await {
                                                             trace!("TCP client {} sent {} bytes", client_id, bytes.len());

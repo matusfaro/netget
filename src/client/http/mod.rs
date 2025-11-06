@@ -1,7 +1,7 @@
 //! HTTP client implementation
 pub mod actions;
 
-pub use actions::HttpClientProtocol;
+pub use actions::{HttpClientProtocol, HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
@@ -15,6 +15,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::client::http::{HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// HTTP client that makes requests to remote HTTP servers
 pub struct HttpClient;
@@ -152,15 +153,15 @@ impl HttpClient {
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                     let protocol = Arc::new(crate::client::http::actions::HttpClientProtocol::new());
-                    let event = Event {
-                        event_type: "http_response_received".to_string(),
-                        data: serde_json::json!({
+                    let event = Event::new(
+                        &HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
+                        serde_json::json!({
                             "status_code": status_code,
                             "status_text": status.to_string(),
                             "headers": resp_headers,
                             "body": body_text,
                         }),
-                    };
+                    );
 
                     let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
 
@@ -171,7 +172,7 @@ impl HttpClient {
                         &instruction,
                         &memory,
                         Some(&event),
-                        &protocol,
+                        protocol.as_ref(),
                         &status_tx,
                     ).await {
                         Ok(ClientLlmResult { actions: _, memory_updates }) => {

@@ -8,6 +8,45 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
+
+/// TCP client connected event
+pub static TCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tcp_connected",
+        "TCP client successfully connected to server"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "remote_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Remote server address".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// TCP client data received event
+pub static TCP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tcp_data_received",
+        "Data received from TCP server"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "data_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "The data received (as hex string)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_length".to_string(),
+            type_hint: "number".to_string(),
+            description: "Length of data in bytes".to_string(),
+            required: true,
+        },
+    ])
+});
 
 /// TCP client protocol action handler
 pub struct TcpClientProtocol;
