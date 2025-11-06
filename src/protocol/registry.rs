@@ -361,6 +361,13 @@ impl ProtocolRegistry {
         // TLS - Generic encrypted transport for custom protocols
         #[cfg(feature = "tls")]
         self.register(Arc::new(crate::server::TlsProtocol::new()));
+
+        // SAML protocols
+        #[cfg(feature = "saml-idp")]
+        self.register(Arc::new(crate::server::SamlIdpProtocol::new()));
+
+        #[cfg(feature = "saml-sp")]
+        self.register(Arc::new(crate::server::SamlSpProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
