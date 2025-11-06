@@ -16,8 +16,8 @@ pub mod http;
 #[cfg(feature = "http")]
 pub use http::actions::HttpClientProtocol;
 
-// Phase 5: Redis client (not yet implemented)
-// #[cfg(feature = "redis")]
-// pub mod redis;
-// #[cfg(feature = "redis")]
-// pub use redis::RedisClientProtocol;
+// Phase 5: Redis client
+#[cfg(feature = "redis")]
+pub mod redis;
+#[cfg(feature = "redis")]
+pub use redis::actions::RedisClientProtocol;
