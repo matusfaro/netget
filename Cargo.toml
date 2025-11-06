@@ -6,8 +6,8 @@ edition = "2021"
 [features]
 default = ["all-protocols"]
 tcp = ["async-trait"]
-http = []
-http2 = ["dep:h2"]
+http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
+http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
@@ -15,8 +15,8 @@ datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
-dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # DNS-over-TLS server
-doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
+dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
+doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
@@ -25,10 +25,11 @@ snmp = ["rasn-snmp", "rasn"]
 igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
+svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
 telnet = ["nectar"]
-smtp = ["rust-smtp-server"]
+smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "async-trait"]
 ipp = ["dep:ipp"]
@@ -53,9 +54,10 @@ s3 = []  # S3-compatible object storage server (LLM-controlled responses, no sto
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
+oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
-saml-sp = []  # SAML Service Provider (assertion validation, session management)
+saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -71,12 +73,15 @@ xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
+openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
+mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-http3 = ["dep:quinn"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
+http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
 all-protocols = [
     "tcp",
     "http",
@@ -99,6 +104,7 @@ all-protocols = [
     "igmp",
     "syslog",
     "ssh",
+    "svn",
     "irc",
     "xmpp",
     "telnet",
@@ -127,6 +133,7 @@ all-protocols = [
     "sqs",
     "npm",
     "openai",
+    "oauth2",
     "jsonrpc",
     "wireguard",
     "openvpn",
@@ -142,12 +149,15 @@ all-protocols = [
     "tor",
     "vnc",
     "openapi",
+    "openid",
     "git",
+    "mercurial",
     "kafka",
     "etcd",
     "torrent-tracker",
     "torrent-dht",
     "torrent-peer",
+    "tls",
     "saml-idp",
     "saml-sp",
 ]
@@ -211,7 +221,7 @@ chrono = { version = "0.4", features = ["serde"] }
 time = { version = "0.3", features = ["macros", "formatting"] }  # Time handling for rcgen certificates
 url = "2.5"  # URL parsing for web approval prompts
 regex = "1.11"
-urlencoding = "2.1"
+urlencoding = { version = "2.1", optional = true }
 html2text = "0.12"
 once_cell = "1.20"
 rand = "0.8"  # Random number generation for crypto
@@ -238,6 +248,7 @@ hickory-proto = { version = "0.24", optional = true }
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2.0", optional = true }
 
 # HTTP/2 support for DoH
 h2 = { version = "0.4", optional = true }

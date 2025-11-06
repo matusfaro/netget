@@ -27,16 +27,34 @@ impl Server for Http2Protocol {
         Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            // Use h2-based server for full server push support
             use crate::server::http2::H2Server;
+
+            // Parse TLS configuration from startup_params
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Use h2-based server for full server push support
             H2Server::spawn_with_push_support(
                 ctx.listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                tls_config,
             ).await
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        crate::server::tls_cert_manager::get_tls_startup_parameters()
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {

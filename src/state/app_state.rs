@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-use super::server::{ServerId, ServerInstance};
+use super::server::{ProtocolConnectionInfo, ServerId, ServerInstance};
 use super::task::{ScheduledTask, TaskId};
 use crate::server::connection::ConnectionId;
 
@@ -958,9 +958,9 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    obj.insert("authenticated".to_string(), serde_json::Value::Bool(authenticated));
-                    obj.insert("username".to_string(), serde_json::to_value(&username).unwrap_or(serde_json::Value::Null));
+                if let ProtocolConnectionInfo::Ssh { authenticated: ref mut auth, username: ref mut user, .. } = &mut conn.protocol_info {
+                    *auth = authenticated;
+                    *user = username;
                 }
             }
         }
@@ -973,17 +973,9 @@ impl AppState {
         connection_id: ConnectionId,
         last_message_type: String,
     ) {
-        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
-            if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    obj.insert("last_message_type".to_string(), serde_json::Value::String(last_message_type.clone()));
-                    // Mark handshake complete if we've seen both version and verack
-                    if last_message_type == "verack" {
-                        obj.insert("handshake_complete".to_string(), serde_json::Value::Bool(true));
-                    }
-                }
-            }
-        }
+        // TODO: Bitcoin variant needs fields added to track last_message_type and handshake_complete
+        // For now, this is a no-op
+        let _ = (server_id, connection_id, last_message_type);
     }
 
     /// Get VNC write half for sending framebuffer updates

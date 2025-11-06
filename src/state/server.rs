@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
 
@@ -134,42 +135,200 @@ pub enum OspfNeighborState {
 
 /// Protocol-specific connection information
 ///
-/// This uses flexible storage to avoid centralized enum fighting between protocols.
-/// Each protocol defines its own structure and serializes it to JSON.
-///
+/// Each protocol variant contains protocol-specific state and connection data.
 /// Note: This storage is primarily for UI display and metrics.
 /// Protocols maintain their own local connection data for I/O operations.
 #[derive(Debug, Clone)]
-pub struct ProtocolConnectionInfo {
-    /// Protocol-specific data as JSON
-    /// Protocols can serialize any structure they need here
-    pub data: serde_json::Value,
-}
-
-impl ProtocolConnectionInfo {
-    /// Create new protocol connection info from any serializable data
-    pub fn new<T: serde::Serialize>(data: T) -> Self {
-        Self {
-            data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
-        }
-    }
-
-    /// Create empty protocol connection info
-    pub fn empty() -> Self {
-        Self {
-            data: serde_json::Value::Object(serde_json::Map::new()),
-        }
-    }
-
-    /// Get a reference to a field in the data
-    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
-        self.data.get(key)
-    }
-
-    /// Try to deserialize the data into a specific type
-    pub fn try_into<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
-        serde_json::from_value(self.data.clone())
-    }
+pub enum ProtocolConnectionInfo {
+    /// TCP connection state
+    Tcp {
+        write_half: Option<Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+    },
+    /// UDP connection state
+    Udp {
+        socket: Option<Arc<tokio::net::UdpSocket>>,
+    },
+    /// HTTP connection state
+    Http {
+        recent_requests: Vec<String>,
+    },
+    /// DNS connection state
+    Dns {},
+    /// DHCP connection state
+    Dhcp {},
+    /// NTP connection state
+    Ntp {},
+    /// SNMP connection state
+    Snmp {},
+    /// SSH connection state
+    Ssh {
+        write_half: Option<Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+        authenticated: bool,
+        username: Option<String>,
+    },
+    /// IMAP connection state
+    Imap {
+        write_half: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+        session_state: ImapSessionState,
+        username: Option<String>,
+        selected_mailbox: Option<String>,
+    },
+    /// IRC connection state
+    Irc {
+        write_half: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+        nickname: Option<String>,
+        channels: Vec<String>,
+    },
+    /// Telnet connection state
+    Telnet {
+        write_half: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+    },
+    /// Git connection state
+    Git {
+        recent_repos: Vec<String>,
+    },
+    /// Mercurial connection state
+    Mercurial {
+        recent_repos: Vec<String>,
+    },
+    /// MQTT connection state
+    Mqtt {
+        write_half: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+        client_id: Option<String>,
+        subscriptions: Vec<String>,
+    },
+    /// MySQL connection state
+    Mysql {},
+    /// PostgreSQL connection state
+    Postgresql {},
+    /// Redis connection state
+    Redis {},
+    /// Cassandra connection state
+    Cassandra {},
+    /// Dynamo connection state
+    Dynamo {},
+    /// Elasticsearch connection state
+    Elasticsearch {},
+    /// IPP connection state
+    Ipp {},
+    /// WebDAV connection state
+    WebDav {},
+    /// SOCKS5 connection state
+    Socks {},
+    /// STUN connection state
+    Stun {},
+    /// TURN connection state
+    Turn {},
+    /// gRPC connection state
+    Grpc {},
+    /// MCP connection state
+    Mcp {},
+    /// JsonRpc connection state
+    JsonRpc {},
+    /// XmlRpc connection state
+    XmlRpc {},
+    /// VNC connection state
+    Vnc {},
+    /// Kafka connection state
+    Kafka {},
+    /// S3 connection state
+    S {},
+    /// SQS connection state
+    Sqs {},
+    /// SMTP connection state
+    Smtp {},
+    /// OpenAi connection state
+    OpenAi {},
+    /// DoT connection state
+    Dot {},
+    /// DoH connection state
+    Doh {},
+    /// IGMP connection state
+    Igmp {},
+    /// Bootp connection state
+    Bootp {},
+    /// Wireguard connection state
+    Wireguard {},
+    /// OpenVPN connection state
+    Openvpn {},
+    /// BGP connection state
+    Bgp {
+        session_state: BgpSessionState,
+        peer_as: Option<u32>,
+        peer_id: Option<std::net::Ipv4Addr>,
+    },
+    /// OSPF connection state
+    Ospf {
+        neighbor_state: OspfNeighborState,
+        neighbor_id: Option<std::net::Ipv4Addr>,
+        area_id: Option<u32>,
+    },
+    /// ISIS connection state
+    Isis {},
+    /// RIP connection state
+    Rip {},
+    /// XMPP connection state
+    Xmpp {
+        write_half: Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        state: ProtocolState,
+        queued_data: Vec<Vec<u8>>,
+        jid: Option<String>,
+        authenticated: bool,
+    },
+    /// SIP connection state
+    Sip {},
+    /// LDAP connection state
+    Ldap {},
+    /// SMB connection state
+    Smb {},
+    /// NFS connection state
+    Nfs {},
+    /// Proxy connection state
+    Proxy {},
+    /// Syslog connection state
+    Syslog {},
+    /// NNTP connection state
+    Nntp {},
+    /// Whois connection state
+    Whois {},
+    /// Bitcoin connection state
+    Bitcoin {},
+    /// TorrentTracker connection state
+    TorrentTracker {},
+    /// TorrentDht connection state
+    TorrentDht {},
+    /// TorrentPeer connection state
+    TorrentPeer {},
+    /// DC connection state
+    Dc {},
+    /// Maven connection state
+    Maven {},
+    /// Npm connection state
+    Npm {},
+    /// Pypi connection state
+    Pypi {},
+    /// OpenApi connection state
+    OpenApi {},
+    /// SAML IDP connection state
+    SamlIdp {
+        recent_requests: Vec<String>,
+    },
+    /// SAML SP connection state
+    SamlSp {
+        recent_requests: Vec<String>,
+    },
 }
 
 /// Connection status
