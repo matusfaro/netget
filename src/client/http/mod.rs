@@ -9,9 +9,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::llm::action_helper::call_llm;
+use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
+use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
