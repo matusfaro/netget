@@ -1323,15 +1323,51 @@ repo.find_remote("origin")?.fetch(&["main"], None, None)?;
 
 ---
 
-### SVN 🟠
-**Complexity:** Hard
-**Reason:** No mature Rust library. Would need to interface with `svn` command-line or implement WebDAV subset.
+### SVN ❌
+**Complexity:** Unfeasible
+**Client Library:** `subversion` v0.0.8 (immature, FFI bindings)
+
+**Why Unfeasible:**
+- Rust bindings exist (`subversion` v0.0.8) but extremely immature
+- Requires Subversion C library (libsvn)
+- Complex C API surface (dozens of libraries: libsvn_client, libsvn_ra, libsvn_wc, etc.)
+- Working copy management complexity
+- Authentication complexity (HTTP, SSH, SVN protocol)
+- Limited documentation for Rust bindings
+- Better to use `svn` command-line tool via wrapper
+
+**Alternative:** Command wrapper approach - LLM generates `svn` commands:
+```rust
+// Example: LLM generates svn commands
+std::process::Command::new("svn")
+    .args(&["checkout", repo_url, dest_path])
+    .output()?;
+```
 
 ---
 
-### Mercurial 🔴
-**Complexity:** Very Hard
-**Reason:** No Rust library. Would need to wrap `hg` command or implement wire protocol.
+### Mercurial ❌
+**Complexity:** Unfeasible
+**Client Library:** `hglib` v0.1.1 or `tokio-hglib` v0.4.0 (command server clients)
+
+**Why Unfeasible:**
+- Rust bindings exist (`hglib`, `tokio-hglib`) but use Mercurial command server protocol
+- Requires `hg` binary installed on system
+- Command server is a Python subprocess wrapper
+- Limited to operations exposed by command server
+- Not a native protocol implementation
+- Wire protocol extremely complex (would need full reimplementation)
+- Better to use `hg` command-line tool directly
+
+**Alternative:** Command wrapper approach - LLM generates `hg` commands:
+```rust
+// Example: LLM generates hg commands
+std::process::Command::new("hg")
+    .args(&["clone", repo_url, dest_path])
+    .output()?;
+```
+
+**Note:** `tokio-hglib` provides async command server client if Mercurial integration is required.
 
 ---
 
@@ -1412,27 +1448,124 @@ impl VncClient {
 
 ## File & Print Protocols
 
-### SMB/CIFS 🔴
-**Complexity:** Very Hard
-**Client Library:** No mature Rust library
+### SMB/CIFS 🟠
+**Complexity:** Hard
+**Client Library:** `pavao` or `smbc` (both libsmbclient wrappers)
+
+**LLM Control:**
+- Connect to SMB share
+- List directory contents
+- Read/write files
+- Create/delete files and directories
+- Get file attributes
+
+**Implementation Strategy (Option 1: pavao):**
+```rust
+use pavao::{SmbClient, SmbCredentials, SmbMode};
+
+// LLM decides: connect to share
+let creds = SmbCredentials::new("username", "password", None, None);
+let client = SmbClient::new(creds, SmbMode::Auto)?;
+
+// LLM decides: list directory
+let entries = client.list_dir("smb://server/share/path")?;
+
+// LLM decides: read file
+let data = client.read("smb://server/share/file.txt")?;
+
+// LLM decides: write file
+client.write("smb://server/share/newfile.txt", data)?;
+```
+
+**Implementation Strategy (Option 2: smbc):**
+```rust
+use smbc::{Smb, SmbOptions};
+
+// LLM decides: connect
+let options = SmbOptions::default()
+    .username("user")
+    .password("pass");
+let smb = Smb::new(options)?;
+
+// std::fs-like interface
+let entries = smb.read_dir("smb://server/share/")?;
+let file = smb.open("smb://server/share/file.txt")?;
+```
+
+**Use Cases:**
+- Windows file share access
+- SMB network browsing
+- File transfer to/from Windows servers
+- CIFS protocol testing
 
 **Challenges:**
-- Complex protocol (multiple SMB versions)
-- NTLM authentication
-- Large specification
+- Requires libsmbclient system library
+- SMB protocol complexity (SMB1/2/3 versions)
+- NTLM authentication complexity
 - Windows domain integration
+- Kerberos authentication (optional)
 
-**Alternative:** Use `smbclient` command wrapper.
+**Recommendation:** Use `pavao` for SMB 2/3 support, or `smbc` for std::fs-like interface. Both require libsmbclient system library.
 
 ---
 
-### NFS 🔴
-**Complexity:** Very Hard
-**Client Library:** No userspace Rust library (kernel NFS)
+### NFS 🟠
+**Complexity:** Hard
+**Client Library:** `nfs3_client` (pure Rust) or `libnfs` (C bindings)
 
-**Reason:** Requires kernel NFS client or complex RPC implementation.
+**LLM Control:**
+- Mount NFS export
+- Read/write files
+- Create/delete files and directories
+- Get file attributes
+- List directory contents
 
-**Alternative:** Mount via kernel NFS, LLM operates on mounted filesystem.
+**Implementation Strategy (Option 1: Pure Rust):**
+```rust
+use nfs3_client::{Client, MountClient};
+
+// LLM decides: mount NFS export
+let mount_client = MountClient::new(nfs_server)?;
+let mount_result = mount_client.mount(export_path).await?;
+
+// Get NFS client
+let nfs_client = Client::new(nfs_server, mount_result.fhandle)?;
+
+// LLM decides: read file
+let file_handle = nfs_client.lookup(dir_fh, filename).await?;
+let data = nfs_client.read(file_handle, offset, count).await?;
+
+// LLM decides: write file
+nfs_client.write(file_handle, offset, data).await?;
+```
+
+**Implementation Strategy (Option 2: C Bindings):**
+```rust
+use libnfs::{Nfs, NfsContext};
+
+// LLM decides: mount and access
+let nfs = Nfs::new()?;
+nfs.mount(nfs_server, export_path)?;
+
+// Read/write operations
+let data = nfs.read(filepath)?;
+nfs.write(filepath, data)?;
+```
+
+**Use Cases:**
+- Remote file access
+- NFS export browsing
+- File transfer over NFS
+- Network storage testing
+
+**Challenges:**
+- NFS v3 protocol complexity (RPC, XDR encoding)
+- Mount protocol interaction
+- File handle management
+- Authentication (AUTH_SYS, Kerberos)
+- Performance (many round trips for operations)
+
+**Recommendation:** Use `nfs3_client` for pure Rust implementation, or `libnfs` for more mature C library bindings.
 
 ---
 
@@ -1540,11 +1673,15 @@ impl VncClient {
 **Client Library:** `oauth2` crate
 
 **LLM Control:**
-- Authorization code flow
-- Token refresh
+- Flow selection (authorization code, device code, password, client credentials)
 - Scope selection
+- Token refresh
+- Authorization decision
 
-**Implementation Strategy:**
+**OAuth2 Flows (Multiple Strategies):**
+
+#### 1. Resource Owner Password Credentials (Direct Username/Password)
+**Use Case:** User provides username and password directly to NetGet
 ```rust
 use oauth2::*;
 
@@ -1555,14 +1692,107 @@ let client = BasicClient::new(
     Some(TokenUrl::new(token_url)?)
 );
 
-// LLM triggers auth flow
+// LLM prompts user for username/password, then exchanges for tokens
+let token_result = client
+    .exchange_password(
+        &ResourceOwnerUsername::new(username),
+        &ResourceOwnerPassword::new(password)
+    )
+    .add_scope(Scope::new("read".to_string()))
+    .request_async(async_http_client)
+    .await?;
+
+// Access token and refresh token obtained
+let access_token = token_result.access_token();
+let refresh_token = token_result.refresh_token();
+```
+
+**Pros:** Simple, no browser redirect
+**Cons:** Less secure (user trusts NetGet with credentials), not supported by all providers
+
+#### 2. Device Code Flow (For CLI/Terminal Apps)
+**Use Case:** User authenticates via browser on another device
+```rust
+// LLM initiates device code flow
+let device_auth_response = client
+    .exchange_device_code()?
+    .add_scope(Scope::new("read".to_string()))
+    .request_async(async_http_client)
+    .await?;
+
+// Display to user
+println!("Visit: {}", device_auth_response.verification_uri());
+println!("Enter code: {}", device_auth_response.user_code());
+
+// LLM polls for completion
+let token_result = client
+    .exchange_device_access_token(&device_auth_response)
+    .request_async(async_http_client, tokio::time::sleep, None)
+    .await?;
+```
+
+**Pros:** Secure, user authenticates in browser
+**Cons:** Requires polling, user must switch to browser
+
+#### 3. Authorization Code Flow (Traditional Web Flow)
+**Use Case:** Open browser for user to authenticate
+```rust
+// LLM generates authorization URL
 let (auth_url, csrf_state) = client
     .authorize_url(CsrfToken::new_random)
     .add_scope(Scope::new("read".to_string()))
     .url();
+
+// Open browser (or display URL for user to visit)
+println!("Visit: {}", auth_url);
+
+// After user completes auth, receive callback with code
+let token_result = client
+    .exchange_code(AuthorizationCode::new(code))
+    .request_async(async_http_client)
+    .await?;
 ```
 
-**Note:** Interactive flow (requires user browser interaction).
+**Pros:** Most secure, standard flow
+**Cons:** Requires web server to receive callback or manual code paste
+
+#### 4. Client Credentials Flow (Machine-to-Machine)
+**Use Case:** Service account authentication (no user)
+```rust
+// LLM uses client credentials only
+let token_result = client
+    .exchange_client_credentials()
+    .add_scope(Scope::new("api.read".to_string()))
+    .request_async(async_http_client)
+    .await?;
+```
+
+**Pros:** Simplest for service accounts
+**Cons:** No user context
+
+**Recommendation for NetGet:**
+- **Primary:** Resource Owner Password Credentials (direct username/password)
+- **Alternative:** Device Code Flow (more secure, good UX for CLI)
+- **Advanced:** Authorization Code with localhost callback server
+
+**Implementation Strategy:**
+```rust
+// LLM prompts user: "Enter OAuth2 flow: password, device_code, client_credentials"
+match llm_flow_choice {
+    "password" => {
+        // Prompt for username and password
+        let tokens = exchange_password(username, password).await?;
+    }
+    "device_code" => {
+        // Display device code and URL
+        let tokens = poll_device_code().await?;
+    }
+    "client_credentials" => {
+        // Use client ID/secret only
+        let tokens = exchange_client_credentials().await?;
+    }
+}
+```
 
 ---
 
@@ -1640,11 +1870,106 @@ client.put_object()
 
 ---
 
-### Kubernetes API ❌
-**Complexity:** Unfeasible for typical use
-**Reason:** Not a specific protocol, but REST API over HTTP. Use HTTP client + kubectl-style commands.
+### Kubernetes API 🟡
+**Complexity:** Medium
+**Client Library:** `kube` v2.0.1 (kube-rs) - mature, actively maintained
 
-**Alternative:** HTTP client with k8s API knowledge.
+**LLM Control:**
+- Resource CRUD (Pods, Deployments, Services, ConfigMaps, etc.)
+- Namespace selection
+- Label selectors and field selectors
+- Watch resources for changes
+- Logs streaming
+- Port forwarding
+- Execute commands in pods
+
+**Implementation Strategy:**
+```rust
+use kube::{Client, Api, ResourceExt};
+use k8s_openapi::api::core::v1::Pod;
+
+// Create k8s client
+let client = Client::try_default().await?;
+
+// LLM decides: list pods in namespace
+let pods: Api<Pod> = Api::namespaced(client.clone(), "default");
+let pod_list = pods.list(&Default::default()).await?;
+
+for pod in pod_list {
+    println!("Pod: {}", pod.name_any());
+}
+
+// LLM decides: create deployment
+use k8s_openapi::api::apps::v1::Deployment;
+let deployments: Api<Deployment> = Api::namespaced(client.clone(), "default");
+let deployment = serde_json::from_value(llm_deployment_json)?;
+deployments.create(&Default::default(), &deployment).await?;
+
+// LLM decides: get pod logs
+let logs = pods.logs("my-pod", &Default::default()).await?;
+
+// LLM decides: watch for changes
+use futures::TryStreamExt;
+let mut stream = pods.watch(&Default::default(), "0").await?.boxed();
+while let Some(event) = stream.try_next().await? {
+    // LLM processes event
+}
+```
+
+**Use Cases:**
+- Cluster management and monitoring
+- Pod/Deployment operations (create, delete, scale)
+- Log collection and analysis
+- Resource inspection (describe, get)
+- Namespace management
+- ConfigMap/Secret operations
+- Service discovery
+
+**Kubernetes Resources Accessible:**
+- **Workloads:** Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs
+- **Services:** Services, Endpoints, Ingress
+- **Config:** ConfigMaps, Secrets
+- **Storage:** PersistentVolumes, PersistentVolumeClaims
+- **RBAC:** Roles, RoleBindings, ServiceAccounts
+- **Cluster:** Nodes, Namespaces, Events
+
+**Authentication:**
+- Kubeconfig file (`~/.kube/config`)
+- In-cluster service account
+- Bearer token
+- Client certificates
+
+**LLM Action Examples:**
+```json
+{
+  "type": "k8s_list_pods",
+  "namespace": "default",
+  "label_selector": "app=nginx"
+}
+
+{
+  "type": "k8s_get_logs",
+  "pod_name": "nginx-abc123",
+  "namespace": "default",
+  "tail_lines": 100
+}
+
+{
+  "type": "k8s_scale_deployment",
+  "deployment_name": "nginx",
+  "namespace": "default",
+  "replicas": 3
+}
+```
+
+**Challenges:**
+- Requires kubeconfig or in-cluster credentials
+- Large API surface (many resource types)
+- Version skew between client and server
+- Complex RBAC permissions
+- LLM must understand k8s concepts (Deployments vs Pods, etc.)
+
+**Recommendation:** Use `kube` crate with k8s-openapi types. LLM generates resource manifests as JSON, NetGet applies via API.
 
 ---
 
@@ -1700,23 +2025,263 @@ stream.read_to_string(&mut response).await?;
 
 ---
 
-### DHCP ❌
-**Complexity:** Unfeasible for typical client
-**Reason:** OS handles DHCP automatically. Implementing custom DHCP client would conflict with OS network stack.
+### DHCP 🟡
+**Complexity:** Medium
+**Client Library:** `dhcproto` (parser/encoder), `mozim` (client library), or `toe-beans` (client + server)
 
-**Alternative:** Mock/honeypot only.
+**Use Case:** DHCP testing, network diagnostics, IP address discovery (NOT for managing OS network stack)
+
+**LLM Control:**
+- Send DHCP DISCOVER (broadcast or unicast)
+- Send DHCP REQUEST for specific IP
+- Request IP for specific MAC address (spoofing for testing)
+- Parse DHCP OFFER/ACK responses
+- Extract offered IP, subnet mask, gateway, DNS servers
+- DHCP INFORM requests (query options without lease)
+
+**Implementation Strategy:**
+```rust
+use dhcproto::{v4, Encodable, Decodable};
+use tokio::net::UdpSocket;
+
+// Bind to DHCP client port
+let socket = UdpSocket::bind("0.0.0.0:68").await?;
+socket.set_broadcast(true)?;
+
+// LLM decides: send DHCP DISCOVER for specific MAC
+let mut discover = v4::Message::new(
+    /* your IP */ Ipv4Addr::UNSPECIFIED,
+    /* server IP */ Ipv4Addr::UNSPECIFIED,
+    /* gateway */ Ipv4Addr::UNSPECIFIED,
+    /* client MAC */ llm_specified_mac,
+);
+discover.set_flags(v4::Flags::BROADCAST);
+discover.opcode = v4::Opcode::BootRequest;
+discover.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Discover));
+
+// Send to broadcast or specific DHCP server
+let encoded = discover.to_vec()?;
+socket.send_to(&encoded, "255.255.255.255:67").await?;
+
+// LLM processes: receive DHCP OFFER
+let mut buf = vec![0u8; 1500];
+let (len, peer) = socket.recv_from(&mut buf).await?;
+let offer = v4::Message::decode(&mut &buf[..len])?;
+
+// Extract offered IP address
+if let Some(v4::DhcpOption::MessageType(v4::MessageType::Offer)) = offer.opts().get(v4::OptionCode::MessageType) {
+    let offered_ip = offer.yiaddr(); // Your IP address
+    let server_ip = offer.opts().get(v4::OptionCode::ServerIdentifier);
+    // LLM analyzes offer and decides whether to accept
+}
+```
+
+**Use Cases:**
+- **DHCP Server Testing:** Verify server responds correctly
+- **Network Discovery:** Find DHCP servers on network
+- **IP Conflict Detection:** Request specific IP to test if already allocated
+- **MAC-based IP Querying:** Request IP for specific MAC (useful for testing)
+- **DHCP Option Analysis:** Inspect DNS, gateway, NTP servers offered
+- **Rogue DHCP Detection:** Monitor for unauthorized DHCP servers
+
+**LLM Action Examples:**
+```json
+{
+  "type": "dhcp_discover",
+  "mac_address": "00:11:22:33:44:55",
+  "broadcast": true
+}
+
+{
+  "type": "dhcp_request",
+  "requested_ip": "192.168.1.100",
+  "dhcp_server": "192.168.1.1",
+  "mac_address": "00:11:22:33:44:55"
+}
+
+{
+  "type": "dhcp_inform",
+  "current_ip": "192.168.1.50",
+  "query_options": ["dns_servers", "gateway", "ntp_servers"]
+}
+```
+
+**Challenges:**
+- Requires binding to port 68 (may need elevated privileges)
+- Broadcast socket configuration
+- DHCP option parsing (many option types)
+- Timing (DHCP has specific timeout requirements)
+- Does NOT configure OS network stack (that's intentional)
+
+**Important:** This is for DHCP **testing and monitoring**, NOT for managing the OS network interface. The OS DHCP client continues to manage actual network configuration.
+
+**Recommendation:** Use `dhcproto` for protocol encoding/decoding, implement custom client logic for testing scenarios.
 
 ---
 
-### BOOTP ❌
-**Complexity:** Unfeasible
-**Reason:** Same as DHCP (precursor protocol). OS-managed.
+### BOOTP 🟡
+**Complexity:** Medium
+**Client Library:** `dhcproto` (supports BOOTP as DHCP subset)
+
+**Use Case:** Legacy network testing, embedded systems, diskless workstation simulation
+
+**LLM Control:**
+- Send BOOTP request
+- Specify client MAC address
+- Parse BOOTP reply (IP, server, boot filename)
+- Extract boot server address
+
+**Implementation Strategy:**
+```rust
+use dhcproto::v4;
+
+// BOOTP is essentially DHCP without options
+let mut bootp_request = v4::Message::new(
+    Ipv4Addr::UNSPECIFIED,
+    Ipv4Addr::UNSPECIFIED,
+    Ipv4Addr::UNSPECIFIED,
+    client_mac,
+);
+bootp_request.opcode = v4::Opcode::BootRequest;
+// No DHCP options = BOOTP
+
+// Send to BOOTP server
+socket.send_to(&bootp_request.to_vec()?, "255.255.255.255:67").await?;
+
+// Parse BOOTP reply
+let reply = v4::Message::decode(&mut response_buf)?;
+let assigned_ip = reply.yiaddr();
+let boot_server = reply.siaddr();
+let boot_filename = reply.fname(); // Boot file name (e.g., "pxelinux.0")
+```
+
+**Use Cases:**
+- PXE boot testing
+- Diskless workstation simulation
+- Legacy network compatibility testing
+- TFTP server discovery
+
+**Note:** BOOTP is simpler than DHCP (no options), primarily for boot file location.
 
 ---
 
-### IGMP ❌
-**Complexity:** Unfeasible
-**Reason:** Multicast group management is kernel-level. Applications use socket options, not IGMP directly.
+### IGMP 🟠
+**Complexity:** Hard (Requires Root)
+**Client Library:** `pcap` + `pnet` for IGMP packet construction, or raw IP sockets
+
+**Prerequisites:**
+- **Root/CAP_NET_RAW** - Required for raw packet injection
+- Alternatively, use socket options (IP_ADD_MEMBERSHIP) for standard multicast join
+
+**LLM Control:**
+- Send IGMP Membership Report (join multicast group)
+- Send IGMP Leave Group message
+- Send IGMPv2/IGMPv3 reports
+- Specify multicast group address
+- Query IGMP state
+
+**Implementation Strategy (Option 1: Raw Packet Injection):**
+```rust
+use pcap::{Capture, Device};
+use pnet::packet::igmp::{IgmpPacket, MutableIgmpPacket, IgmpType};
+use pnet::packet::ip::IpNextHeaderProtocols;
+
+// Open interface for sending (requires root)
+let device = Device::lookup()?.unwrap();
+let mut cap = Capture::from_device(device)?.open()?;
+
+// LLM decides: join multicast group 239.1.2.3
+let multicast_addr = Ipv4Addr::new(239, 1, 2, 3);
+
+// Construct IGMP Membership Report
+let mut igmp_buffer = vec![0u8; 8]; // IGMP packet size
+let mut igmp_packet = MutableIgmpPacket::new(&mut igmp_buffer).unwrap();
+
+igmp_packet.set_igmp_type(IgmpType::MembershipReportV2);
+igmp_packet.set_group_addr(multicast_addr);
+igmp_packet.set_checksum(/* calculate checksum */);
+
+// Wrap in IP packet
+let mut ip_packet = construct_ip_packet(
+    src_ip,
+    multicast_addr, // Dest is the multicast group
+    IpNextHeaderProtocols::Igmp,
+    &igmp_buffer
+);
+
+// Send via pcap
+cap.sendpacket(&ip_packet)?;
+```
+
+**Implementation Strategy (Option 2: Socket Options - Easier):**
+```rust
+use socket2::{Socket, Domain, Type, Protocol};
+use std::net::Ipv4Addr;
+
+// Create UDP socket
+let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+
+// LLM decides: join multicast group
+let multicast_addr = Ipv4Addr::new(239, 1, 2, 3);
+let interface_addr = Ipv4Addr::new(0, 0, 0, 0); // Any interface
+
+// Join multicast group (kernel sends IGMP report automatically)
+socket.join_multicast_v4(&multicast_addr, &interface_addr)?;
+
+// LLM can now receive multicast traffic
+// When done, leave group (kernel sends IGMP leave)
+socket.leave_multicast_v4(&multicast_addr, &interface_addr)?;
+```
+
+**Use Cases:**
+- **Multicast Group Testing:** Verify multicast router functionality
+- **IGMP Snooping Testing:** Test switch IGMP snooping behavior
+- **Multicast Discovery:** Find active multicast groups
+- **IGMP Query Response:** Respond to router IGMP queries
+- **Group Membership Simulation:** Simulate multiple hosts joining groups
+
+**IGMP Message Types:**
+- **IGMPv1 Membership Report** (0x12)
+- **IGMPv2 Membership Report** (0x16)
+- **IGMPv2 Leave Group** (0x17)
+- **IGMPv3 Membership Report** (0x22)
+- **IGMP Membership Query** (0x11) - Usually sent by routers
+
+**LLM Action Examples:**
+```json
+{
+  "type": "igmp_join_group",
+  "multicast_group": "239.1.2.3",
+  "interface": "eth0",
+  "igmp_version": "v2"
+}
+
+{
+  "type": "igmp_leave_group",
+  "multicast_group": "239.1.2.3",
+  "interface": "eth0"
+}
+
+{
+  "type": "igmp_send_report",
+  "groups": ["239.1.2.3", "239.1.2.4"],
+  "igmp_version": "v3"
+}
+```
+
+**Challenges:**
+- Raw packet injection requires root privileges
+- IGMP checksum calculation (includes IP pseudo-header)
+- TTL must be 1 for IGMP packets (link-local)
+- Router Alert IP option required for IGMPv2/v3
+- Coordination with kernel multicast stack
+
+**Recommendation:**
+- **For Testing:** Use raw packet injection (Option 1) to manually craft IGMP messages
+- **For Receiving Multicast:** Use socket options (Option 2) for standard multicast reception
+- **Hybrid:** Socket options for join/leave, pcap capture for monitoring IGMP traffic
+
+**Important:** IGMP is typically handled by the kernel, but raw injection allows testing IGMP behavior without kernel involvement.
 
 ---
 
@@ -2049,10 +2614,10 @@ LLM sees proxy actions in both client types:
 | Complexity | Count | Protocols |
 |------------|-------|-----------|
 | ✅ Easy | 4 | TCP, HTTP, Redis, Whois |
-| 🟡 Medium | 37 | UDP, HTTPS, HTTP/2, WebDAV, DNS, DoT, DoH, SMTP, IRC, MQTT, MySQL, PostgreSQL, DynamoDB, Elasticsearch, Telnet, SNMP, NTP, SOCKS5, HTTP Proxy, STUN, gRPC, JSON-RPC, XML-RPC, MCP, OpenAI, etcd, VNC, NPM, PyPI, Maven, IPP, BitTorrent Tracker, OAuth2, OpenID, S3, SQS, Syslog, NNTP, Bitcoin (RPC), RIP (Query) |
-| 🟠 Hard | 21 | HTTP/3, mDNS, IMAP, XMPP, Cassandra, SSH, LDAP, Tor, TURN, Kafka, Git, SVN, SIP, BitTorrent DHT, BitTorrent Peer, SAML, DataLink (requires root), ARP (requires root), BGP (Query), OSPF (Query), ISIS (Query) |
-| 🔴 Very Hard | 4 | WireGuard, Mercurial, SMB, NFS |
-| ❌ Unfeasible | 8 | OpenVPN, IPSec, DHCP, BOOTP, IGMP, Kubernetes, WebRTC |
+| 🟡 Medium | 40 | UDP, HTTPS, HTTP/2, WebDAV, DNS, DoT, DoH, SMTP, IRC, MQTT, MySQL, PostgreSQL, DynamoDB, Elasticsearch, Telnet, SNMP, NTP, SOCKS5, HTTP Proxy, STUN, gRPC, JSON-RPC, XML-RPC, MCP, OpenAI, etcd, VNC, NPM, PyPI, Maven, IPP, BitTorrent Tracker, OAuth2, OpenID, S3, SQS, Syslog, NNTP, Bitcoin (RPC), RIP (Query), **Kubernetes**, **DHCP**, **BOOTP** |
+| 🟠 Hard | 23 | HTTP/3, mDNS, IMAP, XMPP, Cassandra, SSH, LDAP, Tor, TURN, Kafka, Git, SIP, BitTorrent DHT, BitTorrent Peer, SAML, DataLink (requires root), ARP (requires root), BGP (Query), OSPF (Query), ISIS (Query), **NFS**, **SMB**, **IGMP** (requires root) |
+| 🔴 Very Hard | 1 | WireGuard |
+| ❌ Unfeasible | 5 | OpenVPN, IPSec, **SVN**, **Mercurial**, WebRTC |
 
 ### Implementation Priority Recommendations
 
@@ -2089,8 +2654,7 @@ LLM sees proxy actions in both client types:
 **Avoid (Too Complex/Low Value):**
 - OpenVPN (no Rust library, extremely complex)
 - VPN protocols requiring kernel (WireGuard, IPSec)
-- OS-level protocols (DHCP, BOOTP, IGMP)
-- Protocols with no Rust libraries (SMB, NFS, Mercurial)
+- Version control with immature bindings (SVN, Mercurial - use command wrappers)
 - WebRTC (real-time media too complex for LLM)
 
 ---
@@ -2207,13 +2771,21 @@ impl Client for ProtocolClientProtocol {
 
 ## Conclusion
 
-**50+ server protocols analyzed:**
-- ✅ **4 Easy** - Already proven pattern
-- 🟡 **35 Medium** - Straightforward with good libraries
-- 🟠 **17 Hard** - Complex but feasible with effort
-- 🔴 **5 Very Hard** - Possible but marginal value
-- ❌ **9 Unfeasible** - Wrong abstraction or requires kernel
+**73 server protocols analyzed:**
+- ✅ **4 Easy** - Already proven pattern (TCP, HTTP, Redis implemented)
+- 🟡 **40 Medium** - Straightforward with good libraries (including Kubernetes, DHCP, BOOTP)
+- 🟠 **23 Hard** - Complex but feasible with effort (including NFS, SMB, IGMP)
+- 🔴 **1 Very Hard** - Possible but marginal value (WireGuard only)
+- ❌ **5 Unfeasible** - Wrong abstraction or requires kernel (OpenVPN, IPSec, SVN, Mercurial, WebRTC)
 
-**Recommended next implementations:** UDP, DNS, SMTP, MySQL, MQTT (all Medium complexity, high utility).
+**Key Updates:**
+- **Kubernetes:** Now feasible with `kube` v2.0.1 (mature, actively maintained)
+- **DHCP/BOOTP:** Feasible for testing and monitoring (not OS network stack management)
+- **IGMP:** Feasible via raw packet injection or socket options (multicast testing)
+- **NFS:** Feasible with `nfs3_client` (pure Rust) or `libnfs` (C bindings)
+- **SMB:** Feasible with `pavao` or `smbc` (libsmbclient wrappers)
+- **SVN/Mercurial:** Marked unfeasible (use command wrappers instead)
 
-**Mock client strategy:** Command wrappers for unfeasible protocols enable server testing without full client implementation.
+**Recommended next implementations:** UDP, DNS, SMTP, MySQL, MQTT, Kubernetes (all Medium complexity, high utility).
+
+**Mock client strategy:** Command wrappers for unfeasible protocols (SVN, Mercurial) enable server testing without full client implementation.
