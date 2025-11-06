@@ -135,14 +135,100 @@ impl Server for SmtpProtocol {
     > {
         Box::pin(async move {
             use crate::server::smtp::SmtpServer;
+
+            // Check if TLS should be enabled via startup parameters
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                if params.get_optional_bool("enable_tls").unwrap_or(false) {
+                    // Generate TLS configuration
+                    let common_name = params.get_optional_string("tls_common_name");
+                    let san_dns_names = params.get_optional_array("tls_san_dns_names")
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .collect::<Vec<_>>()
+                        });
+                    let validity_days = params.get_optional_i64("tls_validity_days");
+                    let organization = params.get_optional_string("tls_organization");
+                    let organizational_unit = params.get_optional_string("tls_organizational_unit");
+
+                    match crate::server::tls_cert_manager::generate_custom_tls_config(
+                        common_name,
+                        san_dns_names,
+                        validity_days,
+                        organization,
+                        organizational_unit,
+                    ) {
+                        Ok(config) => Some(config),
+                        Err(e) => {
+                            tracing::error!("Failed to generate TLS config: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             SmtpServer::spawn_with_llm_actions(
                 ctx.listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                tls_config,
             ).await
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "enable_tls".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Enable SMTPS (implicit TLS) mode (default: false)".to_string(),
+                required: false,
+                example: json!(true),
+            },
+            ParameterDefinition {
+                name: "tls_common_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "TLS certificate Common Name (CN) (default: 'netget-smtp-server')".to_string(),
+                required: false,
+                example: json!("mail.example.com"),
+            },
+            ParameterDefinition {
+                name: "tls_san_dns_names".to_string(),
+                type_hint: "array".to_string(),
+                description: "TLS certificate Subject Alternative Names (DNS names) (default: ['localhost', '*.local'])".to_string(),
+                required: false,
+                example: json!(["mail.example.com", "localhost", "*.example.com"]),
+            },
+            ParameterDefinition {
+                name: "tls_validity_days".to_string(),
+                type_hint: "integer".to_string(),
+                description: "TLS certificate validity period in days (default: 365)".to_string(),
+                required: false,
+                example: json!(365),
+            },
+            ParameterDefinition {
+                name: "tls_organization".to_string(),
+                type_hint: "string".to_string(),
+                description: "TLS certificate Organization (O) (default: 'NetGet')".to_string(),
+                required: false,
+                example: json!("Example Corp"),
+            },
+            ParameterDefinition {
+                name: "tls_organizational_unit".to_string(),
+                type_hint: "string".to_string(),
+                description: "TLS certificate Organizational Unit (OU) (default: 'SMTP Server')".to_string(),
+                required: false,
+                example: json!("IT Department"),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -205,19 +291,19 @@ impl Server for SmtpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual line-based parsing with tokio")
+            .implementation("Manual line-based parsing with tokio, optional TLS via rustls")
             .llm_control("All SMTP commands + responses")
             .e2e_testing("lettre SMTP client")
-            .notes("No auth/TLS, basic MTA functionality")
+            .notes("Basic MTA functionality, supports plain SMTP and SMTPS (implicit TLS)")
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "SMTP mail server"
+        "SMTP/SMTPS mail server"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Start an SMTP mail server on port 25"
+        "Start an SMTP mail server on port 25 (or 'Start an SMTPS mail server on port 465 with TLS enabled')"
     }
 
     fn group_name(&self) -> &'static str {

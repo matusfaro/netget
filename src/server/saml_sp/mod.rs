@@ -77,9 +77,9 @@ impl SamlSpServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
-                                "recent_requests": []
-                            })),
+                            protocol_info: ProtocolConnectionInfo::SamlSp {
+                                recent_requests: Vec::new(),
+                            },
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());

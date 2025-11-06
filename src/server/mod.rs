@@ -13,8 +13,8 @@ pub mod socket_helpers;
 #[cfg(any(feature = "http", feature = "http2"))]
 pub mod http_common;
 
-// TLS certificate management for DoT and DoH
-#[cfg(any(feature = "dot", feature = "doh"))]
+// TLS certificate management for DoT, DoH, HTTP, HTTP/2, HTTP/3, SMTP, and TLS protocols
+#[cfg(any(feature = "dot", feature = "doh", feature = "http", feature = "http2", feature = "http3", feature = "smtp", feature = "tls"))]
 pub mod tls_cert_manager;
 
 #[cfg(feature = "tcp")]
@@ -158,6 +158,13 @@ pub use ssh::sftp_handler::LlmSftpHandler;
 pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshProtocol;
+
+#[cfg(feature = "svn")]
+pub mod svn;
+#[cfg(feature = "svn")]
+pub use svn::SvnServer;
+#[cfg(feature = "svn")]
+pub use svn::actions::SvnProtocol;
 
 #[cfg(feature = "irc")]
 pub mod irc;
@@ -363,6 +370,13 @@ pub use openai::OpenAiServer;
 #[cfg(feature = "openai")]
 pub use openai::actions::OpenAiProtocol;
 
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
+#[cfg(feature = "oauth2")]
+pub use oauth2::OAuth2Server;
+#[cfg(feature = "oauth2")]
+pub use oauth2::actions::OAuth2Protocol;
+
 #[cfg(feature = "jsonrpc")]
 pub mod jsonrpc;
 #[cfg(feature = "jsonrpc")]
@@ -485,12 +499,26 @@ pub use openapi::OpenApiServer;
 #[cfg(feature = "openapi")]
 pub use openapi::actions::OpenApiProtocol;
 
+#[cfg(feature = "openid")]
+pub mod openid;
+#[cfg(feature = "openid")]
+pub use openid::OpenIdServer;
+#[cfg(feature = "openid")]
+pub use openid::actions::OpenIdProtocol;
+
 #[cfg(feature = "git")]
 pub mod git;
 #[cfg(feature = "git")]
 pub use git::GitServer;
 #[cfg(feature = "git")]
 pub use git::actions::GitProtocol;
+
+#[cfg(feature = "mercurial")]
+pub mod mercurial;
+#[cfg(feature = "mercurial")]
+pub use mercurial::MercurialServer;
+#[cfg(feature = "mercurial")]
+pub use mercurial::actions::MercurialProtocol;
 
 #[cfg(feature = "kafka")]
 pub mod kafka;
@@ -526,6 +554,13 @@ pub mod torrent_peer;
 pub use torrent_peer::TorrentPeerServer;
 #[cfg(feature = "torrent-peer")]
 pub use torrent_peer::actions::TorrentPeerProtocol;
+
+#[cfg(feature = "tls")]
+pub mod tls;
+#[cfg(feature = "tls")]
+pub use tls::TlsServer;
+#[cfg(feature = "tls")]
+pub use tls::actions::TlsProtocol;
 
 #[cfg(feature = "saml-idp")]
 pub mod saml_idp;

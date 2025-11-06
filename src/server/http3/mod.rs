@@ -45,29 +45,25 @@ impl Http3Server {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> Result<SocketAddr> {
-        // Generate self-signed certificate for TLS
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
-            .context("Failed to generate self-signed certificate")?;
-        let cert_der = cert.serialize_der()
-            .context("Failed to serialize certificate")?;
-        let key_der = cert.serialize_private_key_der();
+        // Use provided TLS config or generate default
+        let mut server_crypto = match tls_config {
+            Some(config) => (*config).clone(),
+            None => {
+                // Generate default self-signed certificate
+                let config = crate::server::tls_cert_manager::generate_default_tls_config()
+                    .context("Failed to generate default TLS config")?;
+                (*config).clone()
+            }
+        };
 
-        // Configure TLS with rustls
-        let mut server_crypto = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![rustls::pki_types::CertificateDer::from(cert_der)],
-                rustls::pki_types::PrivateKeyDer::try_from(key_der)
-                    .context("Failed to parse private key")?
-            )
-            .context("Failed to configure TLS")?;
-
+        // Ensure ALPN protocols include h3
         server_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
         // Create HTTP3 server configuration
         let mut server_config = ServerConfig::with_crypto(Arc::new(
-            quinn::crypto::rustls::Http3ServerConfig::try_from(server_crypto)
+            quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
                 .context("Failed to create HTTP3 crypto config")?
         ));
 
@@ -120,9 +116,9 @@ impl Http3Server {
                                         last_activity: now,
                                         status: ConnectionStatus::Active,
                                         status_changed_at: now,
-                                        protocol_info: ProtocolConnectionInfo::Http3 {
-                                            stream_count: 0,
-                                        },
+                                        protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
+                                            "stream_count": 0
+                                        })),
                                     };
                                     app_state_clone.add_connection_to_server(server_id, conn_state).await;
                                     let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
