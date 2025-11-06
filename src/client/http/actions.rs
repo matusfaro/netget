@@ -45,10 +45,10 @@ impl Client for HttpClientProtocol {
                 description: "Default headers to include in all requests".to_string(),
                 type_hint: "object".to_string(),
                 required: false,
-                example: Some(json!({
+                example: json!({
                     "User-Agent": "NetGet/1.0",
                     "Accept": "application/json"
-                })),
+                }),
             },
         ]
     }
@@ -200,12 +200,14 @@ impl Client for HttpClientProtocol {
             EventType {
                 id: "http_connected".to_string(),
                 description: "Triggered when HTTP client is initialized".to_string(),
-                available_actions: vec!["send_http_request".to_string()],
+                actions: vec![],
+                parameters: vec![],
             },
             EventType {
                 id: "http_response_received".to_string(),
                 description: "Triggered when HTTP client receives a response".to_string(),
-                available_actions: vec!["send_http_request".to_string()],
+                actions: vec![],
+                parameters: vec![],
             },
         ]
     }

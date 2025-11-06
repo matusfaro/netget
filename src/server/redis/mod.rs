@@ -96,7 +96,7 @@ impl RedisServer {
                                 last_activity: now,
                                 status: ConnectionStatus::Active,
                                 status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::Redis,
+                                protocol_info: ProtocolConnectionInfo::Redis {},
                             };
                             server
                                 .app_state

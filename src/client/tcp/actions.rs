@@ -129,12 +129,14 @@ impl Client for TcpClientProtocol {
             EventType {
                 id: "tcp_connected".to_string(),
                 description: "Triggered when TCP client connects to server".to_string(),
-                available_actions: vec!["send_tcp_data".to_string()],
+                actions: vec![],
+                parameters: vec![],
             },
             EventType {
                 id: "tcp_data_received".to_string(),
                 description: "Triggered when TCP client receives data from server".to_string(),
-                available_actions: vec!["send_tcp_data".to_string(), "wait_for_more".to_string()],
+                actions: vec![],
+                parameters: vec![],
             },
         ]
     }

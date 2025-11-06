@@ -1414,6 +1414,7 @@ fn update_slash_suggestions_and_render(
         if app.slash_suggestions.is_empty() {
             footer.set_content(FooterContent::Normal {
                 servers: app.servers.clone(),
+                clients: app.clients.clone(),
                 connections: app.connections.clone(),
                 expand_all: app.expand_all_connections,
                 conversations: app.conversations.clone(),

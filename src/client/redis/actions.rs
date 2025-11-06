@@ -123,12 +123,14 @@ impl Client for RedisClientProtocol {
             EventType {
                 id: "redis_connected".to_string(),
                 description: "Triggered when Redis client connects to server".to_string(),
-                available_actions: vec!["execute_redis_command".to_string()],
+                actions: vec![],
+                parameters: vec![],
             },
             EventType {
                 id: "redis_response_received".to_string(),
                 description: "Triggered when Redis client receives a response".to_string(),
-                available_actions: vec!["execute_redis_command".to_string()],
+                actions: vec![],
+                parameters: vec![],
             },
         ]
     }
