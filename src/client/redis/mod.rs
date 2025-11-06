@@ -1,7 +1,7 @@
 //! Redis client implementation
 pub mod actions;
 
-pub use actions::{RedisClientProtocol, REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT};
+pub use actions::RedisClientProtocol;
 
 use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;

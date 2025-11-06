@@ -1,7 +1,7 @@
 //! HTTP client implementation
 pub mod actions;
 
-pub use actions::{HttpClientProtocol, HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT};
+pub use actions::HttpClientProtocol;
 
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
