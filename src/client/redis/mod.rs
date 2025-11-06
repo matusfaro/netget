@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -18,7 +18,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::redis::actions::{REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::client::redis::actions::REDIS_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// Redis client that connects to a Redis server
 pub struct RedisClient;
@@ -103,7 +103,7 @@ impl RedisClient {
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) if name == "redis_command" => {
                                                 if let Some(command_str) = data.get("command").and_then(|v| v.as_str()) {
                                                     let cmd = format!("{}\r\n", command_str);
-                                                    if let Ok(mut write) = write_half_arc.lock().await.write_all(cmd.as_bytes()).await {
+                                                    if let Ok(_) = write_half_arc.lock().await.write_all(cmd.as_bytes()).await {
                                                         trace!("Redis client {} sent: {}", client_id, command_str);
                                                     }
                                                 }

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{error, info};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -15,7 +15,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::http::actions::{HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::client::http::actions::HTTP_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// HTTP client that makes requests to remote HTTP servers
 pub struct HttpClient;
@@ -24,7 +24,7 @@ impl HttpClient {
     /// Connect to an HTTP server with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        llm_client: OllamaClient,
+        _llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -35,7 +35,7 @@ impl HttpClient {
         info!("HTTP client {} initialized for {}", client_id, remote_addr);
 
         // Build reqwest client
-        let http_client = reqwest::Client::builder()
+        let _http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .context("Failed to build HTTP client")?;

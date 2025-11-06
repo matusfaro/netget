@@ -168,6 +168,7 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
 }
 
 /// Guard to ensure terminal cleanup happens
+#[allow(dead_code)]
 pub struct TerminalGuard {
     enhanced_supported: bool,
 }

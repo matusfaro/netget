@@ -20,7 +20,6 @@ use actions::HTTP_REQUEST_EVENT;
 use crate::server::HttpProtocol;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 

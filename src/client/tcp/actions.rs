@@ -2,7 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
-    ActionDefinition, Parameter, ParameterDefinition,
+    ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
