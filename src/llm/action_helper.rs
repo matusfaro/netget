@@ -571,7 +571,7 @@ pub struct ClientLlmResult {
 pub async fn call_llm_for_client(
     llm_client: &OllamaClient,
     state: &AppState,
-    client_id: String,
+    _client_id: String,
     instruction: &str,
     memory: &str,
     event: Option<&Event>,

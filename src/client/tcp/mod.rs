@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -17,7 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::tcp::actions::{TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RECEIVED_EVENT};
+use crate::client::tcp::actions::TCP_CLIENT_DATA_RECEIVED_EVENT;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -130,7 +130,7 @@ impl TcpClient {
                                                 use crate::llm::actions::client_trait::Client;
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
-                                                        if let Ok(mut write) = write_half_arc.lock().await.write_all(&bytes).await {
+                                                        if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
                                                             trace!("TCP client {} sent {} bytes", client_id, bytes.len());
                                                         }
                                                     }

@@ -1,9 +1,9 @@
 //! Socket helper utilities for creating sockets with proper options
 
 use anyhow::Result;
-use socket2::{Domain, Socket, Type, Protocol, SockAddr};
+use socket2::{Domain, Socket, Type};
 use std::net::{SocketAddr, Ipv4Addr};
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::io::FromRawFd;
 use tokio::net::{TcpListener, UdpSocket};
 
 /// OSPF protocol number (IPPROTO_OSPFIGP)

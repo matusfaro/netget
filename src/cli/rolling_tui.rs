@@ -5,7 +5,6 @@
 //! while input and connection info remain sticky at the bottom.
 
 use anyhow::Result;
-use chrono::Local;
 use crossterm::{
     cursor,
     event::{Event, EventStream, KeyCode, KeyModifiers},
@@ -158,7 +157,7 @@ pub async fn run_rolling_tui(
     test_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Counter for test heartbeats
-    let mut heartbeat_counter = 0u64;
+    let mut _heartbeat_counter = 0u64;
 
     // Resize debouncing - store pending resize dimensions
     let mut pending_resize: Option<(u16, u16)> = None;
