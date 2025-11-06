@@ -53,13 +53,106 @@ socket.send_to(&data, remote_addr).await?
 - May receive from multiple sources
 - Need timeout handling for responses
 
+**Note on Connectionless Protocols:**
+Even though UDP has no "connection", the client still maintains active state:
+- **Listening state**: Client remains active to receive responses
+- **LLM trigger system**: Events fire when data arrives
+- **Scheduled tasks**: LLM can schedule periodic sends (e.g., heartbeats)
+- **Client lifecycle**: Open client → active listening → close client
+
+This pattern applies to all connectionless protocols (UDP, IGMP, multicast, etc.). We track the **active listening state**, not connections.
+
 ---
 
-### DataLink/ARP ❌
-**Complexity:** Unfeasible
-**Reason:** Clients don't typically send raw ethernet frames. DataLink is layer 2 - applications use layer 3+ protocols. ARP is handled by OS kernel.
+### DataLink 🟠
+**Complexity:** Hard (Requires Root)
+**Client Library:** `pcap` crate
 
-**Alternative:** Use existing network stack instead.
+**Prerequisites:**
+- **Root/CAP_NET_RAW** - Required for raw packet capture/injection
+- **libpcap** system library
+- Network interface in promiscuous mode
+
+**LLM Control:**
+- Inject raw Ethernet frames (hex)
+- Specify interface
+- Set Ethernet type (0x0800 for IPv4, 0x0806 for ARP, etc.)
+- Construct custom L2 protocols
+
+**Implementation Strategy:**
+```rust
+use pcap::{Capture, Device};
+
+// Open interface for sending (requires root)
+let device = Device::lookup()?.unwrap();
+let mut cap = Capture::from_device(device)?.open()?;
+
+// LLM constructs raw Ethernet frame
+let frame = hex::decode(llm_frame_hex)?;
+cap.sendpacket(&frame)?;
+```
+
+**Use Cases:**
+- Custom L2 protocols
+- Network simulation/testing
+- ARP spoofing detection testing
+- Ethernet frame analysis
+
+**Challenges:**
+- Requires elevated privileges
+- Platform-specific (libpcap behavior differs)
+- Must handle Ethernet framing manually
+
+**Server Implementation Reference:** `src/server/datalink/mod.rs` shows packet injection with `cap.sendpacket()`
+
+---
+
+### ARP 🟠
+**Complexity:** Hard (Requires Root)
+**Client Library:** `pcap` + `pnet` for ARP packet construction
+
+**Prerequisites:**
+- Same as DataLink (root access, libpcap)
+
+**LLM Control:**
+- Send ARP requests (who-has queries)
+- Send ARP replies (gratuitous ARP)
+- Spoof source MAC/IP (testing only)
+- ARP cache poisoning detection testing
+
+**Implementation Strategy:**
+```rust
+use pcap::Capture;
+use pnet::packet::arp::{ArpPacket, MutableArpPacket, ArpOperations};
+use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket};
+
+// LLM decides: send ARP request
+let mut arp_buffer = vec![0u8; 28]; // ARP packet size
+let mut arp_packet = MutableArpPacket::new(&mut arp_buffer).unwrap();
+
+arp_packet.set_hardware_type(ArpHardwareTypes::Ethernet);
+arp_packet.set_protocol_type(EtherTypes::Ipv4);
+arp_packet.set_operation(ArpOperations::Request);
+// ... set MAC/IP fields
+
+// Wrap in Ethernet frame
+let mut eth_buffer = vec![0u8; 14 + 28];
+let mut eth_packet = MutableEthernetPacket::new(&mut eth_buffer).unwrap();
+eth_packet.set_ethertype(EtherTypes::Arp);
+// ... construct frame
+
+cap.sendpacket(&eth_buffer)?;
+```
+
+**Use Cases:**
+- Network reconnaissance
+- ARP table manipulation (testing)
+- Gratuitous ARP announcements
+- Duplicate IP detection
+
+**Server Implementation Reference:** `src/server/arp/mod.rs` shows ARP packet construction and injection
+
+**Important:** ARP spoofing can be used maliciously. Only use for authorized testing/research.
 
 ---
 
@@ -203,13 +296,39 @@ let response = client.query(name, DNSClass::IN, RecordType::A)?;
 
 ### DoH (DNS over HTTPS) 🟡
 **Complexity:** Medium
-**Client Library:** `reqwest` + DNS wire format
+**Client Library:** `doh-client`, `https-dns`, or `hickory-dns` with DoH support
 
 **LLM Control:**
-- Same as DNS
-- HTTPS endpoint selection
+- Same as DNS query control
+- DoH server selection (Google, Cloudflare, custom)
+- Wire format vs JSON format
 
-**Implementation:** Send DNS queries as HTTPS POST/GET requests.
+**Implementation Strategy:**
+```rust
+use doh_client::DoHClient;
+
+let client = DoHClient::new("https://dns.google/dns-query".to_string());
+
+// LLM decides query
+let response = client.query_dns(name, record_type).await?;
+```
+
+**Alternative:**
+```rust
+// Using hickory-dns with DoH
+use hickory_client::client::AsyncClient;
+use hickory_https::HttpsClientStreamBuilder;
+
+let stream = HttpsClientStreamBuilder::new()
+    .build::<AsyncClient>(dns_https_url);
+```
+
+**Available DoH Providers:**
+- Google: `https://dns.google/dns-query`
+- Cloudflare: `https://cloudflare-dns.com/dns-query`
+- Quad9: `https://dns.quad9.net/dns-query`
+
+**Implementation:** HTTPS POST/GET with DNS wire format or JSON API.
 
 ---
 
@@ -611,11 +730,18 @@ let local_time = response.transmit_time;
 
 ---
 
-### OpenVPN 🔴
-**Complexity:** Very Hard
-**Reason:** No pure Rust library. Complex TLS control channel + data channel. Certificate management. Requires external `openvpn` binary or kernel module.
+### OpenVPN ❌
+**Complexity:** Unfeasible
+**Reason:** No pure Rust library. Extremely complex protocol with TLS control channel + data channel. Certificate/key management. Requires external `openvpn` binary or kernel module integration.
 
-**Alternative:** Use system OpenVPN client, LLM generates config files.
+**Why Unfeasible:**
+- No Rust implementation of OpenVPN protocol
+- Would need to wrap C library or `openvpn` binary
+- Certificate/PKI infrastructure complexity
+- Requires TUN/TAP devices (kernel interaction)
+- Authentication complexity (username/password, certificates, 2FA)
+
+**Alternative:** Command wrapper approach - LLM generates `.ovpn` config files and executes `openvpn --config llm-generated.ovpn`
 
 ---
 
@@ -829,58 +955,286 @@ let response = client.chat().create(request).await?;
 
 ## Routing Protocols
 
-### BGP ❌
-**Complexity:** Unfeasible for typical client use
-**Reason:** BGP is a routing protocol used between routers. "Client" doesn't make sense - you'd be a BGP peer (essentially a server). Requires AS number, IP prefix announcements.
+### BGP 🟠
+**Complexity:** Hard (Query Mode)
+**Client Library:** Custom TCP + BGP wire format
 
-**Alternative:** BGP monitoring tools exist, but true client participation is rare.
+**Use Case:** Query BGP peer for routing information (not full participation)
+
+**LLM Control:**
+- Connect to BGP peer (port 179)
+- Send BGP OPEN (establish session)
+- Query route information (REQUEST routes)
+- Parse UPDATE messages (learned routes)
+- Send KEEPALIVE messages
+
+**Implementation Strategy:**
+```rust
+// BGP query client - connects to peer to gather routing info
+use std::net::TcpStream;
+
+// LLM decides: query this BGP peer
+let mut stream = TcpStream::connect((peer_ip, 179))?;
+
+// Send OPEN message
+let open_msg = BgpOpenMessage {
+    version: 4,
+    my_as: llm_as_number, // Can be fake for monitoring
+    hold_time: 180,
+    bgp_id: my_ip,
+    // ...
+};
+stream.write_all(&open_msg.encode())?;
+
+// Receive UPDATE messages with routes
+let update = BgpUpdateMessage::decode(&stream)?;
+// LLM analyzes: prefix, AS path, next hop, communities
+```
+
+**Use Cases:**
+- Query peer for advertised routes
+- Monitor BGP updates
+- Analyze AS paths
+- BGP route debugging
+
+**Challenges:**
+- BGP wire protocol parsing
+- Session management (OPEN, KEEPALIVE, NOTIFICATION)
+- Route parsing (NLRI, path attributes)
+- Requires valid AS number (can be private AS for testing)
+
+**Note:** This is **passive monitoring/querying**, not active route announcement.
 
 ---
 
-### OSPF ❌
-**Complexity:** Unfeasible
-**Reason:** Layer 3 routing protocol. Requires multicast, raw IP sockets, complex adjacency formation. Clients don't run OSPF.
+### OSPF 🟠
+**Complexity:** Hard (Query Mode)
+**Client Library:** Raw IP socket + OSPF packet parsing
+
+**Use Case:** Query OSPF router for link-state database
+
+**Prerequisites:**
+- Root access (raw IP sockets)
+- Multicast support (224.0.0.5, 224.0.0.6)
+
+**LLM Control:**
+- Send Hello packets (neighbor discovery)
+- Request Link State Database (LSDB)
+- Parse LSAs (Link State Advertisements)
+- Query router information
+
+**Implementation Strategy:**
+```rust
+use socket2::{Socket, Domain, Type, Protocol};
+
+// OSPF uses IP protocol 89
+let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::from(89)))?;
+
+// LLM decides: query router for LSDB
+let hello_packet = OspfHelloPacket { /* ... */ };
+socket.send_to(&hello_packet.encode(), ospf_router_addr)?;
+
+// Receive Database Description packets
+let lsdb = parse_ospf_lsdb(&response)?;
+// LLM analyzes: network topology, link costs
+```
+
+**Use Cases:**
+- Topology discovery
+- Link cost monitoring
+- OSPF debugging
+- Network visualization
+
+**Challenges:**
+- Raw IP socket handling
+- OSPF state machine (simplified for querying)
+- Multicast group membership
+- LSA parsing complexity
 
 ---
 
-### ISIS ❌
-**Complexity:** Unfeasible
-**Reason:** Layer 2/3 routing protocol. Similar to OSPF, not a client-server model.
+### ISIS 🟠
+**Complexity:** Hard (Query Mode)
+**Client Library:** Raw packet capture (pcap) + IS-IS parsing
+
+**Use Case:** Capture and parse IS-IS PDUs for topology information
+
+**Prerequisites:**
+- Root access (pcap)
+- Layer 2 access (Ethernet)
+
+**LLM Control:**
+- Capture IS-IS Hello PDUs
+- Parse LSPs (Link State PDUs)
+- Analyze topology database
+- Query neighbor information
+
+**Implementation:**
+Similar to OSPF but at Layer 2 (uses LLC/SNAP, not IP). Requires pcap for raw frame capture.
+
+**Use Cases:**
+- Topology monitoring
+- IS-IS debugging
+- Network analysis
 
 ---
 
-### RIP ❌
-**Complexity:** Unfeasible
-**Reason:** Distance-vector routing protocol. Clients don't participate in routing.
+### RIP 🟡
+**Complexity:** Medium (Query Mode)
+**Client Library:** UDP socket + RIP packet parsing
+
+**Use Case:** Query RIP router for routing table
+
+**LLM Control:**
+- Send RIP Request (query routing table)
+- Parse RIP Response
+- Analyze routes (destination, metric, next hop)
+
+**Implementation Strategy:**
+```rust
+use tokio::net::UdpSocket;
+
+// RIP uses UDP port 520
+let socket = UdpSocket::bind("0.0.0.0:520").await?;
+
+// LLM decides: query router
+let request = RipRequestMessage::new();
+socket.send_to(&request.encode(), (router_ip, 520)).await?;
+
+// Receive routing table
+let (data, _) = socket.recv_from(&mut buf).await?;
+let routes = RipResponseMessage::decode(&data)?;
+// LLM analyzes: network, metric, next hop
+```
+
+**Use Cases:**
+- Simple routing table queries
+- RIP network debugging
+- Route metric analysis
+
+**Challenges:**
+- RIPv1 vs RIPv2 parsing
+- Authentication handling
+- Limited route information (compared to BGP/OSPF)
+
+**Note:** Easiest of the routing protocols - UDP-based, simple format.
 
 ---
 
 ## Specialized Protocols
 
-### Bitcoin 🟠
-**Complexity:** Hard
-**Client Library:** `bitcoin` crate + custom P2P
+### Bitcoin 🟡
+**Complexity:** Medium
+**Client Library:** `bitcoin-rpc` for RPC, `bitcoin` crate for P2P
+
+**Two Client Modes:**
+
+#### 1. Bitcoin RPC Client (Easier) 🟡
+**Connects to:** Bitcoin Core node via JSON-RPC
 
 **LLM Control:**
-- Connect to peers (version handshake)
-- Request blocks/transactions (getdata)
-- Relay transactions (inv, tx)
-- Mempool queries
+- **Blockchain Queries:**
+  - Get block by height/hash (`getblock`, `getblockhash`)
+  - Get transaction details (`getrawtransaction`, `gettransaction`)
+  - Get blockchain info (`getblockchaininfo`)
+  - Get mempool info (`getmempoolinfo`, `getrawmempool`)
+  - Get mining info (`getmininginfo`, `getnetworkhashps`)
+
+- **Wallet Operations:**
+  - Get wallet balance (`getbalance`, `getwalletinfo`)
+  - List transactions (`listtransactions`)
+  - Get addresses (`getnewaddress`, `getaddressinfo`)
+  - Send transaction (`sendtoaddress`, `sendrawtransaction`)
+  - Create raw transaction (`createrawtransaction`)
+  - Sign transaction (`signrawtransactionwithwallet`)
+
+- **Network Queries:**
+  - Get peer info (`getpeerinfo`)
+  - Get network info (`getnetworkinfo`)
+  - Get node addresses (`getnodeaddresses`)
 
 **Implementation Strategy:**
 ```rust
-use bitcoin::{Network, consensus::encode};
+use bitcoincore_rpc::{Auth, Client, RpcApi};
 
-// LLM decides: request block, send tx
-let version_msg = VersionMessage { ... };
-stream.write_all(&encode::serialize(&version_msg)).await?;
+// Connect to Bitcoin Core RPC
+let rpc = Client::new(
+    "http://localhost:8332",
+    Auth::UserPass("user".to_string(), "pass".to_string())
+)?;
+
+// LLM decides: get transaction details
+let txid = Txid::from_str(tx_hash)?;
+let tx = rpc.get_raw_transaction(&txid, None)?;
+
+// LLM decides: get block info
+let block_hash = rpc.get_block_hash(block_height)?;
+let block = rpc.get_block(&block_hash)?;
+
+// LLM decides: send transaction
+let address = Address::from_str(destination)?;
+let txid = rpc.send_to_address(
+    &address,
+    Amount::from_btc(0.001)?,
+    None, None, None, None, None, None
+)?;
+
+// LLM decides: query mempool
+let mempool = rpc.get_raw_mempool()?;
 ```
 
-**Challenges:**
-- P2P protocol (not traditional client-server)
-- Block/transaction validation
+**Use Cases:**
+- Query blockchain data
+- Monitor transactions
+- Wallet management
+- Transaction submission
+- Mining statistics
+- Network monitoring
+
+#### 2. Bitcoin P2P Client (Harder) 🟠
+**Connects to:** Bitcoin P2P network nodes
+
+**LLM Control:**
+- Connect to peers (version handshake)
+- Request blocks (getdata)
+- Request transactions
+- Relay transactions (inv, tx)
+- Query mempool
+- Peer discovery (addr messages)
+
+**Implementation Strategy:**
+```rust
+use bitcoin::consensus::{Decodable, Encodable};
+use bitcoin::p2p::message::{NetworkMessage, RawNetworkMessage};
+use bitcoin::p2p::Magic;
+
+// Connect to Bitcoin node
+let mut stream = TcpStream::connect((peer_ip, 8333)).await?;
+
+// Send version handshake
+let version = NetworkMessage::Version(VersionMessage {
+    version: 70015,
+    services: ServiceFlags::NETWORK,
+    // ...
+});
+let msg = RawNetworkMessage { magic: Magic::BITCOIN, payload: version };
+msg.consensus_encode(&mut stream)?;
+
+// LLM decides: request block
+let getdata = NetworkMessage::GetData(vec![
+    Inventory::Block(block_hash)
+]);
+// ...
+```
+
+**Challenges (P2P mode):**
+- P2P protocol complexity
 - Peer discovery
+- Block/transaction validation
 - Large data downloads
+- DOS protection
+
+**Recommended:** Use RPC mode for most use cases (simpler, more reliable)
 
 ---
 
@@ -1366,6 +1720,328 @@ stream.read_to_string(&mut response).await?;
 
 ---
 
+## Proxy Routing Architecture
+
+### Overview
+
+NetGet supports routing client traffic through proxy protocols (HTTP Proxy, SOCKS5, STUN, TURN). This enables:
+- HTTP client → HTTP Proxy → destination
+- Any TCP client → SOCKS5 → destination
+- WebRTC client → TURN relay → peer
+
+### Design Approach
+
+**Proxy-as-Middleware Pattern:**
+
+Clients accept an optional `proxy_config` parameter that specifies routing through a proxy client. The proxy client establishes the tunnel, then the target client sends data through it.
+
+### Implementation Strategy
+
+#### Option 1: Configuration-Based (Recommended)
+
+```rust
+// Client startup accepts proxy configuration
+pub struct ProxyConfig {
+    pub proxy_type: ProxyType,  // Socks5, HttpProxy, etc.
+    pub proxy_addr: String,
+    pub auth: Option<ProxyAuth>,
+}
+
+pub enum ProxyType {
+    Socks5,
+    HttpProxy,
+    HttpsProxy,
+}
+
+// HTTP client with proxy support
+HttpClient::connect_with_llm_actions(
+    remote_addr,
+    llm_client,
+    app_state,
+    status_tx,
+    client_id,
+    Some(ProxyConfig {
+        proxy_type: ProxyType::Socks5,
+        proxy_addr: "127.0.0.1:1080".to_string(),
+        auth: None,
+    })
+).await?;
+```
+
+**Implementation in HTTP client:**
+```rust
+impl HttpClient {
+    pub async fn connect_with_llm_actions(
+        /* ... */
+        proxy_config: Option<ProxyConfig>,
+    ) -> Result<SocketAddr> {
+        let client = if let Some(proxy) = proxy_config {
+            match proxy.proxy_type {
+                ProxyType::Socks5 => {
+                    // Use tokio-socks to establish SOCKS tunnel
+                    let proxy = Proxy::all(&proxy.proxy_addr)?;
+                    reqwest::Client::builder()
+                        .proxy(proxy)
+                        .build()?
+                }
+                ProxyType::HttpProxy => {
+                    let proxy = Proxy::http(&proxy.proxy_addr)?;
+                    reqwest::Client::builder()
+                        .proxy(proxy)
+                        .build()?
+                }
+            }
+        } else {
+            reqwest::Client::new()
+        };
+
+        // Rest of implementation...
+    }
+}
+```
+
+#### Option 2: Chained Clients (Advanced)
+
+For protocols that don't natively support proxies, chain through SOCKS:
+
+```rust
+// 1. LLM opens SOCKS5 client
+let socks_client_id = open_client("socks5", "127.0.0.1:1080", "Establish tunnel to example.com:80").await?;
+
+// 2. SOCKS5 client negotiates and returns a TcpStream-like handle
+let tunneled_stream = app_state.get_proxy_stream(socks_client_id)?;
+
+// 3. Custom protocol uses the tunneled stream
+let custom_client = CustomTcpClient::connect_via_stream(tunneled_stream, llm_client, ...).await?;
+```
+
+**Challenges:**
+- Need abstraction for "stream provider" (direct TCP vs proxied TCP)
+- Proxy client must expose the tunneled connection
+- Connection lifecycle management (close proxy when client closes)
+
+#### Option 3: LLM-Directed Composition
+
+LLM explicitly chains clients:
+
+```rust
+// User: "Connect to example.com via SOCKS proxy at 127.0.0.1:1080"
+
+// LLM interprets as two-step process:
+// Step 1: Open SOCKS5 client
+let socks_id = execute_action(json!({
+    "type": "open_client",
+    "protocol": "socks5",
+    "remote_addr": "127.0.0.1:1080",
+    "instruction": "Establish tunnel to example.com:80"
+}));
+
+// Step 2: Use SOCKS client ID in HTTP request
+let http_id = execute_action(json!({
+    "type": "open_client",
+    "protocol": "http",
+    "remote_addr": "example.com:80",
+    "proxy_client_id": socks_id,  // Route through this client
+    "instruction": "GET / via SOCKS proxy"
+}));
+```
+
+### Proxy Protocol Details
+
+#### SOCKS5 Proxy Client
+
+**Purpose:** TCP proxy for any protocol
+
+```rust
+pub struct Socks5ClientProtocol;
+
+impl Client for Socks5ClientProtocol {
+    async fn connect(&self, ctx: ConnectContext) -> Result<SocketAddr> {
+        // 1. Connect to SOCKS5 proxy
+        let stream = TcpStream::connect(&ctx.remote_addr).await?;
+
+        // 2. SOCKS5 handshake
+        // Auth negotiation (none, username/password)
+
+        // 3. CONNECT request (LLM specifies target)
+        let target = parse_target_from_instruction(&ctx.instruction)?;
+        send_socks5_connect(&stream, target).await?;
+
+        // 4. Now stream is tunneled - store for other clients to use
+        ctx.app_state.set_proxy_stream(ctx.client_id, stream).await;
+
+        Ok(stream.local_addr()?)
+    }
+}
+```
+
+**Actions:**
+- `socks_connect(target)` - Establish tunnel to target
+- `socks_disconnect()` - Close tunnel
+
+#### HTTP Proxy Client
+
+**Purpose:** HTTP/HTTPS proxy (CONNECT method)
+
+```rust
+pub struct HttpProxyClientProtocol;
+
+impl Client for HttpProxyClientProtocol {
+    async fn connect(&self, ctx: ConnectContext) -> Result<SocketAddr> {
+        // For HTTPS, send CONNECT request
+        let target = parse_target_from_instruction(&ctx.instruction)?;
+
+        let request = format!(
+            "CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n",
+            target, target
+        );
+
+        // Send CONNECT, read "200 Connection established"
+        // Now tunnel is ready for TLS/data
+
+        Ok(stream.local_addr()?)
+    }
+}
+```
+
+#### TURN Relay Client
+
+**Purpose:** UDP relay for WebRTC/NAT traversal
+
+```rust
+pub struct TurnClientProtocol;
+
+impl Client for TurnClientProtocol {
+    async fn connect(&self, ctx: ConnectContext) -> Result<SocketAddr> {
+        // 1. Connect to TURN server
+        // 2. Allocate relay (STUN Allocate request)
+        // 3. Create permissions for peer
+        // 4. ChannelBind for efficient relay
+
+        // Return relay address for peer connection
+        Ok(relay_addr)
+    }
+}
+```
+
+**Actions:**
+- `turn_allocate()` - Request relay address
+- `turn_create_permission(peer_addr)` - Allow peer
+- `turn_send_data(data)` - Send via relay
+- `turn_refresh()` - Keep allocation alive
+
+### Usage Examples
+
+#### Example 1: HTTP via HTTP Proxy
+
+```bash
+# User command
+open_client http example.com:80 --proxy http://proxy.example.com:8080 "GET /"
+```
+
+```rust
+// Translated to action
+{
+  "type": "open_client",
+  "protocol": "http",
+  "remote_addr": "example.com:80",
+  "proxy_config": {
+    "type": "http_proxy",
+    "address": "proxy.example.com:8080"
+  },
+  "instruction": "GET /"
+}
+```
+
+#### Example 2: SSH via SOCKS5
+
+```bash
+# User command
+open_client ssh remote-server:22 --proxy socks5://localhost:1080 "Connect and execute ls"
+```
+
+```rust
+// SSH client receives proxy config, establishes via SOCKS
+let stream = if let Some(proxy) = proxy_config {
+    Socks5Stream::connect(
+        proxy.address,
+        (remote_host, 22)
+    ).await?
+} else {
+    TcpStream::connect((remote_host, 22)).await?
+};
+```
+
+#### Example 3: Chained Proxies
+
+```bash
+# User wants: HTTP → SOCKS5 → HTTP Proxy → Destination
+open_client http example.com:80 --proxy socks5://localhost:1080 --proxy-chain http://proxy:8080 "GET /"
+```
+
+**Implementation:** Recursively wrap connections:
+1. Connect to SOCKS5 (localhost:1080)
+2. SOCKS5 connects to HTTP Proxy (proxy:8080)
+3. HTTP Proxy connects to destination (example.com:80)
+
+### State Management
+
+Proxy clients are tracked as regular clients:
+```rust
+pub struct ClientInstance {
+    pub id: ClientId,
+    pub protocol_name: String,  // "socks5", "http_proxy", etc.
+    pub remote_addr: String,    // Proxy address
+    pub status: ClientStatus,
+    pub proxy_target: Option<String>,  // Ultimate destination
+    // ...
+}
+```
+
+**Lifecycle:**
+1. User opens proxy client → ClientId assigned
+2. Proxy establishes tunnel → Status: Connected
+3. Target client references proxy → Uses tunneled connection
+4. User closes target client → Target closed, proxy remains
+5. User closes proxy client → Tunnel torn down
+
+### LLM Integration
+
+LLM sees proxy actions in both client types:
+
+**HTTP Client Actions (with proxy support):**
+```json
+{
+  "name": "send_http_request",
+  "parameters": {
+    "method": "GET",
+    "path": "/",
+    "headers": {},
+    "use_proxy": "client-123"  // Optional: route via proxy client
+  }
+}
+```
+
+**SOCKS5 Client Actions:**
+```json
+{
+  "name": "socks_establish_tunnel",
+  "parameters": {
+    "target_host": "example.com",
+    "target_port": 80
+  }
+}
+```
+
+### Implementation Priority
+
+1. **Phase 1:** SOCKS5 client (most versatile, works with any TCP protocol)
+2. **Phase 2:** HTTP Proxy client (common for HTTP/HTTPS)
+3. **Phase 3:** Configuration-based proxy support in HTTP/SSH/etc clients
+4. **Phase 4:** TURN client (specialized for WebRTC)
+
+---
+
 ## Summary Statistics
 
 ### By Complexity
@@ -1373,39 +2049,49 @@ stream.read_to_string(&mut response).await?;
 | Complexity | Count | Protocols |
 |------------|-------|-----------|
 | ✅ Easy | 4 | TCP, HTTP, Redis, Whois |
-| 🟡 Medium | 35 | UDP, HTTPS, HTTP/2, WebDAV, DNS, DoT, DoH, SMTP, IRC, MQTT, MySQL, PostgreSQL, DynamoDB, Elasticsearch, Telnet, SNMP, NTP, SOCKS5, HTTP Proxy, STUN, gRPC, JSON-RPC, XML-RPC, MCP, OpenAI, etcd, VNC, NPM, PyPI, Maven, IPP, BitTorrent Tracker, OAuth2, OpenID, S3, SQS, Syslog, NNTP |
-| 🟠 Hard | 17 | HTTP/3, mDNS, IMAP, XMPP, Cassandra, SSH, LDAP, Tor, TURN, Bitcoin, Kafka, Git, SVN, SIP, BitTorrent DHT, BitTorrent Peer, SAML |
-| 🔴 Very Hard | 5 | WireGuard, OpenVPN, Mercurial, SMB, NFS |
-| ❌ Unfeasible | 9 | DataLink, ARP, IPSec, BGP, OSPF, ISIS, RIP, DHCP, BOOTP, IGMP, Kubernetes, WebRTC |
+| 🟡 Medium | 37 | UDP, HTTPS, HTTP/2, WebDAV, DNS, DoT, DoH, SMTP, IRC, MQTT, MySQL, PostgreSQL, DynamoDB, Elasticsearch, Telnet, SNMP, NTP, SOCKS5, HTTP Proxy, STUN, gRPC, JSON-RPC, XML-RPC, MCP, OpenAI, etcd, VNC, NPM, PyPI, Maven, IPP, BitTorrent Tracker, OAuth2, OpenID, S3, SQS, Syslog, NNTP, Bitcoin (RPC), RIP (Query) |
+| 🟠 Hard | 21 | HTTP/3, mDNS, IMAP, XMPP, Cassandra, SSH, LDAP, Tor, TURN, Kafka, Git, SVN, SIP, BitTorrent DHT, BitTorrent Peer, SAML, DataLink (requires root), ARP (requires root), BGP (Query), OSPF (Query), ISIS (Query) |
+| 🔴 Very Hard | 4 | WireGuard, Mercurial, SMB, NFS |
+| ❌ Unfeasible | 8 | OpenVPN, IPSec, DHCP, BOOTP, IGMP, Kubernetes, WebRTC |
 
 ### Implementation Priority Recommendations
 
 **Phase 1 (Quick Wins):**
 1. UDP - Simple extension of TCP pattern
-2. DNS - Common need, good libraries
-3. SMTP - Email sending useful
-4. MySQL/PostgreSQL - Database clients popular
-5. MQTT - IoT/messaging use case
+2. DNS - Common need, excellent library (hickory-dns)
+3. SMTP - Email sending with `lettre`
+4. MySQL/PostgreSQL - Database clients (`mysql_async`, `tokio-postgres`)
+5. MQTT - IoT/messaging with `rumqttc`
+6. SOCKS5 - Universal TCP proxy client
 
 **Phase 2 (High Value):**
-1. SSH - Remote command execution
-2. gRPC - Modern microservices
-3. Elasticsearch - Search/analytics
-4. Kafka - Streaming data
-5. S3 - Object storage
+1. SSH - Remote command execution (`russh`)
+2. gRPC - Modern microservices (`tonic`)
+3. Elasticsearch - Search/analytics (HTTP-based)
+4. Kafka - Streaming data (`rdkafka`)
+5. S3 - Object storage (`aws-sdk-s3`)
+6. Bitcoin RPC - Blockchain queries (`bitcoin-rpc`)
 
 **Phase 3 (Specialized):**
-1. IMAP - Email retrieval
-2. LDAP - Directory services
-3. Bitcoin - Blockchain interaction
-4. Git - Version control
-5. VNC - Remote desktop
+1. IMAP - Email retrieval (`async-imap`)
+2. LDAP - Directory services (`ldap3`)
+3. Git - Version control (`git2`)
+4. VNC - Remote desktop (custom RFB)
+5. RIP - Routing table queries (UDP-based)
+
+**Phase 4 (Advanced/Research):**
+1. BGP Query - Route monitoring (custom protocol)
+2. OSPF Query - Topology discovery (raw sockets, requires root)
+3. DataLink/ARP - Raw frame injection (pcap, requires root)
+4. Tor - Onion routing (`arti`)
+5. BitTorrent P2P - Distributed file sharing
 
 **Avoid (Too Complex/Low Value):**
-- Routing protocols (BGP, OSPF, ISIS, RIP)
-- VPN protocols requiring kernel (WireGuard, OpenVPN, IPSec)
-- OS-level protocols (DHCP, BOOTP, ARP, IGMP)
+- OpenVPN (no Rust library, extremely complex)
+- VPN protocols requiring kernel (WireGuard, IPSec)
+- OS-level protocols (DHCP, BOOTP, IGMP)
 - Protocols with no Rust libraries (SMB, NFS, Mercurial)
+- WebRTC (real-time media too complex for LLM)
 
 ---
 

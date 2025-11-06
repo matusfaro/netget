@@ -180,6 +180,12 @@ NetGet now supports LLM-controlled network **clients** in addition to servers. C
 
 ## Client Protocol Implementation Checklist (CRITICAL)
 
+**Before implementing a new client protocol:**
+1. **Consult `CLIENT_PROTOCOL_FEASIBILITY.md`** - Review the feasibility assessment for your protocol
+2. Check for existing Rust client libraries and complexity rating
+3. Understand LLM control points and implementation strategy
+4. Review similar protocol implementations for patterns
+
 **12-Step Client Implementation**:
 1. **protocol/client_registry.rs**: Register client protocol (feature-gated)
 2. **src/client/<protocol>/mod.rs**: Implement connection with LLM integration
