@@ -18,7 +18,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::redis::{REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::client::redis::actions::{REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// Redis client that connects to a Redis server
 pub struct RedisClient;
