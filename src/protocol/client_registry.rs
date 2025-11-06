@@ -44,9 +44,9 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
 
-        // Phase 5: Redis client (not yet implemented)
-        // #[cfg(feature = "redis")]
-        // self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+        // Phase 5: Redis client
+        #[cfg(feature = "redis")]
+        self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
