@@ -851,6 +851,40 @@ impl EventHandler {
                     }
                 }
             }
+            CommonAction::OpenClient {
+                protocol,
+                remote_addr,
+                instruction,
+                startup_params: _,
+                initial_memory: _,
+                script_runtime: _,
+                script_language: _,
+                script_path: _,
+                script_inline: _,
+                script_handles: _,
+                scheduled_tasks: _,
+            } => {
+                // TODO: Implement client opening
+                let _ = status_tx.send(format!("[CLIENT] Opening {} client to {}... (not yet implemented)", protocol, remote_addr));
+                let _ = status_tx.send(format!("[CLIENT] Instruction: {}", instruction));
+            }
+            CommonAction::CloseClient { client_id } => {
+                // TODO: Implement client closing
+                let _ = status_tx.send(format!("[CLIENT] Closing client #{}... (not yet implemented)", client_id));
+            }
+            CommonAction::CloseAllClients => {
+                // TODO: Implement close all clients
+                let _ = status_tx.send("[CLIENT] Closing all clients... (not yet implemented)".to_string());
+            }
+            CommonAction::ReconnectClient { client_id } => {
+                // TODO: Implement client reconnection
+                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}... (not yet implemented)", client_id));
+            }
+            CommonAction::UpdateClientInstruction { client_id, instruction } => {
+                // TODO: Implement instruction update
+                let _ = status_tx.send(format!("[CLIENT] Updating instruction for client #{}... (not yet implemented)", client_id));
+                let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
+            }
         }
 
         Ok(())

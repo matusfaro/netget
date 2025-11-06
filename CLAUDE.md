@@ -1,6 +1,6 @@
-# NetGet - LLM-Controlled Network Protocol Server
+# NetGet - LLM-Controlled Network Protocol Server & Client
 
-Rust CLI where an LLM (via Ollama) controls 40+ network protocols. The LLM constructs raw protocol datagrams or high-level responses.
+Rust CLI where an LLM (via Ollama) controls 40+ network protocols as both servers and clients. The LLM constructs raw protocol datagrams or high-level responses.
 
 ## Protocols (50+)
 
@@ -17,7 +17,7 @@ See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<pr
 
 **Decentralization (CRITICAL)**: Never create centralized protocol registries. Use trait-based patterns where each protocol implements traits independently. Exceptions: Protocol registry (`protocol/registry.rs`), `Cargo.toml` features, `server_startup.rs` match statements.
 
-**Modules**: `cli/` (TUI), `server/<protocol>/` (implementations), `protocol/` (registry, metadata), `state/` (app state), `llm/` (Ollama), `events/` (coordination), `llm/actions/` (action system)
+**Modules**: `cli/` (TUI), `server/<protocol>/` (server implementations), `client/<protocol>/` (client implementations), `protocol/` (registry, metadata), `state/` (app state), `llm/` (Ollama), `events/` (coordination), `llm/actions/` (action system)
 
 **Connection**: TcpStream split with `tokio::io::split()`. Never hold Mutex during I/O (deadlock risk).
 
@@ -108,6 +108,212 @@ Research: **Server library** (crate eval: compliance, maturity, LLM control), **
 **Validation**: Compiles with feature, tests pass, both CLAUDE.md files exist, < 10 LLM calls
 
 **Common Pitfalls**: Missing feature flags/gates, missing CLAUDE.md files, inefficient E2E tests, forgetting dual logging, using `--all-features` for single protocol
+
+## Client Capability (NEW)
+
+NetGet now supports LLM-controlled network **clients** in addition to servers. Clients connect to remote servers and allow the LLM to control sending data, interpreting responses, and making decisions based on server behavior.
+
+### Client Architecture
+
+**Client Trait System**: Mirrors server patterns with `Client` trait in `llm/actions/client_trait.rs`
+- `connect()`: Establish connection and spawn LLM integration loop
+- `get_async_actions()`: User-triggered actions (modify instruction, reconnect)
+- `get_sync_actions()`: Response actions (send_data, disconnect, wait_for_more)
+- `execute_action()`: Execute actions returning `ClientActionResult`
+
+**Client State Management** (`state/client.rs`):
+- `ClientInstance`: Client metadata (id, remote_addr, protocol, instruction, memory, status)
+- `ClientId`: Unique identifier (u32)
+- `ClientStatus`: Connecting, Connected, Disconnected, Error
+- `ClientConnectionState`: Per-client LLM state (Idle/Processing/Accumulating)
+
+**Client Registry** (`protocol/client_registry.rs`):
+- `CLIENT_REGISTRY`: LazyLock registry of all client protocols
+- Feature-gated registration (same as servers)
+- Protocol lookup by name for `open_client` action
+
+**EventType Constants**: Each client defines static `LazyLock<EventType>` constants:
+- Example: `TCP_CLIENT_CONNECTED_EVENT`, `TCP_CLIENT_DATA_RECEIVED_EVENT`
+- Used with `Event::new(&CONSTANT, json!(...))`
+- Avoids string-based event type IDs
+
+**LLM Integration**: Clients use `call_llm_for_client()` helper:
+- Builds simple prompt with client instruction and available actions
+- Uses `ConversationHandler` for action generation
+- Returns `ClientLlmResult` with actions and optional memory updates
+- No web search or complex tool calling (simplified for clients)
+
+**State Machine**: Same as servers (Idle → Processing → Accumulating)
+- Prevents concurrent LLM calls on same client
+- Queues data during Processing state
+
+### Client vs Server Differences
+
+| Aspect | Server | Client |
+|--------|--------|--------|
+| **Initiates Connection** | No (listens) | Yes (connects) |
+| **LLM Integration** | `call_llm()` with scripting support | `call_llm_for_client()` simplified |
+| **Actions Result** | `ActionResult` enum | `ClientActionResult` enum |
+| **State Location** | `state/server.rs` | `state/client.rs` |
+| **Registry** | `PROTOCOL_REGISTRY` | `CLIENT_REGISTRY` |
+| **Startup** | `cli/server_startup.rs` | `cli/client_startup.rs` |
+| **TUI Display** | Left column | Middle column (3-column layout) |
+
+### Implemented Client Protocols
+
+**TCP Client** (`client/tcp/`):
+- Direct socket I/O with hex-encoded data
+- Actions: send_tcp_data (hex), disconnect, wait_for_more
+- Events: tcp_connected, tcp_data_received
+
+**HTTP Client** (`client/http/`):
+- Uses reqwest library with TLS support
+- Actions: send_http_request (method, path, headers, body)
+- Events: http_connected, http_response_received
+- Startup params: default_headers
+
+**Redis Client** (`client/redis/`):
+- Line-based RESP protocol parsing
+- Actions: execute_redis_command (command string)
+- Events: redis_connected, redis_response_received
+- Simple synchronous request-response model
+
+## Client Protocol Implementation Checklist (CRITICAL)
+
+**Before implementing a new client protocol:**
+1. **Consult `CLIENT_PROTOCOL_FEASIBILITY.md`** - Review the feasibility assessment for your protocol
+2. Check for existing Rust client libraries and complexity rating
+3. Understand LLM control points and implementation strategy
+4. Review similar protocol implementations for patterns
+
+**12-Step Client Implementation**:
+1. **protocol/client_registry.rs**: Register client protocol (feature-gated)
+2. **src/client/<protocol>/mod.rs**: Implement connection with LLM integration
+   - Define connection state machine (Idle/Processing/Accumulating)
+   - Spawn read loop that calls `call_llm_for_client()`
+   - Handle `ClientActionResult` enum (SendData, Disconnect, WaitForMore, Custom)
+   - Use dual logging (tracing macros + status_tx)
+3. **src/client/<protocol>/actions.rs**: Implement `Client` trait
+   - Define static `LazyLock<EventType>` constants for events
+   - Implement `connect()` spawning connection task
+   - Implement `get_async_actions()` (user actions)
+   - Implement `get_sync_actions()` (response actions)
+   - Implement `execute_action()` parsing action JSON
+   - Implement `get_event_types()` returning event type list
+   - Implement `protocol_name()`, `stack_name()`, `get_startup_params()`
+4. **src/client/<protocol>/CLAUDE.md** (MANDATORY): Document implementation
+   - Library choices (crates used)
+   - Architecture (connection model, state management)
+   - LLM integration (action flow, event triggers)
+   - Limitations and known issues
+5. **src/client/mod.rs**: Add feature-gated module declaration
+   - `#[cfg(feature = "<protocol>")] pub mod <protocol>;`
+6. **cli/client_startup.rs**: Add feature-gated match arm
+   - Match on protocol name, call protocol's connect method
+7. **Cargo.toml** (MANDATORY): Add feature flag
+   - `<protocol> = ["<dependencies>"]`
+   - Mark dependencies as `optional = true`
+   - Include in `all-protocols` feature
+8. **tests/client/<protocol>/e2e_test.rs**: Create feature-gated test (< 10 LLM calls)
+   - Test basic connectivity
+   - Test LLM-controlled actions
+   - Use `#[cfg(all(test, feature = "<protocol>"))]`
+9. **tests/client/<protocol>/CLAUDE.md** (MANDATORY): Document test strategy
+   - Test approach (unit vs E2E)
+   - LLM call budget and rationale
+   - Expected runtime
+   - Known issues or flaky tests
+10. **Export protocol**: Re-export from `client/<protocol>/mod.rs`
+    - `pub use actions::XyzClientProtocol;`
+    - Export only protocol struct, NOT event constants (to avoid duplicate imports)
+
+**Validation**:
+- Compiles with `--no-default-features --features <protocol>`
+- Tests pass with `--features <protocol>`
+- Both CLAUDE.md files exist
+- < 10 LLM calls in test suite
+
+**Common Pitfalls**:
+- Exporting EventType constants from mod.rs (causes E0252 duplicate name errors)
+- Missing Client trait import when calling execute_action()
+- Using string event type IDs instead of static EventType constants
+- Forgetting to call `protocol.as_ref()` when passing Arc<ClientProtocol> to trait methods
+- Missing `parameters` field in EventType construction
+- Not using dual logging (tracing + status_tx)
+
+### Example: Adding a New Client Protocol (SSH)
+
+```rust
+// 1. src/client/ssh/actions.rs
+use std::sync::LazyLock;
+
+pub static SSH_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("ssh_connected", "SSH client authenticated")
+        .with_parameters(vec![...])
+});
+
+pub struct SshClientProtocol;
+
+impl Client for SshClientProtocol {
+    fn connect(&self, ctx: ConnectContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
+        Box::pin(async move {
+            crate::client::ssh::SshClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.app_state,
+                ctx.status_tx,
+                ctx.client_id,
+            ).await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action["type"].as_str()?;
+        match action_type {
+            "execute_command" => {
+                let command = action["command"].as_str()?;
+                Ok(ClientActionResult::Custom {
+                    name: "ssh_command".to_string(),
+                    data: json!({ "command": command }),
+                })
+            }
+            // ... other actions
+        }
+    }
+    // ... other trait methods
+}
+
+// 2. src/client/ssh/mod.rs
+pub mod actions;
+pub use actions::SshClientProtocol;
+
+use crate::client::ssh::actions::{SSH_CLIENT_CONNECTED_EVENT, SSH_CLIENT_DATA_RECEIVED_EVENT};
+
+impl SshClient {
+    pub async fn connect_with_llm_actions(...) -> Result<SocketAddr> {
+        // 1. Connect to SSH server
+        // 2. Authenticate
+        // 3. Call LLM with connected event
+        let event = Event::new(&SSH_CLIENT_CONNECTED_EVENT, json!({...}));
+        call_llm_for_client(..., Some(&event), ...).await?;
+        // 4. Spawn read loop with state machine
+        // 5. On data received, call LLM again
+        // 6. Execute actions from LLM response
+    }
+}
+
+// 3. protocol/client_registry.rs (add to register_protocols)
+#[cfg(feature = "ssh")]
+self.register(Arc::new(crate::client::ssh::SshClientProtocol::new()));
+
+// 4. Cargo.toml
+ssh = ["russh", "russh-keys"]
+all-protocols = [..., "ssh"]
+
+[dependencies]
+russh = { version = "0.40", optional = true }
+russh-keys = { version = "0.40", optional = true }
+```
 
 ## Multi-Instance Collaboration (CRITICAL)
 

@@ -85,6 +85,15 @@ pub struct ServerDisplayInfo {
     pub connections: usize,
 }
 
+/// Client information for display
+#[derive(Debug, Clone)]
+pub struct ClientDisplayInfo {
+    pub id: String,
+    pub protocol: String,
+    pub remote_addr: String,
+    pub status: String,
+}
+
 /// Connection information for display
 #[derive(Debug, Clone)]
 pub struct ConnectionDisplayInfo {
@@ -130,6 +139,8 @@ pub struct App {
     pub slash_suggestions: Vec<String>,
     /// Server list for display
     pub servers: Vec<ServerDisplayInfo>,
+    /// Client list for display
+    pub clients: Vec<ClientDisplayInfo>,
     /// Connection list for display
     pub connections: Vec<ConnectionDisplayInfo>,
     /// Whether to expand all connections (E key toggle)
@@ -155,6 +166,7 @@ impl Default for App {
             log_level: LogLevel::default(), // Defaults to VERBOSE
             slash_suggestions: Vec::new(),
             servers: Vec::new(),
+            clients: Vec::new(),
             connections: Vec::new(),
             expand_all_connections: false,
             next_global_connection_id: 1,

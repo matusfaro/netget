@@ -77,6 +77,50 @@ pub enum CommonAction {
     /// Close all servers
     CloseAllServers,
 
+    /// Open a new client connection
+    OpenClient {
+        protocol: String,
+        remote_addr: String,
+        instruction: String,
+        #[serde(default)]
+        startup_params: Option<serde_json::Value>,
+        #[serde(default)]
+        initial_memory: Option<String>,
+        // Script configuration fields
+        #[serde(default)]
+        script_runtime: Option<String>,
+        #[serde(default)]
+        script_language: Option<String>,
+        #[serde(default)]
+        script_path: Option<String>,
+        #[serde(default)]
+        script_inline: Option<String>,
+        #[serde(default)]
+        script_handles: Option<Vec<String>>,
+        // Scheduled tasks to create with this client
+        #[serde(default)]
+        scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+    },
+
+    /// Close a specific client
+    CloseClient {
+        client_id: u32,
+    },
+
+    /// Close all clients
+    CloseAllClients,
+
+    /// Reconnect a disconnected client
+    ReconnectClient {
+        client_id: u32,
+    },
+
+    /// Update the client instruction
+    UpdateClientInstruction {
+        client_id: u32,
+        instruction: String,
+    },
+
     /// Update the server instruction (combines with existing)
     UpdateInstruction { instruction: String },
 
