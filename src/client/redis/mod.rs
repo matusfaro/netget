@@ -1,7 +1,7 @@
 //! Redis client implementation
 pub mod actions;
 
-pub use actions::RedisClientProtocol;
+pub use actions::{RedisClientProtocol, REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;
@@ -18,6 +18,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::client::redis::{REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// Redis client that connects to a Redis server
 pub struct RedisClient;
@@ -71,12 +72,12 @@ impl RedisClient {
                         // Call LLM with response
                         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                             let protocol = Arc::new(crate::client::redis::actions::RedisClientProtocol::new());
-                            let event = Event {
-                                event_type: "redis_response_received".to_string(),
-                                data: serde_json::json!({
+                            let event = Event::new(
+                                &REDIS_CLIENT_RESPONSE_RECEIVED_EVENT,
+                                serde_json::json!({
                                     "response": line.trim(),
                                 }),
-                            };
+                            );
 
                             let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
 
@@ -87,7 +88,7 @@ impl RedisClient {
                                 &instruction,
                                 &memory,
                                 Some(&event),
-                                &protocol,
+                                protocol.as_ref(),
                                 &status_tx,
                             ).await {
                                 Ok(ClientLlmResult { actions, memory_updates }) => {

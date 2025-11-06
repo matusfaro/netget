@@ -8,6 +8,39 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
+
+/// Redis client connected event
+pub static REDIS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "redis_connected",
+        "Redis client successfully connected to server"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "remote_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Redis server address".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// Redis client response received event
+pub static REDIS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "redis_response_received",
+        "Response received from Redis server"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "response".to_string(),
+            type_hint: "string".to_string(),
+            description: "The response line from Redis".to_string(),
+            required: true,
+        },
+    ])
+});
 
 /// Redis client protocol action handler
 pub struct RedisClientProtocol;

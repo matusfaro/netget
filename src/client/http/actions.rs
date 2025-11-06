@@ -8,6 +8,51 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
+
+/// HTTP client connected event
+pub static HTTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "http_connected",
+        "HTTP client initialized and ready to send requests"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "base_url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Base URL for HTTP requests".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// HTTP client response received event
+pub static HTTP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "http_response_received",
+        "HTTP response received from server"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "status_code".to_string(),
+            type_hint: "number".to_string(),
+            description: "HTTP status code".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "headers".to_string(),
+            type_hint: "object".to_string(),
+            description: "Response headers".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Response body".to_string(),
+            required: true,
+        },
+    ])
+});
 
 /// HTTP client protocol action handler
 pub struct HttpClientProtocol;
