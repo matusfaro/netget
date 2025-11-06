@@ -857,6 +857,12 @@ impl EventHandler {
                 instruction,
                 startup_params: _,
                 initial_memory: _,
+                script_runtime: _,
+                script_language: _,
+                script_path: _,
+                script_inline: _,
+                script_handles: _,
+                scheduled_tasks: _,
             } => {
                 // TODO: Implement client opening
                 let _ = status_tx.send(format!("[CLIENT] Opening {} client to {}... (not yet implemented)", protocol, remote_addr));

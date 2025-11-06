@@ -1,7 +1,7 @@
 //! TCP client implementation
 pub mod actions;
 
-pub use actions::{TcpClientProtocol, TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RECEIVED_EVENT};
+pub use actions::TcpClientProtocol;
 
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
@@ -127,6 +127,7 @@ impl TcpClient {
 
                                             // Execute actions
                                             for action in actions {
+                                                use crate::llm::actions::client_trait::Client;
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(mut write) = write_half_arc.lock().await.write_all(&bytes).await {

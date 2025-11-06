@@ -439,9 +439,19 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
     }
 
     // Otherwise, use DuckDuckGo HTML search (no API key required)
+    let encoded_query = {
+        #[cfg(feature = "urlencoding")]
+        {
+            urlencoding::encode(query)
+        }
+        #[cfg(not(feature = "urlencoding"))]
+        {
+            query.replace(' ', "%20")
+        }
+    };
     let url = format!(
         "https://html.duckduckgo.com/html/?q={}",
-        urlencoding::encode(query)
+        encoded_query
     );
 
     let client = reqwest::Client::builder()
