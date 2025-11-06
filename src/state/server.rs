@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
 
@@ -320,6 +321,14 @@ pub enum ProtocolConnectionInfo {
     Pypi {},
     /// OpenApi connection state
     OpenApi {},
+    /// SAML IDP connection state
+    SamlIdp {
+        recent_requests: Vec<String>,
+    },
+    /// SAML SP connection state
+    SamlSp {
+        recent_requests: Vec<String>,
+    },
 }
 
 /// Connection status

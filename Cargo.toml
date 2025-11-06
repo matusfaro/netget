@@ -56,6 +56,8 @@ npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
+saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
+saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -156,6 +158,8 @@ all-protocols = [
     "torrent-dht",
     "torrent-peer",
     "tls",
+    "saml-idp",
+    "saml-sp",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
@@ -217,7 +221,7 @@ chrono = { version = "0.4", features = ["serde"] }
 time = { version = "0.3", features = ["macros", "formatting"] }  # Time handling for rcgen certificates
 url = "2.5"  # URL parsing for web approval prompts
 regex = "1.11"
-urlencoding = "2.1"
+urlencoding = { version = "2.1", optional = true }
 html2text = "0.12"
 once_cell = "1.20"
 rand = "0.8"  # Random number generation for crypto
