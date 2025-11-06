@@ -40,9 +40,9 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::client::tcp::TcpClientProtocol::new()));
 
-        // Phase 4: HTTP client (not yet implemented)
-        // #[cfg(feature = "http")]
-        // self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
+        // Phase 4: HTTP client
+        #[cfg(feature = "http")]
+        self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
 
         // Phase 5: Redis client (not yet implemented)
         // #[cfg(feature = "redis")]

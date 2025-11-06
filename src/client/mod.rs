@@ -10,11 +10,11 @@ pub mod tcp;
 #[cfg(feature = "tcp")]
 pub use tcp::actions::TcpClientProtocol;
 
-// Phase 4: HTTP client (not yet implemented)
-// #[cfg(feature = "http")]
-// pub mod http;
-// #[cfg(feature = "http")]
-// pub use http::HttpClientProtocol;
+// Phase 4: HTTP client
+#[cfg(feature = "http")]
+pub mod http;
+#[cfg(feature = "http")]
+pub use http::actions::HttpClientProtocol;
 
 // Phase 5: Redis client (not yet implemented)
 // #[cfg(feature = "redis")]
