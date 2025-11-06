@@ -28,6 +28,8 @@ pub mod dynamo;
 pub mod elasticsearch;
 #[cfg(feature = "git")]
 pub mod git;
+#[cfg(feature = "mercurial")]
+pub mod mercurial;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 #[cfg(feature = "etcd")]
@@ -70,6 +72,8 @@ pub mod ntp;
 pub mod npm;
 #[cfg(feature = "openai")]
 pub mod openai;
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
 #[cfg(feature = "openapi")]
 pub mod openapi;
 #[cfg(feature = "jsonrpc")]

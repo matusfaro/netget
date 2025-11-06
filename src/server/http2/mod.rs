@@ -39,12 +39,20 @@ impl Http2Server {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("HTTP/2 server (action-based) listening on {}", local_addr);
+
+        let protocol_name = if tls_config.is_some() { "HTTP/2 (TLS)" } else { "HTTP/2 (h2c)" };
+        info!("{} server (action-based) listening on {}", protocol_name, local_addr);
 
         let protocol = Arc::new(Http2Protocol::new());
+
+        // Create TLS acceptor if TLS is enabled
+        let tls_acceptor = tls_config.map(|config| {
+            tokio_rustls::TlsAcceptor::from(config)
+        });
 
         // Spawn server loop
         tokio::spawn(async move {
@@ -53,7 +61,7 @@ impl Http2Server {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new();
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted HTTP/2 connection {} from {}", connection_id, remote_addr);
+                        info!("Accepted {} connection {} from {}", protocol_name, connection_id, remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -69,9 +77,9 @@ impl Http2Server {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Http2 {
-                                recent_requests: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
+                                "recent_requests": []
+                            })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -80,43 +88,49 @@ impl Http2Server {
                         let app_state_clone = app_state.clone();
                         let status_tx_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
+                        let tls_acceptor_clone = tls_acceptor.clone();
 
                         // Spawn a task to handle this connection
                         tokio::spawn(async move {
-                            let io = TokioIo::new(stream);
-
-                            // Clone for service closure
-                            let status_for_service = status_tx_clone.clone();
-                            let app_state_for_service = app_state_clone.clone();
-
-                            // Create a service that handles requests with LLM
-                            let service = service_fn(move |req: Request<Incoming>| {
-                                let llm_clone = llm_client_clone.clone();
-                                let state_clone = app_state_for_service.clone();
-                                let status_clone = status_for_service.clone();
-                                let protocol_clone = protocol_clone.clone();
-                                handle_http2_request_with_llm_actions(
-                                    req,
+                            // Perform TLS handshake if TLS is enabled
+                            if let Some(acceptor) = tls_acceptor_clone {
+                                match acceptor.accept(stream).await {
+                                    Ok(tls_stream) => {
+                                        debug!("{} TLS handshake complete with {}", protocol_name, remote_addr);
+                                        let _ = status_tx_clone.send(format!("[DEBUG] {} TLS handshake complete with {}", protocol_name, remote_addr));
+                                        let io = TokioIo::new(tls_stream);
+                                        Self::serve_connection(
+                                            io,
+                                            connection_id,
+                                            server_id,
+                                            llm_client_clone,
+                                            app_state_clone.clone(),
+                                            status_tx_clone.clone(),
+                                            protocol_clone,
+                                        ).await;
+                                    }
+                                    Err(e) => {
+                                        error!("{} TLS handshake failed: {}", protocol_name, e);
+                                        let _ = status_tx_clone.send(format!("[ERROR] {} TLS handshake failed: {}", protocol_name, e));
+                                    }
+                                }
+                            } else {
+                                // No TLS, use plain TCP (h2c)
+                                let io = TokioIo::new(stream);
+                                Self::serve_connection(
+                                    io,
                                     connection_id,
                                     server_id,
-                                    llm_clone,
-                                    state_clone,
-                                    status_clone,
+                                    llm_client_clone,
+                                    app_state_clone.clone(),
+                                    status_tx_clone.clone(),
                                     protocol_clone,
-                                )
-                            });
-
-                            // Serve HTTP/2 on this connection
-                            if let Err(err) = http2::Builder::new(hyper_util::rt::TokioExecutor::new())
-                                .serve_connection(io, service)
-                                .await
-                            {
-                                error!("Error serving HTTP/2 connection: {:?}", err);
+                                ).await;
                             }
 
                             // Mark connection as closed
                             app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ HTTP/2 connection {connection_id} closed"));
+                            let _ = status_tx_clone.send(format!("✗ {} connection {connection_id} closed", protocol_name));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -129,6 +143,48 @@ impl Http2Server {
         });
 
         Ok(local_addr)
+    }
+
+    /// Serve an HTTP/2 connection (helper function to avoid code duplication)
+    async fn serve_connection<T>(
+        io: TokioIo<T>,
+        connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<Http2Protocol>,
+    ) where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        // Clone for service closure
+        let status_for_service = status_tx.clone();
+        let app_state_for_service = app_state.clone();
+
+        // Create a service that handles requests with LLM
+        let service = service_fn(move |req: Request<Incoming>| {
+            let llm_clone = llm_client.clone();
+            let state_clone = app_state_for_service.clone();
+            let status_clone = status_for_service.clone();
+            let protocol_clone = protocol.clone();
+            handle_http2_request_with_llm_actions(
+                req,
+                connection_id,
+                server_id,
+                llm_clone,
+                state_clone,
+                status_clone,
+                protocol_clone,
+            )
+        });
+
+        // Serve HTTP/2 on this connection
+        if let Err(err) = http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .serve_connection(io, service)
+            .await
+        {
+            error!("Error serving HTTP/2 connection: {:?}", err);
+        }
     }
 }
 
