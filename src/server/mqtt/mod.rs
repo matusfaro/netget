@@ -123,6 +123,13 @@ async fn handle_mqtt_connection(
 
     // Add connection to app state
     let now = std::time::Instant::now();
+
+    // Create MQTT-specific connection info
+    let mqtt_info = serde_json::json!({
+        "client_id": client_id.clone(),
+        "subscriptions": Vec::<String>::new(),
+    });
+
     let conn_state = ConnectionState {
         id: connection_id,
         remote_addr: peer_addr,
@@ -134,10 +141,7 @@ async fn handle_mqtt_connection(
         last_activity: now,
         status: ConnectionStatus::Active,
         status_changed_at: now,
-        protocol_info: ProtocolConnectionInfo::Mqtt {
-            client_id: client_id.clone(),
-            subscriptions: vec![],
-        },
+        protocol_info: ProtocolConnectionInfo::new(mqtt_info),
     };
     app_state.add_connection_to_server(server_id, conn_state).await;
     let _ = status_tx.send("__UPDATE_UI__".to_string());

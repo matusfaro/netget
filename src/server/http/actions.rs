@@ -28,14 +28,32 @@ impl Server for HttpProtocol {
     > {
         Box::pin(async move {
             use crate::server::http::HttpServer;
+
+            // Parse TLS configuration from startup_params
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                    }
+                }
+            } else {
+                None
+            };
+
             HttpServer::spawn_with_llm_actions(
                 ctx.listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                tls_config,
             ).await
         })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        crate::server::tls_cert_manager::get_tls_startup_parameters()
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {

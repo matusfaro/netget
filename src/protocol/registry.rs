@@ -102,6 +102,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "ssh")]
         self.register(Arc::new(crate::server::SshProtocol::new()));
 
+        #[cfg(feature = "svn")]
+        self.register(Arc::new(crate::server::SvnProtocol::new()));
+
         // Application protocols
         #[cfg(feature = "irc")]
         self.register(Arc::new(crate::server::IrcProtocol::new()));
@@ -289,6 +292,11 @@ impl ProtocolRegistry {
             Arc::new(crate::server::OpenAiProtocol::new()),
         );
 
+        #[cfg(feature = "oauth2")]
+        self.register(
+            Arc::new(crate::server::OAuth2Protocol::new()),
+        );
+
         #[cfg(feature = "jsonrpc")]
         self.register(
             Arc::new(crate::server::JsonRpcProtocol::new()),
@@ -323,8 +331,16 @@ impl ProtocolRegistry {
             Arc::new(crate::server::OpenApiProtocol::new()),
         );
 
+        #[cfg(feature = "openid")]
+        self.register(
+            Arc::new(crate::server::OpenIdProtocol::new()),
+        );
+
         #[cfg(feature = "git")]
         self.register(Arc::new(crate::server::GitProtocol::new()));
+
+        #[cfg(feature = "mercurial")]
+        self.register(Arc::new(crate::server::MercurialProtocol::new()));
 
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::server::KafkaProtocol::new()));
@@ -341,6 +357,10 @@ impl ProtocolRegistry {
 
         #[cfg(feature = "torrent-peer")]
         self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
+
+        // TLS - Generic encrypted transport for custom protocols
+        #[cfg(feature = "tls")]
+        self.register(Arc::new(crate::server::TlsProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
