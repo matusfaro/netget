@@ -293,6 +293,75 @@ Or using `wg` command:
 sudo wg set netget_wg0 peer abc123... allowed-ips 10.20.30.2/32
 ```
 
+## System Dependencies
+
+### macOS Setup
+
+**Good News**: WireGuard on macOS requires **NO system dependencies**.
+
+The `defguard_wireguard_rs` library uses the userspace `wireguard-go` implementation on macOS, which is included in the Rust library itself. No native libraries, kernel modules, or special tools are required.
+
+**To build WireGuard client on macOS**:
+```bash
+# No special setup needed - just build it
+./cargo-isolated.sh build --no-default-features --features wireguard
+
+# Run with:
+netget
+# Then in the LLM prompt: "connect to WireGuard VPN at..."
+```
+
+### Linux Setup
+
+**Requirements**:
+- Kernel 5.6+ with WireGuard support, OR
+- WireGuard kernel module installed
+- `CAP_NET_ADMIN` capability or root privileges
+
+**Installation**:
+```bash
+# Debian/Ubuntu
+sudo apt-get install wireguard-tools linux-headers-$(uname -r)
+
+# Fedora/RHEL
+sudo dnf install wireguard-tools kernel-devel-$(uname -r)
+
+# Alpine
+apk add wireguard-tools linux-headers
+
+# Arch
+sudo pacman -S wireguard-tools linux-headers
+```
+
+### Windows Setup
+
+**Requirements**:
+- Windows 10 1809+ or Windows 11
+- WireGuard Driver installed (included with official WireGuard app)
+
+**Installation**:
+```powershell
+# Download and install official WireGuard
+# https://www.wireguard.com/install/
+# OR via Chocolatey:
+choco install wireguard
+```
+
+### Troubleshooting Platform-Specific Issues
+
+**macOS - "Operation not permitted" error**:
+- Ensure you're running the latest version of macOS
+- Check System Preferences > Security & Privacy
+- The userspace implementation should not require elevation
+
+**Linux - "ioctl(SIOCDEVPRIVATE)..." error**:
+- Kernel module not loaded: `modprobe wireguard`
+- Missing CAP_NET_ADMIN: Run with `sudo` or grant capability
+
+**Linux - "Interface not found"**:
+- Ensure WireGuard tools are installed: `which wg`
+- Check if module is loaded: `lsmod | grep wireguard`
+
 ## References
 
 - [WireGuard White Paper](https://www.wireguard.com/papers/wireguard.pdf)

@@ -292,6 +292,70 @@ Then retrieve /app/timeout
 - TLS encryption
 - Certificate validation
 
+## System Dependencies
+
+### macOS Setup
+
+**etcd-client on macOS**: The `etcd-client` v0.15 Rust crate is a pure gRPC client with **no system dependencies** for normal operation.
+
+**Build**:
+```bash
+# No special setup needed
+./cargo-isolated.sh build --no-default-features --features etcd
+```
+
+**Run with etcd server**:
+```bash
+# Requires running etcd server on localhost:2379
+# Start etcd first (if installed):
+etcd
+
+# Then in netget:
+netget> connect to etcd at localhost:2379
+```
+
+**Optional: Installing etcd server locally for testing**:
+```bash
+# Install via Homebrew
+brew install etcd
+
+# Or from source:
+git clone https://github.com/etcd-io/etcd.git
+cd etcd && ./build.sh && ./bin/etcd
+
+# Verify installation
+etcd --version
+```
+
+### Linux Setup
+
+**Installation**:
+```bash
+# Debian/Ubuntu - install etcd server (optional, for testing)
+sudo apt-get install etcd
+
+# Fedora/RHEL
+sudo dnf install etcd
+
+# Alpine
+apk add etcd
+
+# Arch
+sudo pacman -S etcd
+```
+
+### Troubleshooting
+
+**"Connection refused" when connecting to etcd**:
+- Ensure etcd server is running: `etcd &` or `brew services start etcd`
+- Check etcd is listening on port 2379: `lsof -i :2379`
+- Try connecting to explicit address: `connect to etcd at 127.0.0.1:2379`
+
+**protoc binary requirement (for etcd-client build)**:
+- The etcd-client crate v0.15 requires protoc at build time
+- Install protoc: `brew install protobuf`
+- Or download binary: https://github.com/protocolbuffers/protobuf/releases
+
 ## References
 - [etcd-client Documentation](https://docs.rs/etcd-client/)
 - [etcd v3 API](https://etcd.io/docs/v3.5/learning/api/)
