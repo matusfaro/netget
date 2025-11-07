@@ -1169,6 +1169,30 @@ impl AppState {
             .map(f)
     }
 
+    /// Update script configuration for a client
+    pub async fn set_client_script_config(
+        &self,
+        client_id: ClientId,
+        config: Option<crate::scripting::ScriptConfig>,
+    ) {
+        if let Some(client) = self.inner.write().await.clients.get_mut(&client_id) {
+            client.script_config = config;
+        }
+    }
+
+    /// Get script configuration for a client
+    pub async fn get_client_script_config(
+        &self,
+        client_id: ClientId,
+    ) -> Option<crate::scripting::ScriptConfig> {
+        self.inner
+            .read()
+            .await
+            .clients
+            .get(&client_id)
+            .and_then(|c| c.script_config.clone())
+    }
+
     /// Cleanup old disconnected clients (removes clients that have been disconnected for more than max_age_secs)
     pub async fn cleanup_old_clients(&self, max_age_secs: u64) {
         use super::client::ClientStatus;
@@ -1443,6 +1467,28 @@ impl AppState {
                     TaskScope::Connection(sid, cid) if *sid == server_id && *cid == connection_id
                 )
             })
+            .map(|(&id, _)| id)
+            .collect();
+
+        // Remove tasks and their name mappings
+        for id in task_ids_to_remove {
+            if let Some(task) = inner.tasks.remove(&id) {
+                inner.task_names.remove(&task.name);
+            }
+        }
+    }
+
+    /// Clean up tasks associated with a client
+    pub async fn cleanup_client_tasks(&self, client_id: ClientId) {
+        use crate::state::task::TaskScope;
+
+        let mut inner = self.inner.write().await;
+
+        // Collect task IDs to remove
+        let task_ids_to_remove: Vec<TaskId> = inner
+            .tasks
+            .iter()
+            .filter(|(_, task)| matches!(&task.scope, TaskScope::Client(cid) if *cid == client_id))
             .map(|(&id, _)| id)
             .collect();
 
