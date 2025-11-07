@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Kubernetes client
-#[cfg(feature = "kubernetes")]
-pub mod kubernetes;
-#[cfg(feature = "kubernetes")]
-pub use kubernetes::actions::KubernetesClientProtocol;
+// Phase 6: MCP client
+#[cfg(feature = "mcp")]
+pub mod mcp;
+#[cfg(feature = "mcp")]
+pub use mcp::actions::McpClientProtocol;
