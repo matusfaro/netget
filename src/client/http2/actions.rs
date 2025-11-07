@@ -61,11 +61,12 @@ pub static HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
 });
 
 /// HTTP/2 client protocol action handler
+#[derive(Default)]
 pub struct Http2ClientProtocol;
 
 impl Http2ClientProtocol {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
