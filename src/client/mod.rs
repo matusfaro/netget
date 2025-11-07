@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// WireGuard VPN client
-#[cfg(feature = "wireguard")]
-pub mod wireguard;
-#[cfg(feature = "wireguard")]
-pub use wireguard::WireguardClientProtocol;
+// XML-RPC client
+#[cfg(feature = "xmlrpc")]
+pub mod xmlrpc;
+#[cfg(feature = "xmlrpc")]
+pub use xmlrpc::actions::XmlRpcClientProtocol;
