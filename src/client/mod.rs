@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: IPP client
+#[cfg(feature = "ipp")]
+pub mod ipp;
+#[cfg(feature = "ipp")]
+pub use ipp::actions::IppClientProtocol;
