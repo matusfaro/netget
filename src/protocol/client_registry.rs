@@ -42,6 +42,9 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
 
+        #[cfg(feature = "http2")]
+        self.register(Arc::new(crate::client::http2::Http2ClientProtocol::new()));
+
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
     }
