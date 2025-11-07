@@ -54,10 +54,19 @@ enum ConnectionState {
     Accumulating,
 }
 
+/// Queued OSPF packet with metadata
+struct QueuedPacket {
+    packet_type: u8,
+    ospf_data: Vec<u8>,
+    src_ip: Ipv4Addr,
+    sender_router_id: String,
+    sender_area_id: String,
+}
+
 /// Per-client data for LLM handling
 struct ClientData {
     state: ConnectionState,
-    queued_packets: Vec<Vec<u8>>,
+    queued_packets: Vec<QueuedPacket>,
     memory: String,
 }
 
@@ -266,14 +275,26 @@ impl OspfClient {
                                 .await;
                             }
                             ConnectionState::Processing => {
-                                // Queue packet
-                                client_data_lock.queued_packets.push(ospf_data.to_vec());
+                                // Queue packet with metadata
+                                client_data_lock.queued_packets.push(QueuedPacket {
+                                    packet_type,
+                                    ospf_data: ospf_data.to_vec(),
+                                    src_ip,
+                                    sender_router_id: sender_router_id.clone(),
+                                    sender_area_id: sender_area_id.clone(),
+                                });
                                 client_data_lock.state = ConnectionState::Accumulating;
                                 trace!("OSPF client {} queued packet", client_id);
                             }
                             ConnectionState::Accumulating => {
-                                // Continue queuing
-                                client_data_lock.queued_packets.push(ospf_data.to_vec());
+                                // Continue queuing with metadata
+                                client_data_lock.queued_packets.push(QueuedPacket {
+                                    packet_type,
+                                    ospf_data: ospf_data.to_vec(),
+                                    src_ip,
+                                    sender_router_id: sender_router_id.clone(),
+                                    sender_area_id: sender_area_id.clone(),
+                                });
                             }
                         }
                     }
@@ -413,13 +434,27 @@ impl OspfClient {
                 // Process first queued packet
                 let has_queued = !client_data_lock.queued_packets.is_empty();
                 if has_queued {
-                    let _queued_data = client_data_lock.queued_packets.remove(0);
+                    let queued_packet = client_data_lock.queued_packets.remove(0);
                     client_data_lock.state = ConnectionState::Processing;
                     drop(client_data_lock);
 
-                    // TODO: Parse packet type and source from queued data
-                    // For now, just log
+                    // Recursively process the queued packet with all metadata
                     trace!("OSPF client {} processing queued packet", client_id);
+                    Box::pin(Self::process_ospf_packet(
+                        queued_packet.packet_type,
+                        queued_packet.ospf_data,
+                        queued_packet.src_ip,
+                        queued_packet.sender_router_id,
+                        queued_packet.sender_area_id,
+                        llm_client,
+                        app_state,
+                        status_tx,
+                        protocol,
+                        client_id,
+                        client_data,
+                        socket_fd,
+                    ))
+                    .await;
                 } else {
                     client_data_lock.state = ConnectionState::Idle;
                 }
