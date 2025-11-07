@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// OSPF client
+#[cfg(feature = "ospf")]
+pub mod ospf;
+#[cfg(feature = "ospf")]
+pub use ospf::actions::OspfClientProtocol;
