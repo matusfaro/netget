@@ -104,7 +104,6 @@ impl DynamoDbClient {
     }
 
     /// Execute a PutItem operation
-    #[allow(dead_code)]
     pub async fn put_item(
         client_id: ClientId,
         table_name: String,
@@ -127,75 +126,63 @@ impl DynamoDbClient {
             secret_access_key.as_deref(),
         ).await?;
 
-        // Create DynamoDB client and execute PutItem
-        #[cfg(test)]
-        {
-            let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
+        // Create DynamoDB client
+        let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
 
-            // Convert JSON item to AttributeValue map
-            let mut attribute_map = std::collections::HashMap::new();
-            for (key, value) in item {
-                if let Some(attr_value) = Self::json_to_attribute_value(&value) {
-                    attribute_map.insert(key, attr_value);
-                }
-            }
-
-            // Execute PutItem
-            match dynamodb_client
-                .put_item()
-                .table_name(&table_name)
-                .set_item(Some(attribute_map))
-                .send()
-                .await
-            {
-                Ok(_) => {
-                    info!("DynamoDB client {} PutItem succeeded", client_id);
-
-                    // Call LLM with success event
-                    Self::call_llm_with_response(
-                        client_id,
-                        "put_item",
-                        true,
-                        Some(serde_json::json!({"table_name": table_name})),
-                        None,
-                        &app_state,
-                        &llm_client,
-                        &status_tx,
-                    ).await?;
-
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("DynamoDB client {} PutItem failed: {}", client_id, e);
-
-                    // Call LLM with error event
-                    Self::call_llm_with_response(
-                        client_id,
-                        "put_item",
-                        false,
-                        None,
-                        Some(e.to_string()),
-                        &app_state,
-                        &llm_client,
-                        &status_tx,
-                    ).await?;
-
-                    Err(e.into())
-                }
+        // Convert JSON item to AttributeValue map
+        let mut attribute_map = std::collections::HashMap::new();
+        for (key, value) in item {
+            if let Some(attr_value) = Self::json_to_attribute_value(&value) {
+                attribute_map.insert(key, attr_value);
             }
         }
 
-        #[cfg(not(test))]
+        // Execute PutItem
+        match dynamodb_client
+            .put_item()
+            .table_name(&table_name)
+            .set_item(Some(attribute_map))
+            .send()
+            .await
         {
-            let _config = config;
-            let _table_name = table_name;
-            let _item = item;
-            Err(anyhow::anyhow!("DynamoDB client requires aws-sdk-dynamodb dependency"))
+            Ok(_) => {
+                info!("DynamoDB client {} PutItem succeeded", client_id);
+
+                // Call LLM with success event
+                Self::call_llm_with_response(
+                    client_id,
+                    "put_item",
+                    true,
+                    Some(serde_json::json!({"table_name": table_name})),
+                    None,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                ).await?;
+
+                Ok(())
+            }
+            Err(e) => {
+                error!("DynamoDB client {} PutItem failed: {}", client_id, e);
+
+                // Call LLM with error event
+                Self::call_llm_with_response(
+                    client_id,
+                    "put_item",
+                    false,
+                    None,
+                    Some(e.to_string()),
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                ).await?;
+
+                Err(e.into())
+            }
         }
     }
 
     /// Execute a GetItem operation
-    #[allow(dead_code)]
     pub async fn get_item(
         client_id: ClientId,
         table_name: String,
@@ -218,76 +205,65 @@ impl DynamoDbClient {
             secret_access_key.as_deref(),
         ).await?;
 
-        // Create DynamoDB client and execute GetItem
-        #[cfg(test)]
-        {
-            let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
+        // Create DynamoDB client
+        let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
 
-            // Convert JSON key to AttributeValue map
-            let mut key_map = std::collections::HashMap::new();
-            for (key_name, value) in key {
-                if let Some(attr_value) = Self::json_to_attribute_value(&value) {
-                    key_map.insert(key_name, attr_value);
-                }
-            }
-
-            // Execute GetItem
-            match dynamodb_client
-                .get_item()
-                .table_name(&table_name)
-                .set_key(Some(key_map))
-                .send()
-                .await
-            {
-                Ok(output) => {
-                    let item_json = if let Some(item) = output.item {
-                        Self::attribute_map_to_json(&item)
-                    } else {
-                        serde_json::json!(null)
-                    };
-
-                    info!("DynamoDB client {} GetItem succeeded", client_id);
-
-                    // Call LLM with success event
-                    Self::call_llm_with_response(
-                        client_id,
-                        "get_item",
-                        true,
-                        Some(serde_json::json!({"table_name": table_name, "item": item_json})),
-                        None,
-                        &app_state,
-                        &llm_client,
-                        &status_tx,
-                    ).await?;
-
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("DynamoDB client {} GetItem failed: {}", client_id, e);
-
-                    // Call LLM with error event
-                    Self::call_llm_with_response(
-                        client_id,
-                        "get_item",
-                        false,
-                        None,
-                        Some(e.to_string()),
-                        &app_state,
-                        &llm_client,
-                        &status_tx,
-                    ).await?;
-
-                    Err(e.into())
-                }
+        // Convert JSON key to AttributeValue map
+        let mut key_map = std::collections::HashMap::new();
+        for (key_name, value) in key {
+            if let Some(attr_value) = Self::json_to_attribute_value(&value) {
+                key_map.insert(key_name, attr_value);
             }
         }
 
-        #[cfg(not(test))]
+        // Execute GetItem
+        match dynamodb_client
+            .get_item()
+            .table_name(&table_name)
+            .set_key(Some(key_map))
+            .send()
+            .await
         {
-            let _config = config;
-            let _table_name = table_name;
-            let _key = key;
-            Err(anyhow::anyhow!("DynamoDB client requires aws-sdk-dynamodb dependency"))
+            Ok(output) => {
+                let item_json = if let Some(item) = output.item {
+                    Self::attribute_map_to_json(&item)
+                } else {
+                    serde_json::json!(null)
+                };
+
+                info!("DynamoDB client {} GetItem succeeded", client_id);
+
+                // Call LLM with success event
+                Self::call_llm_with_response(
+                    client_id,
+                    "get_item",
+                    true,
+                    Some(serde_json::json!({"table_name": table_name, "item": item_json})),
+                    None,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                ).await?;
+
+                Ok(())
+            }
+            Err(e) => {
+                error!("DynamoDB client {} GetItem failed: {}", client_id, e);
+
+                // Call LLM with error event
+                Self::call_llm_with_response(
+                    client_id,
+                    "get_item",
+                    false,
+                    None,
+                    Some(e.to_string()),
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                ).await?;
+
+                Err(e.into())
+            }
         }
     }
 
@@ -365,7 +341,6 @@ impl DynamoDbClient {
     }
 
     /// Convert JSON value to DynamoDB AttributeValue
-    #[cfg(test)]
     fn json_to_attribute_value(json: &serde_json::Value) -> Option<aws_sdk_dynamodb::types::AttributeValue> {
         use aws_sdk_dynamodb::types::AttributeValue;
 
@@ -399,13 +374,7 @@ impl DynamoDbClient {
         }
     }
 
-    #[cfg(not(test))]
-    fn json_to_attribute_value(_json: &serde_json::Value) -> Option<()> {
-        None
-    }
-
     /// Convert DynamoDB AttributeValue map to JSON
-    #[cfg(test)]
     fn attribute_map_to_json(
         map: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
     ) -> serde_json::Value {
@@ -430,11 +399,6 @@ impl DynamoDbClient {
             json_map.insert(key.clone(), json_value);
         }
         serde_json::Value::Object(json_map)
-    }
-
-    #[cfg(not(test))]
-    fn attribute_map_to_json(_map: &()) -> serde_json::Value {
-        serde_json::json!(null)
     }
 
     /// Call LLM with DynamoDB response
