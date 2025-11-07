@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: MCP client
+#[cfg(feature = "mcp")]
+pub mod mcp;
+#[cfg(feature = "mcp")]
+pub use mcp::actions::McpClientProtocol;
