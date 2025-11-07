@@ -75,6 +75,12 @@ impl NtpClientProtocol {
     }
 }
 
+impl Default for NtpClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Client for NtpClientProtocol {
     fn connect(
         &self,
