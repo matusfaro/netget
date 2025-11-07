@@ -55,6 +55,7 @@ pub static SMTP_CLIENT_EMAIL_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| 
 });
 
 /// SMTP client protocol action handler
+#[derive(Default)]
 pub struct SmtpClientProtocol;
 
 impl SmtpClientProtocol {

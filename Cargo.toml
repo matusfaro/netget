@@ -29,7 +29,7 @@ svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = ["dep:tokio-xmpp", "dep:xmpp-parsers"]  # XMPP/Jabber instant messaging client
 telnet = ["nectar"]
-smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
+smtp = ["rust-smtp-server", "dep:lettre", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "async-trait"]
 ipp = ["dep:ipp"]
@@ -281,6 +281,9 @@ nectar = { version = "0.4", optional = true }
 # SMTP server
 rust-smtp-server = { version = "0.1", optional = true }
 
+# SMTP client (lettre)
+lettre = { version = "0.11", optional = true, default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
 # mDNS/DNS-SD service discovery
 mdns-sd = { version = "0.15", optional = true }
 
@@ -443,8 +446,8 @@ rsntp = "4.0"
 ssh2 = "0.9"
 # IRC client for e2e integration tests
 irc = "1.1"
-# SMTP client for e2e integration tests
-lettre = "0.11"
+# SMTP client for e2e integration tests - now defined as optional dependency above
+# lettre = "0.11"
 # MySQL client for e2e integration tests
 mysql_async = "0.34"
 # PostgreSQL client for e2e integration tests
