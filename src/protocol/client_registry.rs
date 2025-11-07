@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "mdns")]
-        self.register(Arc::new(crate::client::mdns::MdnsClientProtocol::new()));
+        #[cfg(feature = "postgresql")]
+        self.register(Arc::new(crate::client::postgresql::PostgresqlClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
