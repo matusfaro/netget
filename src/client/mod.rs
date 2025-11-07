@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: Kafka client
-#[cfg(feature = "kafka")]
-pub mod kafka;
-#[cfg(feature = "kafka")]
-pub use kafka::actions::KafkaClientProtocol;
+// Phase 6: LDAP client
+#[cfg(feature = "ldap")]
+pub mod ldap;
+#[cfg(feature = "ldap")]
+pub use ldap::actions::LdapClientProtocol;

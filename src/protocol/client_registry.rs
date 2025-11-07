@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "kafka")]
-        self.register(Arc::new(crate::client::kafka::KafkaClientProtocol::new()));
+        #[cfg(feature = "ldap")]
+        self.register(Arc::new(crate::client::ldap::LdapClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
