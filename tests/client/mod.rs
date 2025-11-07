@@ -6,3 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
+#[cfg(feature = "http3")]
+pub mod http3;
