@@ -69,6 +69,7 @@ bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a 
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
+kubernetes = ["dep:kube", "dep:k8s-openapi", "async-trait"]  # Kubernetes API client with LLM control over cluster resources
 xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
@@ -154,6 +155,7 @@ all-protocols = [
     "mercurial",
     "kafka",
     "etcd",
+    "kubernetes",
     "torrent-tracker",
     "torrent-dht",
     "torrent-peer",
@@ -386,6 +388,10 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
+
+# Kubernetes API client (cluster resource management)
+kube = { version = "0.96", optional = true, features = ["client", "runtime"] }  # Kubernetes client library
+k8s-openapi = { version = "0.23", optional = true, features = ["v1_30"] }  # Kubernetes API types
 
 # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed - RFC 9114)
 quinn = { version = "0.11", optional = true }  # Async QUIC implementation for HTTP/3
