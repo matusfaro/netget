@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// OpenID Connect client
+#[cfg(feature = "openidconnect")]
+pub mod openidconnect;
+#[cfg(feature = "openidconnect")]
+pub use openidconnect::actions::OpenIdConnectClientProtocol;
