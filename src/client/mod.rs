@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: gRPC client
+#[cfg(feature = "grpc")]
+pub mod grpc;
+#[cfg(feature = "grpc")]
+pub use grpc::actions::GrpcClientProtocol;
