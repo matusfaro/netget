@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: SQS client
+#[cfg(feature = "sqs")]
+pub mod sqs;
+#[cfg(feature = "sqs")]
+pub use sqs::actions::SqsClientProtocol;
