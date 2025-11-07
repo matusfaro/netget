@@ -169,9 +169,9 @@ User Instruction → git_connected event
 | **status** | ✅ Implemented | Shows modified/untracked files |
 | **list_branches** | ✅ Implemented | Local and remote branches |
 | **log** | ✅ Implemented | Commit history with limit |
-| **pull** | ⚠️ Partial | Action defined, merge logic not implemented |
-| **push** | ⚠️ Partial | Action defined, push logic not implemented |
-| **checkout** | ⚠️ Partial | Action defined, checkout logic not implemented |
+| **pull** | ✅ Implemented | Fetch + fast-forward merge, manual merge for conflicts |
+| **push** | ✅ Implemented | Push commits to remote with authentication |
+| **checkout** | ✅ Implemented | Checkout branches/commits, create new branches |
 | **commit** | ❌ Not implemented | Requires staging and commit creation |
 | **diff** | ❌ Not implemented | Future enhancement |
 | **merge** | ❌ Not implemented | Complex, requires conflict resolution |
@@ -194,13 +194,14 @@ Errors are propagated to the LLM via `git_operation_error` events:
 
 ## Limitations
 
-1. **No SSH Key Support**: Initial implementation only supports username/password (HTTPS)
-2. **No Merge/Rebase**: Pull operation doesn't handle merging
+1. **No SSH Key Support**: Implementation only supports username/password (HTTPS)
+2. **Limited Merge Support**: Pull operation only handles fast-forward merges automatically
 3. **No Commit Creation**: Cannot stage files and create commits
-4. **No Branch Management**: Cannot create or delete branches
+4. **No Branch Deletion**: Can create and checkout branches, but not delete them
 5. **No Tag Support**: Cannot create, list, or delete tags
 6. **No Submodule Support**: Cannot clone or update submodules
-7. **No Conflict Resolution**: LLM cannot resolve merge conflicts
+7. **No Conflict Resolution**: LLM cannot resolve merge conflicts (manual resolution required)
+8. **No Rebase Support**: Rebase operations are not implemented
 
 ## Future Enhancements
 

@@ -79,7 +79,7 @@ openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 openidconnect = []  # OpenID Connect (alternate name)
 kubernetes = []  # Kubernetes client protocol
-git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
+git = ["dep:git2"]  # Git Smart HTTP server with LLM-controlled virtual repositories and Git client
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
@@ -409,6 +409,9 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
+# Git client (libgit2 wrapper for Git protocol operations)
+git2 = { version = "0.19", optional = true }
 
 # AWS SDK for SQS and DynamoDB clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
