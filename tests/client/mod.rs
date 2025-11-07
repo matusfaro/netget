@@ -6,5 +6,7 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
+#[cfg(feature = "telnet")]
+pub mod telnet;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
