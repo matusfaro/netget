@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// XML-RPC client
+#[cfg(feature = "xmlrpc")]
+pub mod xmlrpc;
+#[cfg(feature = "xmlrpc")]
+pub use xmlrpc::actions::XmlRpcClientProtocol;
