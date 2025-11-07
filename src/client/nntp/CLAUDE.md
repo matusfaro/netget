@@ -106,10 +106,12 @@ Most actions are converted to `ClientActionResult::Custom` with command strings:
 }
 ```
 
-The `nntp_post` action is special, as it requires a two-phase process:
+The `nntp_post` action follows the proper NNTP POST protocol flow:
 1. Send `POST` command
-2. Server responds with `340 Send article` (not yet implemented in response handling)
-3. Send headers and body, terminated by `CRLF.CRLF`
+2. Article data (headers + body) is stored in pending state
+3. Server responds with `340 Send article to be posted`
+4. Article data is automatically sent (headers + body + terminator)
+5. Server responds with `240 Article received ok` or error code
 
 ## Response Codes
 
@@ -163,29 +165,29 @@ Connect to NNTP at news.example.com:119 and post a test article to test.misc
 LLM flow:
 1. Receives `nntp_connected` event
 2. Executes `nntp_post` action with headers and body
-3. Receives `340` (send article) or error response
-4. Article is transmitted automatically after POST command
+3. POST command is sent, article data is stored pending 340 response
+4. When 340 response is received, article is automatically transmitted
+5. LLM receives final success (240) or error response
 
 ## Limitations
 
 1. **No Authentication**: Current implementation doesn't support AUTHINFO (NNTP authentication)
 2. **No Pipelining**: Commands are sent one at a time
-3. **Basic POST**: POST implementation sends article immediately without waiting for 340 response
-4. **No Binary Support**: No support for binary attachments (yEnc, uuencode)
-5. **Limited Error Handling**: Error responses are passed to LLM but not parsed
-6. **No Compression**: No support for COMPRESS or MODE STREAM
-7. **No SSL/TLS**: No built-in support for NNTP over SSL (port 563)
+3. **No Binary Support**: No support for binary attachments (yEnc, uuencode)
+4. **Limited Error Handling**: Error responses are passed to LLM but not parsed structurally
+5. **No Compression**: No support for COMPRESS or MODE STREAM
+6. **No SSL/TLS**: No built-in support for NNTP over SSL (port 563)
 
 ## Future Improvements
 
 1. **AUTHINFO Support**: Add username/password authentication
 2. **STARTTLS**: Upgrade connection to TLS for security
-3. **Better POST Handling**: Wait for 340 before sending article data
-4. **Binary Attachments**: Support yEnc decoding/encoding
-5. **Response Parsing**: Parse structured responses (article numbers, ranges, etc.)
-6. **Pipelining**: Send multiple commands without waiting for responses
-7. **CAPABILITIES**: Discover server capabilities via CAPABILITIES command
-8. **HDR/OVER**: Support newer HDR and OVER commands (RFC 3977)
+3. **Binary Attachments**: Support yEnc decoding/encoding for binary data
+4. **Response Parsing**: Parse structured responses (article numbers, ranges, etc.)
+5. **Pipelining**: Send multiple commands without waiting for responses
+6. **CAPABILITIES**: Discover server capabilities via CAPABILITIES command
+7. **HDR/OVER**: Support newer HDR and OVER commands (RFC 3977)
+8. **Better Error Recovery**: Automatic retry logic for transient errors
 
 ## Testing
 
