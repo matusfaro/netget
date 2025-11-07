@@ -77,6 +77,7 @@ pub static HTTP_PROXY_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 });
 
 /// HTTP proxy client protocol action handler
+#[derive(Default)]
 pub struct HttpProxyClientProtocol;
 
 impl HttpProxyClientProtocol {
