@@ -1,0 +1,515 @@
+//! Kubernetes client protocol actions implementation
+
+use crate::llm::actions::{
+    client_trait::{Client, ClientActionResult},
+    ActionDefinition, Parameter, ParameterDefinition,
+};
+use crate::protocol::EventType;
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use serde_json::json;
+use std::sync::LazyLock;
+
+/// Kubernetes client connected event
+pub static K8S_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "k8s_connected",
+        "Kubernetes client connected to cluster API"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "cluster_url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Kubernetes cluster URL or kubeconfig path".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// Kubernetes client resource received event
+pub static K8S_CLIENT_RESOURCE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "k8s_resource_received",
+        "Kubernetes resource operation completed"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "Operation performed (list, get, create, delete, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "resource_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Resource type (pods, deployments, services, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "namespace".to_string(),
+            type_hint: "string".to_string(),
+            description: "Kubernetes namespace".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "response".to_string(),
+            type_hint: "object".to_string(),
+            description: "Operation response data".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// Kubernetes client protocol action handler
+pub struct KubernetesClientProtocol;
+
+impl KubernetesClientProtocol {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Client for KubernetesClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::kubernetes::KubernetesClient;
+            KubernetesClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "namespace".to_string(),
+                description: "Default namespace for operations (default: 'default')".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("kube-system"),
+            },
+            ParameterDefinition {
+                name: "kubeconfig".to_string(),
+                description: "Path to kubeconfig file (default: ~/.kube/config)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("~/.kube/config"),
+            },
+        ]
+    }
+
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "k8s_list_pods".to_string(),
+                description: "List all pods in a namespace".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace to list pods from (optional, uses default if not specified)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "label_selector".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Label selector to filter pods (e.g., 'app=nginx')".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_list_pods",
+                    "namespace": "default",
+                    "label_selector": "app=nginx"
+                }),
+            },
+            ActionDefinition {
+                name: "k8s_get_pod".to_string(),
+                description: "Get details of a specific pod".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Pod name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_get_pod",
+                    "name": "nginx-abc123",
+                    "namespace": "default"
+                }),
+            },
+            ActionDefinition {
+                name: "k8s_get_logs".to_string(),
+                description: "Get logs from a pod".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Pod name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_get_logs",
+                    "name": "nginx-abc123",
+                    "namespace": "default"
+                }),
+            },
+            ActionDefinition {
+                name: "k8s_create_pod".to_string(),
+                description: "Create a new pod".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "spec".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Pod specification (Kubernetes Pod manifest)".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_create_pod",
+                    "namespace": "default",
+                    "spec": {
+                        "apiVersion": "v1",
+                        "kind": "Pod",
+                        "metadata": {
+                            "name": "nginx"
+                        },
+                        "spec": {
+                            "containers": [{
+                                "name": "nginx",
+                                "image": "nginx:latest"
+                            }]
+                        }
+                    }
+                }),
+            },
+            ActionDefinition {
+                name: "k8s_delete_pod".to_string(),
+                description: "Delete a pod".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Pod name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_delete_pod",
+                    "name": "nginx",
+                    "namespace": "default"
+                }),
+            },
+            ActionDefinition {
+                name: "k8s_list_deployments".to_string(),
+                description: "List all deployments in a namespace".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "label_selector".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Label selector (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_list_deployments",
+                    "namespace": "default"
+                }),
+            },
+            ActionDefinition {
+                name: "k8s_list_services".to_string(),
+                description: "List all services in a namespace".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "label_selector".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Label selector (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_list_services",
+                    "namespace": "kube-system"
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from the Kubernetes cluster".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "k8s_list_pods".to_string(),
+                description: "List pods in response to a previous operation".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "namespace".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Namespace (optional)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "k8s_list_pods",
+                    "namespace": "default"
+                }),
+            },
+        ]
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "k8s_list_pods" => {
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let label_selector = action.get("label_selector")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "list",
+                        "resource_type": "pods",
+                        "namespace": namespace,
+                        "label_selector": label_selector,
+                    }),
+                })
+            }
+            "k8s_get_pod" => {
+                let name = action.get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "get",
+                        "resource_type": "pod",
+                        "name": name,
+                        "namespace": namespace,
+                    }),
+                })
+            }
+            "k8s_get_logs" => {
+                let name = action.get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "logs",
+                        "resource_type": "pod",
+                        "name": name,
+                        "namespace": namespace,
+                    }),
+                })
+            }
+            "k8s_create_pod" => {
+                let spec = action.get("spec")
+                    .context("Missing 'spec' field")?
+                    .clone();
+
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "create",
+                        "resource_type": "pod",
+                        "spec": spec,
+                        "namespace": namespace,
+                    }),
+                })
+            }
+            "k8s_delete_pod" => {
+                let name = action.get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "delete",
+                        "resource_type": "pod",
+                        "name": name,
+                        "namespace": namespace,
+                    }),
+                })
+            }
+            "k8s_list_deployments" => {
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let label_selector = action.get("label_selector")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "list",
+                        "resource_type": "deployments",
+                        "namespace": namespace,
+                        "label_selector": label_selector,
+                    }),
+                })
+            }
+            "k8s_list_services" => {
+                let namespace = action.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let label_selector = action.get("label_selector")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "k8s_operation".to_string(),
+                    data: json!({
+                        "operation": "list",
+                        "resource_type": "services",
+                        "namespace": namespace,
+                        "label_selector": label_selector,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!("Unknown Kubernetes client action: {}", action_type)),
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "Kubernetes"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "k8s_connected".to_string(),
+                description: "Triggered when Kubernetes client connects to cluster".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "k8s_resource_received".to_string(),
+                description: "Triggered when Kubernetes operation completes".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>TLS>HTTP>K8s API"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["kubernetes", "k8s", "kubectl", "kube", "cluster"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("kube-rs library for Kubernetes API access")
+            .llm_control("Full control over cluster resources (Pods, Deployments, Services, etc.)")
+            .e2e_testing("minikube or kind local cluster")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "Kubernetes API client for cluster management"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to Kubernetes cluster and list all pods in the default namespace"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Cloud & Orchestration"
+    }
+}
