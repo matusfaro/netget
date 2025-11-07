@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: PostgreSQL client
+#[cfg(feature = "postgresql")]
+pub mod postgresql;
+#[cfg(feature = "postgresql")]
+pub use postgresql::actions::PostgresqlClientProtocol;
