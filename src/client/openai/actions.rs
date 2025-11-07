@@ -63,6 +63,12 @@ pub static OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
 /// OpenAI client protocol action handler
 pub struct OpenAiClientProtocol;
 
+impl Default for OpenAiClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiClientProtocol {
     pub fn new() -> Self {
         Self

@@ -501,12 +501,23 @@ async fn execute_single_task(
 
     let _ = status_tx.send(format!("[TASK] Executing task '{}'", task.name));
 
-    // Get protocol actions if server or connection-scoped
+    // Get protocol actions if server, connection, or client-scoped
     let protocol_actions = match &task.scope {
         TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
             if let Some(protocol_name) = state.get_protocol_name(*server_id).await {
                 if let Some(protocol) = crate::protocol::registry::registry().get(&protocol_name) {
                     protocol.get_sync_actions()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        }
+        TaskScope::Client(client_id) => {
+            if let Some(protocol_name) = state.get_protocol_name_for_client(*client_id).await {
+                if let Some(protocol) = crate::protocol::client_registry::CLIENT_REGISTRY.get(&protocol_name) {
+                    protocol.as_ref().get_sync_actions()
                 } else {
                     Vec::new()
                 }
@@ -528,6 +539,7 @@ async fn execute_single_task(
         TaskScope::Global => crate::state::app_state::ConversationSource::Task { task_name: task.name.clone() },
         TaskScope::Server(server_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}#{}",task.name, server_id.as_u32()) },
         TaskScope::Connection(server_id, conn_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}#{}/{}", task.name, server_id.as_u32(), conn_id) },
+        TaskScope::Client(client_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}@{}", task.name, client_id.as_u32()) },
     };
 
     let truncated_instruction = if task.instruction.len() > 30 {
@@ -579,13 +591,18 @@ async fn execute_single_task(
         }
     };
 
-    // Get protocol for execution (if server or connection-scoped)
+    // Get protocol for execution (if server, connection, or client-scoped)
     let protocol = match &task.scope {
         TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
             state
                 .get_protocol_name(*server_id)
                 .await
                 .and_then(|name| crate::protocol::registry::registry().get(&name))
+        }
+        TaskScope::Client(_client_id) => {
+            // Client protocols are handled differently - they don't use the server protocol registry
+            // For now, return None as task execution for clients needs client-specific implementation
+            None
         }
         TaskScope::Global => None,
     };

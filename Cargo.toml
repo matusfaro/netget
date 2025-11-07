@@ -38,7 +38,7 @@ redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
 webdav = ["dav-server"]
-nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types", "async-trait"]
+nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
@@ -48,7 +48,7 @@ sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
-mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
+mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client
@@ -56,8 +56,8 @@ dynamodb = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client (alternate name
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS client
 npm = []  # NPM registry server uses only HTTP, no extra deps
-openai = []  # OpenAI API uses only HTTP, no extra deps
-oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client with LLM-controlled flows
+openai = ["async-openai"]  # OpenAI API client
+oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
@@ -81,7 +81,7 @@ openidconnect = []  # OpenID Connect (alternate name)
 kubernetes = []  # Kubernetes client protocol
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
-kafka = ["dep:kafka-protocol", "dep:rdkafka"]  # Apache Kafka broker (server) and client with LLM control
+kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
@@ -173,7 +173,7 @@ e2e-tests = []  # Feature flag for E2E tests
 [dependencies]
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec", "compat"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 
 # Low-level system bindings
 libc = "0.2"
@@ -307,9 +307,6 @@ dav-server = { version = "0.8", optional = true }
 
 # NFS server
 nfsserve = { version = "0.10", optional = true }
-# NFS client
-nfs3_client = { version = "0.7", optional = true, features = ["tokio"] }
-nfs3_types = { version = "0.4", optional = true }
 
 # Cassandra/CQL server
 cassandra-protocol = { version = "3.3", optional = true }
@@ -339,8 +336,6 @@ xmpp-parsers = { version = "0.20", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
-# MQTT client (IoT messaging)
-rumqttc = { version = "0.24", optional = true }
 
 # SOCKS5 client (proxy protocol client)
 tokio-socks = { version = "0.5", optional = true }
@@ -408,7 +403,6 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
-rdkafka = { version = "0.37", optional = true }  # Kafka client (librdkafka wrapper)
 
 # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed - RFC 9114)
 quinn = { version = "0.11", optional = true }  # Async QUIC implementation for HTTP/3
@@ -416,13 +410,13 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
-# OAuth2 client (multiple flows: password, device code, client credentials, authorization code)
-oauth2 = { version = "4.4", optional = true }  # OAuth2 flows with async HTTP client support
-
 # AWS SDK for SQS and DynamoDB clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.86", optional = true }
 aws-sdk-dynamodb = { version = "1.52", optional = true }
+
+# OpenAI API client
+async-openai = { version = "0.26", optional = true }
 
 [dev-dependencies]
 # For async tests
