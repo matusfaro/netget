@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: STUN client
+#[cfg(feature = "stun")]
+pub mod stun;
+#[cfg(feature = "stun")]
+pub use stun::actions::StunClientProtocol;
