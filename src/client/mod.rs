@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// IRC client
+#[cfg(feature = "irc")]
+pub mod irc;
+#[cfg(feature = "irc")]
+pub use irc::actions::IrcClientProtocol;
