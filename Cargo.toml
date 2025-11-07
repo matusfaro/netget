@@ -14,7 +14,7 @@ udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
-dns = ["hickory-server", "hickory-proto"]
+dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
@@ -247,9 +247,10 @@ pcap = "2.2"
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
 
-# DNS server (Hickory DNS, formerly Trust-DNS)
+# DNS server and client (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
+hickory-client = { version = "0.24", features = ["dns-over-rustls", "dns-over-https-rustls"], optional = true }
 
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
