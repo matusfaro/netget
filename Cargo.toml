@@ -29,7 +29,7 @@ svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
 telnet = ["nectar"]
-smtp = ["rust-smtp-server", "dep:lettre", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
+smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "async-trait"]
 ipp = ["dep:ipp"]
@@ -40,18 +40,17 @@ webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
-stun = ["dep:stunclient"]
+stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
-imap = ["imap-codec", "dep:async-imap", "tokio-native-tls", "native-tls"]  # IMAP server uses imap-codec, client uses async-imap
+imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
-s3-client = ["dep:aws-config", "dep:aws-sdk-s3"]  # S3 client (AWS S3 and S3-compatible services like MinIO)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
@@ -69,17 +68,16 @@ rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
-etcd = ["grpc", "dep:etcd-client"]  # etcd v3 key-value store server (KV service via gRPC) and client
+etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
 xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
-tor-client = ["dep:arti-client", "dep:tor-rtcompat"]  # Tor client for anonymous connections through Tor network
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
-kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
-http3 = ["dep:quinn", "dep:h3", "dep:h3-quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
+kafka = ["dep:kafka-protocol", "dep:rdkafka"]  # Apache Kafka broker (server) and client with LLM control
+http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
@@ -132,7 +130,6 @@ all-protocols = [
     "elasticsearch",
     "dynamo",
     "s3",
-    "s3-client",
     "sqs",
     "npm",
     "openai",
@@ -150,7 +147,6 @@ all-protocols = [
     "grpc",
     "xmlrpc",
     "tor",
-    "tor-client",
     "vnc",
     "openapi",
     "openid",
@@ -171,7 +167,7 @@ e2e-tests = []  # Feature flag for E2E tests
 [dependencies]
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec", "compat"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 
 # Low-level system bindings
 libc = "0.2"
@@ -279,9 +275,6 @@ nectar = { version = "0.4", optional = true }
 # SMTP server
 rust-smtp-server = { version = "0.1", optional = true }
 
-# SMTP client (lettre)
-lettre = { version = "0.11", optional = true, default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
-
 # mDNS/DNS-SD service discovery
 mdns-sd = { version = "0.15", optional = true }
 
@@ -315,8 +308,8 @@ cassandra-protocol = { version = "3.3", optional = true }
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
 
-# STUN client (Session Traversal Utilities for NAT)
-stunclient = { version = "0.4", optional = true, features = ["tokio"] }
+# STUN server (Session Traversal Utilities for NAT)
+webrtc-stun = { version = "0.1", optional = true }
 
 # TURN server (Traversal Using Relays around NAT)
 webrtc-turn = { version = "0.1", optional = true }
@@ -327,9 +320,6 @@ ldap3_proto = { version = "0.3", optional = true }
 
 # IMAP server (IMAP protocol parsing)
 imap-codec = { version = "2.0.0-alpha.6", optional = true }
-
-# IMAP client (async IMAP client library)
-async-imap = { version = "0.10", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
@@ -362,9 +352,6 @@ prost-reflect = { version = "0.14", optional = true }
 prost-types = { version = "0.13", optional = true }
 tonic-reflection = { version = "0.12", optional = true }
 
-# etcd client (for etcd client protocol)
-etcd-client = { version = "0.15", optional = true }
-
 # XML-RPC server (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }
 
@@ -384,10 +371,6 @@ hkdf = { version = "0.12", optional = true }  # HKDF for key derivation in ntor
 # tokio-rustls already available, don't redeclare
 # rcgen already used by proxy feature, don't redeclare
 
-# Tor client (arti) for anonymous connections
-arti-client = { version = "0.36", optional = true }  # Arti Tor client library
-tor-rtcompat = { version = "0.36", optional = true }  # Runtime compatibility layer for arti
-
 # Display module (for VNC and other protocols requiring image generation)
 tiny-skia = "0.11"  # 2D graphics rendering
 cosmic-text = "0.12"  # Text rendering with font support
@@ -403,18 +386,13 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
+rdkafka = { version = "0.37", optional = true }  # Kafka client (librdkafka wrapper)
 
 # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed - RFC 9114)
 quinn = { version = "0.11", optional = true }  # Async QUIC implementation for HTTP/3
-h3 = { version = "0.0.8", optional = true }  # HTTP/3 implementation over QUIC
-h3-quinn = { version = "0.0.10", optional = true }  # HTTP/3 adapter for quinn QUIC implementation
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
-
-# AWS SDK for S3 client
-aws-config = { version = "1.5", optional = true, features = ["behavior-version-latest"] }
-aws-sdk-s3 = { version = "1.55", optional = true }
 
 [dev-dependencies]
 # For async tests

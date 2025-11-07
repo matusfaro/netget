@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "jsonrpc")]
-pub mod jsonrpc;
+#[cfg(feature = "kafka")]
+pub mod kafka;
