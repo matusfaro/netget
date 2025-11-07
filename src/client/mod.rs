@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: BOOTP client
+#[cfg(feature = "bootp")]
+pub mod bootp;
+#[cfg(feature = "bootp")]
+pub use bootp::actions::BootpClientProtocol;
