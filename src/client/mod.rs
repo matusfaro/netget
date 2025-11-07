@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: SSH client
-#[cfg(feature = "ssh")]
-pub mod ssh;
-#[cfg(feature = "ssh")]
-pub use ssh::actions::SshClientProtocol;
+// Syslog client
+#[cfg(feature = "syslog")]
+pub mod syslog;
+#[cfg(feature = "syslog")]
+pub use syslog::actions::SyslogClientProtocol;
