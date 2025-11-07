@@ -92,7 +92,7 @@ impl WireguardServer {
 
         // Create WGApi instance
         #[cfg(not(target_os = "macos"))]
-        let mut wgapi = WGApi::<defguard_wireguard_rs::Kernel>::new(interface_name.clone())
+        let wgapi = WGApi::<defguard_wireguard_rs::Kernel>::new(interface_name.clone())
             .context("Failed to create WireGuard API")?;
 
         #[cfg(target_os = "macos")]

@@ -4,7 +4,7 @@ pub mod actions;
 pub use actions::WireguardClientProtocol;
 
 use anyhow::{Context, Result};
-use defguard_wireguard_rs::{host::Peer, key::Key, InterfaceConfiguration, WGApi};
+use defguard_wireguard_rs::{host::Peer, key::Key, InterfaceConfiguration, WGApi, WireguardInterfaceApi};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, LazyLock};
@@ -50,20 +50,14 @@ pub struct WireguardClientParams {
     pub private_key: Option<String>,
 }
 
-/// Connection state for monitoring
-#[derive(Debug, Clone, PartialEq)]
-enum ConnectionState {
-    Idle,
-    Processing,
-}
-
 /// WireGuard client
 pub struct WireguardClient {
     interface_name: String,
     wgapi: Arc<RwLock<WGApi>>,
-    private_key: String,
+    _private_key: String,
     public_key: String,
-    server_public_key: String,
+    server_public_key: Key,
+    server_public_key_str: String,
     server_endpoint: String,
     client_address: String,
     allowed_ips: Vec<String>,
@@ -92,8 +86,8 @@ impl WireguardClient {
         };
         let public_key = private_key.public_key();
 
-        let private_key_b64 = private_key.to_base64();
-        let public_key_b64 = public_key.to_base64();
+        let private_key_b64 = private_key.to_string();
+        let public_key_b64 = public_key.to_string();
 
         info!("WireGuard client public key: {}", public_key_b64);
         let _ = status_tx.send(format!(
@@ -111,21 +105,8 @@ impl WireguardClient {
         // Create WireGuard interface
         let ifname = interface_name.clone();
 
-        #[cfg(target_os = "linux")]
-        let wgapi = WGApi::new(ifname, false)
-            .context("Failed to create WireGuard interface (root/CAP_NET_ADMIN required)")?;
-
-        #[cfg(target_os = "macos")]
-        let wgapi = WGApi::new(ifname, true)
-            .context("Failed to create WireGuard userspace interface")?;
-
-        #[cfg(target_os = "windows")]
-        let wgapi = WGApi::new(ifname, false)
-            .context("Failed to create WireGuard interface (administrator required)")?;
-
-        #[cfg(target_os = "freebsd")]
-        let wgapi = WGApi::new(ifname, false)
-            .context("Failed to create WireGuard interface (root required)")?;
+        let wgapi = WGApi::new(ifname)
+            .context("Failed to create WireGuard interface (requires elevated privileges)")?;
 
         info!("Created WireGuard interface: {}", interface_name);
         let _ = status_tx.send(format!(
@@ -134,15 +115,8 @@ impl WireguardClient {
         ));
 
         // Parse client address (e.g., "10.20.30.2/32")
-        let client_addr_parts: Vec<&str> = params.client_address.split('/').collect();
-        let client_ip: IpAddr = client_addr_parts[0]
-            .parse()
-            .context("Invalid client IP address")?;
-        let client_cidr: u32 = if client_addr_parts.len() > 1 {
-            client_addr_parts[1].parse().context("Invalid CIDR")?
-        } else {
-            32
-        };
+        use defguard_wireguard_rs::net::IpAddrMask;
+        let client_addr_mask: IpAddrMask = params.client_address.parse().context("Invalid client address")?;
 
         // Parse server endpoint
         let server_endpoint_addr: SocketAddr = params
@@ -155,22 +129,22 @@ impl WireguardClient {
             Key::decode(&params.server_public_key).context("Invalid server public key")?;
 
         // Parse listen port from remote_addr (use client_id as offset from base port)
-        let listen_port = 51820u16.wrapping_add(client_id % 1000);
+        let listen_port = 51820u16.wrapping_add((client_id.as_u32() % 1000) as u16);
 
         // Configure interface
         let config = InterfaceConfiguration {
             name: interface_name.clone(),
             prvkey: private_key_b64.clone(),
-            address: client_ip.to_string(),
-            port: listen_port,
+            addresses: vec![client_addr_mask],
+            port: listen_port as u32,
             peers: vec![Peer {
-                public_key: server_key.to_base64(),
+                public_key: server_key.clone(),
                 preshared_key: None,
                 protocol_version: None,
                 endpoint: Some(server_endpoint_addr),
                 last_handshake: None,
-                tx_bytes: None,
-                rx_bytes: None,
+                tx_bytes: 0,
+                rx_bytes: 0,
                 persistent_keepalive_interval: params.keepalive,
                 allowed_ips: params
                     .allowed_ips
@@ -210,9 +184,10 @@ impl WireguardClient {
         let client = Arc::new(WireguardClient {
             interface_name: interface_name.clone(),
             wgapi: wgapi_arc.clone(),
-            private_key: private_key_b64,
+            _private_key: private_key_b64,
             public_key: public_key_b64.clone(),
-            server_public_key: params.server_public_key.clone(),
+            server_public_key: server_key.clone(),
+            server_public_key_str: params.server_public_key.clone(),
             server_endpoint: params.server_endpoint.clone(),
             client_address: params.client_address.clone(),
             allowed_ips: params.allowed_ips.clone(),
@@ -229,7 +204,7 @@ impl WireguardClient {
         let status_tx_clone = status_tx.clone();
         let llm_client_clone = llm_client.clone();
         let wgapi_monitor = wgapi_arc.clone();
-        let server_key_b64 = params.server_public_key.clone();
+        let server_key_clone = server_key.clone();
         let client_clone = client.clone();
 
         tokio::spawn(async move {
@@ -237,7 +212,7 @@ impl WireguardClient {
                 client_id,
                 client_clone,
                 wgapi_monitor,
-                server_key_b64,
+                server_key_clone,
                 &mut cmd_rx,
                 app_state_clone,
                 status_tx_clone,
@@ -282,7 +257,7 @@ impl WireguardClient {
             Ok(result) => {
                 debug!("LLM response for connected event: {:?}", result);
                 // Update memory if provided
-                if let Some(new_memory) = result.updated_memory {
+                if let Some(new_memory) = result.memory_updates {
                     app_state
                         .set_memory_for_client(client_id, new_memory)
                         .await;
@@ -305,7 +280,7 @@ impl WireguardClient {
         client_id: ClientId,
         client: Arc<WireguardClient>,
         wgapi: Arc<RwLock<WGApi>>,
-        server_public_key: String,
+        server_public_key: Key,
         cmd_rx: &mut mpsc::UnboundedReceiver<WireguardCommand>,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
@@ -345,8 +320,8 @@ impl WireguardClient {
             }
 
             // Check if client is still active
-            if let Some(client_status) = app_state.get_client_status(client_id).await {
-                if client_status == ClientStatus::Disconnected {
+            if let Some(client) = app_state.get_client(client_id).await {
+                if client.status == ClientStatus::Disconnected {
                     info!("WireGuard client {} stopped, exiting monitor loop", client_id);
                     break;
                 }
@@ -414,7 +389,7 @@ impl WireguardClient {
                             )
                             .await
                             {
-                                if let Some(new_memory) = result.updated_memory {
+                                if let Some(new_memory) = result.memory_updates {
                                     app_state
                                         .set_memory_for_client(client_id, new_memory)
                                         .await;
@@ -429,8 +404,8 @@ impl WireguardClient {
                             debug!(
                                 "WireGuard client {} stats: tx={} rx={} last_handshake={}",
                                 client_id,
-                                peer.tx_bytes.unwrap_or(0),
-                                peer.rx_bytes.unwrap_or(0),
+                                peer.tx_bytes,
+                                peer.rx_bytes,
                                 peer.last_handshake
                                     .map(|t| format!("{:?} ago", t.elapsed().unwrap_or_default()))
                                     .unwrap_or_else(|| "never".to_string())
@@ -477,7 +452,7 @@ impl WireguardClient {
             "private_key": "<redacted>",
             "client_address": self.client_address,
             "server_endpoint": self.server_endpoint,
-            "server_public_key": self.server_public_key,
+            "server_public_key": self.server_public_key_str,
             "allowed_ips": self.allowed_ips,
         })
     }
@@ -496,12 +471,12 @@ impl WireguardClient {
             "public_key": self.public_key,
             "client_address": self.client_address,
             "server_endpoint": self.server_endpoint,
-            "server_public_key": self.server_public_key,
+            "server_public_key": self.server_public_key_str,
             "connected": peer.and_then(|p| p.last_handshake).is_some(),
             "last_handshake": peer.and_then(|p| p.last_handshake)
                 .map(|t| t.elapsed().unwrap_or_default().as_secs()),
-            "tx_bytes": peer.and_then(|p| p.tx_bytes).unwrap_or(0),
-            "rx_bytes": peer.and_then(|p| p.rx_bytes).unwrap_or(0),
+            "tx_bytes": peer.map(|p| p.tx_bytes).unwrap_or(0),
+            "rx_bytes": peer.map(|p| p.rx_bytes).unwrap_or(0),
             "allowed_ips": self.allowed_ips,
         }))
     }
