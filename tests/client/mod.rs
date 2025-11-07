@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "snmp")]
-pub mod snmp;
+#[cfg(feature = "sqs")]
+pub mod sqs;
