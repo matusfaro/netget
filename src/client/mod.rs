@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: RIP client
-#[cfg(feature = "rip")]
-pub mod rip;
-#[cfg(feature = "rip")]
-pub use rip::actions::RipClientProtocol;
+// S3 client
+#[cfg(feature = "s3-client")]
+pub mod s3;
+#[cfg(feature = "s3-client")]
+pub use s3::actions::S3ClientProtocol;

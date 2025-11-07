@@ -16,7 +16,7 @@ arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handlin
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
-doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "hickory-client/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server & client
+doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
@@ -33,10 +33,9 @@ smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "async-trait"]
 ipp = ["dep:ipp"]
-postgresql = ["dep:pgwire", "dep:tokio-postgres", "async-trait"]
+postgresql = ["dep:pgwire", "async-trait"]
 redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
-http_proxy = []  # HTTP proxy client for tunneling through HTTP proxies
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
@@ -50,8 +49,9 @@ nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
-dynamo = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:aws-smithy-types", "dep:aws-credential-types"]  # DynamoDB client with AWS SDK
+dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
+s3-client = ["dep:aws-config", "dep:aws-sdk-s3"]  # S3 client (AWS S3 and S3-compatible services like MinIO)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
@@ -70,7 +70,6 @@ bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a 
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
-kubernetes = ["dep:kube", "dep:k8s-openapi", "async-trait"]  # Kubernetes API client with LLM control over cluster resources
 xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
@@ -117,7 +116,6 @@ all-protocols = [
     "postgresql",
     "redis",
     "proxy",
-    "http_proxy",
     "webdav",
     "nfs",
     "cassandra",
@@ -133,6 +131,7 @@ all-protocols = [
     "elasticsearch",
     "dynamo",
     "s3",
+    "s3-client",
     "sqs",
     "npm",
     "openai",
@@ -157,7 +156,6 @@ all-protocols = [
     "mercurial",
     "kafka",
     "etcd",
-    "kubernetes",
     "torrent-tracker",
     "torrent-dht",
     "torrent-peer",
@@ -245,10 +243,9 @@ pcap = "2.2"
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
 
-# DNS server & client (Hickory DNS, formerly Trust-DNS)
+# DNS server (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
-hickory-client = { version = "0.24", optional = true }
 
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
@@ -291,8 +288,6 @@ ipp = { version = "5.3", optional = true }
 
 # PostgreSQL server
 pgwire = { version = "0.25", optional = true }
-# PostgreSQL client
-tokio-postgres = { version = "0.7", optional = true }
 
 # Redis server (RESP protocol)
 redis-protocol = { version = "6.0", optional = true }
@@ -394,21 +389,15 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
 
-# Kubernetes API client (cluster resource management)
-kube = { version = "0.96", optional = true, features = ["client", "runtime"] }  # Kubernetes client library
-k8s-openapi = { version = "0.23", optional = true, features = ["v1_30"] }  # Kubernetes API types
-
 # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed - RFC 9114)
 quinn = { version = "0.11", optional = true }  # Async QUIC implementation for HTTP/3
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
-# AWS SDK for DynamoDB client
-aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
-aws-sdk-dynamodb = { version = "1.52", optional = true }
-aws-smithy-types = { version = "1.2", optional = true }
-aws-credential-types = { version = "1.2", optional = true }
+# AWS SDK for S3 client
+aws-config = { version = "1.5", optional = true, features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.55", optional = true }
 
 [dev-dependencies]
 # For async tests
