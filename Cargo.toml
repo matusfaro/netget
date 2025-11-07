@@ -14,9 +14,9 @@ udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
-dns = ["hickory-server", "hickory-proto", "hickory-client"]
+dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
-doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "hickory-client/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server & client
+doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
@@ -29,11 +29,11 @@ svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = []  # IRC uses only TCP, no extra deps
 xmpp = ["dep:tokio-xmpp", "dep:xmpp-parsers"]  # XMPP/Jabber instant messaging client
 telnet = ["nectar"]
-smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
+smtp = ["rust-smtp-server", "dep:lettre", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 mdns = ["mdns-sd"]
-mysql = ["dep:opensrv-mysql", "dep:mysql_async", "async-trait"]
+mysql = ["dep:opensrv-mysql", "async-trait"]
 ipp = ["dep:ipp"]
-postgresql = ["dep:pgwire", "dep:tokio-postgres", "async-trait"]
+postgresql = ["dep:pgwire", "async-trait"]
 redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
@@ -41,7 +41,7 @@ webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
-stun = ["dep:stunclient"]
+stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
@@ -54,7 +54,6 @@ elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client
 dynamodb = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client (alternate name)
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
-s3-client = ["aws-config", "aws-sdk-s3"]  # S3 client (AWS S3 and S3-compatible services like MinIO)
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS client
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
@@ -75,7 +74,6 @@ grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:t
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
-tor-client = ["dep:arti-client", "dep:tor-rtcompat"]  # Tor client for anonymous connections through Tor network
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
@@ -138,7 +136,6 @@ all-protocols = [
     "elasticsearch",
     "dynamo",
     "s3",
-    "s3-client",
     "sqs",
     "npm",
     "openai",
@@ -156,7 +153,6 @@ all-protocols = [
     "grpc",
     "xmlrpc",
     "tor",
-    "tor-client",
     "vnc",
     "openapi",
     "openid",
@@ -251,10 +247,9 @@ pcap = "2.2"
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
 
-# DNS server & client (Hickory DNS, formerly Trust-DNS)
+# DNS server (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
-hickory-client = { version = "0.24", optional = true }
 
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
@@ -286,21 +281,20 @@ nectar = { version = "0.4", optional = true }
 # SMTP server
 rust-smtp-server = { version = "0.1", optional = true }
 
+# SMTP client (lettre)
+lettre = { version = "0.11", optional = true, default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
 # mDNS/DNS-SD service discovery
 mdns-sd = { version = "0.15", optional = true }
 
 # MySQL server
 opensrv-mysql = { version = "0.7", optional = true }
-# MySQL client
-mysql_async = { version = "0.34", optional = true }
 
 # IPP (Internet Printing Protocol)
 ipp = { version = "5.3", optional = true }
 
 # PostgreSQL server
 pgwire = { version = "0.25", optional = true }
-# PostgreSQL client
-tokio-postgres = { version = "0.7", optional = true }
 
 # Redis server (RESP protocol)
 redis-protocol = { version = "6.0", optional = true }
@@ -323,8 +317,8 @@ cassandra-protocol = { version = "3.3", optional = true }
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
 
-# STUN client (Session Traversal Utilities for NAT)
-stunclient = { version = "0.4", optional = true, features = ["tokio"] }
+# STUN server (Session Traversal Utilities for NAT)
+webrtc-stun = { version = "0.1", optional = true }
 
 # TURN server (Traversal Using Relays around NAT)
 webrtc-turn = { version = "0.1", optional = true }
@@ -397,10 +391,6 @@ hkdf = { version = "0.12", optional = true }  # HKDF for key derivation in ntor
 # tokio-rustls already available, don't redeclare
 # rcgen already used by proxy feature, don't redeclare
 
-# Tor client (arti) for anonymous connections
-arti-client = { version = "0.36", optional = true }  # Arti Tor client library
-tor-rtcompat = { version = "0.36", optional = true }  # Runtime compatibility layer for arti
-
 # Display module (for VNC and other protocols requiring image generation)
 tiny-skia = "0.11"  # 2D graphics rendering
 cosmic-text = "0.12"  # Text rendering with font support
@@ -423,11 +413,10 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
-# AWS SDK for SQS, DynamoDB, and S3 clients
+# AWS SDK for SQS and DynamoDB clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.86", optional = true }
 aws-sdk-dynamodb = { version = "1.52", optional = true }
-aws-sdk-s3 = { version = "1.55", optional = true }
 
 [dev-dependencies]
 # For async tests
@@ -457,8 +446,10 @@ rsntp = "4.0"
 ssh2 = "0.9"
 # IRC client for e2e integration tests
 irc = "1.1"
-# SMTP client for e2e integration tests
-lettre = "0.11"
+# SMTP client for e2e integration tests - now defined as optional dependency above
+# lettre = "0.11"
+# MySQL client for e2e integration tests
+mysql_async = "0.34"
 # PostgreSQL client for e2e integration tests
 tokio-postgres = "0.7"
 # Redis client for e2e integration tests
