@@ -6,5 +6,7 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
+#[cfg(feature = "mdns")]
+pub mod mdns;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
