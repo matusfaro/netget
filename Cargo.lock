@@ -1659,6 +1659,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "blanket"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2486,6 +2495,12 @@ dependencies = [
  "cast",
  "itertools 0.13.0",
 ]
+
+[[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crossbeam"
@@ -4481,7 +4496,7 @@ dependencies = [
  "data-encoding",
  "futures-channel",
  "futures-util",
- "hickory-proto",
+ "hickory-proto 0.24.4",
  "once_cell",
  "radix_trie",
  "rand 0.8.5",
@@ -4524,6 +4539,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "hickory-proto"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8a6fe56c0038198998a6f217ca4e7ef3a5e51f46163bd6dd60b5c71ca6c6502"
+dependencies = [
+ "async-trait",
+ "cfg-if 1.0.4",
+ "data-encoding",
+ "enum-as-inner 0.6.1",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "idna 1.1.0",
+ "ipnet",
+ "once_cell",
+ "rand 0.9.2",
+ "ring 0.17.14",
+ "thiserror 2.0.17",
+ "tinyvec",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "hickory-resolver"
 version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4531,7 +4571,7 @@ checksum = "cbb117a1ca520e111743ab2f6688eddee69db4e0ea242545a604dce8a66fd22e"
 dependencies = [
  "cfg-if 1.0.4",
  "futures-util",
- "hickory-proto",
+ "hickory-proto 0.24.4",
  "ipconfig",
  "lru-cache",
  "once_cell",
@@ -4548,6 +4588,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hickory-resolver"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc62a9a99b0bfb44d2ab95a7208ac952d31060efc16241c87eaf36406fecf87a"
+dependencies = [
+ "cfg-if 1.0.4",
+ "futures-util",
+ "hickory-proto 0.25.2",
+ "ipconfig",
+ "moka",
+ "once_cell",
+ "parking_lot",
+ "rand 0.9.2",
+ "resolv-conf",
+ "smallvec",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hickory-server"
 version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4559,8 +4620,8 @@ dependencies = [
  "enum-as-inner 0.6.1",
  "futures-util",
  "h2 0.3.27",
- "hickory-proto",
- "hickory-resolver",
+ "hickory-proto 0.24.4",
+ "hickory-resolver 0.24.4",
  "http 0.2.12",
  "rustls 0.21.12",
  "serde",
@@ -5406,6 +5467,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
+name = "jid"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a52cacd869b804660986b10aa2076c3a4b6da644c7198f9fd0b613f4a7b249"
+dependencies = [
+ "memchr",
+ "minidom 0.15.2",
+ "stringprep",
+]
+
+[[package]]
+name = "jid"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04ec04c561bce2a09e8782a8fa7f4804f794ebc8e8dd4c06967f3aa4403ab4fc"
+dependencies = [
+ "idna 1.1.0",
+ "memchr",
+ "minidom 0.18.0",
+ "stringprep",
+]
+
+[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6116,11 +6200,30 @@ dependencies = [
 
 [[package]]
 name = "minidom"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f45614075738ce1b77a1768912a60c0227525971b03e09122a05b8a34a2a6278"
+dependencies = [
+ "rxml 0.9.1",
+]
+
+[[package]]
+name = "minidom"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e394a0e3c7ccc2daea3dffabe82f09857b6b510cb25af87d54bf3e910ac1642d"
 dependencies = [
- "rxml",
+ "rxml 0.11.1",
+]
+
+[[package]]
+name = "minidom"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "040b4e38f8abd85ddf9ea00646accc716b9d15e283b0aacb16f697ddba432c97"
+dependencies = [
+ "rxml 0.13.3",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -6426,7 +6529,7 @@ dependencies = [
  "handlebars",
  "hex",
  "hickory-client",
- "hickory-proto",
+ "hickory-proto 0.24.4",
  "hickory-server",
  "hkdf",
  "hmac 0.12.1",
@@ -6515,6 +6618,7 @@ dependencies = [
  "tokio-rustls 0.26.4",
  "tokio-test",
  "tokio-util",
+ "tokio-xmpp",
  "tonic",
  "tonic-build",
  "tonic-reflection",
@@ -6535,6 +6639,7 @@ dependencies = [
  "webrtc-stun",
  "webrtc-turn",
  "x25519-dalek",
+ "xmpp-parsers 0.20.0",
 ]
 
 [[package]]
@@ -6990,6 +7095,10 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+]
 
 [[package]]
 name = "once_cell_polyfill"
@@ -9200,7 +9309,7 @@ dependencies = [
  "log",
  "maybe-async",
  "md5 0.8.0",
- "minidom",
+ "minidom 0.16.0",
  "percent-encoding",
  "quick-xml 0.38.3",
  "reqwest",
@@ -9516,13 +9625,55 @@ dependencies = [
 
 [[package]]
 name = "rxml"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a98f186c7a2f3abbffb802984b7f1dfd65dac8be1aafdaabbca4137f53f0dff7"
+dependencies = [
+ "bytes",
+ "rxml_validation 0.9.1",
+ "smartstring",
+]
+
+[[package]]
+name = "rxml"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65bc94b580d0f5a6b7a2d604e597513d3c673154b52ddeccd1d5c32360d945ee"
 dependencies = [
  "bytes",
- "rxml_validation",
+ "rxml_validation 0.11.0",
 ]
+
+[[package]]
+name = "rxml"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f288457ad3607c08953ca5604229ebb03878a0b4491d8f545d547281c2b3e0c5"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "pin-project-lite",
+ "rxml_proc",
+ "rxml_validation 0.11.0",
+ "tokio",
+]
+
+[[package]]
+name = "rxml_proc"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d46a2e263a1beb8b39e69bffee9f2395f479cc02472c247af00e065006970ca7"
+dependencies = [
+ "quote",
+ "rxml_validation 0.11.0",
+ "syn 2.0.109",
+]
+
+[[package]]
+name = "rxml_validation"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22a197350ece202f19a166d1ad6d9d6de145e1d2a8ef47db299abe164dbd7530"
 
 [[package]]
 name = "rxml_validation"
@@ -9577,6 +9728,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc984f4f9ceb736a7bb755c3e3bd17dc56370af2600c9780dcc48c66453da34d"
 dependencies = [
  "regex",
+]
+
+[[package]]
+name = "sasl"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6777dddc8108d9f36afbb008bc15b18edab2d17a8664ef58380b9398460e4e30"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.2.16",
+ "hmac 0.12.1",
+ "pbkdf2 0.12.2",
+ "sha1",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -10214,6 +10379,17 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "smartstring"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
+dependencies = [
+ "autocfg",
+ "static_assertions",
+ "version_check",
+]
 
 [[package]]
 name = "smawk"
@@ -11089,6 +11265,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -11116,6 +11293,30 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-xmpp"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02e578261f0b29dd069638e34c4807ed5e029183cbb62bb9d7d374de7d2db628"
+dependencies = [
+ "bytes",
+ "futures",
+ "hickory-resolver 0.25.2",
+ "idna 1.1.0",
+ "log",
+ "pin-project-lite",
+ "rand 0.9.2",
+ "rustls-native-certs 0.8.2",
+ "rxml 0.13.3",
+ "sasl",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tokio-stream",
+ "xmpp-parsers 0.22.0",
+ "xso",
 ]
 
 [[package]]
@@ -13850,6 +14051,73 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b619f8c85654798007fb10afa5125590b43b088c225a25fc2fec100a9fad0fc6"
 dependencies = [
  "xml-rs",
+]
+
+[[package]]
+name = "xmpp-parsers"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0905d294e6e7f7668f4b3ca9c4a6343fd85355d21c44d2f1c8b1c027394048e"
+dependencies = [
+ "base64 0.21.7",
+ "blake2",
+ "chrono",
+ "digest 0.10.7",
+ "jid 0.10.0",
+ "minidom 0.15.2",
+ "rustc_version",
+ "sha1",
+ "sha2 0.10.9",
+ "sha3",
+]
+
+[[package]]
+name = "xmpp-parsers"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d3fbca6d2a48e263c53479ba7cc198724a52fcac066f63f08ec2084b4455b9b"
+dependencies = [
+ "base64 0.22.1",
+ "blake2",
+ "chrono",
+ "digest 0.10.7",
+ "jid 0.12.1",
+ "log",
+ "minidom 0.18.0",
+ "serde_json",
+ "sha1",
+ "sha2 0.10.9",
+ "sha3",
+ "uuid",
+ "xso",
+]
+
+[[package]]
+name = "xso"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71699b74d769a35bd2b1dad02a3861bb4fe907d510b86230230d5d2bb1aac7c3"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "jid 0.12.1",
+ "minidom 0.18.0",
+ "rxml 0.13.3",
+ "serde_json",
+ "uuid",
+ "xso_proc",
+]
+
+[[package]]
+name = "xso_proc"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3500ced69bcf662565b866595ad4a64773906a339f554ab834cfb2e10c527df9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rxml_validation 0.11.0",
+ "syn 2.0.109",
 ]
 
 [[package]]

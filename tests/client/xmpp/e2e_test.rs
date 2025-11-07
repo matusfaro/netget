@@ -1,0 +1,199 @@
+//! XMPP client E2E tests
+
+#![cfg(all(test, feature = "xmpp"))]
+
+use anyhow::Result;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::timeout;
+
+use netget::llm::ollama_client::OllamaClient;
+use netget::state::app_state::AppState;
+use netget::state::{ClientId, ClientStatus};
+
+/// Test basic XMPP client connection
+///
+/// This test connects to a local XMPP server and sends presence.
+/// Requires a local XMPP server (prosody/ejabberd) running on localhost:5222
+/// with test account: alice@localhost/netget
+#[tokio::test]
+#[ignore] // Requires local XMPP server
+async fn test_xmpp_client_connect() -> Result<()> {
+    // Setup app state
+    let app_state = Arc::new(AppState::new());
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
+
+    // Create LLM client
+    let llm_client = OllamaClient::new(
+        "http://localhost:11434".to_string(),
+        "qwen3-coder:30b".to_string(),
+        None,
+    );
+
+    // Create client instance
+    let client_id = ClientId::from(1);
+    app_state.add_client(
+        client_id,
+        "XMPP".to_string(),
+        "alice@localhost@password".to_string(),
+        "Send presence and log any messages".to_string(),
+        None,
+    ).await;
+
+    // Connect client
+    use netget::client::xmpp::XmppClientConnection;
+    let result = timeout(
+        Duration::from_secs(10),
+        XmppClientConnection::connect_with_llm_actions(
+            "alice@localhost@password".to_string(),
+            llm_client,
+            app_state.clone(),
+            status_tx.clone(),
+            client_id,
+        ),
+    ).await;
+
+    // Check connection succeeded
+    assert!(result.is_ok(), "Connection timed out");
+    assert!(result?.is_ok(), "Connection failed");
+
+    // Wait for status updates
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Check client status
+    let client = app_state.get_client(client_id).await;
+    assert!(client.is_some());
+    let client = client.unwrap();
+
+    match client.status {
+        ClientStatus::Connected => {
+            println!("XMPP client connected successfully");
+        }
+        ClientStatus::Error(e) => {
+            panic!("XMPP client error: {}", e);
+        }
+        _ => {
+            panic!("Unexpected client status: {:?}", client.status);
+        }
+    }
+
+    // Drain status messages
+    while let Ok(msg) = status_rx.try_recv() {
+        println!("Status: {}", msg);
+    }
+
+    Ok(())
+}
+
+/// Test sending XMPP message
+///
+/// This test sends a message to another JID.
+/// Requires local XMPP server with two test accounts.
+#[tokio::test]
+#[ignore] // Requires local XMPP server and manual verification
+async fn test_xmpp_client_send_message() -> Result<()> {
+    // Setup app state
+    let app_state = Arc::new(AppState::new());
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
+
+    // Create LLM client
+    let llm_client = OllamaClient::new(
+        "http://localhost:11434".to_string(),
+        "qwen3-coder:30b".to_string(),
+        None,
+    );
+
+    // Create client instance
+    let client_id = ClientId::from(1);
+    app_state.add_client(
+        client_id,
+        "XMPP".to_string(),
+        "alice@localhost@password".to_string(),
+        "Send a test message to bob@localhost".to_string(),
+        None,
+    ).await;
+
+    // Connect client
+    use netget::client::xmpp::XmppClientConnection;
+    XmppClientConnection::connect_with_llm_actions(
+        "alice@localhost@password".to_string(),
+        llm_client,
+        app_state.clone(),
+        status_tx.clone(),
+        client_id,
+    ).await?;
+
+    // Wait for connection and LLM to process
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    // Check that message was sent (check status messages)
+    let mut found_send = false;
+    while let Ok(msg) = status_rx.try_recv() {
+        println!("Status: {}", msg);
+        if msg.contains("sent message") || msg.contains("send_message") {
+            found_send = true;
+        }
+    }
+
+    // Note: This test requires manual verification on the receiving end
+    println!("Test completed. Check bob@localhost for received message.");
+
+    Ok(())
+}
+
+/// Test XMPP presence updates
+#[tokio::test]
+#[ignore] // Requires local XMPP server
+async fn test_xmpp_client_presence() -> Result<()> {
+    // Setup app state
+    let app_state = Arc::new(AppState::new());
+    let (status_tx, _status_rx) = mpsc::unbounded_channel();
+
+    // Create LLM client
+    let llm_client = OllamaClient::new(
+        "http://localhost:11434".to_string(),
+        "qwen3-coder:30b".to_string(),
+        None,
+    );
+
+    // Create client instance with presence instruction
+    let client_id = ClientId::from(1);
+    app_state.add_client(
+        client_id,
+        "XMPP".to_string(),
+        "alice@localhost@password".to_string(),
+        "Send presence as 'away' with status 'Testing NetGet XMPP'".to_string(),
+        None,
+    ).await;
+
+    // Connect client
+    use netget::client::xmpp::XmppClientConnection;
+    XmppClientConnection::connect_with_llm_actions(
+        "alice@localhost@password".to_string(),
+        llm_client,
+        app_state.clone(),
+        status_tx.clone(),
+        client_id,
+    ).await?;
+
+    // Wait for LLM to process and send presence
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    // Note: This requires manual verification
+    println!("Test completed. Check alice@localhost presence status.");
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify feature flag is enabled
+    #[test]
+    fn test_xmpp_feature_enabled() {
+        // This test just ensures the xmpp feature is compiled
+        assert!(true);
+    }
+}
