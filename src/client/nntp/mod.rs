@@ -33,6 +33,7 @@ struct ClientData {
     queued_lines: Vec<String>,
     memory: String,
     last_command: Option<String>,
+    pending_post_article: Option<String>,
 }
 
 /// NNTP client that connects to a remote NNTP server
@@ -72,6 +73,7 @@ impl NntpClient {
             queued_lines: Vec::new(),
             memory: String::new(),
             last_command: None,
+            pending_post_article: None,
         }));
 
         // Spawn read loop
@@ -211,6 +213,22 @@ impl NntpClient {
 
                         debug!("NNTP client {} full response: {}", client_id, full_response);
 
+                        // Handle 340 POST response - send pending article immediately
+                        if status_code == 340 {
+                            let mut client_data_lock = client_data.lock().await;
+                            if let Some(article_data) = client_data_lock.pending_post_article.take() {
+                                drop(client_data_lock);
+
+                                trace!("NNTP client {} sending article for POST", client_id);
+                                if let Err(e) = write_half_arc.lock().await.write_all(article_data.as_bytes()).await {
+                                    error!("NNTP client {} failed to send article: {}", client_id, e);
+                                } else {
+                                    let _ = status_tx.send(format!("[CLIENT] NNTP {} > [article sent]", client_id));
+                                }
+                                continue; // Skip LLM processing for 340
+                            }
+                        }
+
                         // Handle response with LLM
                         let mut client_data_lock = client_data.lock().await;
 
@@ -321,39 +339,40 @@ impl NntpClient {
                             }
                         }
                     } else if name == "nntp_post" {
-                        // Handle POST command specially
-                        let post_command = "POST\r\n";
-                        if let Ok(_) = write_half_arc.lock().await.write_all(post_command.as_bytes()).await {
-                            trace!("NNTP client {} sent: POST", client_id);
-                            let _ = status_tx.send(format!("[CLIENT] NNTP {} > POST", client_id));
+                        // Handle POST command - send POST and wait for 340 response
+                        if let (Some(headers), Some(body)) = (data["headers"].as_object(), data["body"].as_str()) {
+                            // Build article data to send after receiving 340
+                            let mut article = String::new();
 
-                            // Wait for 340 response (would need to be handled in main loop)
-                            // For now, just send headers and body
-                            if let (Some(headers), Some(body)) = (data["headers"].as_object(), data["body"].as_str()) {
-                                let mut article = String::new();
-
-                                // Add headers
-                                for (key, value) in headers {
-                                    if let Some(val_str) = value.as_str() {
-                                        article.push_str(&format!("{}: {}\r\n", key, val_str));
-                                    }
-                                }
-
-                                // Blank line between headers and body
-                                article.push_str("\r\n");
-
-                                // Add body
-                                article.push_str(body);
-
-                                // Terminate with CRLF.CRLF
-                                article.push_str("\r\n.\r\n");
-
-                                if let Ok(_) = write_half_arc.lock().await.write_all(article.as_bytes()).await {
-                                    trace!("NNTP client {} sent article", client_id);
+                            // Add headers
+                            for (key, value) in headers {
+                                if let Some(val_str) = value.as_str() {
+                                    article.push_str(&format!("{}: {}\r\n", key, val_str));
                                 }
                             }
 
-                            client_data.lock().await.last_command = Some("POST".to_string());
+                            // Blank line between headers and body
+                            article.push_str("\r\n");
+
+                            // Add body
+                            article.push_str(body);
+
+                            // Terminate with CRLF.CRLF
+                            article.push_str("\r\n.\r\n");
+
+                            // Store article for sending after 340 response
+                            client_data.lock().await.pending_post_article = Some(article);
+
+                            // Send POST command
+                            let post_command = "POST\r\n";
+                            if let Ok(_) = write_half_arc.lock().await.write_all(post_command.as_bytes()).await {
+                                trace!("NNTP client {} sent: POST (waiting for 340)", client_id);
+                                let _ = status_tx.send(format!("[CLIENT] NNTP {} > POST", client_id));
+                                client_data.lock().await.last_command = Some("POST".to_string());
+                            } else {
+                                // Failed to send POST, clear pending article
+                                client_data.lock().await.pending_post_article = None;
+                            }
                         }
                     }
                 }
