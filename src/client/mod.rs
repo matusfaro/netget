@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// ARP client
-#[cfg(feature = "arp")]
-pub mod arp;
-#[cfg(feature = "arp")]
-pub use arp::actions::ArpClientProtocol;
+// DataLink client
+#[cfg(feature = "datalink")]
+pub mod datalink;
+#[cfg(feature = "datalink")]
+pub use datalink::actions::DataLinkClientProtocol;
