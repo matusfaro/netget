@@ -10,12 +10,6 @@ pub mod tcp;
 #[cfg(feature = "tcp")]
 pub use tcp::actions::TcpClientProtocol;
 
-// UDP client
-#[cfg(feature = "udp")]
-pub mod udp;
-#[cfg(feature = "udp")]
-pub use udp::actions::UdpClientProtocol;
-
 // Phase 4: HTTP client
 #[cfg(feature = "http")]
 pub mod http;
@@ -28,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: Telnet client
-#[cfg(feature = "telnet")]
-pub mod telnet;
-#[cfg(feature = "telnet")]
-pub use telnet::actions::TelnetClientProtocol;
+// VNC client
+#[cfg(feature = "vnc")]
+pub mod vnc;
+#[cfg(feature = "vnc")]
+pub use vnc::actions::VncClientProtocol;

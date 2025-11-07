@@ -39,17 +39,14 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::client::tcp::TcpClientProtocol::new()));
 
-        #[cfg(feature = "udp")]
-        self.register(Arc::new(crate::client::udp::UdpClientProtocol::new()));
-
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
 
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "telnet")]
-        self.register(Arc::new(crate::client::telnet::TelnetClientProtocol::new()));
+        #[cfg(feature = "vnc")]
+        self.register(Arc::new(crate::client::vnc::VncClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
