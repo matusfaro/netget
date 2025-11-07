@@ -49,9 +49,9 @@ nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
-dynamo = []  # DynamoDB uses only HTTP, no extra deps
+dynamo = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
-sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
+sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS client
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
@@ -396,6 +396,11 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
+# AWS SDK for SQS and DynamoDB clients
+aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
+aws-sdk-sqs = { version = "1.86", optional = true }
+aws-sdk-dynamodb = { version = "1.52", optional = true }
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -443,11 +448,6 @@ ldap3 = "0.11"
 # IMAP client for e2e integration tests
 async-imap = "0.11"
 async-native-tls = "0.5"
-# AWS SDK for DynamoDB e2e integration tests
-aws-config = { version = "1.5", features = ["behavior-version-latest"] }
-aws-sdk-dynamodb = "1.52"
-# AWS SDK for SQS e2e integration tests
-aws-sdk-sqs = "1.86"
 # rust-s3 client for S3 e2e integration tests
 rust-s3 = "0.37"
 # Axum for creating test HTTP servers in proxy e2e tests

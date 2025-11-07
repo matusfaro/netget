@@ -1,0 +1,416 @@
+//! SQS client protocol actions implementation
+
+use crate::llm::actions::{
+    client_trait::{Client, ClientActionResult},
+    ActionDefinition, Parameter, ParameterDefinition,
+};
+use crate::protocol::EventType;
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use serde_json::json;
+use std::sync::LazyLock;
+
+/// SQS client connected event
+pub static SQS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sqs_connected",
+        "SQS client initialized and ready to interact with queue"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "queue_url".to_string(),
+            type_hint: "string".to_string(),
+            description: "SQS queue URL".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// SQS message received event
+pub static SQS_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sqs_message_received",
+        "Messages received from SQS queue"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "messages".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of received messages".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// SQS message sent event
+pub static SQS_MESSAGE_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sqs_message_sent",
+        "Message successfully sent to SQS queue"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "ID of the sent message".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// SQS client protocol action handler
+pub struct SqsClientProtocol;
+
+impl SqsClientProtocol {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Client for SqsClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::sqs::SqsClient;
+            SqsClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+                ctx.startup_params,
+            )
+            .await
+        })
+    }
+
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "queue_url".to_string(),
+                description: "SQS queue URL to interact with".to_string(),
+                type_hint: "string".to_string(),
+                required: true,
+                example: json!("https://sqs.us-east-1.amazonaws.com/123456789012/MyQueue"),
+            },
+            ParameterDefinition {
+                name: "region".to_string(),
+                description: "AWS region (e.g., us-east-1, eu-west-1)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("us-east-1"),
+            },
+            ParameterDefinition {
+                name: "endpoint_url".to_string(),
+                description: "Custom endpoint URL for local testing (e.g., http://localhost:9324)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("http://localhost:9324"),
+            },
+        ]
+    }
+
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "send_message".to_string(),
+                description: "Send a message to the SQS queue".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "message_body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "The message content to send".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "message_attributes".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Optional message attributes (key-value pairs)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "delay_seconds".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Delay in seconds before message becomes available".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "send_message",
+                    "message_body": "Hello from NetGet",
+                    "message_attributes": {
+                        "priority": "high",
+                        "source": "netget"
+                    }
+                }),
+            },
+            ActionDefinition {
+                name: "receive_messages".to_string(),
+                description: "Receive messages from the SQS queue".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "max_messages".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Maximum number of messages to receive (1-10)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "wait_time_seconds".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Long polling wait time in seconds (0-20)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "visibility_timeout".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Visibility timeout in seconds for received messages".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "receive_messages",
+                    "max_messages": 5,
+                    "wait_time_seconds": 10
+                }),
+            },
+            ActionDefinition {
+                name: "delete_message".to_string(),
+                description: "Delete a message from the queue using its receipt handle".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "receipt_handle".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Receipt handle of the message to delete".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "delete_message",
+                    "receipt_handle": "AQEBwJnKyrHigUMZj6rY..."
+                }),
+            },
+            ActionDefinition {
+                name: "purge_queue".to_string(),
+                description: "Delete all messages in the queue".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "purge_queue"
+                }),
+            },
+            ActionDefinition {
+                name: "get_queue_attributes".to_string(),
+                description: "Get attributes of the queue (message count, etc.)".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "attribute_names".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "List of attribute names to retrieve".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "get_queue_attributes",
+                    "attribute_names": ["ApproximateNumberOfMessages", "QueueArn"]
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from the SQS queue".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "send_message".to_string(),
+                description: "Send a message to the queue in response to received messages".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "message_body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "The message content to send".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "send_message",
+                    "message_body": "Processed successfully"
+                }),
+            },
+            ActionDefinition {
+                name: "delete_message".to_string(),
+                description: "Delete a received message".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "receipt_handle".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Receipt handle from received message".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "delete_message",
+                    "receipt_handle": "AQEBwJnKyrHigUMZj6rY..."
+                }),
+            },
+        ]
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_message" => {
+                let message_body = action
+                    .get("message_body")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'message_body' field")?
+                    .to_string();
+
+                let message_attributes = action
+                    .get("message_attributes")
+                    .cloned();
+
+                let delay_seconds = action
+                    .get("delay_seconds")
+                    .and_then(|v| v.as_i64());
+
+                Ok(ClientActionResult::Custom {
+                    name: "send_message".to_string(),
+                    data: json!({
+                        "message_body": message_body,
+                        "message_attributes": message_attributes,
+                        "delay_seconds": delay_seconds,
+                    }),
+                })
+            }
+            "receive_messages" => {
+                let max_messages = action
+                    .get("max_messages")
+                    .and_then(|v| v.as_i64());
+
+                let wait_time_seconds = action
+                    .get("wait_time_seconds")
+                    .and_then(|v| v.as_i64());
+
+                let visibility_timeout = action
+                    .get("visibility_timeout")
+                    .and_then(|v| v.as_i64());
+
+                Ok(ClientActionResult::Custom {
+                    name: "receive_messages".to_string(),
+                    data: json!({
+                        "max_messages": max_messages,
+                        "wait_time_seconds": wait_time_seconds,
+                        "visibility_timeout": visibility_timeout,
+                    }),
+                })
+            }
+            "delete_message" => {
+                let receipt_handle = action
+                    .get("receipt_handle")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'receipt_handle' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "delete_message".to_string(),
+                    data: json!({
+                        "receipt_handle": receipt_handle,
+                    }),
+                })
+            }
+            "purge_queue" => {
+                Ok(ClientActionResult::Custom {
+                    name: "purge_queue".to_string(),
+                    data: json!({}),
+                })
+            }
+            "get_queue_attributes" => {
+                let attribute_names = action
+                    .get("attribute_names")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>());
+
+                Ok(ClientActionResult::Custom {
+                    name: "get_queue_attributes".to_string(),
+                    data: json!({
+                        "attribute_names": attribute_names,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!("Unknown SQS client action: {}", action_type)),
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "SQS"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "sqs_connected".to_string(),
+                description: "Triggered when SQS client connects to queue".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "sqs_message_received".to_string(),
+                description: "Triggered when messages are received from queue".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "sqs_message_sent".to_string(),
+                description: "Triggered when message is successfully sent".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>SQS"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["sqs", "sqs client", "connect to sqs", "aws sqs", "queue"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("AWS SDK for SQS with HTTP/JSON protocol")
+            .llm_control("Full control over queue operations")
+            .e2e_testing("LocalStack SQS container")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "AWS SQS client for queue-based messaging"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to SQS queue MyQueue and receive messages"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Cloud"
+    }
+}
