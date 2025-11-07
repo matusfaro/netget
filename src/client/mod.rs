@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// JSON-RPC client
-#[cfg(feature = "jsonrpc")]
-pub mod jsonrpc;
-#[cfg(feature = "jsonrpc")]
-pub use jsonrpc::actions::JsonRpcClientProtocol;
+// Phase 6: Kafka client
+#[cfg(feature = "kafka")]
+pub mod kafka;
+#[cfg(feature = "kafka")]
+pub use kafka::actions::KafkaClientProtocol;
