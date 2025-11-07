@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: MQTT client
-#[cfg(feature = "mqtt")]
-pub mod mqtt;
-#[cfg(feature = "mqtt")]
-pub use mqtt::actions::MqttClientProtocol;
+// Phase 6: NFS client
+#[cfg(feature = "nfs")]
+pub mod nfs;
+#[cfg(feature = "nfs")]
+pub use nfs::actions::NfsClientProtocol;
