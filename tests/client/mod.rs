@@ -8,3 +8,5 @@ pub mod http;
 pub mod redis;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
