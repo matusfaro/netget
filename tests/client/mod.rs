@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "syslog")]
-pub mod syslog;
+#[cfg(feature = "whois")]
+pub mod whois;
