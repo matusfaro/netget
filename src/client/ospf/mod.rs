@@ -295,6 +295,7 @@ impl OspfClient {
         Ok(local_addr)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn process_ospf_packet(
         packet_type: u8,
         ospf_data: Vec<u8>,
