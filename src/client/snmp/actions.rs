@@ -1,0 +1,408 @@
+//! SNMP client protocol actions implementation
+
+use crate::llm::actions::{
+    client_trait::{Client, ClientActionResult},
+    ActionDefinition, Parameter,
+};
+use crate::protocol::EventType;
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use serde_json::json;
+use std::sync::LazyLock;
+
+/// SNMP client connected event
+pub static SNMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "snmp_connected",
+        "SNMP client successfully connected to agent"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "remote_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "SNMP agent address".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// SNMP client response received event
+pub static SNMP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "snmp_response_received",
+        "Response received from SNMP agent"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "request_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Type of SNMP request (GetRequest, GetNextRequest, GetBulkRequest, SetRequest)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "variables".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of OID/value pairs in response".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "error_status".to_string(),
+            type_hint: "integer".to_string(),
+            description: "SNMP error status (0=noError, 2=noSuchName, etc.)".to_string(),
+            required: true,
+        },
+    ])
+});
+
+/// SNMP client protocol action handler
+pub struct SnmpClientProtocol;
+
+impl SnmpClientProtocol {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Client for SnmpClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::snmp::SnmpClient;
+            SnmpClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+                ctx.startup_params,
+            )
+            .await
+        })
+    }
+
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "send_snmp_get".to_string(),
+                description: "Send SNMP GET request for one or more OIDs".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "oids".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Array of OID strings (e.g., [\"1.3.6.1.2.1.1.1.0\"])".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "send_snmp_get",
+                    "oids": ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"]
+                }),
+            },
+            ActionDefinition {
+                name: "send_snmp_getnext".to_string(),
+                description: "Send SNMP GETNEXT request to walk OID tree".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "oids".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Array of starting OID strings".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "send_snmp_getnext",
+                    "oids": ["1.3.6.1.2.1.1"]
+                }),
+            },
+            ActionDefinition {
+                name: "send_snmp_getbulk".to_string(),
+                description: "Send SNMP GETBULK request for efficient bulk retrieval (SNMPv2c only)".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "oids".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Array of starting OID strings".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "non_repeaters".to_string(),
+                        type_hint: "integer".to_string(),
+                        description: "Number of non-repeating variables (default: 0)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "max_repetitions".to_string(),
+                        type_hint: "integer".to_string(),
+                        description: "Maximum repetitions for each repeating variable (default: 10)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "send_snmp_getbulk",
+                    "oids": ["1.3.6.1.2.1.2.2.1"],
+                    "non_repeaters": 0,
+                    "max_repetitions": 10
+                }),
+            },
+            ActionDefinition {
+                name: "send_snmp_set".to_string(),
+                description: "Send SNMP SET request to modify agent values".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "variables".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Array of {oid, type, value} objects".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "send_snmp_set",
+                    "variables": [
+                        {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "new-hostname"}
+                    ]
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from the SNMP agent".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "send_snmp_get".to_string(),
+                description: "Send follow-up SNMP GET request based on response".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "oids".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Array of OID strings".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "send_snmp_get",
+                    "oids": ["1.3.6.1.2.1.1.3.0"]
+                }),
+            },
+            ActionDefinition {
+                name: "send_snmp_getnext".to_string(),
+                description: "Continue walking OID tree".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "oids".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Array of OID strings from previous response".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "send_snmp_getnext",
+                    "oids": ["1.3.6.1.2.1.1.1.0"]
+                }),
+            },
+            ActionDefinition {
+                name: "wait_for_more".to_string(),
+                description: "Wait for more responses (no action)".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "wait_for_more"
+                }),
+            },
+        ]
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_snmp_get" => {
+                let oids = action
+                    .get("oids")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'oids' array")?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>();
+
+                if oids.is_empty() {
+                    return Err(anyhow::anyhow!("At least one OID required for GET"));
+                }
+
+                Ok(ClientActionResult::Custom {
+                    name: "snmp_get".to_string(),
+                    data: json!({
+                        "oids": oids,
+                    }),
+                })
+            }
+            "send_snmp_getnext" => {
+                let oids = action
+                    .get("oids")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'oids' array")?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>();
+
+                if oids.is_empty() {
+                    return Err(anyhow::anyhow!("At least one OID required for GETNEXT"));
+                }
+
+                Ok(ClientActionResult::Custom {
+                    name: "snmp_getnext".to_string(),
+                    data: json!({
+                        "oids": oids,
+                    }),
+                })
+            }
+            "send_snmp_getbulk" => {
+                let oids = action
+                    .get("oids")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'oids' array")?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>();
+
+                if oids.is_empty() {
+                    return Err(anyhow::anyhow!("At least one OID required for GETBULK"));
+                }
+
+                let non_repeaters = action
+                    .get("non_repeaters")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as i32;
+
+                let max_repetitions = action
+                    .get("max_repetitions")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(10) as i32;
+
+                Ok(ClientActionResult::Custom {
+                    name: "snmp_getbulk".to_string(),
+                    data: json!({
+                        "oids": oids,
+                        "non_repeaters": non_repeaters,
+                        "max_repetitions": max_repetitions,
+                    }),
+                })
+            }
+            "send_snmp_set" => {
+                let variables = action
+                    .get("variables")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'variables' array")?
+                    .clone();
+
+                if variables.is_empty() {
+                    return Err(anyhow::anyhow!("At least one variable required for SET"));
+                }
+
+                Ok(ClientActionResult::Custom {
+                    name: "snmp_set".to_string(),
+                    data: json!({
+                        "variables": variables,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!("Unknown SNMP client action: {}", action_type)),
+        }
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "SNMP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "snmp_connected".to_string(),
+                description: "Triggered when SNMP client connects to agent".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "snmp_response_received".to_string(),
+                description: "Triggered when SNMP client receives a response".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>SNMP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["snmp", "snmp client", "connect to snmp", "network management"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("UDP-based with rasn-snmp for BER encoding/decoding")
+            .llm_control("Full control over SNMP operations (GET, GETNEXT, GETBULK, SET)")
+            .e2e_testing("net-snmp agent container")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "SNMP client for network device monitoring and management"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to SNMP agent at localhost:161 and query system description (OID 1.3.6.1.2.1.1.1.0)"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Network Management"
+    }
+
+    fn get_startup_params(&self) -> Vec<Parameter> {
+        vec![
+            Parameter {
+                name: "community".to_string(),
+                type_hint: "string".to_string(),
+                description: "SNMP community string (default: 'public')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "version".to_string(),
+                type_hint: "string".to_string(),
+                description: "SNMP version: 'v1' or 'v2c' (default: 'v2c')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "timeout_ms".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Request timeout in milliseconds (default: 5000)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "retries".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Number of retries on timeout (default: 3)".to_string(),
+                required: false,
+            },
+        ]
+    }
+}
