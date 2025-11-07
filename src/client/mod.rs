@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: DoH (DNS-over-HTTPS) client
+#[cfg(feature = "doh")]
+pub mod doh;
+#[cfg(feature = "doh")]
+pub use doh::actions::DohClientProtocol;
