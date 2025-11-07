@@ -39,7 +39,7 @@ proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
-smb = ["smb-msg"]
+smb = ["smb-msg", "pavao"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
@@ -310,6 +310,9 @@ cassandra-protocol = { version = "3.3", optional = true }
 
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
+
+# SMB client (libsmbclient wrapper)
+pavao = { version = "0.1", optional = true }
 
 # STUN server (Session Traversal Utilities for NAT)
 webrtc-stun = { version = "0.1", optional = true }
