@@ -3,10 +3,9 @@ pub mod actions;
 
 pub use actions::DohClientProtocol;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use hickory_proto::op::{Message, Query};
 use hickory_proto::rr::{Name, RecordType};
-use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

@@ -8,15 +8,15 @@ default = ["all-protocols"]
 tcp = ["async-trait"]
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
-pypi = ["urlencoding"]  # PyPI (Python Package Index) client for searching and downloading packages
+pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
-dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
+dns = ["hickory-server", "hickory-proto", "hickory-client"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
-doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
+doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "hickory-client/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server & client
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
@@ -79,7 +79,7 @@ openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 openidconnect = []  # OpenID Connect (alternate name)
 kubernetes = []  # Kubernetes client protocol
-git = ["dep:git2"]  # Git Smart HTTP server with LLM-controlled virtual repositories and Git client
+git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
@@ -247,10 +247,10 @@ pcap = "2.2"
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
 
-# DNS server and client (Hickory DNS, formerly Trust-DNS)
+# DNS server & client (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
-hickory-client = { version = "0.24", features = ["dns-over-rustls", "dns-over-https-rustls"], optional = true }
+hickory-client = { version = "0.24", optional = true }
 
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
@@ -410,9 +410,6 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
-
-# Git client (libgit2 wrapper for Git protocol operations)
-git2 = { version = "0.19", optional = true }
 
 # AWS SDK for SQS and DynamoDB clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
