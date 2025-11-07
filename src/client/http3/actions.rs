@@ -67,6 +67,7 @@ pub static HTTP3_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
 });
 
 /// HTTP/3 client protocol action handler
+#[derive(Default)]
 pub struct Http3ClientProtocol;
 
 impl Http3ClientProtocol {
