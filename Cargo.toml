@@ -70,7 +70,7 @@ bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a 
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
-xmlrpc = ["quick-xml"]  # XML-RPC server with LLM-controlled method execution
+xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
@@ -360,8 +360,9 @@ prost-reflect = { version = "0.14", optional = true }
 prost-types = { version = "0.13", optional = true }
 tonic-reflection = { version = "0.12", optional = true }
 
-# XML-RPC server (XML parsing for RPC protocol)
+# XML-RPC server and client (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }
+xmlrpc = { version = "0.15", optional = true }  # XML-RPC client library
 
 # Tor directory mirror (Tor protocol parsing and generation)
 tor-netdoc = { version = "0.36", optional = true }  # Tor network document parsing (consensus, descriptors)
