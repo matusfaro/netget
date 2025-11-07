@@ -688,6 +688,54 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection 
 
                 (Some(*sid), actions, trigger, combined)
             }
+            TaskScope::Client(cid) => {
+                // Client-scoped task: use client instruction + protocol actions
+                let client = state.get_client(*cid).await;
+                if client.is_none() {
+                    // Client no longer exists - return error prompt
+                    return format!(
+                        r#"ERROR: Client #{} no longer exists. Task '{}' cannot execute.
+
+Return: [{{"type": "show_message", "message": "Task '{}' cancelled - client no longer exists"}}]"#,
+                        cid.as_u32(),
+                        task.name,
+                        task.name
+                    );
+                }
+
+                let client_instance = client.unwrap();
+
+                let mut actions = get_network_event_common_actions();
+                actions.extend(protocol_actions);
+
+                // Add tool actions
+                let web_search_mode = state.get_web_search_mode().await;
+                actions.extend(get_all_tool_actions(web_search_mode));
+
+                let trigger = format!(
+                    "Scheduled task '{}' triggered for client #{} (created {} ago)\n\
+                     Client: {} ({})\n\
+                     Status: {:?}",
+                    task.name,
+                    cid.as_u32(),
+                    crate::state::task::format_duration(task.created_at.elapsed()),
+                    client_instance.remote_addr,
+                    client_instance.protocol_name,
+                    client_instance.status
+                );
+
+                // Combine client instruction with task instruction
+                let combined = if client_instance.instruction.is_empty() {
+                    task.instruction.clone()
+                } else {
+                    format!(
+                        "{}\n\nScheduled task: {}",
+                        client_instance.instruction, task.instruction
+                    )
+                };
+
+                (None, actions, trigger, combined)
+            }
         };
 
         // Add context data to trigger if present

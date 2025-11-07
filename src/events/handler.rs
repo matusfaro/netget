@@ -263,10 +263,15 @@ impl EventHandler {
                     let mut state_changed = false;
                     for action_value in &action_values {
                         if let Ok(common_action) = CommonAction::from_json(action_value) {
-                            // Check if this action will modify state (open_server, close_server, etc.)
+                            // Check if this action will modify state (open_server, close_server, open_client, close_client, etc.)
                             let modifies_state = matches!(
                                 common_action,
-                                CommonAction::OpenServer { .. } | CommonAction::CloseServer { .. } | CommonAction::CloseAllServers
+                                CommonAction::OpenServer { .. }
+                                    | CommonAction::CloseServer { .. }
+                                    | CommonAction::CloseAllServers
+                                    | CommonAction::OpenClient { .. }
+                                    | CommonAction::CloseClient { .. }
+                                    | CommonAction::CloseAllClients
                             );
 
                             match self.execute_server_management_action(common_action, &status_tx).await {
@@ -722,6 +727,7 @@ impl EventHandler {
                 max_executions,
                 server_id,
                 connection_id,
+                client_id,
                 instruction,
                 context,
                 script_runtime,
@@ -732,7 +738,7 @@ impl EventHandler {
             } => {
                 use crate::state::task::{ScheduledTask, TaskScope};
 
-                // Determine scope: Connection > Server > Global
+                // Determine scope: Connection > Server > Client > Global
                 let scope = if let Some(conn_id_str) = connection_id {
                     // Connection scope requires server_id
                     if let Some(sid) = server_id {
@@ -774,6 +780,17 @@ impl EventHandler {
                     }
                 } else if let Some(sid) = server_id {
                     TaskScope::Server(crate::state::ServerId::new(sid))
+                } else if let Some(cid) = client_id {
+                    let client_id_obj = crate::state::ClientId::new(cid);
+                    // Validate client exists
+                    if self.state.get_client(client_id_obj).await.is_none() {
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Client #{} not found for client-scoped task",
+                            cid
+                        ));
+                        return Ok(());
+                    }
+                    TaskScope::Client(client_id_obj)
                 } else {
                     TaskScope::Global
                 };
@@ -858,86 +875,241 @@ impl EventHandler {
                 instruction,
                 startup_params,
                 initial_memory,
-                script_runtime: _,
+                script_runtime,
                 script_language: _,
                 script_path: _,
-                script_inline: _,
-                script_handles: _,
-                scheduled_tasks: _,
+                script_inline,
+                script_handles,
+                scheduled_tasks,
             } => {
-                // Parse protocol name using client registry
-                let protocol_name = crate::protocol::CLIENT_REGISTRY
-                    .parse_from_str(&protocol)
-                    .unwrap_or_else(|| {
-                        let _ = status_tx.send(format!("[WARN] Unknown client protocol '{}', defaulting to TCP", protocol));
-                        "TCP".to_string()
-                    });
+                use crate::state::client::{ClientInstance, ClientStatus};
 
-                // Create client instance
-                use crate::state::client::ClientInstance;
-                let temp_id = crate::state::ClientId::new(0); // Temporary ID, will be replaced
-                let mut client_instance = ClientInstance::new(
-                    temp_id,
+                // Create client instance with temporary ID (add_client will assign real ID)
+                let mut client = ClientInstance::new(
+                    crate::state::ClientId::new(0),
                     remote_addr.clone(),
-                    protocol_name.clone(),
+                    protocol.clone(),
                     instruction.clone(),
                 );
 
-                // Set initial memory if provided
+                // Set optional fields
                 if let Some(mem) = initial_memory {
-                    client_instance.memory = mem;
+                    client.memory = mem;
                 }
+                client.startup_params = startup_params.clone();
 
-                // Set startup params if provided
-                client_instance.startup_params = startup_params;
+                // Add client to state (this allocates the real client ID)
+                let client_id = self.state.add_client(client).await;
 
-                // Add client to state (this assigns the real ID)
-                let client_id = self.state.add_client(client_instance).await;
+                // Set script configuration if provided
+                if script_runtime.is_some() || script_inline.is_some() || script_handles.is_some() {
+                    let selected_mode = self.state.get_selected_scripting_mode().await;
+                    match crate::scripting::ScriptManager::build_config(
+                        selected_mode,
+                        script_runtime.as_deref(),
+                        script_inline.as_deref(),
+                        script_handles,
+                    ) {
+                        Ok(Some(config)) => {
+                            let scripting_env = self.state.get_scripting_env().await;
+                            if scripting_env.is_available(config.language) {
+                                self.state.set_client_script_config(client_id, Some(config)).await;
+                                let _ = status_tx.send("[INFO] Script configuration applied to client".to_string());
+                            } else {
+                                let _ = status_tx.send(format!(
+                                    "[WARN] {} not available, script not configured",
+                                    config.language.as_str()
+                                ));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let _ = status_tx.send(format!("[ERROR] Failed to build script config: {}", e));
+                        }
+                    }
+                }
 
                 let _ = status_tx.send(format!(
-                    "[CLIENT] Opening client #{} ({}) to {}",
+                    "[CLIENT] Opening {} client #{} to {}...",
+                    protocol,
                     client_id.as_u32(),
-                    protocol_name,
                     remote_addr
                 ));
-                let _ = status_tx.send(format!("[CLIENT] Instruction: {}", instruction));
 
-                // Start the client
-                match crate::cli::client_startup::start_client_by_id(&self.state, client_id, &self.llm, status_tx).await {
+                // Start the client connection
+                let llm_client = self.llm.clone();
+                let status_tx_clone = status_tx.clone();
+                match crate::cli::client_startup::start_client_by_id(
+                    &self.state,
+                    client_id,
+                    &llm_client,
+                    &status_tx_clone,
+                )
+                .await
+                {
                     Ok(_) => {
                         // Client started successfully
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] {} client #{} connected",
+                            protocol,
+                            client_id.as_u32()
+                        ));
+
+                        // Create scheduled tasks if provided
+                        if let Some(task_defs) = scheduled_tasks {
+                            for task_def in task_defs {
+                                let delay = if task_def.recurring {
+                                    task_def.delay_secs.or(task_def.interval_secs).unwrap_or(0)
+                                } else {
+                                    task_def.delay_secs.unwrap_or(0)
+                                };
+
+                                let task = if task_def.recurring {
+                                    let interval_secs = task_def.interval_secs.unwrap_or(delay);
+                                    crate::state::task::ScheduledTask::new_recurring(
+                                        crate::state::TaskId::new(0),
+                                        task_def.task_id.clone(),
+                                        crate::state::task::TaskScope::Client(client_id),
+                                        interval_secs,
+                                        task_def.max_executions,
+                                        task_def.instruction,
+                                        task_def.context,
+                                    )
+                                } else {
+                                    crate::state::task::ScheduledTask::new_one_shot(
+                                        crate::state::TaskId::new(0),
+                                        task_def.task_id.clone(),
+                                        crate::state::task::TaskScope::Client(client_id),
+                                        delay,
+                                        task_def.instruction,
+                                        task_def.context,
+                                    )
+                                };
+
+                                let task_id_num = self.state.add_task(task).await;
+
+                                let _ = status_tx.send(format!(
+                                    "[TASK] Created {} task '{}' (ID: {}) for client #{}",
+                                    if task_def.recurring {
+                                        "recurring"
+                                    } else {
+                                        "one-shot"
+                                    },
+                                    task_def.task_id,
+                                    task_id_num,
+                                    client_id.as_u32()
+                                ));
+                            }
+                        }
                     }
                     Err(e) => {
-                        // Fatal error - log and update status to Error
-                        let error_msg = e.to_string();
-                        use crate::state::ClientStatus;
-                        self.state.update_client_status(client_id, ClientStatus::Error(error_msg.clone())).await;
+                        // Connection failed
+                        self.state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send(format!(
-                            "[ERROR] Failed to start client #{}: {}",
+                            "[ERROR] Failed to connect {} client #{}: {}",
+                            protocol,
                             client_id.as_u32(),
-                            error_msg
+                            e
                         ));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
-                        // Don't return error, just log it
+                        return Err(e);
                     }
                 }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::CloseClient { client_id } => {
-                // TODO: Implement client closing
-                let _ = status_tx.send(format!("[CLIENT] Closing client #{}... (not yet implemented)", client_id));
+                use crate::state::client::ClientStatus;
+
+                let cid = crate::state::ClientId::new(client_id);
+
+                // Mark client as Disconnected
+                self.state
+                    .update_client_status(cid, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send(format!("[CLIENT] Closed client #{}", cid.as_u32()));
+
+                // Clean up tasks associated with this client
+                self.state.cleanup_client_tasks(cid).await;
+                let _ = status_tx.send(format!(
+                    "[TASK] Cleaned up tasks for client #{}",
+                    cid.as_u32()
+                ));
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::CloseAllClients => {
-                // TODO: Implement close all clients
-                let _ = status_tx.send("[CLIENT] Closing all clients... (not yet implemented)".to_string());
+                use crate::state::client::ClientStatus;
+
+                let client_ids = self.state.get_all_client_ids().await;
+
+                for client_id in client_ids {
+                    // Mark client as Disconnected
+                    self.state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    let _ = status_tx.send(format!("[CLIENT] Closed client #{}", client_id.as_u32()));
+
+                    // Clean up tasks associated with this client
+                    self.state.cleanup_client_tasks(client_id).await;
+                    let _ = status_tx.send(format!(
+                        "[TASK] Cleaned up tasks for client #{}",
+                        client_id.as_u32()
+                    ));
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::ReconnectClient { client_id } => {
-                // TODO: Implement client reconnection
-                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}... (not yet implemented)", client_id));
+                let cid = crate::state::ClientId::new(client_id);
+
+                // Reconnect the client
+                let llm_client = self.llm.clone();
+                let status_tx_clone = status_tx.clone();
+
+                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}...", cid.as_u32()));
+
+                match crate::cli::client_startup::start_client_by_id(
+                    &self.state,
+                    cid,
+                    &llm_client,
+                    &status_tx_clone,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        let _ = status_tx.send(format!("[CLIENT] Client #{} reconnected", cid.as_u32()));
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to reconnect client #{}: {}",
+                            cid.as_u32(),
+                            e
+                        ));
+                        return Err(e);
+                    }
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
-            CommonAction::UpdateClientInstruction { client_id, instruction } => {
-                // TODO: Implement instruction update
-                let _ = status_tx.send(format!("[CLIENT] Updating instruction for client #{}... (not yet implemented)", client_id));
+            CommonAction::UpdateClientInstruction {
+                client_id,
+                instruction,
+            } => {
+                let cid = crate::state::ClientId::new(client_id);
+
+                // Update client instruction
+                self.state
+                    .set_instruction_for_client(cid, instruction.clone())
+                    .await;
+
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Updated instruction for client #{}",
+                    cid.as_u32()
+                ));
                 let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
         }
 

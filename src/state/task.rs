@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
+use super::client::ClientId;
 use super::server::ServerId;
 use crate::server::connection::ConnectionId;
 
@@ -38,6 +39,9 @@ pub enum TaskScope {
     /// Connection-scoped task - uses server's instruction and protocol actions
     /// for a specific connection. Automatically cleaned up when connection closes.
     Connection(ServerId, ConnectionId),
+    /// Client-scoped task - uses client's instruction and protocol actions
+    /// Automatically cleaned up when client disconnects.
+    Client(ClientId),
 }
 
 /// Task type
@@ -235,6 +239,7 @@ impl ScheduledTask {
             TaskScope::Connection(sid, cid) => {
                 format!("connection {} on server #{}", cid, sid.as_u32())
             }
+            TaskScope::Client(cid) => format!("client #{}", cid.as_u32()),
         };
 
         let type_str = match &self.task_type {
