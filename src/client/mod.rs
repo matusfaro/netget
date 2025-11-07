@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// WebRTC client (data channels only, no media)
-#[cfg(feature = "webrtc")]
-pub mod webrtc;
-#[cfg(feature = "webrtc")]
-pub use webrtc::actions::WebRtcClientProtocol;
+// WireGuard VPN client
+#[cfg(feature = "wireguard")]
+pub mod wireguard;
+#[cfg(feature = "wireguard")]
+pub use wireguard::WireguardClientProtocol;
