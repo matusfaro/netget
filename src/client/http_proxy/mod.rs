@@ -265,7 +265,7 @@ impl HttpProxyClient {
                                             if let Ok(result) = protocol.as_ref().execute_action(action) {
                                                 match result {
                                                     ClientActionResult::SendData(bytes) => {
-                                                        if let Ok(_) = write_half_clone.lock().await.write_all(&bytes).await {
+                                                        if write_half_clone.lock().await.write_all(&bytes).await.is_ok() {
                                                             trace!("HTTP proxy client {} sent {} bytes via tunnel", client_id, bytes.len());
                                                         }
                                                     }
@@ -354,7 +354,7 @@ impl HttpProxyClient {
                                                 if let Ok(result) = protocol.as_ref().execute_action(action) {
                                                     match result {
                                                         ClientActionResult::SendData(bytes) => {
-                                                            if let Ok(_) = write_half_clone.lock().await.write_all(&bytes).await {
+                                                            if write_half_clone.lock().await.write_all(&bytes).await.is_ok() {
                                                                 trace!("HTTP proxy client {} sent {} bytes", client_id, bytes.len());
                                                             }
                                                         }
