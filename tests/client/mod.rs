@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "ntp")]
-pub mod ntp;
+#[cfg(feature = "pypi")]
+pub mod pypi;

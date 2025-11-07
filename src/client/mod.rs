@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: NPM client
-#[cfg(feature = "npm")]
-pub mod npm;
-#[cfg(feature = "npm")]
-pub use npm::actions::NpmClientProtocol;
+// Phase 6: PyPI client
+#[cfg(feature = "pypi")]
+pub mod pypi;
+#[cfg(feature = "pypi")]
+pub use pypi::actions::PypiClientProtocol;
