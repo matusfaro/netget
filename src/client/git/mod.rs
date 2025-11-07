@@ -14,9 +14,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-use crate::client::git::actions::{
-    GIT_CLIENT_CONNECTED_EVENT, GIT_OPERATION_COMPLETED_EVENT, GIT_OPERATION_ERROR_EVENT,
-};
+use crate::client::git::actions::GIT_CLIENT_CONNECTED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -151,7 +149,7 @@ impl GitClient {
         password: &mut Option<String>,
         client_id: ClientId,
         _llm_client: &OllamaClient,
-        _app_state: &Arc<AppState>,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match protocol.execute_action(action.clone())? {
@@ -264,6 +262,82 @@ impl GitClient {
                                 }
                                 Err(e) => {
                                     error!("Git client {} log failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
+                    "git_pull" => {
+                        let remote_name = data
+                            .get("remote")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("origin");
+                        let branch = data
+                            .get("branch")
+                            .and_then(|v| v.as_str());
+
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} pulling from {}", client_id, remote_name);
+                            match Self::git_pull(
+                                path,
+                                remote_name,
+                                branch,
+                                username.as_deref(),
+                                password.as_deref(),
+                            ) {
+                                Ok(result) => {
+                                    info!("Git client {} pull: {}", client_id, result);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} pull failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
+                    "git_push" => {
+                        let remote_name = data
+                            .get("remote")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("origin");
+                        let branch = data
+                            .get("branch")
+                            .and_then(|v| v.as_str());
+
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} pushing to {}", client_id, remote_name);
+                            match Self::git_push(
+                                path,
+                                remote_name,
+                                branch,
+                                username.as_deref(),
+                                password.as_deref(),
+                            ) {
+                                Ok(result) => {
+                                    info!("Git client {} push: {}", client_id, result);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} push failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
+                    "git_checkout" => {
+                        let target = data
+                            .get("target")
+                            .and_then(|v| v.as_str())
+                            .context("Missing 'target' field")?;
+                        let create = data
+                            .get("create")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} checking out {}", client_id, target);
+                            match Self::git_checkout(path, target, create) {
+                                Ok(result) => {
+                                    info!("Git client {} checkout: {}", client_id, result);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} checkout failed: {}", client_id, e);
                                 }
                             }
                         }
@@ -426,5 +500,151 @@ impl GitClient {
         }
 
         Ok(result)
+    }
+
+    /// Pull updates from remote (fetch + merge)
+    fn git_pull(
+        path: &PathBuf,
+        remote_name: &str,
+        branch_name: Option<&str>,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<String> {
+        let repo = Repository::open(path)?;
+
+        // Get current branch if not specified
+        let current_branch_name = if let Some(branch) = branch_name {
+            branch.to_string()
+        } else {
+            let head = repo.head()?;
+            head.shorthand()
+                .context("Could not get current branch name")?
+                .to_string()
+        };
+
+        // Fetch first
+        let mut remote = repo.find_remote(remote_name)?;
+        let mut callbacks = RemoteCallbacks::new();
+
+        if let (Some(user), Some(pass)) = (username, password) {
+            let user = user.to_string();
+            let pass = pass.to_string();
+            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+                Cred::userpass_plaintext(&user, &pass)
+            });
+        }
+
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        remote.fetch(
+            &[format!("refs/heads/{}:refs/remotes/{}/{}", current_branch_name, remote_name, current_branch_name)],
+            Some(&mut fetch_options),
+            None
+        )?;
+
+        // Now merge the fetched changes
+        let fetch_head = repo.find_reference("FETCH_HEAD")?;
+        let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+
+        // Perform the merge analysis
+        let (analysis, _) = repo.merge_analysis(&[&fetch_commit])?;
+
+        if analysis.is_up_to_date() {
+            Ok("Already up to date".to_string())
+        } else if analysis.is_fast_forward() {
+            // Fast-forward merge
+            let refname = format!("refs/heads/{}", current_branch_name);
+            let mut reference = repo.find_reference(&refname)?;
+            reference.set_target(fetch_commit.id(), "pull: Fast-forward")?;
+            repo.set_head(&refname)?;
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+            Ok(format!("Fast-forward merge completed"))
+        } else if analysis.is_normal() {
+            // Normal merge (requires commit)
+            Ok("Merge required but auto-merge not implemented. Please manually merge.".to_string())
+        } else {
+            Ok("Unknown merge analysis result".to_string())
+        }
+    }
+
+    /// Push commits to remote
+    fn git_push(
+        path: &PathBuf,
+        remote_name: &str,
+        branch_name: Option<&str>,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<String> {
+        let repo = Repository::open(path)?;
+
+        // Get current branch if not specified
+        let current_branch_name = if let Some(branch) = branch_name {
+            branch.to_string()
+        } else {
+            let head = repo.head()?;
+            head.shorthand()
+                .context("Could not get current branch name")?
+                .to_string()
+        };
+
+        let mut remote = repo.find_remote(remote_name)?;
+        let mut callbacks = RemoteCallbacks::new();
+
+        if let (Some(user), Some(pass)) = (username, password) {
+            let user = user.to_string();
+            let pass = pass.to_string();
+            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+                Cred::userpass_plaintext(&user, &pass)
+            });
+        }
+
+        let mut push_options = git2::PushOptions::new();
+        push_options.remote_callbacks(callbacks);
+
+        // Push the branch
+        let refspec = format!("refs/heads/{}:refs/heads/{}", current_branch_name, current_branch_name);
+        remote.push(&[&refspec], Some(&mut push_options))?;
+
+        Ok(format!("Successfully pushed {} to {}", current_branch_name, remote_name))
+    }
+
+    /// Checkout a branch or create a new branch
+    fn git_checkout(
+        path: &PathBuf,
+        target: &str,
+        create: bool,
+    ) -> Result<String> {
+        let repo = Repository::open(path)?;
+
+        if create {
+            // Create and checkout new branch
+            let head = repo.head()?;
+            let oid = head.target().context("Could not get HEAD target")?;
+            let commit = repo.find_commit(oid)?;
+
+            repo.branch(target, &commit, false)?;
+
+            let obj = repo.revparse_single(&format!("refs/heads/{}", target))?;
+            repo.checkout_tree(&obj, None)?;
+            repo.set_head(&format!("refs/heads/{}", target))?;
+
+            Ok(format!("Created and checked out new branch: {}", target))
+        } else {
+            // Checkout existing branch or commit
+            let obj = repo.revparse_single(target)?;
+            repo.checkout_tree(&obj, None)?;
+
+            // Try to set HEAD to the branch reference if it exists
+            let refname = format!("refs/heads/{}", target);
+            if repo.find_reference(&refname).is_ok() {
+                repo.set_head(&refname)?;
+                Ok(format!("Checked out branch: {}", target))
+            } else {
+                // Detached HEAD for commit
+                repo.set_head_detached(obj.id())?;
+                Ok(format!("Checked out commit: {} (detached HEAD)", target))
+            }
+        }
     }
 }
