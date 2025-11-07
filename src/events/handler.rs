@@ -263,10 +263,15 @@ impl EventHandler {
                     let mut state_changed = false;
                     for action_value in &action_values {
                         if let Ok(common_action) = CommonAction::from_json(action_value) {
-                            // Check if this action will modify state (open_server, close_server, etc.)
+                            // Check if this action will modify state (open_server, close_server, open_client, close_client, etc.)
                             let modifies_state = matches!(
                                 common_action,
-                                CommonAction::OpenServer { .. } | CommonAction::CloseServer { .. } | CommonAction::CloseAllServers
+                                CommonAction::OpenServer { .. }
+                                    | CommonAction::CloseServer { .. }
+                                    | CommonAction::CloseAllServers
+                                    | CommonAction::OpenClient { .. }
+                                    | CommonAction::CloseClient { .. }
+                                    | CommonAction::CloseAllClients
                             );
 
                             match self.execute_server_management_action(common_action, &status_tx).await {
@@ -856,35 +861,183 @@ impl EventHandler {
                 protocol,
                 remote_addr,
                 instruction,
-                startup_params: _,
-                initial_memory: _,
-                script_runtime: _,
+                startup_params,
+                initial_memory,
+                script_runtime,
                 script_language: _,
                 script_path: _,
-                script_inline: _,
-                script_handles: _,
-                scheduled_tasks: _,
+                script_inline,
+                script_handles,
+                scheduled_tasks,
             } => {
-                // TODO: Implement client opening
-                let _ = status_tx.send(format!("[CLIENT] Opening {} client to {}... (not yet implemented)", protocol, remote_addr));
-                let _ = status_tx.send(format!("[CLIENT] Instruction: {}", instruction));
+                use crate::state::client::{ClientInstance, ClientStatus};
+
+                // Create client instance with temporary ID (add_client will assign real ID)
+                let mut client = ClientInstance::new(
+                    crate::state::ClientId::new(0),
+                    remote_addr.clone(),
+                    protocol.clone(),
+                    instruction.clone(),
+                );
+
+                // Set optional fields
+                if let Some(mem) = initial_memory {
+                    client.memory = mem;
+                }
+                client.startup_params = startup_params.clone();
+
+                // Add client to state (this allocates the real client ID)
+                let client_id = self.state.add_client(client).await;
+
+                // TODO: Set script configuration if provided (not yet implemented for clients)
+                // if let Some(runtime) = script_runtime {
+                //     self.state
+                //         .set_client_script_config(
+                //             client_id,
+                //             Some(runtime.clone()),
+                //             script_inline.clone(),
+                //             script_handles.clone().unwrap_or_default(),
+                //         )
+                //         .await;
+                // }
+                let _ = script_runtime; // Silence unused variable warning
+                let _ = script_inline; // Silence unused variable warning
+                let _ = script_handles; // Silence unused variable warning
+
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Opening {} client #{} to {}...",
+                    protocol,
+                    client_id.as_u32(),
+                    remote_addr
+                ));
+
+                // Start the client connection
+                let llm_client = self.llm.clone();
+                let status_tx_clone = status_tx.clone();
+                match crate::cli::client_startup::start_client_by_id(
+                    &self.state,
+                    client_id,
+                    &llm_client,
+                    &status_tx_clone,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        // Client started successfully
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] {} client #{} connected",
+                            protocol,
+                            client_id.as_u32()
+                        ));
+
+                        // TODO: Create scheduled tasks if provided (TaskScope::Client not yet implemented)
+                        if let Some(_task_defs) = scheduled_tasks {
+                            let _ = status_tx.send(format!(
+                                "[WARN] Scheduled tasks for clients not yet supported (client #{})",
+                                client_id.as_u32()
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        // Connection failed
+                        self.state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to connect {} client #{}: {}",
+                            protocol,
+                            client_id.as_u32(),
+                            e
+                        ));
+                        return Err(e);
+                    }
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::CloseClient { client_id } => {
-                // TODO: Implement client closing
-                let _ = status_tx.send(format!("[CLIENT] Closing client #{}... (not yet implemented)", client_id));
+                use crate::state::client::ClientStatus;
+
+                let cid = crate::state::ClientId::new(client_id);
+
+                // Mark client as Disconnected
+                self.state
+                    .update_client_status(cid, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send(format!("[CLIENT] Closed client #{}", cid.as_u32()));
+
+                // TODO: Clean up tasks associated with this client (not yet implemented)
+                // self.state.cleanup_client_tasks(cid).await;
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::CloseAllClients => {
-                // TODO: Implement close all clients
-                let _ = status_tx.send("[CLIENT] Closing all clients... (not yet implemented)".to_string());
+                use crate::state::client::ClientStatus;
+
+                let client_ids = self.state.get_all_client_ids().await;
+
+                for client_id in client_ids {
+                    // Mark client as Disconnected
+                    self.state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    let _ = status_tx.send(format!("[CLIENT] Closed client #{}", client_id.as_u32()));
+
+                    // TODO: Clean up tasks associated with this client (not yet implemented)
+                    // self.state.cleanup_client_tasks(client_id).await;
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             CommonAction::ReconnectClient { client_id } => {
-                // TODO: Implement client reconnection
-                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}... (not yet implemented)", client_id));
+                let cid = crate::state::ClientId::new(client_id);
+
+                // Reconnect the client
+                let llm_client = self.llm.clone();
+                let status_tx_clone = status_tx.clone();
+
+                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}...", cid.as_u32()));
+
+                match crate::cli::client_startup::start_client_by_id(
+                    &self.state,
+                    cid,
+                    &llm_client,
+                    &status_tx_clone,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        let _ = status_tx.send(format!("[CLIENT] Client #{} reconnected", cid.as_u32()));
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to reconnect client #{}: {}",
+                            cid.as_u32(),
+                            e
+                        ));
+                        return Err(e);
+                    }
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
-            CommonAction::UpdateClientInstruction { client_id, instruction } => {
-                // TODO: Implement instruction update
-                let _ = status_tx.send(format!("[CLIENT] Updating instruction for client #{}... (not yet implemented)", client_id));
+            CommonAction::UpdateClientInstruction {
+                client_id,
+                instruction,
+            } => {
+                let cid = crate::state::ClientId::new(client_id);
+
+                // Update client instruction
+                self.state
+                    .set_instruction_for_client(cid, instruction.clone())
+                    .await;
+
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Updated instruction for client #{}",
+                    cid.as_u32()
+                ));
                 let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
         }
 
