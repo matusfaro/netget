@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: DHCP client
+#[cfg(feature = "dhcp")]
+pub mod dhcp;
+#[cfg(feature = "dhcp")]
+pub use dhcp::actions::DhcpClientProtocol;
