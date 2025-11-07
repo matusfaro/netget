@@ -13,7 +13,7 @@ use tracing::{error, info, debug};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
-use crate::protocol::Event;
+use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::smb::actions::{
@@ -22,7 +22,7 @@ use crate::client::smb::actions::{
     SMB_CLIENT_ERROR_EVENT,
 };
 
-use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbMode, SmbDirent, SmbStat};
+use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbMode, SmbDirent};
 
 /// SMB client that connects to an SMB/CIFS server
 pub struct SmbClient;
@@ -35,30 +35,20 @@ impl SmbClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
-        startup_params: Option<serde_json::Value>,
+        startup_params: Option<StartupParams>,
     ) -> Result<SocketAddr> {
         info!("SMB client {} initializing connection to {}", client_id, remote_addr);
 
         // Parse startup parameters for credentials
         let (username, password, domain, workgroup) = if let Some(params) = startup_params {
             let username = params
-                .get("username")
-                .and_then(|v| v.as_str())
-                .unwrap_or("guest")
-                .to_string();
+                .get_optional_string("username")
+                .unwrap_or_else(|| "guest".to_string());
             let password = params
-                .get("password")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let domain = params
-                .get("domain")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let workgroup = params
-                .get("workgroup")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .get_optional_string("password")
+                .unwrap_or_else(|| "".to_string());
+            let domain = params.get_optional_string("domain");
+            let workgroup = params.get_optional_string("workgroup");
 
             (username, password, domain, workgroup)
         } else {
