@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: OpenAI client
+#[cfg(feature = "openai")]
+pub mod openai;
+#[cfg(feature = "openai")]
+pub use openai::actions::OpenAiClientProtocol;
