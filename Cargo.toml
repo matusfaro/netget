@@ -53,7 +53,7 @@ dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
-openai = []  # OpenAI API uses only HTTP, no extra deps
+openai = ["dep:async-openai"]  # OpenAI API client using async-openai library
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
@@ -392,6 +392,9 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
+# OpenAI client (async API access)
+async-openai = { version = "0.26", optional = true }  # OpenAI API client library
 
 [dev-dependencies]
 # For async tests
