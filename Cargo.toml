@@ -74,7 +74,7 @@ tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:toki
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
-git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
+git = ["dep:git2"]  # Git Smart HTTP server with LLM-controlled virtual repositories and Git client
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
@@ -397,6 +397,9 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
+# Git client (libgit2 wrapper for Git protocol operations)
+git2 = { version = "0.19", optional = true }
+
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -466,8 +469,6 @@ etcd-client = "0.15"
 # Tor client for e2e integration tests (Tor relay + directory)
 arti-client = "0.36"
 tor-rtcompat = "0.36"
-# Git client for e2e integration tests
-git2 = "0.19"
 # AMQP 1.0 client for e2e integration tests
 rumqttc = "0.24"
 # Kafka client for e2e integration tests
