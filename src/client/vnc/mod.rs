@@ -30,6 +30,7 @@ use serde_json::Value as JsonValue;
 enum ConnectionState {
     Idle,
     Processing,
+    #[allow(dead_code)]
     Accumulating,
 }
 
@@ -156,8 +157,10 @@ impl VncClient {
                                 }
                             }
                             1 => {
-                                // SetColourMapEntries (skip)
-                                warn!("VNC client {}: SetColourMapEntries not implemented, skipping", client_id);
+                                // SetColourMapEntries
+                                if let Err(e) = Self::handle_set_colour_map_entries(&mut read_half).await {
+                                    error!("Failed to handle SetColourMapEntries: {}", e);
+                                }
                             }
                             2 => {
                                 // Bell
@@ -323,6 +326,30 @@ impl VncClient {
         Ok(())
     }
 
+    /// Handle SetColourMapEntries message (read and consume data)
+    async fn handle_set_colour_map_entries<R>(read_half: &mut R) -> Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+    {
+        // Read padding + first-color + number-of-colors
+        let mut header = [0u8; 5];
+        read_half.read_exact(&mut header).await?;
+
+        let first_color = u16::from_be_bytes([header[1], header[2]]);
+        let num_colors = u16::from_be_bytes([header[3], header[4]]);
+
+        trace!("SetColourMapEntries: first={}, count={}", first_color, num_colors);
+
+        // Each color is 6 bytes (RGB as u16 each)
+        let color_data_size = (num_colors as usize) * 6;
+        let mut color_data = vec![0u8; color_data_size];
+        read_half.read_exact(&mut color_data).await?;
+
+        // Color map entries are now consumed and discarded
+        // Modern VNC servers rarely use this message
+        Ok(())
+    }
+
     /// Handle FramebufferUpdate message
     async fn handle_framebuffer_update<R, W>(
         read_half: &mut R,
@@ -345,9 +372,36 @@ impl VncClient {
         let num_rects = u16::from_be_bytes([header[1], header[2]]);
         trace!("FramebufferUpdate: {} rectangles", num_rects);
 
-        // Skip reading actual rectangle data for simplicity
-        // In a real implementation, we would parse each rectangle
-        // For now, just notify the LLM that an update occurred
+        // Read each rectangle header and consume pixel data
+        // We don't parse the actual pixels but must consume the data from the stream
+        for _ in 0..num_rects {
+            // Rectangle: x-pos (u16), y-pos (u16), width (u16), height (u16), encoding-type (i32)
+            let mut rect_header = [0u8; 12];
+            read_half.read_exact(&mut rect_header).await?;
+
+            let x = u16::from_be_bytes([rect_header[0], rect_header[1]]);
+            let y = u16::from_be_bytes([rect_header[2], rect_header[3]]);
+            let width = u16::from_be_bytes([rect_header[4], rect_header[5]]);
+            let height = u16::from_be_bytes([rect_header[6], rect_header[7]]);
+            let encoding = i32::from_be_bytes([rect_header[8], rect_header[9], rect_header[10], rect_header[11]]);
+
+            trace!("Rectangle: {}x{} at ({}, {}), encoding={}", width, height, x, y, encoding);
+
+            // For Raw encoding (0), consume pixel data
+            // We're using 32-bit RGBA (4 bytes per pixel) based on server's pixel format
+            if encoding == 0 {
+                // Raw encoding: width * height * bytes_per_pixel
+                // Assuming 32-bit color (4 bytes per pixel) - typical for modern VNC
+                let pixel_data_size = (width as usize) * (height as usize) * 4;
+                let mut pixel_data = vec![0u8; pixel_data_size];
+                read_half.read_exact(&mut pixel_data).await?;
+                // Pixel data consumed and discarded
+            } else {
+                warn!("Unsupported encoding: {}, may cause protocol issues", encoding);
+                // For other encodings, we would need to parse differently
+                // Since we only advertised Raw encoding, this shouldn't happen
+            }
+        }
 
         let mut client_data_lock = client_data.lock().await;
 
