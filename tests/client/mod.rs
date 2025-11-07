@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "kubernetes")]
-pub mod kubernetes;
+#[cfg(feature = "mcp")]
+pub mod mcp;
