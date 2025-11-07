@@ -27,3 +27,9 @@ pub use redis::actions::RedisClientProtocol;
 pub mod bgp;
 #[cfg(feature = "bgp")]
 pub use bgp::actions::BgpClientProtocol;
+
+// Bitcoin RPC client
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
+#[cfg(feature = "bitcoin")]
+pub use bitcoin::actions::BitcoinClientProtocol;
