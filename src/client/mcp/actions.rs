@@ -63,6 +63,12 @@ pub static MCP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 /// MCP client protocol action handler
 pub struct McpClientProtocol;
 
+impl Default for McpClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpClientProtocol {
     pub fn new() -> Self {
         Self

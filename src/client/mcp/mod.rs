@@ -265,7 +265,7 @@ impl McpClient {
         };
 
         debug!("Sending initialize request: {:?}", request);
-        let _ = status_tx.send(format!("[CLIENT] Sending MCP initialize request"));
+        let _ = status_tx.send("[CLIENT] Sending MCP initialize request".to_string());
 
         let response = http_client
             .post(base_url)
@@ -306,7 +306,7 @@ impl McpClient {
         };
 
         debug!("Sending initialized notification: {:?}", notification);
-        let _ = status_tx.send(format!("[CLIENT] Sending MCP initialized notification"));
+        let _ = status_tx.send("[CLIENT] Sending MCP initialized notification".to_string());
 
         http_client
             .post(base_url)
