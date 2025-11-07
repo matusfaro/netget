@@ -31,7 +31,7 @@ xmpp = ["dep:tokio-xmpp", "dep:xmpp-parsers"]  # XMPP/Jabber instant messaging c
 telnet = ["nectar"]
 smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
 mdns = ["mdns-sd"]
-mysql = ["dep:opensrv-mysql", "async-trait"]
+mysql = ["dep:opensrv-mysql", "dep:mysql_async", "async-trait"]
 ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "async-trait"]
 redis = ["dep:redis-protocol"]
@@ -286,6 +286,8 @@ mdns-sd = { version = "0.15", optional = true }
 
 # MySQL server
 opensrv-mysql = { version = "0.7", optional = true }
+# MySQL client
+mysql_async = { version = "0.34", optional = true }
 
 # IPP (Internet Printing Protocol)
 ipp = { version = "5.3", optional = true }
@@ -445,8 +447,6 @@ ssh2 = "0.9"
 irc = "1.1"
 # SMTP client for e2e integration tests
 lettre = "0.11"
-# MySQL client for e2e integration tests
-mysql_async = "0.34"
 # PostgreSQL client for e2e integration tests
 tokio-postgres = "0.7"
 # Redis client for e2e integration tests
