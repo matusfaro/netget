@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -15,7 +15,10 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::elasticsearch::actions::ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::client::elasticsearch::actions::{
+    ELASTICSEARCH_CLIENT_CONNECTED_EVENT,
+    ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 
 /// Elasticsearch client that interacts with Elasticsearch clusters
 pub struct ElasticsearchClient;
@@ -24,7 +27,7 @@ impl ElasticsearchClient {
     /// Connect to an Elasticsearch cluster with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -55,7 +58,7 @@ impl ElasticsearchClient {
             );
             client.set_protocol_field(
                 "cluster_url".to_string(),
-                serde_json::json!(cluster_url),
+                serde_json::json!(cluster_url.clone()),
             );
         }).await;
 
@@ -63,6 +66,113 @@ impl ElasticsearchClient {
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
         let _ = status_tx.send(format!("[CLIENT] Elasticsearch client {} ready for {}", client_id, cluster_url));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Call LLM with connected event to get initial instructions
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let protocol = Arc::new(ElasticsearchClientProtocol::new());
+            let event = Event::new(
+                &ELASTICSEARCH_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "cluster_url": cluster_url.clone(),
+                }),
+            );
+
+            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &memory,
+                Some(&event),
+                protocol.as_ref(),
+                &status_tx,
+            ).await {
+                Ok(ClientLlmResult { actions, memory_updates }) => {
+                    // Update memory
+                    if let Some(mem) = memory_updates {
+                        app_state.set_memory_for_client(client_id, mem).await;
+                    }
+
+                    // Execute initial actions
+                    use crate::llm::actions::client_trait::{Client, ClientActionResult};
+                    for action in actions {
+                        match protocol.execute_action(action) {
+                            Ok(ClientActionResult::Custom { name, data }) => {
+                                match name.as_str() {
+                                    "index_document" => {
+                                        let index = data.get("index")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown")
+                                            .to_string();
+                                        let id = data.get("id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        let document = data.get("document")
+                                            .cloned()
+                                            .unwrap_or(serde_json::json!({}));
+
+                                        tokio::spawn(Self::index_document(
+                                            client_id,
+                                            index,
+                                            id,
+                                            document,
+                                            app_state.clone(),
+                                            llm_client.clone(),
+                                            status_tx.clone(),
+                                        ));
+                                    }
+                                    "search" => {
+                                        let index = data.get("index")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown")
+                                            .to_string();
+                                        let query = data.get("query")
+                                            .cloned()
+                                            .unwrap_or(serde_json::json!({}));
+
+                                        tokio::spawn(Self::search(
+                                            client_id,
+                                            index,
+                                            query,
+                                            app_state.clone(),
+                                            llm_client.clone(),
+                                            status_tx.clone(),
+                                        ));
+                                    }
+                                    _ => {
+                                        info!("Ignoring action {} during initial connection", name);
+                                    }
+                                }
+                            }
+                            Ok(ClientActionResult::NoAction) => {
+                                // LLM chose to take no action
+                            }
+                            Ok(ClientActionResult::Multiple(_)) => {
+                                // Multiple actions not supported for initial connection
+                                warn!("Multiple actions not supported during initial connection");
+                            }
+                            Ok(ClientActionResult::Disconnect) => {
+                                // Ignore disconnect during initial connection
+                            }
+                            Ok(ClientActionResult::WaitForMore) => {
+                                // Ignore wait for more during initial connection
+                            }
+                            Ok(ClientActionResult::SendData(_)) => {
+                                // Not applicable for Elasticsearch (HTTP-based)
+                            }
+                            Err(e) => {
+                                error!("Failed to execute initial action: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Initial LLM call failed for Elasticsearch client {}: {}", client_id, e);
+                }
+            }
+        }
 
         // Spawn background monitoring task
         tokio::spawn(async move {
@@ -391,6 +501,9 @@ impl ElasticsearchClient {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
+                    // Note: Actions are intentionally not executed here to avoid recursion.
+                    // For HTTP-based clients like Elasticsearch, responses don't trigger new operations.
+                    // New operations are only triggered by the initial connection or explicit user actions.
                 }
                 Err(e) => {
                     error!("LLM error for Elasticsearch client {}: {}", client_id, e);
