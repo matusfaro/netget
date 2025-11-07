@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: MQTT client
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
+#[cfg(feature = "mqtt")]
+pub use mqtt::actions::MqttClientProtocol;
