@@ -15,7 +15,7 @@ datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
-dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # DNS-over-TLS server and client (note: dns feature currently has broken client needing hickory_client)
+dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
@@ -39,7 +39,7 @@ proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
-cassandra = ["dep:cassandra-protocol", "dep:scylla", "tcp"]
+cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
@@ -60,7 +60,7 @@ openai = []  # OpenAI API uses only HTTP, no extra deps
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
-saml-sp = ["dep:urlencoding"]  # SAML Service Provider (assertion validation, session management)
+saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -79,11 +79,11 @@ openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 openidconnect = []  # OpenID Connect (alternate name)
 kubernetes = []  # Kubernetes client protocol
-git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
-mercurial = ["dep:urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
+git = ["dep:git2"]  # Git Smart HTTP server with LLM-controlled virtual repositories and Git client
+mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
-torrent-tracker = ["dep:serde_bencode", "dep:urlencoding"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
+torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
@@ -255,7 +255,6 @@ hickory-proto = { version = "0.24", optional = true }
 rustls = { version = "0.23", features = ["ring"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2.0", optional = true }
-webpki-roots = { version = "0.26", optional = true }
 
 # HTTP/2 support for DoH
 h2 = { version = "0.4", optional = true }
@@ -311,9 +310,6 @@ nfsserve = { version = "0.10", optional = true }
 
 # Cassandra/CQL server
 cassandra-protocol = { version = "3.3", optional = true }
-
-# Cassandra/ScyllaDB client
-scylla = { version = "1.3", optional = true }
 
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
@@ -414,6 +410,9 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
+# Git client (libgit2 wrapper for Git protocol operations)
+git2 = { version = "0.19", optional = true }
+
 # AWS SDK for SQS and DynamoDB clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.86", optional = true }
@@ -459,6 +458,8 @@ redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest_dav = "0.2"
 # NFS client for e2e integration tests
 nfs3_client = "0.7"
+# Cassandra/CQL client for e2e integration tests
+scylla = "1.3"
 # LDAP client for e2e integration tests
 ldap3 = "0.11"
 # IMAP client for e2e integration tests
