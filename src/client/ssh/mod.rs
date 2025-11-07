@@ -21,18 +21,8 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 
-/// Connection state for LLM processing
-#[derive(Debug, Clone, PartialEq)]
-enum ConnectionState {
-    Idle,
-    Processing,
-    Accumulating,
-}
-
 /// Per-client data for LLM handling
 struct ClientData {
-    state: ConnectionState,
-    queued_commands: Vec<String>,
     memory: String,
 }
 
@@ -153,8 +143,6 @@ impl SshClient {
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
-            state: ConnectionState::Idle,
-            queued_commands: Vec::new(),
             memory: String::new(),
         }));
 
