@@ -4,6 +4,9 @@ pub mod actions;
 pub use actions::GrpcClientProtocol;
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
+use http::Request;
+use http_body_util::BodyExt;
 use prost::Message as ProstMessage;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor, ReflectMessage, Value as ProtoValue, MapKey};
 use prost_types::FileDescriptorSet;
@@ -11,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tonic::transport::{Channel, Endpoint};
+use tower::{Service, ServiceExt};
 use tracing::{error, info, debug};
 
 use crate::client::grpc::actions::{
@@ -162,15 +166,17 @@ impl GrpcClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = execute_grpc_action(
+                        let grpc_data = grpc_client_data.clone();
+                        let proto = protocol.clone();
+                        if let Err(e) = Box::pin(execute_grpc_action(
                             client_id,
                             action,
-                            grpc_client_data.clone(),
+                            grpc_data,
                             &app_state,
                             &llm_client,
                             &status_tx,
-                            &protocol,
-                        )
+                            &proto,
+                        ))
                         .await
                         {
                             error!("Failed to execute gRPC action: {}", e);
@@ -324,7 +330,7 @@ async fn make_grpc_call(
     service: &str,
     method: &str,
     request_json: serde_json::Value,
-    _metadata: Option<serde_json::Map<String, serde_json::Value>>,
+    metadata: Option<serde_json::Map<String, serde_json::Value>>,
     grpc_client_data: Arc<Mutex<GrpcClientData>>,
     app_state: &AppState,
     llm_client: &OllamaClient,
@@ -349,7 +355,7 @@ async fn make_grpc_call(
     info!("gRPC client {} calling {}/{}", client_id, service, method);
 
     // Get descriptor pool and find method
-    let (method_desc, input_desc, output_desc) = {
+    let (input_desc, output_desc) = {
         let data = grpc_client_data.lock().await;
         let method_desc = data
             .descriptor_pool
@@ -359,7 +365,7 @@ async fn make_grpc_call(
 
         let input_desc = method_desc.input();
         let output_desc = method_desc.output();
-        (method_desc, input_desc, output_desc)
+        (input_desc, output_desc)
     };
 
     // Convert JSON request to protobuf
@@ -369,11 +375,53 @@ async fn make_grpc_call(
     // Encode request
     let request_bytes = request_msg.encode_to_vec();
 
-    info!("gRPC client {} sending {}-byte request", client_id, request_bytes.len());
+    info!("gRPC client {} sending {}-byte request to {}/{}", client_id, request_bytes.len(), service, method);
 
-    // For a simplified implementation, we'll just log that we would make the call
-    // A full implementation would need to manually construct HTTP/2 frames
-    // or use a different approach with tonic
+    // Build gRPC request path
+    let path = format!("/{}/{}", service, method);
+
+    // Get channel
+    let channel = {
+        let data = grpc_client_data.lock().await;
+        data.channel.clone()
+    };
+
+    // Create HTTP request with gRPC framing
+    use http::HeaderValue;
+
+    let mut request_builder = Request::builder()
+        .method("POST")
+        .uri(path.clone())
+        .header("content-type", "application/grpc")
+        .header("te", "trailers")
+        .header("grpc-accept-encoding", "identity");
+
+    // Add custom metadata
+    if let Some(meta) = metadata {
+        for (key, value) in meta {
+            if let Some(val_str) = value.as_str() {
+                if let Ok(header_value) = HeaderValue::from_str(val_str) {
+                    request_builder = request_builder.header(key.as_str(), header_value);
+                }
+            }
+        }
+    }
+
+    // Encode gRPC message with 5-byte header (compression flag + length)
+    let mut grpc_message = Vec::with_capacity(5 + request_bytes.len());
+    grpc_message.push(0); // No compression
+    grpc_message.extend_from_slice(&(request_bytes.len() as u32).to_be_bytes());
+    grpc_message.extend_from_slice(&request_bytes);
+
+    // Create body using UnsyncBoxBody which is compatible with tonic
+    use http_body_util::combinators::UnsyncBoxBody;
+    let full_body = http_body_util::Full::new(Bytes::from(grpc_message));
+    let body = UnsyncBoxBody::new(full_body.map_err(|_: std::convert::Infallible| tonic::Status::internal("infallible error")));
+    let http_request = request_builder.body(body)
+        .context("Failed to build HTTP request")?;
+
+    // Make the call using the channel
+    let result = call_grpc_unary(&channel, http_request).await;
 
     // Reset to idle
     {
@@ -381,13 +429,171 @@ async fn make_grpc_call(
         data.state = ConnectionState::Idle;
     }
 
-    // For now, simulate a simple response
-    let _ = status_tx.send(format!(
-        "[CLIENT] gRPC client {} would call {}/{} (dynamic gRPC client not fully implemented)",
-        client_id, service, method
-    ));
+    match result {
+        Ok(response_bytes) => {
+            // Decode response
+            let response_msg = DynamicMessage::decode(output_desc.clone(), &response_bytes[..])
+                .context("Failed to decode gRPC response")?;
 
-    Ok(())
+            // Convert to JSON
+            let response_json = dynamic_message_to_json(&response_msg)?;
+
+            info!("gRPC client {} received response for {}/{}", client_id, service, method);
+
+            // Call LLM with response
+            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                let event = Event::new(
+                    &GRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
+                    serde_json::json!({
+                        "service": service,
+                        "method": method,
+                        "response": response_json,
+                    }),
+                );
+
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
+
+                match call_llm_for_client(
+                    llm_client,
+                    app_state,
+                    client_id.to_string(),
+                    &instruction,
+                    &memory,
+                    Some(&event),
+                    protocol.as_ref(),
+                    status_tx,
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
+                        // Update memory
+                        if let Some(mem) = memory_updates {
+                            app_state.set_memory_for_client(client_id, mem).await;
+                        }
+
+                        // Execute actions
+                        for action in actions {
+                            let grpc_data = grpc_client_data.clone();
+                            let proto = protocol.clone();
+                            if let Err(e) = Box::pin(execute_grpc_action(
+                                client_id,
+                                action,
+                                grpc_data,
+                                app_state,
+                                llm_client,
+                                status_tx,
+                                &proto,
+                            ))
+                            .await
+                            {
+                                error!("Failed to execute gRPC action: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("LLM error for gRPC client {}: {}", client_id, e);
+                    }
+                }
+            }
+
+            Ok(())
+        }
+        Err(e) => {
+            error!("gRPC client {} call failed: {}", client_id, e);
+
+            // Call LLM with error
+            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                let event = Event::new(
+                    &GRPC_CLIENT_ERROR_EVENT,
+                    serde_json::json!({
+                        "service": service,
+                        "method": method,
+                        "code": "UNKNOWN",
+                        "message": e.to_string(),
+                    }),
+                );
+
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
+
+                let _ = call_llm_for_client(
+                    llm_client,
+                    app_state,
+                    client_id.to_string(),
+                    &instruction,
+                    &memory,
+                    Some(&event),
+                    protocol.as_ref(),
+                    status_tx,
+                )
+                .await;
+            }
+
+            Err(e)
+        }
+    }
+}
+
+/// Make a unary gRPC call using tonic channel
+async fn call_grpc_unary(
+    channel: &Channel,
+    request: Request<http_body_util::combinators::UnsyncBoxBody<Bytes, tonic::Status>>,
+) -> Result<Vec<u8>> {
+    // Clone the channel to get a service we can call
+    let mut client = channel.clone();
+
+    // Call the service
+    let response = client
+        .ready()
+        .await
+        .context("gRPC channel not ready")?
+        .call(request)
+        .await
+        .context("gRPC call failed")?;
+
+    // Check gRPC status in headers
+    let status_code = response
+        .headers()
+        .get("grpc-status")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(-1);
+
+    if status_code != 0 && status_code != -1 {
+        let status_message = response
+            .headers()
+            .get("grpc-message")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("Unknown error");
+
+        return Err(anyhow::anyhow!(
+            "gRPC error: status={}, message={}",
+            status_code,
+            status_message
+        ));
+    }
+
+    // Read response body
+    let body = response.into_body();
+    let body_bytes = body.collect().await
+        .context("Failed to read response body")?
+        .to_bytes();
+
+    // Decode gRPC framing (skip 5-byte header)
+    if body_bytes.len() < 5 {
+        return Err(anyhow::anyhow!("Response too short"));
+    }
+
+    let message_bytes = body_bytes.slice(5..);
+    Ok(message_bytes.to_vec())
 }
 
 /// Convert JSON to dynamic protobuf message

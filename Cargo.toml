@@ -70,7 +70,7 @@ isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
-grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
+grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "dep:tower", "dep:tempfile", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
@@ -367,6 +367,8 @@ prost = { version = "0.13", optional = true }
 prost-reflect = { version = "0.14", optional = true }
 prost-types = { version = "0.13", optional = true }
 tonic-reflection = { version = "0.12", optional = true }
+tower = { version = "0.4", optional = true }  # Service trait for tonic gRPC client
+tempfile = { version = "3.13", optional = true }  # For .proto compilation in gRPC client
 
 # XML-RPC server and client (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }
