@@ -39,7 +39,7 @@ proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
-smb = ["smb-msg", "pavao"]
+smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
@@ -47,18 +47,17 @@ ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
-socks5 = []  # SOCKS5 uses only TCP, no extra deps
+socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
-openai = ["dep:async-openai"]  # OpenAI API client using async-openai library
+openai = []  # OpenAI API uses only HTTP, no extra deps
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
-saml = ["quick-xml", "urlencoding", "flate2"]  # SAML client (SP-initiated SSO, assertion validation)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -75,7 +74,6 @@ tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:toki
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
-openidconnect = ["dep:openidconnect"]  # OpenID Connect client for authentication flows
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
@@ -152,7 +150,6 @@ all-protocols = [
     "vnc",
     "openapi",
     "openid",
-    "openidconnect",
     "git",
     "mercurial",
     "kafka",
@@ -311,9 +308,6 @@ cassandra-protocol = { version = "3.3", optional = true }
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
 
-# SMB client (libsmbclient wrapper)
-pavao = { version = "0.1", optional = true }
-
 # STUN server (Session Traversal Utilities for NAT)
 webrtc-stun = { version = "0.1", optional = true }
 
@@ -330,8 +324,8 @@ imap-codec = { version = "2.0.0-alpha.6", optional = true }
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
 
-# OpenID Connect client
-openidconnect = { version = "3.5", optional = true }
+# SOCKS5 client (proxy protocol client)
+tokio-socks = { version = "0.5", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
@@ -363,9 +357,6 @@ tonic-reflection = { version = "0.12", optional = true }
 
 # XML-RPC server (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }
-
-# SAML client (compression for HTTP-Redirect binding)
-flate2 = { version = "1.0", optional = true }
 
 # Tor directory mirror (Tor protocol parsing and generation)
 tor-netdoc = { version = "0.36", optional = true }  # Tor network document parsing (consensus, descriptors)
@@ -404,9 +395,6 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
-
-# OpenAI client (async API access)
-async-openai = { version = "0.26", optional = true }  # OpenAI API client library
 
 [dev-dependencies]
 # For async tests
