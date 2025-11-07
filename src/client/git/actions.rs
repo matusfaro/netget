@@ -276,6 +276,96 @@ impl Client for GitClientProtocol {
                 }),
             },
             ActionDefinition {
+                name: "git_delete_branch".to_string(),
+                description: "Delete a local or remote branch".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "branch".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Branch name to delete".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "force".to_string(),
+                        type_hint: "boolean".to_string(),
+                        description: "Force delete even if not fully merged".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "remote".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Remote name to delete from (e.g., 'origin'). If not specified, deletes local branch only.".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "git_delete_branch",
+                    "branch": "feature-branch",
+                    "force": false,
+                    "remote": "origin"
+                }),
+            },
+            ActionDefinition {
+                name: "git_list_tags".to_string(),
+                description: "List all tags in the repository".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "git_list_tags"
+                }),
+            },
+            ActionDefinition {
+                name: "git_create_tag".to_string(),
+                description: "Create a new tag".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Tag name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "target".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Commit hash or branch name to tag (default: HEAD)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "message".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Tag message (for annotated tags)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "git_create_tag",
+                    "name": "v1.0.0",
+                    "target": "HEAD",
+                    "message": "Release version 1.0.0"
+                }),
+            },
+            ActionDefinition {
+                name: "git_diff".to_string(),
+                description: "View differences in the repository".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "target".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Commit, branch, or file to diff against (default: working directory vs index)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "staged".to_string(),
+                        type_hint: "boolean".to_string(),
+                        description: "Show staged changes (index vs HEAD)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "git_diff",
+                    "staged": true
+                }),
+            },
+            ActionDefinition {
                 name: "disconnect".to_string(),
                 description: "Close the Git client".to_string(),
                 parameters: vec![],
@@ -424,6 +514,78 @@ impl Client for GitClientProtocol {
                     data: json!({}),
                 })
             }
+            "git_delete_branch" => {
+                let branch = action
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'branch' field")?
+                    .to_string();
+                let force = action
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let remote = action
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_delete_branch".to_string(),
+                    data: json!({
+                        "branch": branch,
+                        "force": force,
+                        "remote": remote,
+                    }),
+                })
+            }
+            "git_list_tags" => {
+                Ok(ClientActionResult::Custom {
+                    name: "git_list_tags".to_string(),
+                    data: json!({}),
+                })
+            }
+            "git_create_tag" => {
+                let name = action
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+                let target = action
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let message = action
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_create_tag".to_string(),
+                    data: json!({
+                        "name": name,
+                        "target": target,
+                        "message": message,
+                    }),
+                })
+            }
+            "git_diff" => {
+                let target = action
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let staged = action
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_diff".to_string(),
+                    data: json!({
+                        "target": target,
+                        "staged": staged,
+                    }),
+                })
+            }
             "disconnect" => Ok(ClientActionResult::Disconnect),
             _ => Err(anyhow::anyhow!("Unknown Git client action: {}", action_type)),
         }
@@ -461,7 +623,7 @@ impl Client for GitClientProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["git", "git client", "version control", "clone", "fetch", "pull", "push"]
+        vec!["git", "git client", "version control", "clone", "fetch", "pull", "push", "branch", "tag", "diff"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

@@ -342,6 +342,96 @@ impl GitClient {
                             }
                         }
                     }
+                    "git_delete_branch" => {
+                        let branch = data
+                            .get("branch")
+                            .and_then(|v| v.as_str())
+                            .context("Missing 'branch' field")?;
+                        let force = data
+                            .get("force")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let remote = data
+                            .get("remote")
+                            .and_then(|v| v.as_str());
+
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} deleting branch {}", client_id, branch);
+                            match Self::git_delete_branch(
+                                path,
+                                branch,
+                                force,
+                                remote,
+                                username.as_deref(),
+                                password.as_deref(),
+                            ) {
+                                Ok(result) => {
+                                    info!("Git client {} delete branch: {}", client_id, result);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} delete branch failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
+                    "git_list_tags" => {
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} listing tags", client_id);
+                            match Self::git_list_tags(path) {
+                                Ok(tags) => {
+                                    info!("Git client {} tags: {}", client_id, tags);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} list tags failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
+                    "git_create_tag" => {
+                        let tag_name = data
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .context("Missing 'name' field")?;
+                        let target = data
+                            .get("target")
+                            .and_then(|v| v.as_str());
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str());
+
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} creating tag {}", client_id, tag_name);
+                            match Self::git_create_tag(path, tag_name, target, message) {
+                                Ok(result) => {
+                                    info!("Git client {} create tag: {}", client_id, result);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} create tag failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
+                    "git_diff" => {
+                        let target = data
+                            .get("target")
+                            .and_then(|v| v.as_str());
+                        let staged = data
+                            .get("staged")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        if let Some(ref path) = repo_path {
+                            info!("Git client {} getting diff", client_id);
+                            match Self::git_diff(path, target, staged) {
+                                Ok(diff_text) => {
+                                    info!("Git client {} diff: {}", client_id, diff_text);
+                                }
+                                Err(e) => {
+                                    error!("Git client {} diff failed: {}", client_id, e);
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         debug!("Unhandled Git action: {}", name);
                     }
@@ -645,6 +735,177 @@ impl GitClient {
                 repo.set_head_detached(obj.id())?;
                 Ok(format!("Checked out commit: {} (detached HEAD)", target))
             }
+        }
+    }
+
+    /// Delete a local or remote branch
+    fn git_delete_branch(
+        path: &PathBuf,
+        branch_name: &str,
+        force: bool,
+        remote_name: Option<&str>,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<String> {
+        let repo = Repository::open(path)?;
+        let mut result_msgs = Vec::new();
+
+        // Delete local branch if no remote specified, or always delete local
+        if remote_name.is_none() {
+            let mut branch = repo.find_branch(branch_name, git2::BranchType::Local)?;
+
+            // Check if branch is fully merged (unless force is true)
+            if !force {
+                let head = repo.head()?;
+                let head_commit = head.peel_to_commit()?;
+
+                let branch_ref = branch.get();
+                let branch_commit = branch_ref.peel_to_commit()?;
+
+                // Check if branch is merged into HEAD
+                let merge_base = repo.merge_base(head_commit.id(), branch_commit.id())?;
+                if merge_base != branch_commit.id() {
+                    anyhow::bail!("Branch '{}' is not fully merged. Use force=true to delete anyway.", branch_name);
+                }
+            }
+
+            branch.delete()?;
+            result_msgs.push(format!("Deleted local branch: {}", branch_name));
+        }
+
+        // Delete remote branch if specified
+        if let Some(remote) = remote_name {
+            let mut remote_obj = repo.find_remote(remote)?;
+
+            let mut callbacks = RemoteCallbacks::new();
+            if let (Some(user), Some(pass)) = (username, password) {
+                let user = user.to_string();
+                let pass = pass.to_string();
+                callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+                    Cred::userpass_plaintext(&user, &pass)
+                });
+            }
+
+            let mut push_options = git2::PushOptions::new();
+            push_options.remote_callbacks(callbacks);
+
+            // Push empty refspec to delete remote branch
+            let refspec = format!(":refs/heads/{}", branch_name);
+            remote_obj.push(&[&refspec], Some(&mut push_options))?;
+
+            result_msgs.push(format!("Deleted remote branch: {}/{}", remote, branch_name));
+        }
+
+        Ok(result_msgs.join("; "))
+    }
+
+    /// List all tags in the repository
+    fn git_list_tags(path: &PathBuf) -> Result<String> {
+        let repo = Repository::open(path)?;
+        let tag_names = repo.tag_names(None)?;
+
+        let mut tags = Vec::new();
+        for tag_name in tag_names.iter() {
+            if let Some(name) = tag_name {
+                tags.push(name.to_string());
+            }
+        }
+
+        if tags.is_empty() {
+            Ok("No tags found".to_string())
+        } else {
+            Ok(format!("Tags ({}): {}", tags.len(), tags.join(", ")))
+        }
+    }
+
+    /// Create a new tag
+    fn git_create_tag(
+        path: &PathBuf,
+        tag_name: &str,
+        target: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<String> {
+        let repo = Repository::open(path)?;
+
+        // Resolve target (default to HEAD)
+        let target_str = target.unwrap_or("HEAD");
+        let obj = repo.revparse_single(target_str)?;
+        let target_commit = obj.peel_to_commit()?;
+
+        // Get git signature for annotated tags
+        let sig = repo.signature().or_else(|_| {
+            // Fallback signature if not configured
+            git2::Signature::now("NetGet", "netget@localhost")
+        })?;
+
+        if let Some(msg) = message {
+            // Create annotated tag
+            repo.tag(tag_name, &obj, &sig, msg, false)?;
+            Ok(format!("Created annotated tag '{}' at {} with message: {}", tag_name, target_commit.id(), msg))
+        } else {
+            // Create lightweight tag
+            repo.tag_lightweight(tag_name, &obj, false)?;
+            Ok(format!("Created lightweight tag '{}' at {}", tag_name, target_commit.id()))
+        }
+    }
+
+    /// View differences in the repository
+    fn git_diff(
+        path: &PathBuf,
+        target: Option<&str>,
+        staged: bool,
+    ) -> Result<String> {
+        let repo = Repository::open(path)?;
+
+        let diff = if staged {
+            // Show staged changes (index vs HEAD)
+            let head_tree = repo.head()?.peel_to_tree()?;
+            let mut index = repo.index()?;
+            let index_tree = repo.find_tree(index.write_tree()?)?;
+            repo.diff_tree_to_tree(Some(&head_tree), Some(&index_tree), None)?
+        } else if let Some(target_ref) = target {
+            // Show diff against specific target
+            let target_obj = repo.revparse_single(target_ref)?;
+            let target_tree = target_obj.peel_to_tree()?;
+            let head_tree = repo.head()?.peel_to_tree()?;
+            repo.diff_tree_to_tree(Some(&target_tree), Some(&head_tree), None)?
+        } else {
+            // Show working directory changes (working dir vs index)
+            repo.diff_index_to_workdir(None, None)?
+        };
+
+        // Format diff statistics
+        let stats = diff.stats()?;
+        let files_changed = stats.files_changed();
+        let insertions = stats.insertions();
+        let deletions = stats.deletions();
+
+        // Get patch text
+        let mut patch_text = String::new();
+        diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+            let origin = line.origin();
+            let content = std::str::from_utf8(line.content()).unwrap_or("");
+
+            match origin {
+                '+' | '-' | ' ' => {
+                    patch_text.push(origin);
+                    patch_text.push_str(content);
+                }
+                _ => {
+                    patch_text.push_str(content);
+                }
+            }
+            true
+        })?;
+
+        if patch_text.is_empty() {
+            Ok("No differences found".to_string())
+        } else {
+            Ok(format!(
+                "Diff: {} file(s) changed, {} insertion(s), {} deletion(s)\n\n{}",
+                files_changed, insertions, deletions,
+                patch_text.lines().take(50).collect::<Vec<_>>().join("\n")
+            ))
         }
     }
 }
