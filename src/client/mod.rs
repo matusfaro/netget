@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// SMB client
-#[cfg(feature = "smb")]
-pub mod smb;
-#[cfg(feature = "smb")]
-pub use smb::actions::SmbClientProtocol;
+// SNMP client
+#[cfg(feature = "snmp")]
+pub mod snmp;
+#[cfg(feature = "snmp")]
+pub use snmp::actions::SnmpClientProtocol;
