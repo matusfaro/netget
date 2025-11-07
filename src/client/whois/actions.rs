@@ -51,9 +51,15 @@ pub static WHOIS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
 /// WHOIS client protocol action handler
 pub struct WhoisClientProtocol;
 
+impl Default for WhoisClientProtocol {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl WhoisClientProtocol {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
