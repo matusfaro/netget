@@ -181,15 +181,25 @@ echo -e "${GREEN}📅 LINES OF CODE PER DAY${NC}"
 echo "─────────────────────────────────────────────────────────"
 
 TEMP_DAILY_STATS=$(mktemp)
+TEMP_ALL_DATES=$(mktemp)
 
-# Get unique dates in reverse order (oldest first)
-git log --format="%ai" --reverse | cut -d' ' -f1 | sort -u | while read date; do
-    # Count commits on or before this date
+# Get first and last commit dates
+FIRST_DATE=$(git log --format="%ai" --reverse | head -1 | cut -d' ' -f1)
+LAST_DATE=$(git log --format="%ai" | head -1 | cut -d' ' -f1)
+
+# Generate all dates between first and last (macOS compatible)
+current_date="$FIRST_DATE"
+while [ "$current_date" != "$LAST_DATE" ]; do
+    echo "$current_date" >> "$TEMP_ALL_DATES"
+    # Use BSD date syntax for macOS
+    current_date=$(date -j -f "%Y-%m-%d" -v+1d "$current_date" "+%Y-%m-%d")
+done
+echo "$LAST_DATE" >> "$TEMP_ALL_DATES"
+
+# For each date, count commits up to that date
+cat "$TEMP_ALL_DATES" | while read date; do
     commit_count=$(git log --until="$date 23:59:59" --oneline 2>/dev/null | wc -l)
-
-    # Estimate: average of ~440 LOC per commit
     estimated_loc=$((commit_count * 440))
-
     echo "$date $estimated_loc" >> "$TEMP_DAILY_STATS"
 done
 
@@ -202,7 +212,7 @@ else
     echo "  (Unable to compute daily stats)"
 fi
 
-rm -f "$TEMP_DAILY_STATS"
+rm -f "$TEMP_DAILY_STATS" "$TEMP_ALL_DATES"
 echo ""
 
 # 11. SUMMARY
