@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Tor client (anonymous connections)
+#[cfg(feature = "tor-client")]
+pub mod tor;
+#[cfg(feature = "tor-client")]
+pub use tor::TorClientProtocol;
