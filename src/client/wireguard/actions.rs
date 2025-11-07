@@ -1,7 +1,7 @@
 //! WireGuard client protocol actions implementation
 
 use crate::llm::actions::{
-    client_trait::{Client, ClientActionResult, ConnectContext},
+    client_trait::{Client, ClientActionResult},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -66,14 +66,32 @@ impl WireguardClientProtocol {
 impl Client for WireguardClientProtocol {
     fn connect(
         &self,
-        ctx: ConnectContext,
+        ctx: crate::protocol::ConnectContext,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
-            use crate::client::wireguard::{WireguardClient, WireguardClientParams};
+            use crate::client::wireguard::WireguardClient;
 
-            // Parse startup params from instruction or use defaults
-            // Expected format: "server_public_key=<key> server_endpoint=<ip:port> client_address=<ip/cidr> allowed_ips=<ips>"
-            let params = parse_wireguard_params(&ctx.instruction)?;
+            // Parse startup params - should be in JSON format in startup_params
+            let params = if let Some(startup_params) = &ctx.startup_params {
+                // Get required parameters using StartupParams accessors
+                crate::client::wireguard::WireguardClientParams {
+                    server_public_key: startup_params.get_string("server_public_key"),
+                    server_endpoint: startup_params.get_string("server_endpoint"),
+                    client_address: startup_params.get_string("client_address"),
+                    allowed_ips: startup_params
+                        .get_optional_array("allowed_ips")
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_else(|| vec!["0.0.0.0/0".to_string()]),
+                    keepalive: startup_params.get_optional_u64("keepalive").map(|k| k as u16),
+                    private_key: startup_params.get_optional_string("private_key"),
+                }
+            } else {
+                return Err(anyhow::anyhow!("Missing startup parameters for WireGuard client"));
+            };
 
             WireguardClient::connect_with_llm_actions(
                 ctx.remote_addr,
@@ -184,119 +202,4 @@ impl Client for WireguardClientProtocol {
     fn group_name(&self) -> &'static str {
         "VPN"
     }
-
-    fn get_startup_params(&self) -> Vec<Parameter> {
-        vec![
-            Parameter {
-                name: "server_public_key".to_string(),
-                type_hint: "string".to_string(),
-                description: "Server's WireGuard public key (base64 encoded)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "server_endpoint".to_string(),
-                type_hint: "string".to_string(),
-                description: "Server endpoint (IP:port)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "client_address".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client's VPN IP address with CIDR (e.g., 10.20.30.2/32)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "allowed_ips".to_string(),
-                type_hint: "array".to_string(),
-                description:
-                    "IPs to route through VPN (e.g., [\"0.0.0.0/0\"] for all traffic)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "keepalive".to_string(),
-                type_hint: "number".to_string(),
-                description: "Keepalive interval in seconds (0 to disable)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "private_key".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client's private key (base64 encoded, generated if not provided)"
-                    .to_string(),
-                required: false,
-            },
-        ]
-    }
-}
-
-/// Parse WireGuard client parameters from instruction or JSON
-fn parse_wireguard_params(instruction: &str) -> Result<crate::client::wireguard::WireguardClientParams> {
-    // Try to parse as JSON first
-    if let Ok(json_params) = serde_json::from_str::<serde_json::Value>(instruction) {
-        return Ok(crate::client::wireguard::WireguardClientParams {
-            server_public_key: json_params["server_public_key"]
-                .as_str()
-                .context("Missing server_public_key")?
-                .to_string(),
-            server_endpoint: json_params["server_endpoint"]
-                .as_str()
-                .context("Missing server_endpoint")?
-                .to_string(),
-            client_address: json_params["client_address"]
-                .as_str()
-                .context("Missing client_address")?
-                .to_string(),
-            allowed_ips: json_params["allowed_ips"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_else(|| vec!["0.0.0.0/0".to_string()]),
-            keepalive: json_params["keepalive"]
-                .as_u64()
-                .map(|k| k as u16),
-            private_key: json_params["private_key"]
-                .as_str()
-                .map(|s| s.to_string()),
-        });
-    }
-
-    // Otherwise, parse as key=value pairs
-    let mut server_public_key = None;
-    let mut server_endpoint = None;
-    let mut client_address = None;
-    let mut allowed_ips = vec![];
-    let mut keepalive = None;
-    let mut private_key = None;
-
-    for part in instruction.split_whitespace() {
-        if let Some((key, value)) = part.split_once('=') {
-            match key {
-                "server_public_key" => server_public_key = Some(value.to_string()),
-                "server_endpoint" => server_endpoint = Some(value.to_string()),
-                "client_address" => client_address = Some(value.to_string()),
-                "allowed_ips" => {
-                    allowed_ips = value.split(',').map(|s| s.to_string()).collect()
-                }
-                "keepalive" => keepalive = value.parse().ok(),
-                "private_key" => private_key = Some(value.to_string()),
-                _ => {}
-            }
-        }
-    }
-
-    Ok(crate::client::wireguard::WireguardClientParams {
-        server_public_key: server_public_key.context("Missing server_public_key parameter")?,
-        server_endpoint: server_endpoint.context("Missing server_endpoint parameter")?,
-        client_address: client_address.context("Missing client_address parameter")?,
-        allowed_ips: if allowed_ips.is_empty() {
-            vec!["0.0.0.0/0".to_string()]
-        } else {
-            allowed_ips
-        },
-        keepalive,
-        private_key,
-    })
 }
