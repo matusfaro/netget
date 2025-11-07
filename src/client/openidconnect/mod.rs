@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
+use urlencoding;
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
@@ -219,6 +220,16 @@ impl OpenIdConnectClient {
                             protocol,
                         ).await?;
                     }
+                    "oidc_authorization_code" => {
+                        Self::start_authorization_code_flow(
+                            client_id,
+                            data,
+                            llm_client,
+                            app_state,
+                            status_tx,
+                            protocol,
+                        ).await?;
+                    }
                     "oidc_password_flow" => {
                         Self::exchange_password(
                             client_id,
@@ -275,35 +286,551 @@ impl OpenIdConnectClient {
         })
     }
 
-    /// Start device code flow
+    /// Start device code flow (RFC 8628)
     async fn start_device_flow(
         client_id: ClientId,
-        _data: serde_json::Value,
-        _llm_client: &OllamaClient,
-        _app_state: &Arc<AppState>,
+        data: serde_json::Value,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        _protocol: Arc<OpenIdConnectClientProtocol>,
+        protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        let _ = status_tx.send(format!("[CLIENT] Device code flow requested for client {}", client_id));
+        let _ = status_tx.send(format!("[CLIENT] Starting device code flow for client {}", client_id));
 
-        // Device code flow requires RFC 8628 support which is not fully implemented
-        // in openidconnect crate 3.5. This flow would require:
-        // 1. POST to /device/code endpoint to get device_code and user_code
-        // 2. Display user_code and verification_uri to user
-        // 3. Poll token endpoint until user authorizes
-        //
-        // For now, recommend using password or client credentials flow instead
+        // Get provider metadata and client config
+        let (provider_url, oidc_client_id, oidc_client_secret) = app_state.with_client_mut(client_id, |client| {
+            let provider = client.get_protocol_field("provider_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())?;
+            let client_id_str = client.get_protocol_field("client_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "default-client-id".to_string());
+            let client_secret_str = client.get_protocol_field("client_secret")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Some((provider, client_id_str, client_secret_str))
+        }).await.flatten().context("No provider URL found")?;
+
+        let scopes = data.get("scopes")
+            .and_then(|v| v.as_str())
+            .unwrap_or("openid");
+
+        let issuer_url = IssuerUrl::new(provider_url)?;
+        let provider_metadata = CoreProviderMetadata::discover_async(
+            issuer_url.clone(),
+            async_http_client,
+        ).await?;
+
+        // Construct device authorization endpoint URL (typically /device/code or /device/authorize)
+        let device_auth_url = format!("{}/device/code", issuer_url.as_str().trim_end_matches('/'));
+        let _ = status_tx.send(format!("[CLIENT] Device authorization endpoint: {}", device_auth_url));
+
+        // Build request body
+        let mut params = vec![
+            ("client_id", oidc_client_id.as_str()),
+            ("scope", scopes),
+        ];
+
+        if let Some(ref secret) = oidc_client_secret {
+            params.push(("client_secret", secret.as_str()));
+        }
+
+        // Make device authorization request
+        let http_client = reqwest::Client::new();
+        let response = http_client
+            .post(&device_auth_url)
+            .form(&params)
+            .send()
+            .await
+            .context("Failed to send device authorization request")?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(anyhow::anyhow!("Device authorization failed: {}", error_text));
+        }
+
+        let device_response: serde_json::Value = response.json().await
+            .context("Failed to parse device authorization response")?;
+
+        // Extract device code response fields
+        let device_code = device_response.get("device_code")
+            .and_then(|v| v.as_str())
+            .context("Missing device_code in response")?
+            .to_string();
+
+        let user_code = device_response.get("user_code")
+            .and_then(|v| v.as_str())
+            .context("Missing user_code in response")?
+            .to_string();
+
+        let verification_uri = device_response.get("verification_uri")
+            .and_then(|v| v.as_str())
+            .context("Missing verification_uri in response")?
+            .to_string();
+
+        let verification_uri_complete = device_response.get("verification_uri_complete")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let interval = device_response.get("interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
+
+        let expires_in = device_response.get("expires_in")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300);
+
+        // Display device code and verification URL to user
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send("[CLIENT] Device Code Flow - Not Fully Supported".to_string());
+        let _ = status_tx.send("[CLIENT] Device Code Flow - User Action Required".to_string());
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send("[INFO] Device code flow (RFC 8628) is not fully".to_string());
-        let _ = status_tx.send("[INFO] supported by the current openidconnect crate version.".to_string());
-        let _ = status_tx.send("[INFO] ".to_string());
-        let _ = status_tx.send("[INFO] Please use one of these alternatives:".to_string());
-        let _ = status_tx.send("[INFO] 1. Password flow (resource owner password credentials)".to_string());
-        let _ = status_tx.send("[INFO] 2. Client credentials flow (machine-to-machine)".to_string());
-        let _ = status_tx.send("[INFO] 3. Authorization code flow (requires browser redirect)".to_string());
+        let _ = status_tx.send("[CLIENT] 1. Open this URL in your browser:".to_string());
+        let _ = status_tx.send(format!("[CLIENT]    {}", verification_uri));
+        if let Some(complete_uri) = verification_uri_complete {
+            let _ = status_tx.send(format!("[CLIENT]    Or use this direct link: {}", complete_uri));
+        }
+        let _ = status_tx.send(format!("[CLIENT] 2. Enter this code: {}", user_code));
         let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] Waiting for authorization...".to_string());
+
+        // Get token endpoint
+        let token_endpoint = provider_metadata.token_endpoint()
+            .context("No token endpoint in provider metadata")?
+            .as_str()
+            .to_string();
+
+        // Spawn polling task
+        let app_state_clone = app_state.clone();
+        let llm_client_clone = llm_client.clone();
+        let status_tx_clone = status_tx.clone();
+        let protocol_clone = protocol.clone();
+        let oidc_client_id_clone = oidc_client_id.clone();
+        let oidc_client_secret_clone = oidc_client_secret.clone();
+
+        tokio::spawn(async move {
+            let start_time = std::time::Instant::now();
+            let mut poll_count = 0;
+            let interval_duration = std::time::Duration::from_secs(interval);
+            let expires_duration = std::time::Duration::from_secs(expires_in);
+
+            loop {
+                // Check if expired
+                if start_time.elapsed() > expires_duration {
+                    let _ = status_tx_clone.send("[ERROR] Device code expired. Please try again.".to_string());
+                    break;
+                }
+
+                // Wait for interval
+                tokio::time::sleep(interval_duration).await;
+                poll_count += 1;
+
+                let _ = status_tx_clone.send(format!("[CLIENT] Polling for authorization (attempt {})...", poll_count));
+
+                // Build token request
+                let mut token_params = vec![
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                    ("device_code", device_code.as_str()),
+                    ("client_id", oidc_client_id_clone.as_str()),
+                ];
+
+                if let Some(ref secret) = oidc_client_secret_clone {
+                    token_params.push(("client_secret", secret.as_str()));
+                }
+
+                // Poll token endpoint
+                let http_client = reqwest::Client::new();
+                match http_client
+                    .post(&token_endpoint)
+                    .form(&token_params)
+                    .send()
+                    .await
+                {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            // Success - parse tokens
+                            match response.json::<serde_json::Value>().await {
+                                Ok(token_json) => {
+                                    let _ = status_tx_clone.send("[CLIENT] Authorization successful! Received tokens.".to_string());
+
+                                    // Convert JSON to CoreTokenResponse manually
+                                    if let Err(e) = Self::store_tokens_from_json(
+                                        client_id,
+                                        &token_json,
+                                        &llm_client_clone,
+                                        &app_state_clone,
+                                        &status_tx_clone,
+                                        protocol_clone,
+                                    ).await {
+                                        error!("Failed to store tokens: {}", e);
+                                        let _ = status_tx_clone.send(format!("[ERROR] Failed to store tokens: {}", e));
+                                    }
+                                    break;
+                                }
+                                Err(e) => {
+                                    let _ = status_tx_clone.send(format!("[ERROR] Failed to parse token response: {}", e));
+                                    break;
+                                }
+                            }
+                        } else {
+                            // Check error response
+                            match response.json::<serde_json::Value>().await {
+                                Ok(error_json) => {
+                                    let error_code = error_json.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+                                    match error_code {
+                                        "authorization_pending" => {
+                                            // User hasn't authorized yet, continue polling
+                                            continue;
+                                        }
+                                        "slow_down" => {
+                                            // Slow down polling
+                                            let _ = status_tx_clone.send("[CLIENT] Slowing down polling rate...".to_string());
+                                            tokio::time::sleep(interval_duration).await;
+                                            continue;
+                                        }
+                                        "expired_token" => {
+                                            let _ = status_tx_clone.send("[ERROR] Device code expired.".to_string());
+                                            break;
+                                        }
+                                        "access_denied" => {
+                                            let _ = status_tx_clone.send("[ERROR] User denied authorization.".to_string());
+                                            break;
+                                        }
+                                        _ => {
+                                            let _ = status_tx_clone.send(format!("[ERROR] Authorization error: {}", error_code));
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    let _ = status_tx_clone.send("[ERROR] Failed to parse error response".to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = status_tx_clone.send(format!("[ERROR] Polling failed: {}", e));
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Store tokens from JSON response (helper for device code flow)
+    async fn store_tokens_from_json(
+        client_id: ClientId,
+        token_json: &serde_json::Value,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: Arc<OpenIdConnectClientProtocol>,
+    ) -> Result<()> {
+        let access_token = token_json.get("access_token")
+            .and_then(|v| v.as_str())
+            .context("Missing access_token")?;
+        let id_token = token_json.get("id_token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let refresh_token = token_json.get("refresh_token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let expires_in = token_json.get("expires_in")
+            .and_then(|v| v.as_u64());
+        let token_type = token_json.get("token_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Bearer");
+
+        let _ = status_tx.send(format!("[CLIENT] Received tokens (expires_in: {:?}s)", expires_in));
+
+        // Store tokens
+        app_state.with_client_mut(client_id, |client| {
+            client.set_protocol_field("access_token".to_string(), serde_json::json!(access_token));
+            if let Some(id) = &id_token {
+                client.set_protocol_field("id_token".to_string(), serde_json::json!(id));
+            }
+            if let Some(refresh) = &refresh_token {
+                client.set_protocol_field("refresh_token".to_string(), serde_json::json!(refresh));
+            }
+        }).await;
+
+        // Call LLM with token received event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
+                serde_json::json!({
+                    "access_token": access_token,
+                    "id_token": id_token,
+                    "refresh_token": refresh_token,
+                    "expires_in": expires_in,
+                    "token_type": token_type,
+                }),
+            );
+
+            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+
+            match call_llm_for_client(
+                llm_client,
+                app_state,
+                client_id.to_string(),
+                &instruction,
+                &memory,
+                Some(&event),
+                protocol.as_ref(),
+                status_tx,
+            ).await {
+                Ok(ClientLlmResult { actions, memory_updates }) => {
+                    if let Some(mem) = memory_updates {
+                        app_state.set_memory_for_client(client_id, mem).await;
+                    }
+
+                    // Execute follow-up actions
+                    for action in actions {
+                        if let Err(e) = Self::execute_llm_action(
+                            action,
+                            client_id,
+                            llm_client,
+                            app_state,
+                            status_tx,
+                            protocol.clone(),
+                        ).await {
+                            error!("Failed to execute follow-up action: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error for OIDC client {}: {}", client_id, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Start authorization code flow with local callback server
+    async fn start_authorization_code_flow(
+        client_id: ClientId,
+        data: serde_json::Value,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: Arc<OpenIdConnectClientProtocol>,
+    ) -> Result<()> {
+        use tokio::net::TcpListener;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let _ = status_tx.send(format!("[CLIENT] Starting authorization code flow for client {}", client_id));
+
+        // Get provider metadata and client config
+        let (provider_url, oidc_client_id, oidc_client_secret) = app_state.with_client_mut(client_id, |client| {
+            let provider = client.get_protocol_field("provider_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())?;
+            let client_id_str = client.get_protocol_field("client_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "default-client-id".to_string());
+            let client_secret_str = client.get_protocol_field("client_secret")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Some((provider, client_id_str, client_secret_str))
+        }).await.flatten().context("No provider URL found")?;
+
+        let scopes = data.get("scopes")
+            .and_then(|v| v.as_str())
+            .unwrap_or("openid profile email");
+
+        let callback_port = data.get("port")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(8080) as u16;
+
+        let issuer_url = IssuerUrl::new(provider_url)?;
+        let provider_metadata = CoreProviderMetadata::discover_async(
+            issuer_url,
+            async_http_client,
+        ).await?;
+
+        // Get authorization endpoint
+        let auth_endpoint = provider_metadata.authorization_endpoint().as_str();
+
+        // Generate state for CSRF protection
+        use rand::Rng;
+        let state: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect();
+
+        // Build redirect URI
+        let redirect_uri = format!("http://localhost:{}/callback", callback_port);
+
+        // Build authorization URL
+        let auth_url = format!(
+            "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
+            auth_endpoint,
+            urlencoding::encode(&oidc_client_id),
+            urlencoding::encode(&redirect_uri),
+            urlencoding::encode(scopes),
+            urlencoding::encode(&state)
+        );
+
+        // Display authorization URL
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] Authorization Code Flow - User Action Required".to_string());
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] 1. Open this URL in your browser:".to_string());
+        let _ = status_tx.send(format!("[CLIENT]    {}", auth_url));
+        let _ = status_tx.send(format!("[CLIENT] 2. After authorization, the browser will redirect to localhost:{}", callback_port));
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send(format!("[CLIENT] Starting local callback server on port {}...", callback_port));
+
+        // Start local HTTP server
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", callback_port)).await
+            .context(format!("Failed to bind to port {}. Port may be in use.", callback_port))?;
+
+        let _ = status_tx.send(format!("[CLIENT] Callback server listening on http://127.0.0.1:{}/callback", callback_port));
+        let _ = status_tx.send("[CLIENT] Waiting for authorization...".to_string());
+
+        // Get token endpoint
+        let token_endpoint = provider_metadata.token_endpoint()
+            .context("No token endpoint in provider metadata")?
+            .as_str()
+            .to_string();
+
+        // Spawn server task
+        let app_state_clone = app_state.clone();
+        let llm_client_clone = llm_client.clone();
+        let status_tx_clone = status_tx.clone();
+        let protocol_clone = protocol.clone();
+        let state_clone = state.clone();
+
+        tokio::spawn(async move {
+            // Accept one connection
+            match listener.accept().await {
+                Ok((mut socket, _addr)) => {
+                    let _ = status_tx_clone.send("[CLIENT] Received callback request...".to_string());
+
+                    // Read HTTP request
+                    let mut buffer = vec![0u8; 4096];
+                    match socket.read(&mut buffer).await {
+                        Ok(n) => {
+                            let request = String::from_utf8_lossy(&buffer[..n]);
+
+                            // Parse query parameters
+                            if let Some(query_line) = request.lines().next() {
+                                if let Some(query_str) = query_line.split_whitespace().nth(1) {
+                                    if let Some(query_params) = query_str.split('?').nth(1) {
+                                        let mut code = None;
+                                        let mut returned_state = None;
+                                        let mut error = None;
+
+                                        for param in query_params.split('&') {
+                                            let parts: Vec<&str> = param.split('=').collect();
+                                            if parts.len() == 2 {
+                                                match parts[0] {
+                                                    "code" => code = Some(parts[1].to_string()),
+                                                    "state" => returned_state = Some(parts[1].to_string()),
+                                                    "error" => error = Some(parts[1].to_string()),
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+
+                                        // Send response to browser
+                                        let response = if error.is_some() {
+                                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Authorization Failed</h1><p>An error occurred during authorization. You can close this window.</p></body></html>"
+                                        } else if code.is_some() {
+                                            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Authorization Successful!</h1><p>You can close this window and return to the terminal.</p></body></html>"
+                                        } else {
+                                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Invalid Request</h1><p>Missing authorization code. You can close this window.</p></body></html>"
+                                        };
+
+                                        let _ = socket.write_all(response.as_bytes()).await;
+
+                                        // Process authorization code
+                                        if let Some(error_msg) = error {
+                                            let _ = status_tx_clone.send(format!("[ERROR] Authorization failed: {}", error_msg));
+                                            return;
+                                        }
+
+                                        if let Some(auth_code) = code {
+                                            // Verify state
+                                            if returned_state.as_deref() != Some(state_clone.as_str()) {
+                                                let _ = status_tx_clone.send("[ERROR] State mismatch - possible CSRF attack".to_string());
+                                                return;
+                                            }
+
+                                            let _ = status_tx_clone.send("[CLIENT] Authorization code received, exchanging for tokens...".to_string());
+
+                                            // Exchange authorization code for tokens
+                                            let mut token_params = vec![
+                                                ("grant_type", "authorization_code"),
+                                                ("code", auth_code.as_str()),
+                                                ("redirect_uri", redirect_uri.as_str()),
+                                                ("client_id", oidc_client_id.as_str()),
+                                            ];
+
+                                            if let Some(ref secret) = oidc_client_secret {
+                                                token_params.push(("client_secret", secret.as_str()));
+                                            }
+
+                                            let http_client = reqwest::Client::new();
+                                            match http_client
+                                                .post(&token_endpoint)
+                                                .form(&token_params)
+                                                .send()
+                                                .await
+                                            {
+                                                Ok(response) => {
+                                                    if response.status().is_success() {
+                                                        match response.json::<serde_json::Value>().await {
+                                                            Ok(token_json) => {
+                                                                let _ = status_tx_clone.send("[CLIENT] Successfully exchanged code for tokens!".to_string());
+
+                                                                if let Err(e) = Self::store_tokens_from_json(
+                                                                    client_id,
+                                                                    &token_json,
+                                                                    &llm_client_clone,
+                                                                    &app_state_clone,
+                                                                    &status_tx_clone,
+                                                                    protocol_clone,
+                                                                ).await {
+                                                                    error!("Failed to store tokens: {}", e);
+                                                                    let _ = status_tx_clone.send(format!("[ERROR] Failed to store tokens: {}", e));
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                let _ = status_tx_clone.send(format!("[ERROR] Failed to parse token response: {}", e));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                                                        let _ = status_tx_clone.send(format!("[ERROR] Token exchange failed: {}", error_text));
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    let _ = status_tx_clone.send(format!("[ERROR] Failed to exchange code: {}", e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = status_tx_clone.send(format!("[ERROR] Failed to read request: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = status_tx_clone.send(format!("[ERROR] Failed to accept connection: {}", e));
+                }
+            }
+        });
 
         Ok(())
     }
