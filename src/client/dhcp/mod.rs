@@ -152,6 +152,20 @@ impl DhcpClient {
                                             {
                                                 error!("DHCP feature not enabled");
                                             }
+                                        } else if name == "dhcp_inform" {
+                                            #[cfg(feature = "dhcp")]
+                                            {
+                                                if let Ok(inform_packet) = Self::build_inform_packet(&data) {
+                                                    let _ = socket.send_to(&inform_packet, server_addr).await;
+                                                    debug!("DHCP client {} sent INFORM ({} bytes)", client_id, inform_packet.len());
+                                                    trace!("DHCP INFORM (hex): {}", hex::encode(&inform_packet));
+                                                }
+                                            }
+
+                                            #[cfg(not(feature = "dhcp"))]
+                                            {
+                                                error!("DHCP feature not enabled");
+                                            }
                                         }
                                     }
                                     ClientActionResult::Disconnect => {
@@ -280,6 +294,14 @@ impl DhcpClient {
                                                                             debug!("DHCP client {} sent REQUEST", client_id);
                                                                         }
                                                                     }
+                                                                } else if name == "dhcp_inform" {
+                                                                    #[cfg(feature = "dhcp")]
+                                                                    {
+                                                                        if let Ok(inform_packet) = Self::build_inform_packet(&action_data) {
+                                                                            let _ = socket_clone.send_to(&inform_packet, peer_addr).await;
+                                                                            debug!("DHCP client {} sent INFORM", client_id);
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
                                                             ClientActionResult::Disconnect => {
@@ -406,6 +428,42 @@ impl DhcpClient {
         if let Some(server) = server_ip {
             msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server));
         }
+
+        // Encode to bytes
+        let bytes = msg.to_vec()?;
+        Ok(bytes)
+    }
+
+    #[cfg(feature = "dhcp")]
+    fn build_inform_packet(params: &serde_json::Value) -> Result<Vec<u8>> {
+        use dhcproto::Encodable;
+        use std::net::Ipv4Addr;
+
+        // Generate random transaction ID
+        let xid = rand::random::<u32>();
+
+        // Get MAC address
+        let mac_str = params.get("mac_address")
+            .and_then(|v| v.as_str())
+            .unwrap_or("00:00:00:00:00:00");
+
+        let chaddr = Self::parse_mac_address(mac_str)?;
+
+        // Get current IP (required for INFORM)
+        let current_ip = params.get("current_ip")
+            .and_then(|v| v.as_str())
+            .context("Missing 'current_ip' parameter")?
+            .parse::<Ipv4Addr>()?;
+
+        // Build DHCP INFORM
+        let mut msg = v4::Message::default();
+        msg.set_opcode(v4::Opcode::BootRequest)
+            .set_xid(xid)
+            .set_ciaddr(current_ip)  // Set client IP address
+            .set_chaddr(&chaddr);
+
+        // Add DHCP options
+        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Inform));
 
         // Encode to bytes
         let bytes = msg.to_vec()?;
