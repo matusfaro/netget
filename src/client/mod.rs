@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: LDAP client
+#[cfg(feature = "ldap")]
+pub mod ldap;
+#[cfg(feature = "ldap")]
+pub use ldap::actions::LdapClientProtocol;
