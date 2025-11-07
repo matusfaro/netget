@@ -6661,6 +6661,7 @@ dependencies = [
  "nectar",
  "netgauze-bgp-pkt",
  "nfs3_client",
+ "nfs3_types",
  "nfsserve",
  "nix 0.29.0",
  "ollama-rs",
@@ -6828,6 +6829,7 @@ checksum = "d8593f463c9e625d916cf65fbb40a3f12b111b657e5e10c61aa45329a880d845"
 dependencies = [
  "nfs3_types",
  "rand 0.9.2",
+ "tokio",
 ]
 
 [[package]]

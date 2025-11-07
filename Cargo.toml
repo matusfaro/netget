@@ -38,7 +38,7 @@ redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
 webdav = ["dav-server"]
-nfs = ["nfsserve", "dep:nfs3_client", "async-trait"]
+nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types", "async-trait"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
@@ -308,7 +308,8 @@ dav-server = { version = "0.8", optional = true }
 # NFS server
 nfsserve = { version = "0.10", optional = true }
 # NFS client
-nfs3_client = { version = "0.7", optional = true }
+nfs3_client = { version = "0.7", optional = true, features = ["tokio"] }
+nfs3_types = { version = "0.4", optional = true }
 
 # Cassandra/CQL server
 cassandra-protocol = { version = "3.3", optional = true }
