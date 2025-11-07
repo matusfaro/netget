@@ -23,6 +23,8 @@ use crate::client::sip::actions::{SIP_CLIENT_CONNECTED_EVENT, SIP_CLIENT_RESPONS
 enum ConnectionState {
     Idle,
     Processing,
+    /// Reserved for future TCP support where partial messages may need buffering
+    #[allow(dead_code)]
     Accumulating,
 }
 
@@ -544,6 +546,8 @@ struct SipResponse {
     from: String,
     to: String,
     to_tag: Option<String>,
+    /// Full CSeq header value (kept for debugging and future use)
+    #[allow(dead_code)]
     cseq: String,
     body: Option<String>,
 }
