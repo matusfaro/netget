@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: SMTP client
+#[cfg(feature = "smtp")]
+pub mod smtp;
+#[cfg(feature = "smtp")]
+pub use smtp::actions::SmtpClientProtocol;

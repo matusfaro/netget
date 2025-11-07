@@ -5647,11 +5647,13 @@ version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e13e10e8818f8b2a60f52cb127041d388b89f3a96a62be9ceaffa22262fef7f"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "chumsky",
  "email-encoding",
  "email_address",
  "fastrand",
+ "futures-io",
  "futures-util",
  "hostname",
  "httpdate",
@@ -5661,9 +5663,12 @@ dependencies = [
  "nom 8.0.0",
  "percent-encoding",
  "quoted_printable",
+ "rustls 0.23.35",
  "socket2 0.6.1",
  "tokio",
+ "tokio-rustls 0.26.4",
  "url",
+ "webpki-roots 1.0.4",
 ]
 
 [[package]]
