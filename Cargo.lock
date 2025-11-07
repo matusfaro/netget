@@ -6419,6 +6419,7 @@ dependencies = [
  "dirs 5.0.1",
  "ed25519-dalek",
  "etcd-client",
+ "flate2",
  "fs2",
  "futures",
  "git2",

@@ -58,6 +58,7 @@ oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
+saml = ["quick-xml", "urlencoding", "flate2"]  # SAML client (SP-initiated SSO, assertion validation)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -354,6 +355,9 @@ tonic-reflection = { version = "0.12", optional = true }
 
 # XML-RPC server (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }
+
+# SAML client (compression for HTTP-Redirect binding)
+flate2 = { version = "1.0", optional = true }
 
 # Tor directory mirror (Tor protocol parsing and generation)
 tor-netdoc = { version = "0.36", optional = true }  # Tor network document parsing (consensus, descriptors)

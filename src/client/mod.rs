@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: SAML client
+#[cfg(feature = "saml")]
+pub mod saml;
+#[cfg(feature = "saml")]
+pub use saml::actions::SamlClientProtocol;
