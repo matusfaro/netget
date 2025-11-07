@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: MCP client
-#[cfg(feature = "mcp")]
-pub mod mcp;
-#[cfg(feature = "mcp")]
-pub use mcp::actions::McpClientProtocol;
+// Phase 6: mDNS client
+#[cfg(feature = "mdns")]
+pub mod mdns;
+#[cfg(feature = "mdns")]
+pub use mdns::actions::MdnsClientProtocol;
