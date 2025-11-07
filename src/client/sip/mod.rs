@@ -1,0 +1,549 @@
+//! SIP client implementation
+pub mod actions;
+
+pub use actions::SipClientProtocol;
+
+use anyhow::{Context, Result};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::UdpSocket;
+use tokio::sync::{mpsc, Mutex};
+use tracing::{error, info, trace, warn};
+
+use crate::llm::action_helper::call_llm_for_client;
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::ClientLlmResult;
+use crate::protocol::Event;
+use crate::state::app_state::AppState;
+use crate::state::{ClientId, ClientStatus};
+use crate::client::sip::actions::{SIP_CLIENT_CONNECTED_EVENT, SIP_CLIENT_RESPONSE_RECEIVED_EVENT};
+
+/// Connection state for LLM processing
+#[derive(Debug, Clone, PartialEq)]
+enum ConnectionState {
+    Idle,
+    Processing,
+    Accumulating,
+}
+
+/// Per-client data for LLM handling
+struct ClientData {
+    state: ConnectionState,
+    queued_data: Vec<u8>,
+    memory: String,
+    call_id: Option<String>,
+    from_tag: Option<String>,
+    to_tag: Option<String>,
+    cseq: u32,
+}
+
+/// SIP client that connects to a remote SIP server
+pub struct SipClient;
+
+impl SipClient {
+    /// Connect to a SIP server with integrated LLM actions
+    pub async fn connect_with_llm_actions(
+        remote_addr: String,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+    ) -> Result<SocketAddr> {
+        // Parse remote address
+        let remote_sock_addr: SocketAddr = remote_addr
+            .parse()
+            .context(format!("Invalid SIP server address: {}", remote_addr))?;
+
+        // Bind to local UDP socket (ephemeral port)
+        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+        let local_addr = socket.local_addr()?;
+
+        // Connect UDP socket to remote address
+        socket.connect(remote_sock_addr).await?;
+
+        info!(
+            "SIP client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
+
+        // Update client state
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!("[CLIENT] SIP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Initialize client data
+        let client_data = Arc::new(Mutex::new(ClientData {
+            state: ConnectionState::Idle,
+            queued_data: Vec::new(),
+            memory: String::new(),
+            call_id: None,
+            from_tag: None,
+            to_tag: None,
+            cseq: 1,
+        }));
+
+        // Call LLM with initial connected event
+        let protocol = Arc::new(crate::client::sip::actions::SipClientProtocol::new());
+        let event = Event::new(
+            &SIP_CLIENT_CONNECTED_EVENT,
+            serde_json::json!({
+                "remote_addr": remote_sock_addr.to_string(),
+                "local_addr": local_addr.to_string(),
+            }),
+        );
+
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &client_data.lock().await.memory,
+                Some(&event),
+                protocol.as_ref(),
+                &status_tx,
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
+                    // Update memory
+                    if let Some(mem) = memory_updates {
+                        client_data.lock().await.memory = mem;
+                    }
+
+                    // Execute initial actions (e.g., REGISTER)
+                    for action in actions {
+                        Self::execute_sip_action(
+                            action,
+                            &socket,
+                            &protocol,
+                            &client_data,
+                            client_id,
+                            &status_tx,
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error for SIP client {}: {}", client_id, e);
+                }
+            }
+        }
+
+        // Spawn read loop
+        let socket_clone = socket.clone();
+        let llm_clone = llm_client.clone();
+        let state_clone = app_state.clone();
+        let status_clone = status_tx.clone();
+        let protocol_clone = protocol.clone();
+        let client_data_clone = client_data.clone();
+
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 65535]; // Max UDP packet size
+
+            loop {
+                match socket_clone.recv(&mut buffer).await {
+                    Ok(n) => {
+                        let data = buffer[..n].to_vec();
+                        trace!("SIP client {} received {} bytes", client_id, n);
+
+                        // Parse SIP response
+                        let response = match Self::parse_sip_response(&data) {
+                            Ok(resp) => resp,
+                            Err(e) => {
+                                warn!(
+                                    "SIP client {} failed to parse response: {}",
+                                    client_id, e
+                                );
+                                continue;
+                            }
+                        };
+
+                        info!(
+                            "SIP client {} received {} response (status: {})",
+                            client_id, response.method, response.status_code
+                        );
+
+                        // Handle response with LLM
+                        let mut client_data_lock = client_data_clone.lock().await;
+
+                        match client_data_lock.state {
+                            ConnectionState::Idle => {
+                                // Process immediately
+                                client_data_lock.state = ConnectionState::Processing;
+
+                                // Extract To tag if present
+                                if let Some(to_tag) = &response.to_tag {
+                                    client_data_lock.to_tag = Some(to_tag.clone());
+                                }
+
+                                drop(client_data_lock);
+
+                                // Call LLM
+                                if let Some(instruction) =
+                                    state_clone.get_instruction_for_client(client_id).await
+                                {
+                                    let event = Event::new(
+                                        &SIP_CLIENT_RESPONSE_RECEIVED_EVENT,
+                                        serde_json::json!({
+                                            "status_code": response.status_code,
+                                            "reason_phrase": response.reason_phrase,
+                                            "method": response.method,
+                                            "call_id": response.call_id,
+                                            "from": response.from,
+                                            "to": response.to,
+                                            "body": response.body,
+                                        }),
+                                    );
+
+                                    match call_llm_for_client(
+                                        &llm_clone,
+                                        &state_clone,
+                                        client_id.to_string(),
+                                        &instruction,
+                                        &client_data_clone.lock().await.memory,
+                                        Some(&event),
+                                        protocol_clone.as_ref(),
+                                        &status_clone,
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
+                                            // Update memory
+                                            if let Some(mem) = memory_updates {
+                                                client_data_clone.lock().await.memory = mem;
+                                            }
+
+                                            // Execute actions
+                                            for action in actions {
+                                                Self::execute_sip_action(
+                                                    action,
+                                                    &socket_clone,
+                                                    &protocol_clone,
+                                                    &client_data_clone,
+                                                    client_id,
+                                                    &status_clone,
+                                                )
+                                                .await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("LLM error for SIP client {}: {}", client_id, e);
+                                        }
+                                    }
+                                }
+
+                                // Reset state
+                                let mut lock = client_data_clone.lock().await;
+                                lock.state = ConnectionState::Idle;
+
+                                // Process queued data if any
+                                if !lock.queued_data.is_empty() {
+                                    let _queued = lock.queued_data.clone();
+                                    lock.queued_data.clear();
+                                    drop(lock);
+                                    // Re-process queued data (not implemented for simplicity)
+                                }
+                            }
+                            ConnectionState::Processing => {
+                                // Queue data
+                                client_data_lock.queued_data.extend_from_slice(&data);
+                            }
+                            ConnectionState::Accumulating => {
+                                // Accumulate data (not used for UDP)
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("SIP client {} recv error: {}", client_id, e);
+                        state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
+                        let _ =
+                            status_clone.send(format!("[CLIENT] SIP client {} error: {}", client_id, e));
+                        let _ = status_clone.send("__UPDATE_UI__".to_string());
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(local_addr)
+    }
+
+    /// Execute SIP action
+    async fn execute_sip_action(
+        action: serde_json::Value,
+        socket: &Arc<UdpSocket>,
+        protocol: &Arc<SipClientProtocol>,
+        client_data: &Arc<Mutex<ClientData>>,
+        client_id: ClientId,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+
+        match protocol.as_ref().execute_action(action.clone()) {
+            Ok(ClientActionResult::Custom { name, data }) => {
+                match name.as_str() {
+                    "sip_register" | "sip_invite" | "sip_bye" | "sip_options" | "sip_cancel" => {
+                        // Build and send SIP request
+                        let mut client_data_lock = client_data.lock().await;
+
+                        // Generate Call-ID if not set
+                        if client_data_lock.call_id.is_none() {
+                            client_data_lock.call_id = Some(Self::generate_call_id());
+                        }
+
+                        // Generate From tag if not set
+                        if client_data_lock.from_tag.is_none() {
+                            client_data_lock.from_tag = Some(Self::generate_tag());
+                        }
+
+                        let request = Self::build_sip_request(
+                            &name,
+                            &data,
+                            &client_data_lock.call_id.as_ref().unwrap(),
+                            &client_data_lock.from_tag.as_ref().unwrap(),
+                            client_data_lock.to_tag.as_ref(),
+                            client_data_lock.cseq,
+                        );
+
+                        client_data_lock.cseq += 1;
+                        drop(client_data_lock);
+
+                        // Send request
+                        match socket.send(&request).await {
+                            Ok(sent) => {
+                                info!("SIP client {} sent {} bytes", client_id, sent);
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] SIP client {} sent {} request",
+                                    client_id, name
+                                ));
+                            }
+                            Err(e) => {
+                                error!("SIP client {} send error: {}", client_id, e);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(ClientActionResult::Disconnect) => {
+                info!("SIP client {} disconnecting", client_id);
+                let _ = status_tx.send(format!("[CLIENT] SIP client {} disconnecting", client_id));
+            }
+            Ok(ClientActionResult::WaitForMore) => {
+                trace!("SIP client {} waiting for more data", client_id);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                error!("Action execution error for SIP client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Parse SIP response from bytes
+    fn parse_sip_response(data: &[u8]) -> Result<SipResponse> {
+        let text = String::from_utf8(data.to_vec())?;
+        let lines: Vec<&str> = text.lines().collect();
+
+        if lines.is_empty() {
+            anyhow::bail!("Empty SIP response");
+        }
+
+        // Parse status line (e.g., "SIP/2.0 200 OK")
+        let status_line: Vec<&str> = lines[0].split_whitespace().collect();
+        if status_line.len() < 3 {
+            anyhow::bail!("Invalid SIP status line");
+        }
+
+        let status_code: u16 = status_line[1].parse()?;
+        let reason_phrase = status_line[2..].join(" ");
+
+        // Parse headers
+        let mut call_id = String::new();
+        let mut from = String::new();
+        let mut to = String::new();
+        let mut cseq = String::new();
+        let mut to_tag = None;
+        let mut content_length = 0;
+
+        let mut i = 1;
+        while i < lines.len() {
+            let line = lines[i];
+            if line.is_empty() {
+                // End of headers
+                i += 1;
+                break;
+            }
+
+            if let Some(colon_pos) = line.find(':') {
+                let (header_name, header_value) = line.split_at(colon_pos);
+                let header_value = header_value[1..].trim();
+
+                match header_name.to_lowercase().as_str() {
+                    "call-id" => call_id = header_value.to_string(),
+                    "from" | "f" => from = header_value.to_string(),
+                    "to" | "t" => {
+                        to = header_value.to_string();
+                        // Extract tag if present
+                        if let Some(tag_start) = header_value.find(";tag=") {
+                            to_tag = Some(header_value[tag_start + 5..].to_string());
+                        }
+                    }
+                    "cseq" => cseq = header_value.to_string(),
+                    "content-length" | "l" => content_length = header_value.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+
+            i += 1;
+        }
+
+        // Parse body (SDP or other content)
+        let mut body = String::new();
+        if content_length > 0 && i < lines.len() {
+            body = lines[i..].join("\r\n");
+        }
+
+        // Extract method from CSeq
+        let method = cseq.split_whitespace().nth(1).unwrap_or("").to_string();
+
+        Ok(SipResponse {
+            status_code,
+            reason_phrase,
+            method,
+            call_id,
+            from,
+            to,
+            to_tag,
+            cseq,
+            body: if body.is_empty() { None } else { Some(body) },
+        })
+    }
+
+    /// Build SIP request from action data
+    fn build_sip_request(
+        method: &str,
+        data: &serde_json::Value,
+        call_id: &str,
+        from_tag: &str,
+        to_tag: Option<&String>,
+        cseq: u32,
+    ) -> Vec<u8> {
+        let from = data["from"].as_str().unwrap_or("sip:user@localhost");
+        let to = data["to"].as_str().unwrap_or("sip:server@localhost");
+        let request_uri = data["request_uri"]
+            .as_str()
+            .unwrap_or("sip:server@localhost");
+
+        // Map action name to SIP method
+        let sip_method = match method {
+            "sip_register" => "REGISTER",
+            "sip_invite" => "INVITE",
+            "sip_bye" => "BYE",
+            "sip_options" => "OPTIONS",
+            "sip_cancel" => "CANCEL",
+            _ => "OPTIONS",
+        };
+
+        // Build request line
+        let mut request = format!("{} {} SIP/2.0\r\n", sip_method, request_uri);
+
+        // Add Via header
+        request.push_str("Via: SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bK-netget-");
+        request.push_str(&Self::generate_branch());
+        request.push_str("\r\n");
+
+        // Add From header (with tag)
+        request.push_str(&format!("From: <{}>;tag={}\r\n", from, from_tag));
+
+        // Add To header (with tag if available)
+        if let Some(tag) = to_tag {
+            request.push_str(&format!("To: <{}>;tag={}\r\n", to, tag));
+        } else {
+            request.push_str(&format!("To: <{}>\r\n", to));
+        }
+
+        // Add Call-ID header
+        request.push_str(&format!("Call-ID: {}\r\n", call_id));
+
+        // Add CSeq header
+        request.push_str(&format!("CSeq: {} {}\r\n", cseq, sip_method));
+
+        // Add Contact header (for REGISTER/INVITE)
+        if sip_method == "REGISTER" || sip_method == "INVITE" {
+            let contact = data["contact"].as_str().unwrap_or("sip:user@127.0.0.1");
+            request.push_str(&format!("Contact: <{}>\r\n", contact));
+        }
+
+        // Add Expires header (for REGISTER)
+        if sip_method == "REGISTER" {
+            let expires = data["expires"].as_u64().unwrap_or(3600);
+            request.push_str(&format!("Expires: {}\r\n", expires));
+        }
+
+        // Add body (SDP for INVITE)
+        let body = if sip_method == "INVITE" {
+            data["sdp"].as_str()
+        } else {
+            None
+        };
+
+        // Add Content-Length and body
+        if let Some(body_text) = body {
+            request.push_str("Content-Type: application/sdp\r\n");
+            request.push_str(&format!("Content-Length: {}\r\n", body_text.len()));
+            request.push_str("\r\n");
+            request.push_str(body_text);
+        } else {
+            request.push_str("Content-Length: 0\r\n");
+            request.push_str("\r\n");
+        }
+
+        request.into_bytes()
+    }
+
+    /// Generate a random Call-ID
+    fn generate_call_id() -> String {
+        use rand::Rng;
+        let random: u64 = rand::thread_rng().gen();
+        format!("{}@netget-client", random)
+    }
+
+    /// Generate a random tag
+    fn generate_tag() -> String {
+        use rand::Rng;
+        let tag: u32 = rand::thread_rng().gen();
+        format!("{:x}", tag)
+    }
+
+    /// Generate a random branch parameter
+    fn generate_branch() -> String {
+        use rand::Rng;
+        let branch: u32 = rand::thread_rng().gen();
+        format!("{:x}", branch)
+    }
+}
+
+/// Parsed SIP response
+#[derive(Debug, Clone)]
+struct SipResponse {
+    status_code: u16,
+    reason_phrase: String,
+    method: String, // Extracted from CSeq
+    call_id: String,
+    from: String,
+    to: String,
+    to_tag: Option<String>,
+    cseq: String,
+    body: Option<String>,
+}

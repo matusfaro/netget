@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: SAML client
-#[cfg(feature = "saml")]
-pub mod saml;
-#[cfg(feature = "saml")]
-pub use saml::actions::SamlClientProtocol;
+// Phase 6: SIP client
+#[cfg(feature = "sip")]
+pub mod sip;
+#[cfg(feature = "sip")]
+pub use sip::actions::SipClientProtocol;
