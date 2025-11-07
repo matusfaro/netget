@@ -47,6 +47,10 @@ impl ClientProtocolRegistry {
         // Phase 5: Redis client
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+
+        // DataLink client
+        #[cfg(feature = "datalink")]
+        self.register(Arc::new(crate::client::datalink::DataLinkClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
