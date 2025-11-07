@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: Elasticsearch client
+#[cfg(feature = "elasticsearch")]
+pub mod elasticsearch;
+#[cfg(feature = "elasticsearch")]
+pub use elasticsearch::actions::ElasticsearchClientProtocol;
