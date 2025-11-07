@@ -33,7 +33,7 @@ smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "async-trait"]
 ipp = ["dep:ipp"]
-postgresql = ["dep:pgwire", "async-trait"]
+postgresql = ["dep:pgwire", "dep:tokio-postgres", "async-trait"]
 redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
@@ -292,6 +292,8 @@ ipp = { version = "5.3", optional = true }
 
 # PostgreSQL server
 pgwire = { version = "0.25", optional = true }
+# PostgreSQL client
+tokio-postgres = { version = "0.7", optional = true }
 
 # Redis server (RESP protocol)
 redis-protocol = { version = "6.0", optional = true }

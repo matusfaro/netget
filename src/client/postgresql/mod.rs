@@ -9,6 +9,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
 
+use crate::client::postgresql::actions::{
+    POSTGRESQL_CLIENT_CONNECTED_EVENT, POSTGRESQL_CLIENT_QUERY_RESULT_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -16,7 +19,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::postgresql::actions::{POSTGRESQL_CLIENT_CONNECTED_EVENT, POSTGRESQL_CLIENT_QUERY_RESULT_EVENT};
 
 /// PostgreSQL client that connects to a PostgreSQL server
 pub struct PostgresqlClient;
@@ -201,7 +203,7 @@ impl PostgresqlClient {
 
                                                 if let Ok(ClientLlmResult {
                                                     actions: _,
-                                                    memory_updates,
+                                                    memory_updates: Some(mem),
                                                 }) = call_llm_for_client(
                                                     &llm_client_clone,
                                                     &app_state_clone,
@@ -214,11 +216,9 @@ impl PostgresqlClient {
                                                 )
                                                 .await
                                                 {
-                                                    if let Some(mem) = memory_updates {
-                                                        app_state_clone
-                                                            .set_memory_for_client(client_id, mem)
-                                                            .await;
-                                                    }
+                                                    app_state_clone
+                                                        .set_memory_for_client(client_id, mem)
+                                                        .await;
                                                 }
                                             }
                                             Err(e) => {
