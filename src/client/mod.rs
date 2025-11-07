@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: OAuth2 client
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
+#[cfg(feature = "oauth2")]
+pub use oauth2::actions::OAuth2ClientProtocol;
