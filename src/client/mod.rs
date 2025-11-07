@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: NPM client
+#[cfg(feature = "npm")]
+pub mod npm;
+#[cfg(feature = "npm")]
+pub use npm::actions::NpmClientProtocol;
