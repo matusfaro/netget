@@ -76,7 +76,7 @@ impl Server for RipProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["rip", "routing"]
+        vec!["rip"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

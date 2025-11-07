@@ -104,7 +104,7 @@ impl Server for ArpProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["arp", "address resolution", "layer 2"]
+        vec!["arp", "address resolution"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

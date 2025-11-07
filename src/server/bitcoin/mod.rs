@@ -2,7 +2,7 @@
 pub mod actions;
 
 use anyhow::{Context, Result};
-use bitcoin::consensus::{Decodable, Encodable};
+use bitcoin::consensus::Decodable;
 use bitcoin::p2p::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::p2p::Magic;
 use std::collections::HashMap;
@@ -36,6 +36,7 @@ struct ConnectionData {
     state: ConnectionState,
     queued_data: Vec<u8>,
     write_half: Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    #[allow(dead_code)]
     handshake_complete: bool,
 }
 
@@ -55,7 +56,7 @@ impl BitcoinServer {
         // Parse network magic
         let magic = match network.to_lowercase().as_str() {
             "mainnet" | "main" => Magic::BITCOIN,
-            "testnet" | "test" => Magic::TESTNET,
+            "testnet" | "test" => Magic::TESTNET3,
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => {
@@ -105,10 +106,7 @@ impl BitcoinServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Bitcoin {
-                                handshake_complete: false,
-                                last_message_type: None,
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());

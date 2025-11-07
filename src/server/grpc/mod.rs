@@ -158,11 +158,7 @@ impl GrpcServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Grpc {
-                                service_name: String::new(),
-                                method_name: String::new(),
-                                metadata: std::collections::HashMap::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());

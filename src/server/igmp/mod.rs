@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 use socket2::Socket;
 use std::os::fd::{AsRawFd, FromRawFd};
 
@@ -234,9 +234,7 @@ impl IgmpServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Igmp {
-                                joined_groups: state.joined_groups.iter().copied().collect(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         drop(state);
                         app_state.add_connection_to_server(server_id, conn_state).await;

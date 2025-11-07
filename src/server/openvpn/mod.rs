@@ -25,7 +25,7 @@ use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
 use actions::OPENVPN_PEER_CONNECTED_EVENT;
 use anyhow::{Context, Result};
-use packet::{AckPacket, ControlPacket, DataPacket, Opcode, PacketHeader};
+use packet::{ControlPacket, DataPacket, Opcode, PacketHeader};
 use peer::{Peer, PeerManager, PeerState};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -134,7 +134,7 @@ impl OpenvpnServer {
         // Create TUN device
         let mut tun_config = tun::Configuration::default();
         tun_config
-            .name(&interface_name)
+            .tun_name(&interface_name)
             .address(VPN_SERVER_IP.parse::<Ipv4Addr>().unwrap())
             .netmask("255.255.255.0".parse::<Ipv4Addr>().unwrap())
             .mtu(1500)
@@ -366,11 +366,7 @@ impl OpenvpnServer {
             last_activity: now,
             status: ConnectionStatus::Active,
             status_changed_at: now,
-            protocol_info: ProtocolConnectionInfo::Openvpn {
-                session_id: format!("{:016x}", peer.session_id),
-                vpn_ip: Some(vpn_ip.to_string()),
-                cipher: "AES-256-GCM".to_string(),
-            },
+            protocol_info: ProtocolConnectionInfo::empty(),
         };
 
         app_state.add_connection_to_server(server_id, conn_state).await;
@@ -531,7 +527,7 @@ impl OpenvpnServer {
     /// Handle outgoing packets from TUN (to be sent to VPN clients)
     async fn handle_tun_packets(
         &self,
-        status_tx: mpsc::UnboundedSender<String>,
+        _status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         let mut buf = vec![0u8; 2048];
 

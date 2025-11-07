@@ -125,7 +125,7 @@ impl Server for IsisProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["isis", "is-is", "routing"]
+        vec!["isis", "is-is"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

@@ -114,7 +114,7 @@ impl DhcpServer {
                         let now = std::time::Instant::now();
 
                         #[cfg(feature = "dhcp")]
-                        let request_type = parsed_info.as_ref()
+                        let _request_type = parsed_info.as_ref()
                             .map(|(desc, _)| desc.clone())
                             .unwrap_or_else(|| "unknown".to_string());
 
@@ -132,9 +132,7 @@ impl DhcpServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Dhcp {
-                                recent_requests: vec![(request_type, now)],
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());

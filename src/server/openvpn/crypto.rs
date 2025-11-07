@@ -7,7 +7,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
-use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey};
+use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey, Nonce as ChachaNonce};
 
 /// Cipher suite for data channel encryption
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,8 +38,8 @@ impl DataChannelCipher {
 
     /// Create new cipher with ChaCha20-Poly1305
     pub fn new_chacha20poly1305(key: &[u8; 32]) -> Result<Self> {
-        let chacha_key = ChaChaKey::from_slice(key);
-        let cipher = ChaCha20Poly1305::new(chacha_key);
+        let chacha_key = ChaChaKey::from(*key);
+        let cipher = ChaCha20Poly1305::new(&chacha_key);
 
         Ok(DataChannelCipher {
             suite: CipherSuite::ChaCha20Poly1305,
@@ -61,7 +61,7 @@ impl DataChannelCipher {
                 // Create 12-byte nonce from packet_id
                 let mut nonce_bytes = [0u8; 12];
                 nonce_bytes[8..12].copy_from_slice(&packet_id.to_be_bytes());
-                let nonce = Nonce::from_slice(&nonce_bytes);
+                let nonce = Nonce::from(nonce_bytes);
 
                 let payload = Payload {
                     msg: plaintext,
@@ -69,7 +69,7 @@ impl DataChannelCipher {
                 };
 
                 cipher
-                    .encrypt(nonce, payload)
+                    .encrypt(&nonce, payload)
                     .map_err(|e| anyhow::anyhow!("AES-GCM encryption failed: {}", e))
             }
             CipherSuite::ChaCha20Poly1305 => {
@@ -79,7 +79,7 @@ impl DataChannelCipher {
                 // Create 12-byte nonce from packet_id
                 let mut nonce_bytes = [0u8; 12];
                 nonce_bytes[8..12].copy_from_slice(&packet_id.to_be_bytes());
-                let nonce = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
+                let nonce = ChachaNonce::from(nonce_bytes);
 
                 let payload = Payload {
                     msg: plaintext,
@@ -87,7 +87,7 @@ impl DataChannelCipher {
                 };
 
                 cipher
-                    .encrypt(nonce, payload)
+                    .encrypt(&nonce, payload)
                     .map_err(|e| anyhow::anyhow!("ChaCha20-Poly1305 encryption failed: {}", e))
             }
         }
@@ -103,7 +103,7 @@ impl DataChannelCipher {
                 // Create 12-byte nonce from packet_id
                 let mut nonce_bytes = [0u8; 12];
                 nonce_bytes[8..12].copy_from_slice(&packet_id.to_be_bytes());
-                let nonce = Nonce::from_slice(&nonce_bytes);
+                let nonce = Nonce::from(nonce_bytes);
 
                 let payload = Payload {
                     msg: ciphertext,
@@ -111,7 +111,7 @@ impl DataChannelCipher {
                 };
 
                 cipher
-                    .decrypt(nonce, payload)
+                    .decrypt(&nonce, payload)
                     .map_err(|e| anyhow::anyhow!("AES-GCM decryption failed: {}", e))
             }
             CipherSuite::ChaCha20Poly1305 => {
@@ -121,7 +121,7 @@ impl DataChannelCipher {
                 // Create 12-byte nonce from packet_id
                 let mut nonce_bytes = [0u8; 12];
                 nonce_bytes[8..12].copy_from_slice(&packet_id.to_be_bytes());
-                let nonce = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
+                let nonce = ChachaNonce::from(nonce_bytes);
 
                 let payload = Payload {
                     msg: ciphertext,
@@ -129,7 +129,7 @@ impl DataChannelCipher {
                 };
 
                 cipher
-                    .decrypt(nonce, payload)
+                    .decrypt(&nonce, payload)
                     .map_err(|e| anyhow::anyhow!("ChaCha20-Poly1305 decryption failed: {}", e))
             }
         }

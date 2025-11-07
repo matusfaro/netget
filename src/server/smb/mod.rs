@@ -188,12 +188,7 @@ impl SmbServer {
             last_activity: now,
             status: ConnectionStatus::Active,
             status_changed_at: now,
-            protocol_info: ProtocolConnectionInfo::Smb {
-                authenticated: false,
-                username: None,
-                session_id: None,
-                open_files: Vec::new(),
-            },
+            protocol_info: ProtocolConnectionInfo::empty(),
         };
 
         app_state.add_connection_to_server(server_id, conn_state).await;

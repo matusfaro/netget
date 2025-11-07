@@ -76,7 +76,7 @@ impl TurnServer {
 
                         // Get allocation info for this client
                         let allocations = server.allocations.lock().await;
-                        let allocation_ids: Vec<String> = allocations
+                        let _allocation_ids: Vec<String> = allocations
                             .iter()
                             .filter(|(_, alloc)| alloc.client_addr == peer_addr)
                             .map(|(id, _)| id.clone())
@@ -94,10 +94,7 @@ impl TurnServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Turn {
-                                allocation_ids,
-                                relay_addresses: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());

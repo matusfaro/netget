@@ -141,10 +141,7 @@ impl CassandraServer {
                 last_activity: now,
                 status: ConnectionStatus::Active,
                 status_changed_at: now,
-                protocol_info: ProtocolConnectionInfo::Cassandra {
-                    ready: false,
-                    protocol_version: 4,
-                },
+                protocol_info: ProtocolConnectionInfo::empty(),
             };
 
             self.app_state.add_connection_to_server(server_id, conn_state).await;

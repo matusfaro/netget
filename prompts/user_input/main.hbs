@@ -1,4 +1,4 @@
-{{> shared::role }}
+{{> shared/partials/role }}
 
 {{#if conversation_history}}
 # Conversation History
@@ -10,16 +10,16 @@
 
 {{instructions}}
 
-{{> shared::actions tool_actions=tool_actions regular_actions=regular_actions }}
+{{> shared/partials/actions tool_actions=tool_actions regular_actions=regular_actions }}
 
 {{#if include_base_stacks}}
-{{> shared::base_stack_docs base_stack_docs=base_stack_docs }}
+{{> shared/partials/base_stack_docs base_stack_docs=base_stack_docs }}
 
 {{/if}}
 {{#if scripting_enabled}}
-{{> shared::scripting selected_mode=selected_scripting_mode }}
+{{> shared/partials/scripting selected_mode=selected_scripting_mode }}
 
 {{/if}}
-{{> shared::response_format }}
+{{> shared/partials/response_format }}
 
-{{> shared::current_state servers=servers mode=mode can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}
+{{> shared/partials/current_state servers=servers mode=mode can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}

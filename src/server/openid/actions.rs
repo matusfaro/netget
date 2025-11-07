@@ -103,7 +103,7 @@ impl Server for OpenIdProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["openid", "oidc", "openid connect", "oauth2", "sso", "authentication"]
+        vec!["openid", "oidc", "openid connect", "sso", "authentication"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

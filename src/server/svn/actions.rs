@@ -134,7 +134,7 @@ impl SvnProtocol {
             })
             .unwrap_or_else(|| vec!["ANONYMOUS"]);
 
-        let realm = action
+        let _realm = action
             .get("realm")
             .and_then(|v| v.as_str())
             .unwrap_or("svn");

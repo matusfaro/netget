@@ -52,7 +52,7 @@ impl TelnetServer {
                             let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
 
                             // Add connection to ServerInstance
-                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus, ProtocolState};
+                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -65,11 +65,7 @@ impl TelnetServer {
                                 last_activity: now,
                                 status: ConnectionStatus::Active,
                                 status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::Telnet {
-                                    write_half: write_half_arc.clone(),
-                                    state: ProtocolState::Idle,
-                                    queued_data: Vec::new(),
-                                },
+                                protocol_info: ProtocolConnectionInfo::empty(),
                             };
                             state_clone.add_connection_to_server(server_id, conn_state).await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());

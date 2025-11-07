@@ -1,7 +1,7 @@
 //! HTTP/2 Server Push implementation using h2 crate
 
 use bytes::Bytes;
-use h2::server::{Connection, SendResponse};
+use h2::server::SendResponse;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};

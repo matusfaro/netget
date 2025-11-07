@@ -193,7 +193,7 @@ impl Server for Http3Protocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["http3", "http3", "multiplexed"]
+        vec!["http3"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

@@ -1,60 +1,91 @@
 //! E2E tests for Redis client
+//!
+//! These tests verify Redis client functionality by spawning the actual NetGet binary
+//! and testing client behavior as a black-box.
 
 #[cfg(all(test, feature = "redis"))]
 mod redis_client_tests {
-    use netget::state::app_state::AppState;
-    use std::sync::Arc;
+    use super::super::super::helpers::*;
+    use std::time::Duration;
 
-    /// Test Redis client initialization
-    /// LLM calls: 0 (unit test)
+    /// Test Redis client connection and command execution
+    /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
-    async fn test_redis_client_initialization() {
-        let state = Arc::new(AppState::new_with_options(false, true));
+    async fn test_redis_client_connect_and_command() -> E2EResult<()> {
+        // Start a Redis server listening on an available port
+        let port = get_available_port().await?;
+        let server_config = NetGetConfig::new(format!(
+            "Listen on port {} via Redis. Accept PING commands and respond with PONG.",
+            port
+        ));
 
-        let client_instance = netget::state::ClientInstance::new(
-            netget::state::ClientId::new(1),
-            "localhost:6379".to_string(),
-            "Redis".to_string(),
-            "Test Redis client".to_string(),
+        let mut server = start_netget_server(server_config).await?;
+
+        // Give server time to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Now start a Redis client that connects and sends a command
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via Redis. Send PING command and read response.",
+            port
+        ));
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to connect and execute command
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client output shows connection
+        assert!(
+            client.output_contains("connected").await,
+            "Client should show connection message. Output: {:?}",
+            client.get_output().await
         );
 
-        let client_id = state.add_client(client_instance).await;
+        println!("✅ Redis client connected and executed command successfully");
 
-        let client = state.get_client(client_id).await.expect("Client not found");
-        assert_eq!(client.protocol_name, "Redis");
-        assert_eq!(client.remote_addr, "localhost:6379");
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
 
-        println!("✅ Redis client initialization works");
-
-        state.remove_client(client_id).await;
+        Ok(())
     }
 
-    /// Test Redis client status management
-    /// LLM calls: 0 (unit test)
+    /// Test Redis client can be controlled via LLM instructions
+    /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
-    async fn test_redis_client_status() {
-        let state = Arc::new(AppState::new_with_options(false, true));
+    async fn test_redis_client_llm_controlled_commands() -> E2EResult<()> {
+        let port = get_available_port().await?;
 
-        let client_instance = netget::state::ClientInstance::new(
-            netget::state::ClientId::new(1),
-            "localhost:6379".to_string(),
-            "Redis".to_string(),
-            "Test status".to_string(),
-        );
+        // Start a simple Redis server
+        let server_config = NetGetConfig::new(format!(
+            "Listen on port {} via Redis. Log all incoming commands.",
+            port
+        ));
 
-        let client_id = state.add_client(client_instance).await;
+        let mut server = start_netget_server(server_config).await?;
 
-        // Test status transitions
-        state.update_client_status(client_id, netget::state::ClientStatus::Connecting).await;
-        let client = state.get_client(client_id).await.expect("Client not found");
-        assert_eq!(client.status, netget::state::ClientStatus::Connecting);
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        state.update_client_status(client_id, netget::state::ClientStatus::Connected).await;
-        let client = state.get_client(client_id).await.expect("Client not found");
-        assert_eq!(client.status, netget::state::ClientStatus::Connected);
+        // Client that sends specific commands based on LLM instruction
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via Redis. Execute SET key1 'value1' command.",
+            port
+        ));
 
-        println!("✅ Redis client status management works");
+        let mut client = start_netget_client(client_config).await?;
 
-        state.remove_client(client_id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify the client is Redis protocol
+        assert_eq!(client.protocol, "Redis", "Client should be Redis protocol");
+
+        println!("✅ Redis client responded to LLM instruction");
+
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
     }
 }

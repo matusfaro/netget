@@ -141,5 +141,5 @@ pub mod wireguard;
 #[cfg(feature = "xmlrpc")]
 pub mod xmlrpc;
 
-// Shared test helpers
-pub mod helpers;
+// Shared test helpers - re-export from top-level for backward compatibility
+pub use super::helpers;

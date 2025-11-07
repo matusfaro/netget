@@ -404,11 +404,7 @@ impl RusshServer for SshServer {
                 last_activity: now,
                 status: ConnectionStatus::Active,
                 status_changed_at: now,
-                protocol_info: ProtocolConnectionInfo::Ssh {
-                    authenticated: false,
-                    username: None,
-                    channels: Vec::new(),
-                },
+                protocol_info: ProtocolConnectionInfo::empty(),
             };
 
             let app_state = self.app_state.clone();

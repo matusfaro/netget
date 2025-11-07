@@ -60,9 +60,7 @@ impl TorrentDhtServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::TorrentDht {
-                                recent_queries: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -165,7 +163,7 @@ impl TorrentDhtServer {
 
         if let Value::Dict(dict) = value {
             // Get message type (q = query, r = response, e = error)
-            let msg_type = dict.get(b"y".as_ref())
+            let msg_type = dict.get::<[u8]>(b"y")
                 .and_then(|v| {
                     if let Value::Bytes(bytes) = v {
                         String::from_utf8(bytes.clone()).ok()
@@ -177,7 +175,7 @@ impl TorrentDhtServer {
 
             if msg_type == "q" {
                 // Query message
-                let query_type = dict.get(b"q".as_ref())
+                let query_type = dict.get::<[u8]>(b"q")
                     .and_then(|v| {
                         if let Value::Bytes(bytes) = v {
                             String::from_utf8(bytes.clone()).ok()
@@ -188,7 +186,7 @@ impl TorrentDhtServer {
                     .ok_or_else(|| anyhow::anyhow!("Missing 'q' field"))?;
 
                 // Get transaction ID
-                let transaction_id = dict.get(b"t".as_ref())
+                let transaction_id = dict.get::<[u8]>(b"t")
                     .and_then(|v| {
                         if let Value::Bytes(bytes) = v {
                             Some(hex::encode(bytes))
@@ -203,7 +201,7 @@ impl TorrentDhtServer {
                     params.insert("transaction_id".to_string(), serde_json::json!(transaction_id));
                 }
 
-                if let Some(Value::Dict(args)) = dict.get(b"a".as_ref()) {
+                if let Some(Value::Dict(args)) = dict.get::<[u8]>(b"a") {
                     for (k, v) in args {
                         let key = String::from_utf8_lossy(k).to_string();
                         let value = Self::bencode_to_json(v);

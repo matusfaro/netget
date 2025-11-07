@@ -117,7 +117,7 @@ impl Server for DataLinkProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["datalink", "data link", "layer 2", "layer2", "l2", "ethernet", "arp", "pcap"]
+        vec!["datalink", "data link", "layer 2", "layer2", "l2", "ethernet", "pcap"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

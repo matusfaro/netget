@@ -3,7 +3,7 @@
 //! Implements the OpenVPN protocol packet format for control and data channels.
 
 use anyhow::{Result, Context};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 
 /// Maximum OpenVPN packet size
 pub const MAX_PACKET_SIZE: usize = 65535;

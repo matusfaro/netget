@@ -386,6 +386,210 @@ pub fn close_all_servers_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for open_client
+pub fn open_client_action(
+    selected_mode: crate::state::app_state::ScriptingMode,
+    env: &crate::scripting::ScriptingEnvironment,
+    is_enabled: bool,
+) -> ActionDefinition {
+    let name = "open_client".to_string();
+    let mut description = "Connect to a remote server as a client.".to_string();
+
+    if !is_enabled {
+        description.push_str(" ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for client configuration.");
+        return ActionDefinition {
+            name,
+            description,
+            parameters: vec![],
+            example: json!({}),
+        };
+    }
+
+    let mut parameters = vec![
+        Parameter {
+            name: "protocol".to_string(),
+            type_hint: "string".to_string(),
+            description: "Protocol to use for connection (e.g., 'tcp', 'http', 'redis', 'ssh')".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "remote_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Remote server address as 'hostname:port' or 'IP:port' (e.g., 'example.com:80', '192.168.1.1:6379', 'localhost:8080')".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "instruction".to_string(),
+            type_hint: "string".to_string(),
+            description: "Detailed instructions for controlling the client (how to send data, interpret responses, make decisions)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "initial_memory".to_string(),
+            type_hint: "string".to_string(),
+            description: "Optional initial memory as a string. Use for storing persistent context. Example: \"auth_token: abc123\\nrequest_count: 0\"".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "startup_params".to_string(),
+            type_hint: "object".to_string(),
+            description: "Optional protocol-specific startup parameters. For example, HTTP clients may accept default headers or user agent settings.".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "scheduled_tasks".to_string(),
+            type_hint: "array".to_string(),
+            description: "Optional: Array of scheduled tasks to create with this client. Each task will be attached to the client and execute at specified intervals or delays. Tasks are automatically cleaned up when the client disconnects.".to_string(),
+            required: false,
+        },
+    ];
+
+    // Add script parameters based on scripting mode
+    match selected_mode {
+        crate::state::app_state::ScriptingMode::On => {
+            let available_runtimes = env.format_available();
+            parameters.extend(vec![
+                Parameter {
+                    name: "script_runtime".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "Optional: Choose runtime for script execution. Available: {}",
+                        available_runtimes
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Optional: Inline script code to handle client responses instead of LLM. Must match the script_runtime language.".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Optional: Context types the script handles (e.g., [\"data_received\"]). Defaults to [\"all\"].".to_string(),
+                    required: false,
+                },
+            ]);
+        }
+        crate::state::app_state::ScriptingMode::Off => {
+            // OFF mode: no script parameters
+        }
+        crate::state::app_state::ScriptingMode::Python
+        | crate::state::app_state::ScriptingMode::JavaScript
+        | crate::state::app_state::ScriptingMode::Go
+        | crate::state::app_state::ScriptingMode::Perl => {
+            let lang = selected_mode.as_str();
+            parameters.extend(vec![
+                Parameter {
+                    name: "script_inline".to_string(),
+                    type_hint: "string".to_string(),
+                    description: format!(
+                        "Optional: Inline {} script code to handle client responses instead of LLM.",
+                        lang
+                    ),
+                    required: false,
+                },
+                Parameter {
+                    name: "script_handles".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Optional: Context types the script handles (e.g., [\"data_received\"]). Defaults to [\"all\"].".to_string(),
+                    required: false,
+                },
+            ]);
+        }
+    }
+
+    let example = json!({
+        "type": "open_client",
+        "protocol": "http",
+        "remote_addr": "example.com:80",
+        "instruction": "Send a GET request to /api/status and log the response code."
+    });
+
+    ActionDefinition {
+        name,
+        description,
+        parameters,
+        example,
+    }
+}
+
+/// Get action definition for close_client
+pub fn close_client_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_client".to_string(),
+        description: "Disconnect a specific client by ID.".to_string(),
+        parameters: vec![Parameter {
+            name: "client_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Client ID to close (e.g., 1, 2).".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "close_client",
+            "client_id": 1
+        }),
+    }
+}
+
+/// Get action definition for close_all_clients
+pub fn close_all_clients_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_all_clients".to_string(),
+        description: "Disconnect all active clients.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "close_all_clients"
+        }),
+    }
+}
+
+/// Get action definition for reconnect_client
+pub fn reconnect_client_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "reconnect_client".to_string(),
+        description: "Reconnect a disconnected client to its remote server.".to_string(),
+        parameters: vec![Parameter {
+            name: "client_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Client ID to reconnect (e.g., 1, 2).".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "reconnect_client",
+            "client_id": 1
+        }),
+    }
+}
+
+/// Get action definition for update_client_instruction
+pub fn update_client_instruction_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "update_client_instruction".to_string(),
+        description: "Update the instruction for a specific client (replaces existing instruction).".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "client_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Client ID to update (e.g., 1, 2).".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "instruction".to_string(),
+                type_hint: "string".to_string(),
+                description: "New instruction for the client.".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "update_client_instruction",
+            "client_id": 1,
+            "instruction": "Switch to POST requests with JSON payload"
+        }),
+    }
+}
+
 /// Get action definition for update_instruction
 pub fn update_instruction_action() -> ActionDefinition {
     ActionDefinition {
@@ -751,19 +955,27 @@ pub fn list_tasks_action() -> ActionDefinition {
 ///
 /// Actions are organized logically:
 /// 1. Server Management - Create/destroy servers
-/// 2. Server Configuration - Configure running servers
-/// 3. Task Management - Schedule/cancel tasks
-/// 4. System/Utility - Model changes, messages, logging
+/// 2. Client Management - Create/destroy/control clients
+/// 3. Server Configuration - Configure running servers
+/// 4. Task Management - Schedule/cancel tasks
+/// 5. System/Utility - Model changes, messages, logging
 pub fn get_all_common_actions(
     selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_open_server_enabled: bool,
+    is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
     let mut actions = vec![
         // === Server Management ===
         open_server_action(selected_mode, env, is_open_server_enabled),
         close_server_action(),
         close_all_servers_action(),
+        // === Client Management ===
+        open_client_action(selected_mode, env, is_open_client_enabled),
+        close_client_action(),
+        close_all_clients_action(),
+        reconnect_client_action(),
+        update_client_instruction_action(),
         // === Server Configuration ===
         update_instruction_action(),
         set_memory_action(),
@@ -780,19 +992,20 @@ pub fn get_all_common_actions(
 
     // Only include update_script if scripting is enabled (not OFF mode)
     if selected_mode != crate::state::app_state::ScriptingMode::Off {
-        actions.insert(4, update_script_action(selected_mode, env)); // Insert after update_instruction
+        actions.insert(7, update_script_action(selected_mode, env)); // Insert after close_all_clients (adjusted index)
     }
 
     actions
 }
 
-/// Get common actions for user input (all common actions with enhanced open_server)
+/// Get common actions for user input (all common actions with enhanced open_server and open_client)
 pub fn get_user_input_common_actions(
     selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_open_server_enabled: bool,
+    is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    get_all_common_actions(selected_mode, env, is_open_server_enabled)
+    get_all_common_actions(selected_mode, env, is_open_server_enabled, is_open_client_enabled)
 }
 
 /// Get common actions for network events (exclude server management actions)
@@ -897,25 +1110,34 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
 /// Generate documentation for a single protocol
 ///
 /// This is used by the read_base_stack_docs tool to provide detailed information
-/// about a specific protocol on demand.
+/// about a specific protocol on demand. Includes both server and client capabilities
+/// if available.
 ///
 /// # Arguments
 /// * `protocol_name` - Name of the protocol (e.g., "http", "ssh", "tor")
 ///
 /// # Returns
-/// * `Ok(String)` - Documentation for the protocol
-/// * `Err(_)` - If protocol not found
+/// * `Ok(String)` - Documentation for the protocol (server and/or client)
+/// * `Err(_)` - If protocol not found in either registry
 pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Result<String> {
-    use anyhow::Context;
-
-    let registry = crate::protocol::registry::registry();
+    let server_registry = crate::protocol::registry::registry();
+    let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
 
     // Protocol names are stored in uppercase (e.g., "HTTP", "SSH", "TCP")
-    // Normalize input to uppercase for case-insensitive lookup
-    let normalized_name = protocol_name.to_uppercase();
-    let protocol = registry
-        .get(&normalized_name)
-        .with_context(|| format!("Protocol '{}' not found in registry", protocol_name))?;
+    // Normalize input to lowercase for client registry and uppercase for server
+    let normalized_name_upper = protocol_name.to_uppercase();
+    let normalized_name_lower = protocol_name.to_lowercase();
+
+    let server_protocol = server_registry.get(&normalized_name_upper);
+    let client_protocol = client_registry.get(&normalized_name_lower);
+
+    // Error if neither found
+    if server_protocol.is_none() && client_protocol.is_none() {
+        return Err(anyhow::anyhow!(
+            "Protocol '{}' not found in server or client registry",
+            protocol_name
+        ));
+    }
 
     let mut doc = String::new();
 
@@ -925,61 +1147,134 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
         protocol_name.to_uppercase()
     ));
 
-    // Full stack name
-    doc.push_str(&format!("**Full name:** {}\n\n", protocol.stack_name()));
-
-    // Group
-    doc.push_str(&format!("**Category:** {}\n\n", protocol.group_name()));
-
-    // Description
-    doc.push_str(&format!("**Description:** {}\n\n", protocol.description()));
-
-    // Example prompt
-    doc.push_str(&format!(
-        "**Example usage:** \"{}\"\n\n",
-        protocol.example_prompt()
-    ));
-
-    // Keywords
-    let keywords = protocol.keywords();
-    if !keywords.is_empty() {
-        doc.push_str(&format!("**Keywords:** {}\n\n", keywords.join(", ")));
-    }
-
-    // Startup parameters
-    let params = protocol.get_startup_parameters();
-    if !params.is_empty() {
-        doc.push_str("## Startup Parameters\n\n");
-        doc.push_str("These parameters can be included in the `startup_params` field when calling `open_server`:\n\n");
-        for param in params {
-            doc.push_str(&format!(
-                "- **{}** ({}): {}\n",
-                param.name,
-                if param.required {
-                    "required"
-                } else {
-                    "optional"
-                },
-                param.description
-            ));
-            doc.push_str(&format!("  - Type: {}\n", param.type_hint));
-            doc.push_str(&format!(
-                "  - Example: {}\n",
-                serde_json::to_string(&param.example).unwrap_or_default()
-            ));
-            doc.push('\n');
-        }
+    // Show which modes are available
+    if server_protocol.is_some() && client_protocol.is_some() {
+        doc.push_str("**Available as:** Server and Client\n\n");
+    } else if server_protocol.is_some() {
+        doc.push_str("**Available as:** Server only\n\n");
     } else {
-        doc.push_str(
-            "## Startup Parameters\n\nThis protocol does not require any startup parameters.\n\n",
-        );
+        doc.push_str("**Available as:** Client only\n\n");
     }
 
-    // Metadata (state)
-    let metadata = protocol.metadata();
-    doc.push_str(&format!("**Development state:** {:?}\n", metadata.state));
-    if let Some(notes) = metadata.notes {
-        doc.push_str(&format!("**Notes:** {}\n", notes));
+    // Server documentation
+    if let Some(protocol) = server_protocol {
+        doc.push_str("## Server Mode\n\n");
+
+        // Full stack name
+        doc.push_str(&format!("**Full name:** {}\n\n", protocol.stack_name()));
+
+        // Group
+        doc.push_str(&format!("**Category:** {}\n\n", protocol.group_name()));
+
+        // Description
+        doc.push_str(&format!("**Description:** {}\n\n", protocol.description()));
+
+        // Example prompt
+        doc.push_str(&format!(
+            "**Example usage:** \"{}\"\n\n",
+            protocol.example_prompt()
+        ));
+
+        // Keywords
+        let keywords = protocol.keywords();
+        if !keywords.is_empty() {
+            doc.push_str(&format!("**Keywords:** {}\n\n", keywords.join(", ")));
+        }
+
+        // Startup parameters
+        let params = protocol.get_startup_parameters();
+        if !params.is_empty() {
+            doc.push_str("### Startup Parameters for `open_server`\n\n");
+            doc.push_str("These parameters can be included in the `startup_params` field when calling `open_server`:\n\n");
+            for param in params {
+                doc.push_str(&format!(
+                    "- **{}** ({}): {}\n",
+                    param.name,
+                    if param.required {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                    param.description
+                ));
+                doc.push_str(&format!("  - Type: {}\n", param.type_hint));
+                doc.push_str(&format!(
+                    "  - Example: {}\n",
+                    serde_json::to_string(&param.example).unwrap_or_default()
+                ));
+                doc.push('\n');
+            }
+        } else {
+            doc.push_str("### Startup Parameters for `open_server`\n\nThis server does not require any startup parameters.\n\n");
+        }
+
+        // Metadata (state)
+        let metadata = protocol.metadata();
+        doc.push_str(&format!("**Development state:** {:?}\n", metadata.state));
+        if let Some(notes) = metadata.notes {
+            doc.push_str(&format!("**Notes:** {}\n", notes));
+        }
+        doc.push('\n');
+    }
+
+    // Client documentation
+    if let Some(client) = client_protocol {
+        doc.push_str("## Client Mode\n\n");
+
+        // Full stack name
+        doc.push_str(&format!("**Full name:** {}\n\n", client.stack_name()));
+
+        // Group
+        doc.push_str(&format!("**Category:** {}\n\n", client.group_name()));
+
+        // Description
+        doc.push_str(&format!("**Description:** {}\n\n", client.description()));
+
+        // Example prompt
+        doc.push_str(&format!(
+            "**Example usage:** \"{}\"\n\n",
+            client.example_prompt()
+        ));
+
+        // Keywords
+        let keywords = client.keywords();
+        if !keywords.is_empty() {
+            doc.push_str(&format!("**Keywords:** {}\n\n", keywords.join(", ")));
+        }
+
+        // Startup parameters
+        let params = client.get_startup_parameters();
+        if !params.is_empty() {
+            doc.push_str("### Startup Parameters for `open_client`\n\n");
+            doc.push_str("These parameters can be included in the `startup_params` field when calling `open_client`:\n\n");
+            for param in params {
+                doc.push_str(&format!(
+                    "- **{}** ({}): {}\n",
+                    param.name,
+                    if param.required {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                    param.description
+                ));
+                doc.push_str(&format!("  - Type: {}\n", param.type_hint));
+                doc.push_str(&format!(
+                    "  - Example: {}\n",
+                    serde_json::to_string(&param.example).unwrap_or_default()
+                ));
+                doc.push('\n');
+            }
+        } else {
+            doc.push_str("### Startup Parameters for `open_client`\n\nThis client does not require any startup parameters.\n\n");
+        }
+
+        // Metadata (state)
+        let metadata = client.metadata();
+        doc.push_str(&format!("**Development state:** {:?}\n", metadata.state));
+        if let Some(notes) = metadata.notes {
+            doc.push_str(&format!("**Notes:** {}\n", notes));
+        }
     }
 
     Ok(doc)

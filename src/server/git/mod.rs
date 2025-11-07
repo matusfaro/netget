@@ -82,9 +82,7 @@ impl GitServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Git {
-                                recent_repos: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state
                             .add_connection_to_server(server_id, conn_state)
@@ -652,12 +650,15 @@ async fn track_repo_access(
     connection_id: ConnectionId,
     repo_name: &str,
 ) -> anyhow::Result<()> {
-    use crate::state::server::ProtocolConnectionInfo;
+    
 
     app_state
         .with_server_mut(server_id, |server| {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let ProtocolConnectionInfo::Git { recent_repos } = &mut conn.protocol_info {
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    let mut recent_repos: Vec<String> = obj.get("recent_repos")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
                     if !recent_repos.contains(&repo_name.to_string()) {
                         recent_repos.push(repo_name.to_string());
                         // Keep only last 10 repos
@@ -665,6 +666,7 @@ async fn track_repo_access(
                             recent_repos.remove(0);
                         }
                     }
+                    obj.insert("recent_repos".to_string(), serde_json::to_value(&recent_repos).unwrap_or(serde_json::json!([])));
                 }
             }
         })

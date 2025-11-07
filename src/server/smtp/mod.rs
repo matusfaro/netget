@@ -135,7 +135,7 @@ impl SmtpSession {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()> {
-        use tokio::io::AsyncWriteExt;
+        
 
         // Send initial greeting
         Self::send_greeting(
@@ -170,7 +170,7 @@ impl SmtpSession {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()> {
-        use tokio::io::AsyncWriteExt;
+        
 
         // Send initial greeting
         Self::send_greeting_tls(
