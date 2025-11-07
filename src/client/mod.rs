@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: PyPI client
+#[cfg(feature = "pypi")]
+pub mod pypi;
+#[cfg(feature = "pypi")]
+pub use pypi::actions::PypiClientProtocol;
