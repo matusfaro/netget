@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// NTP client
+#[cfg(feature = "ntp")]
+pub mod ntp;
+#[cfg(feature = "ntp")]
+pub use ntp::actions::NtpClientProtocol;
