@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: mDNS client
+#[cfg(feature = "mdns")]
+pub mod mdns;
+#[cfg(feature = "mdns")]
+pub use mdns::actions::MdnsClientProtocol;
