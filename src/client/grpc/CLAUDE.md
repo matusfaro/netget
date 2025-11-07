@@ -246,6 +246,68 @@ Call Add with a=10, b=20.
 }
 ```
 
+## System Dependencies
+
+### macOS Setup
+
+**gRPC client on macOS**: Mostly pure Rust, but has **optional protoc dependency** for inline .proto text format.
+
+**Minimum Setup (No dependencies)**:
+```bash
+# Build with base64-encoded FileDescriptorSet (recommended, no deps)
+./cargo-isolated.sh build --no-default-features --features grpc
+
+# This works if you provide schema as base64:
+netget> Connect to gRPC server at localhost:50051
+# Then provide proto schema as base64-encoded FileDescriptorSet
+```
+
+**Optional: Install protoc for .proto text support**:
+```bash
+# If you want to use inline .proto text format:
+brew install protobuf
+
+# Verify installation
+protoc --version
+```
+
+**Why three schema formats?**
+1. **Base64 FileDescriptorSet** (recommended) - No dependencies, fastest
+2. **.proto file path** - Requires protoc, useful for development
+3. **Inline .proto text** - Requires protoc, most flexible for LLM generation
+
+### Linux Setup
+
+**Optional protoc installation**:
+```bash
+# Debian/Ubuntu
+sudo apt-get install protobuf-compiler
+
+# Fedora/RHEL
+sudo dnf install protobuf-compiler
+
+# Alpine
+apk add protobuf-dev
+
+# Arch
+sudo pacman -S protobuf
+```
+
+### Troubleshooting
+
+**"protoc not found" error**:
+- Use base64-encoded FileDescriptorSet format instead (no protoc needed)
+- Or install protoc: `brew install protobuf`
+
+**"Invalid protobuf schema" error**:
+- Ensure proto definition is valid proto3 syntax
+- Use online protoc compiler to test: https://protoc-web.appspot.com/
+
+**"Cannot connect to gRPC server"**:
+- Verify server address is correct and server is running
+- Check firewall settings allow connection to gRPC port
+- Ensure proto schema matches server implementation
+
 ## References
 
 - [gRPC Protocol Specification](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
