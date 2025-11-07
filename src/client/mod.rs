@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: SMTP client
-#[cfg(feature = "smtp")]
-pub mod smtp;
-#[cfg(feature = "smtp")]
-pub use smtp::actions::SmtpClientProtocol;
+// Phase 6: SSH client
+#[cfg(feature = "ssh")]
+pub mod ssh;
+#[cfg(feature = "ssh")]
+pub use ssh::actions::SshClientProtocol;
