@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// IS-IS client
+#[cfg(feature = "isis")]
+pub mod isis;
+#[cfg(feature = "isis")]
+pub use isis::actions::IsisClientProtocol;
