@@ -61,6 +61,7 @@ pub static BOOTP_REPLY_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// BOOTP client protocol action handler
+#[derive(Default)]
 pub struct BootpClientProtocol;
 
 impl BootpClientProtocol {
