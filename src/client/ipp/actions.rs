@@ -224,8 +224,9 @@ impl Client for IppClientProtocol {
                 // Convert document data to bytes
                 // If it looks like base64, decode it; otherwise use as UTF-8
                 let data_bytes = if document_data.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') && document_data.len() % 4 == 0 {
-                    // Try base64 decode
-                    base64::decode(document_data).unwrap_or_else(|_| document_data.as_bytes().to_vec())
+                    // Try base64 decode using the new engine API
+                    use base64::{Engine as _, engine::general_purpose};
+                    general_purpose::STANDARD.decode(document_data).unwrap_or_else(|_| document_data.as_bytes().to_vec())
                 } else {
                     // Use as UTF-8
                     document_data.as_bytes().to_vec()
