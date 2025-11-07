@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: HTTP/2 client
-#[cfg(feature = "http2")]
-pub mod http2;
-#[cfg(feature = "http2")]
-pub use http2::actions::Http2ClientProtocol;
+// Phase 6: HTTP/3 client
+#[cfg(feature = "http3")]
+pub mod http3;
+#[cfg(feature = "http3")]
+pub use http3::actions::Http3ClientProtocol;
