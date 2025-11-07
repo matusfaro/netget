@@ -44,6 +44,9 @@ impl ClientProtocolRegistry {
 
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+
+        #[cfg(feature = "bitcoin")]
+        self.register(Arc::new(crate::client::bitcoin::BitcoinClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
