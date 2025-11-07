@@ -208,6 +208,29 @@ impl Client for OpenIdConnectClientProtocol {
                 }),
             },
             ActionDefinition {
+                name: "start_authorization_code_flow".to_string(),
+                description: "Start OAuth2 authorization code flow with local HTTP callback server".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "scopes".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Space-separated OAuth scopes".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "port".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Local callback server port (default: 8080)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "start_authorization_code_flow",
+                    "scopes": "openid profile email",
+                    "port": 8080
+                }),
+            },
+            ActionDefinition {
                 name: "exchange_password".to_string(),
                 description: "Exchange username/password for tokens (Resource Owner Password Credentials flow)".to_string(),
                 parameters: vec![
@@ -324,6 +347,25 @@ impl Client for OpenIdConnectClientProtocol {
                     name: "oidc_device_flow".to_string(),
                     data: json!({
                         "scopes": scopes,
+                    }),
+                })
+            }
+            "start_authorization_code_flow" => {
+                let scopes = action
+                    .get("scopes")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let port = action
+                    .get("port")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(8080) as u16;
+
+                Ok(ClientActionResult::Custom {
+                    name: "oidc_authorization_code".to_string(),
+                    data: json!({
+                        "scopes": scopes,
+                        "port": port,
                     }),
                 })
             }
