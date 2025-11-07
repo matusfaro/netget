@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: DynamoDB client
+#[cfg(feature = "dynamo")]
+pub mod dynamodb;
+#[cfg(feature = "dynamo")]
+pub use dynamodb::actions::DynamoDbClientProtocol;

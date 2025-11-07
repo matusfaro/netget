@@ -49,7 +49,7 @@ nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
-dynamo = []  # DynamoDB uses only HTTP, no extra deps
+dynamo = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:aws-smithy-types", "dep:aws-credential-types"]  # DynamoDB client with AWS SDK
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
@@ -392,6 +392,12 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
+# AWS SDK for DynamoDB client
+aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
+aws-sdk-dynamodb = { version = "1.52", optional = true }
+aws-smithy-types = { version = "1.2", optional = true }
+aws-credential-types = { version = "1.2", optional = true }
 
 [dev-dependencies]
 # For async tests
