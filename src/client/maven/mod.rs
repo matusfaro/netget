@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -21,6 +21,79 @@ use crate::client::maven::actions::MAVEN_CLIENT_CONNECTED_EVENT;
 pub struct MavenClient;
 
 impl MavenClient {
+    /// Execute a Maven custom action
+    fn execute_maven_action(
+        client_id: ClientId,
+        name: String,
+        data: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        match name.as_str() {
+            "maven_download_artifact" => {
+                let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
+                let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
+                let version = data["version"].as_str().unwrap_or_default().to_string();
+                let packaging = data["packaging"].as_str().map(|s| s.to_string());
+
+                tokio::spawn(async move {
+                    if let Err(e) = Self::download_artifact(
+                        client_id,
+                        group_id,
+                        artifact_id,
+                        version,
+                        packaging,
+                        app_state,
+                        llm_client,
+                        status_tx,
+                    ).await {
+                        error!("Maven artifact download failed: {}", e);
+                    }
+                });
+            }
+            "maven_download_pom" => {
+                let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
+                let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
+                let version = data["version"].as_str().unwrap_or_default().to_string();
+
+                tokio::spawn(async move {
+                    if let Err(e) = Self::download_pom(
+                        client_id,
+                        group_id,
+                        artifact_id,
+                        version,
+                        app_state,
+                        llm_client,
+                        status_tx,
+                    ).await {
+                        error!("Maven POM download failed: {}", e);
+                    }
+                });
+            }
+            "maven_search_versions" => {
+                let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
+                let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
+
+                tokio::spawn(async move {
+                    if let Err(e) = Self::search_versions(
+                        client_id,
+                        group_id,
+                        artifact_id,
+                        app_state,
+                        llm_client,
+                        status_tx,
+                    ).await {
+                        error!("Maven version search failed: {}", e);
+                    }
+                });
+            }
+            _ => {
+                warn!("Unknown Maven custom action: {}", name);
+            }
+        }
+    }
+
     /// Connect to a Maven repository with integrated LLM actions
     pub async fn connect_with_llm_actions(
         repository_url: String,
@@ -78,10 +151,97 @@ impl MavenClient {
                 protocol.as_ref(),
                 &status_tx,
             ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                Ok(ClientLlmResult { actions, memory_updates }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
+                    }
+
+                    // Execute actions
+                    for action in actions {
+                        use crate::llm::actions::client_trait::Client;
+                        match protocol.as_ref().execute_action(action) {
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                                match name.as_str() {
+                                    "maven_download_artifact" => {
+                                        let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
+                                        let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
+                                        let version = data["version"].as_str().unwrap_or_default().to_string();
+                                        let packaging = data["packaging"].as_str().map(|s| s.to_string());
+
+                                        let app_state_clone = app_state.clone();
+                                        let llm_client_clone = _llm_client.clone();
+                                        let status_tx_clone = status_tx.clone();
+
+                                        tokio::spawn(async move {
+                                            if let Err(e) = Self::download_artifact(
+                                                client_id,
+                                                group_id,
+                                                artifact_id,
+                                                version,
+                                                packaging,
+                                                app_state_clone,
+                                                llm_client_clone,
+                                                status_tx_clone,
+                                            ).await {
+                                                error!("Maven artifact download failed: {}", e);
+                                            }
+                                        });
+                                    }
+                                    "maven_download_pom" => {
+                                        let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
+                                        let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
+                                        let version = data["version"].as_str().unwrap_or_default().to_string();
+
+                                        let app_state_clone = app_state.clone();
+                                        let llm_client_clone = _llm_client.clone();
+                                        let status_tx_clone = status_tx.clone();
+
+                                        tokio::spawn(async move {
+                                            if let Err(e) = Self::download_pom(
+                                                client_id,
+                                                group_id,
+                                                artifact_id,
+                                                version,
+                                                app_state_clone,
+                                                llm_client_clone,
+                                                status_tx_clone,
+                                            ).await {
+                                                error!("Maven POM download failed: {}", e);
+                                            }
+                                        });
+                                    }
+                                    "maven_search_versions" => {
+                                        let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
+                                        let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
+
+                                        let app_state_clone = app_state.clone();
+                                        let llm_client_clone = _llm_client.clone();
+                                        let status_tx_clone = status_tx.clone();
+
+                                        tokio::spawn(async move {
+                                            if let Err(e) = Self::search_versions(
+                                                client_id,
+                                                group_id,
+                                                artifact_id,
+                                                app_state_clone,
+                                                llm_client_clone,
+                                                status_tx_clone,
+                                            ).await {
+                                                error!("Maven version search failed: {}", e);
+                                            }
+                                        });
+                                    }
+                                    _ => {
+                                        warn!("Unknown Maven custom action: {}", name);
+                                    }
+                                }
+                            }
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                info!("Maven client {} disconnecting", client_id);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 Err(e) => {
@@ -244,9 +404,30 @@ impl MavenClient {
                             protocol.as_ref(),
                             &status_tx,
                         ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                            Ok(ClientLlmResult { actions, memory_updates }) => {
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
+                                }
+
+                                // Execute actions from LLM response
+                                for action in actions {
+                                    use crate::llm::actions::client_trait::Client;
+                                    match protocol.as_ref().execute_action(action) {
+                                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                                            Self::execute_maven_action(
+                                                client_id,
+                                                name,
+                                                data,
+                                                app_state.clone(),
+                                                llm_client.clone(),
+                                                status_tx.clone(),
+                                            );
+                                        }
+                                        Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                            info!("Maven client {} disconnecting", client_id);
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -351,9 +532,30 @@ impl MavenClient {
                             protocol.as_ref(),
                             &status_tx,
                         ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                            Ok(ClientLlmResult { actions, memory_updates }) => {
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
+                                }
+
+                                // Execute actions from LLM response
+                                for action in actions {
+                                    use crate::llm::actions::client_trait::Client;
+                                    match protocol.as_ref().execute_action(action) {
+                                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                                            Self::execute_maven_action(
+                                                client_id,
+                                                name,
+                                                data,
+                                                app_state.clone(),
+                                                llm_client.clone(),
+                                                status_tx.clone(),
+                                            );
+                                        }
+                                        Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                            info!("Maven client {} disconnecting", client_id);
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -455,9 +657,30 @@ impl MavenClient {
                             protocol.as_ref(),
                             &status_tx,
                         ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                            Ok(ClientLlmResult { actions, memory_updates }) => {
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
+                                }
+
+                                // Execute actions from LLM response
+                                for action in actions {
+                                    use crate::llm::actions::client_trait::Client;
+                                    match protocol.as_ref().execute_action(action) {
+                                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                                            Self::execute_maven_action(
+                                                client_id,
+                                                name,
+                                                data,
+                                                app_state.clone(),
+                                                llm_client.clone(),
+                                                status_tx.clone(),
+                                            );
+                                        }
+                                        Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                            info!("Maven client {} disconnecting", client_id);
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             }
                             Err(e) => {
