@@ -132,6 +132,9 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "mqtt")]
         self.register(Arc::new(crate::client::mqtt::MqttClientProtocol::new()));
 
+        #[cfg(feature = "mysql")]
+        self.register(Arc::new(crate::client::mysql::MysqlClientProtocol::new()));
+
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::client::nfs::NfsClientProtocol::new()));
 
@@ -245,7 +248,6 @@ impl ClientProtocolRegistry {
 
         #[cfg(feature = "xmpp")]
         self.register(Arc::new(crate::client::xmpp::XmppClientProtocol::new()));
-
     }
 
     /// Build keyword map for fast protocol parsing
