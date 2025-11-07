@@ -10,8 +10,9 @@ use anyhow::{Context, Result};
 use handlebars::Handlebars;
 use include_dir::{include_dir, Dir};
 use once_cell::sync::Lazy;
+use std::error::Error;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Embedded template directory (compiled into binary)
 static EMBEDDED_TEMPLATES: Dir = include_dir!("$CARGO_MANIFEST_DIR/prompts");
@@ -21,11 +22,17 @@ pub static TEMPLATE_ENGINE: Lazy<Arc<TemplateEngine>> = Lazy::new(|| {
     info!("Initializing template engine from embedded templates");
 
     let engine = TemplateEngine::from_embedded().unwrap_or_else(|e| {
-        warn!("Failed to initialize template engine from embedded templates: {}", e);
+        warn!(
+            "Failed to initialize template engine from embedded templates: {}",
+            e
+        );
         TemplateEngine::empty()
     });
 
-    info!("Template engine initialized with {} templates", engine.get_templates().len());
+    info!(
+        "Template engine initialized with {} templates",
+        engine.get_templates().len()
+    );
     for template_name in engine.get_templates() {
         debug!("  Loaded template: {}", template_name);
     }
@@ -102,18 +109,11 @@ impl TemplateEngine {
                 == Some("partials");
 
             if is_partial {
-                // Register as partial with both path and namespace syntax for compatibility
+                // Register as partial (keep the full path name)
                 handlebars
                     .register_partial(&template_name, content)
                     .with_context(|| format!("Failed to register partial: {}", template_name))?;
                 debug!("Registered partial: {}", template_name);
-
-                // Also register with namespace syntax (convert "shared/partials/role" -> "shared::role")
-                let namespace_name = template_name.replace("/", "::");
-                handlebars
-                    .register_partial(&namespace_name, content)
-                    .with_context(|| format!("Failed to register namespaced partial: {}", namespace_name))?;
-                debug!("Registered namespaced partial: {}", namespace_name);
             } else {
                 // Register as template
                 handlebars
@@ -161,13 +161,31 @@ impl TemplateEngine {
         // Check if template exists
         if !handlebars.has_template(template_name) {
             // Fallback: return empty string with warning
-            warn!("Template not found: {}. Using empty template.", template_name);
+            warn!(
+                "Template not found: {}. Using empty template.",
+                template_name
+            );
             return Ok(String::new());
         }
 
-        handlebars
-            .render(template_name, data)
-            .with_context(|| format!("Failed to render template: {}", template_name))
+        match handlebars.render(template_name, data) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let available_partials: Vec<_> = handlebars
+                    .get_templates()
+                    .keys()
+                    .filter(|k| k.contains("partials"))
+                    .map(|k| k.to_string())
+                    .collect();
+                let error_msg = format!(
+                    "TEMPLATE RENDER PANIC\nTemplate: {}\nHandlebars Error: {}\nAvailable partials: {:#?}",
+                    template_name, e, available_partials
+                );
+                error!("{}", error_msg);
+                eprintln!("{}", error_msg);
+                std::process::exit(1);
+            }
+        }
     }
 
     /// Render a template with raw JSON data
@@ -268,10 +286,19 @@ mod tests {
         let engine = TemplateEngine::from_embedded().expect("Failed to load embedded templates");
 
         // Check that the main templates are loaded
-        assert!(engine.has_template("user_input/main"), "user_input/main template should be loaded");
-        assert!(engine.has_template("network_request/main"), "network_request/main template should be loaded");
+        assert!(
+            engine.has_template("user_input/main"),
+            "user_input/main template should be loaded"
+        );
+        assert!(
+            engine.has_template("network_request/main"),
+            "network_request/main template should be loaded"
+        );
 
         // Should have multiple templates
-        assert!(engine.get_templates().len() > 0, "Should have loaded templates");
+        assert!(
+            engine.get_templates().len() > 0,
+            "Should have loaded templates"
+        );
     }
 }

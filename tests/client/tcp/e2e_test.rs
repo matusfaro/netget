@@ -6,7 +6,7 @@
 
 #[cfg(all(test, feature = "tcp"))]
 mod tcp_client_tests {
-    use super::super::super::helpers::*;
+    use crate::helpers::*;
     use std::time::Duration;
 
     /// Test TCP client connection to a local server
@@ -14,11 +14,7 @@ mod tcp_client_tests {
     #[tokio::test]
     async fn test_tcp_client_connect_to_server() -> E2EResult<()> {
         // Start a TCP server listening on an available port
-        let port = get_available_port().await?;
-        let server_config = NetGetConfig::new(format!(
-            "Listen on port {} via TCP. Accept one connection, echo received data back.",
-            port
-        ));
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Accept one connection, echo received data back.");
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -28,7 +24,7 @@ mod tcp_client_tests {
         // Now start a TCP client that connects to this server
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via TCP. Send 'HELLO' and wait for response.",
-            port
+            server.port
         ));
 
         let mut client = start_netget_client(client_config).await?;
@@ -56,13 +52,9 @@ mod tcp_client_tests {
     /// LLM calls: 2 (client startup)
     #[tokio::test]
     async fn test_tcp_client_command_via_prompt() -> E2EResult<()> {
-        let port = get_available_port().await?;
 
         // Start a simple TCP server
-        let server_config = NetGetConfig::new(format!(
-            "Listen on port {} via TCP. Log all incoming data.",
-            port
-        ));
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Log all incoming data.");
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -71,7 +63,7 @@ mod tcp_client_tests {
         // Client that sends specific data based on LLM instruction
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via TCP and send the string 'TEST_DATA' then disconnect.",
-            port
+            server.port
         ));
 
         let mut client = start_netget_client(client_config).await?;

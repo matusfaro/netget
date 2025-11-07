@@ -8,16 +8,16 @@
 - **Port**: {{active_server.port}}
 - **Status**: {{active_server.status}}
 - **Memory**: {{#if active_server.memory}}{{active_server.memory}}{{else}}(empty){{/if}}
-{{else if servers.length}}
+{{else}}
+{{#each servers}}
 ## Running Servers
 
 You may be asked to update these servers and you need to refer to them by number:
 
-{{#each servers}}
 - Server #{{this.id}}: **{{this.protocol_name}}** on port {{this.port}} ({{this.status}})
-{{/each}}
 {{else}}
 No servers currently running.
+{{/each}}
 {{/if}}
 
 ## System Capabilities

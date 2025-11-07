@@ -69,6 +69,34 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 
 **Use `./cargo-isolated.sh`** (session-specific `target-claude/claude-$$`). **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`). **Speed**: Fast with `--no-default-features --features <protocol>` (10-30s), slow with `--all-features` (1-2min). **Cleanup**: `rm -rf target-claude/`.
 
+### Build Performance & Feature Flags (CRITICAL)
+
+**ALWAYS use minimal features unless you explicitly need all protocols.** Default to feature-specific builds:
+
+```bash
+# FAST: Single protocol testing (10-30s)
+./cargo-isolated.sh test --no-default-features --features tcp --test server::tcp::e2e_test
+
+# FAST: Multiple related protocols (20-40s)
+./cargo-isolated.sh build --no-default-features --features tcp,http,dns
+
+# SLOW: Only use when absolutely needed (1-2min+, uses 3GB+ RAM)
+./cargo-isolated.sh build --all-features
+```
+
+**Why this matters**:
+- `--all-features` compiles 50+ protocols with all their dependencies (2GB+ code)
+- sccache helps but cannot eliminate compilation of all crates
+- Multiple concurrent cargo processes without feature limiting = resource thrashing
+- Default: Use protocol-specific features for development, `--all-features` only for CI/release builds
+
+**Before building**, ask: "Do I need ALL protocols for this task?" If not, use `--no-default-features --features <protocol>`.
+
+**Common workflows**:
+- Testing a protocol: `--no-default-features --features <protocol>`
+- Modifying shared code: `--no-default-features --features tcp,http,dns` (representative subset)
+- Full validation: `--all-features` (use sparingly)
+
 ## Logging (CRITICAL)
 
 **Dual logging**: ALL logs to tracing macros (`debug!`, `trace!`, etc.) → `netget.log` AND `status_tx.send()` → TUI. **Levels**: ERROR (critical), WARN (non-fatal), INFO (lifecycle), DEBUG (summaries), TRACE (payloads).
