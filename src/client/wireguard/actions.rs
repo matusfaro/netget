@@ -161,15 +161,15 @@ impl Client for WireguardClientProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2, Privilege};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2, PrivilegeRequirement};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("defguard_wireguard_rs with kernel/userspace backend")
             .llm_control("VPN connection control, status queries")
             .e2e_testing("WireGuard server for client connections")
-            .privileges(vec![Privilege::Root])
-            .notes(Some("Requires root/CAP_NET_ADMIN on Linux, userspace on macOS"))
+            .privilege_requirement(PrivilegeRequirement::Root)
+            .notes("Requires root/CAP_NET_ADMIN on Linux, userspace on macOS")
             .build()
     }
 

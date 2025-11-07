@@ -694,23 +694,34 @@ impl SnmpClient {
 
     fn build_v1_get_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
         let var_binds: Vec<v1::VarBind> = oids.iter().map(|oid| {
+            // Create OID from string - if parsing fails, use a simple default
+            let oid_obj = oid.split('.').fold(
+                rasn::types::ObjectIdentifier::new(vec![0, 0]),
+                |mut acc, part| {
+                    if let Ok(num) = part.parse::<u32>() {
+                        acc.push(num);
+                    }
+                    acc
+                }
+            );
+
             v1::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data: v1::ObjectValue::Value(v1::Value::Empty),
+                name: oid_obj,
+                value: v1::ObjectValue::Value(v1::Value::Empty),
             }
         }).collect();
 
-        let pdu = v1::Pdus::GetRequest(Box::new(v1::Pdu {
+        let pdu = v1::Pdus::GetRequest(v1::GetRequest {
             request_id: Integer::Primitive(request_id as isize),
             error_status: Integer::Primitive(0),
             error_index: Integer::Primitive(0),
             variable_bindings: var_binds,
-        }));
+        });
 
         let message = v1::Message {
-            version: 0,  // v1 uses version 0
+            version: Integer::Primitive(0),  // v1 uses version 0
             community: community.as_bytes().to_vec().into(),
-            data: pdu,
+            pdu,
         };
 
         ber::encode(&message).context("Failed to encode SNMP v1 GET request")
@@ -718,23 +729,34 @@ impl SnmpClient {
 
     fn build_v1_getnext_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
         let var_binds: Vec<v1::VarBind> = oids.iter().map(|oid| {
+            // Create OID from string
+            let oid_obj = oid.split('.').fold(
+                rasn::types::ObjectIdentifier::new(vec![0, 0]),
+                |mut acc, part| {
+                    if let Ok(num) = part.parse::<u32>() {
+                        acc.push(num);
+                    }
+                    acc
+                }
+            );
+
             v1::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data: v1::ObjectValue::Value(v1::Value::Empty),
+                name: oid_obj,
+                value: v1::ObjectValue::Value(v1::Value::Empty),
             }
         }).collect();
 
-        let pdu = v1::Pdus::GetNextRequest(Box::new(v1::Pdu {
+        let pdu = v1::Pdus::GetNextRequest(v1::GetNextRequest {
             request_id: Integer::Primitive(request_id as isize),
             error_status: Integer::Primitive(0),
             error_index: Integer::Primitive(0),
             variable_bindings: var_binds,
-        }));
+        });
 
         let message = v1::Message {
-            version: 0,
+            version: Integer::Primitive(0),
             community: community.as_bytes().to_vec().into(),
-            data: pdu,
+            pdu,
         };
 
         ber::encode(&message).context("Failed to encode SNMP v1 request")
@@ -746,7 +768,18 @@ impl SnmpClient {
             let value_type = var.get("type").and_then(|v| v.as_str()).unwrap_or("string");
             let value = var.get("value").unwrap_or(&serde_json::json!(null));
 
-            let data = match value_type {
+            // Create OID from string
+            let oid_obj = oid.split('.').fold(
+                rasn::types::ObjectIdentifier::new(vec![0, 0]),
+                |mut acc, part| {
+                    if let Ok(num) = part.parse::<u32>() {
+                        acc.push(num);
+                    }
+                    acc
+                }
+            );
+
+            let value_obj = match value_type {
                 "integer" => {
                     let n = value.as_i64().unwrap_or(0);
                     v1::ObjectValue::Value(v1::Value::Number(Integer::Primitive(n as isize)))
@@ -759,22 +792,22 @@ impl SnmpClient {
             };
 
             v1::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data,
+                name: oid_obj,
+                value: value_obj,
             }
         }).collect();
 
-        let pdu = v1::Pdus::SetRequest(Box::new(v1::Pdu {
+        let pdu = v1::Pdus::SetRequest(v1::SetRequest {
             request_id: Integer::Primitive(request_id as isize),
             error_status: Integer::Primitive(0),
             error_index: Integer::Primitive(0),
             variable_bindings: var_binds,
-        }));
+        });
 
         let message = v1::Message {
-            version: 0,
+            version: Integer::Primitive(0),
             community: community.as_bytes().to_vec().into(),
-            data: pdu,
+            pdu,
         };
 
         ber::encode(&message).context("Failed to encode SNMP v1 request")
