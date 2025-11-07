@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: OpenAI client
-#[cfg(feature = "openai")]
-pub mod openai;
-#[cfg(feature = "openai")]
-pub use openai::actions::OpenAiClientProtocol;
+// OpenID Connect client
+#[cfg(feature = "openidconnect")]
+pub mod openidconnect;
+#[cfg(feature = "openidconnect")]
+pub use openidconnect::actions::OpenIdConnectClientProtocol;

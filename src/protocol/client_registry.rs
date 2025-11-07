@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "openai")]
-        self.register(Arc::new(crate::client::openai::OpenAiClientProtocol::new()));
+        #[cfg(feature = "openidconnect")]
+        self.register(Arc::new(crate::client::openidconnect::OpenIdConnectClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
