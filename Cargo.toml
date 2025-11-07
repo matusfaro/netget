@@ -56,7 +56,7 @@ dynamodb = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client (alternate name
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS client
 npm = []  # NPM registry server uses only HTTP, no extra deps
-openai = []  # OpenAI API uses only HTTP, no extra deps
+openai = ["async-openai"]  # OpenAI API client
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
@@ -414,6 +414,9 @@ serde_bencode = { version = "0.2", optional = true }  # Bencode serialization fo
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.86", optional = true }
 aws-sdk-dynamodb = { version = "1.52", optional = true }
+
+# OpenAI API client
+async-openai = { version = "0.26", optional = true }
 
 [dev-dependencies]
 # For async tests
