@@ -46,7 +46,7 @@ turn = ["dep:webrtc-turn"]
 webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
-imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
+imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls", "tokio-native-tls", "native-tls"]  # IMAP server uses imap-codec, client uses async-imap
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
@@ -173,7 +173,7 @@ e2e-tests = []  # Feature flag for E2E tests
 [dependencies]
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { version = "0.7", features = ["codec", "compat"] }
 
 # Low-level system bindings
 libc = "0.2"
@@ -329,6 +329,10 @@ ldap3_proto = { version = "0.3", optional = true }
 
 # IMAP server (IMAP protocol parsing)
 imap-codec = { version = "2.0.0-alpha.6", optional = true }
+
+# IMAP client (async IMAP client library)
+async-imap = { version = "0.11", optional = true }
+async-native-tls = { version = "0.5", optional = true }
 
 # XMPP/Jabber client (instant messaging)
 tokio-xmpp = { version = "5.0", optional = true }
