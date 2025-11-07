@@ -123,12 +123,16 @@ User Instruction → git_connected event
 **Async Actions (User-triggered):**
 - `git_clone`: Clone a repository
 - `git_fetch`: Fetch updates from remote
-- `git_pull`: Pull and merge updates (not fully implemented)
-- `git_push`: Push commits to remote (not fully implemented)
-- `git_checkout`: Checkout branch or commit (not fully implemented)
+- `git_pull`: Pull and merge updates (fast-forward only)
+- `git_push`: Push commits to remote
+- `git_checkout`: Checkout branch or commit, create new branches
+- `git_delete_branch`: Delete local or remote branches
 - `git_list_branches`: List local/remote branches
+- `git_list_tags`: List all tags in repository
+- `git_create_tag`: Create lightweight or annotated tags
 - `git_log`: Get commit history
 - `git_status`: Get repository status
+- `git_diff`: View working directory, staged, or commit differences
 - `disconnect`: Close the client
 
 **Sync Actions:**
@@ -156,6 +160,29 @@ User Instruction → git_connected event
 {
   "type": "git_status"
 }
+
+{
+  "type": "git_delete_branch",
+  "branch": "feature-branch",
+  "force": false,
+  "remote": "origin"
+}
+
+{
+  "type": "git_list_tags"
+}
+
+{
+  "type": "git_create_tag",
+  "name": "v1.0.0",
+  "target": "HEAD",
+  "message": "Release version 1.0.0"
+}
+
+{
+  "type": "git_diff",
+  "staged": true
+}
 ```
 
 ## Implementation Details
@@ -169,11 +196,14 @@ User Instruction → git_connected event
 | **status** | ✅ Implemented | Shows modified/untracked files |
 | **list_branches** | ✅ Implemented | Local and remote branches |
 | **log** | ✅ Implemented | Commit history with limit |
-| **pull** | ⚠️ Partial | Action defined, merge logic not implemented |
-| **push** | ⚠️ Partial | Action defined, push logic not implemented |
-| **checkout** | ⚠️ Partial | Action defined, checkout logic not implemented |
+| **pull** | ✅ Implemented | Fetch + fast-forward merge, manual merge for conflicts |
+| **push** | ✅ Implemented | Push commits to remote with authentication |
+| **checkout** | ✅ Implemented | Checkout branches/commits, create new branches |
+| **delete_branch** | ✅ Implemented | Delete local or remote branches with safety checks |
+| **list_tags** | ✅ Implemented | List all tags in repository |
+| **create_tag** | ✅ Implemented | Create lightweight or annotated tags |
+| **diff** | ✅ Implemented | View working directory, staged, or commit differences |
 | **commit** | ❌ Not implemented | Requires staging and commit creation |
-| **diff** | ❌ Not implemented | Future enhancement |
 | **merge** | ❌ Not implemented | Complex, requires conflict resolution |
 
 ### Threading Model
@@ -194,23 +224,24 @@ Errors are propagated to the LLM via `git_operation_error` events:
 
 ## Limitations
 
-1. **No SSH Key Support**: Initial implementation only supports username/password (HTTPS)
-2. **No Merge/Rebase**: Pull operation doesn't handle merging
+1. **No SSH Key Support**: Implementation only supports username/password (HTTPS)
+2. **Limited Merge Support**: Pull operation only handles fast-forward merges automatically
 3. **No Commit Creation**: Cannot stage files and create commits
-4. **No Branch Management**: Cannot create or delete branches
-5. **No Tag Support**: Cannot create, list, or delete tags
-6. **No Submodule Support**: Cannot clone or update submodules
-7. **No Conflict Resolution**: LLM cannot resolve merge conflicts
+4. **No Submodule Support**: Cannot clone or update submodules
+5. **No Conflict Resolution**: LLM cannot resolve merge conflicts (manual resolution required)
+6. **No Rebase Support**: Rebase operations are not implemented
+7. **No Tag Deletion**: Can create and list tags, but cannot delete them
 
 ## Future Enhancements
 
 1. **SSH Authentication**: Add support for SSH keys
-2. **Full Pull/Push**: Implement merge logic for pull, push logic for push
+2. **Full Merge Support**: Implement automatic merge for non-fast-forward cases
 3. **Commit Creation**: Allow LLM to stage files and create commits
-4. **Branch Management**: Create, delete, rename branches
-5. **Advanced Operations**: Cherry-pick, rebase, stash
-6. **Submodule Support**: Clone and update Git submodules
-7. **Conflict Resolution**: Interactive conflict resolution via LLM
+4. **Tag Deletion**: Add ability to delete tags (local and remote)
+5. **Branch Renaming**: Add ability to rename branches
+6. **Advanced Operations**: Cherry-pick, rebase, stash
+7. **Submodule Support**: Clone and update Git submodules
+8. **Conflict Resolution**: Interactive conflict resolution via LLM
 
 ## Testing Strategy
 
