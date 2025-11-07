@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "cassandra")]
-        self.register(Arc::new(crate::client::cassandra::CassandraClientProtocol::new()));
+        #[cfg(feature = "ipp")]
+        self.register(Arc::new(crate::client::ipp::IppClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
