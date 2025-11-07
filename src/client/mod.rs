@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Tor client (anonymous connections)
-#[cfg(feature = "tor-client")]
-pub mod tor;
-#[cfg(feature = "tor-client")]
-pub use tor::TorClientProtocol;
+// Phase 6: SMTP client
+#[cfg(feature = "smtp")]
+pub mod smtp;
+#[cfg(feature = "smtp")]
+pub use smtp::actions::SmtpClientProtocol;
