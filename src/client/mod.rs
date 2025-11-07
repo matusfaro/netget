@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// WireGuard VPN client
+#[cfg(feature = "wireguard")]
+pub mod wireguard;
+#[cfg(feature = "wireguard")]
+pub use wireguard::WireguardClientProtocol;
