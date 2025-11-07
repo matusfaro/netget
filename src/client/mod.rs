@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// WHOIS client
-#[cfg(feature = "whois")]
-pub mod whois;
-#[cfg(feature = "whois")]
-pub use whois::actions::WhoisClientProtocol;
+// Phase 6: DHCP client
+#[cfg(feature = "dhcp")]
+pub mod dhcp;
+#[cfg(feature = "dhcp")]
+pub use dhcp::actions::DhcpClientProtocol;
