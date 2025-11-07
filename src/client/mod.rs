@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// WHOIS client
+#[cfg(feature = "whois")]
+pub mod whois;
+#[cfg(feature = "whois")]
+pub use whois::actions::WhoisClientProtocol;
