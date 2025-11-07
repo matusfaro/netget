@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: IPP client
-#[cfg(feature = "ipp")]
-pub mod ipp;
-#[cfg(feature = "ipp")]
-pub use ipp::actions::IppClientProtocol;
+// NTP client
+#[cfg(feature = "ntp")]
+pub mod ntp;
+#[cfg(feature = "ntp")]
+pub use ntp::actions::NtpClientProtocol;
