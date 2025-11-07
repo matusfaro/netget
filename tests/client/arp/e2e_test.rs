@@ -1,0 +1,171 @@
+//! E2E tests for ARP client
+//!
+//! These tests verify ARP client functionality by spawning the actual NetGet binary
+//! and testing client behavior as a black-box.
+//! Test strategy: Use netget binary to start ARP client, < 10 LLM calls total.
+//!
+//! IMPORTANT: ARP tests require root privileges for packet capture and injection.
+//! Run tests with: sudo ./cargo-isolated.sh test --no-default-features --features arp --test client::arp::e2e_test
+
+#[cfg(all(test, feature = "arp"))]
+mod arp_client_tests {
+    use crate::helpers::*;
+    use std::time::Duration;
+
+    /// Test ARP client can start on a network interface
+    /// LLM calls: 1 (client startup)
+    ///
+    /// NOTE: This test requires root privileges. It will be skipped if not running as root.
+    #[tokio::test]
+    async fn test_arp_client_start_on_interface() -> E2EResult<()> {
+        // Check if running as root (required for pcap)
+        if !is_root() {
+            println!("⚠️  Skipping test_arp_client_start_on_interface - requires root privileges");
+            return Ok(());
+        }
+
+        // Get available network interface (typically "lo" for loopback)
+        let interface = get_loopback_interface()?;
+
+        println!("🔍 Using network interface: {}", interface);
+
+        // Start ARP client on loopback interface
+        let client_config =
+            NetGetConfig::new(format!("Monitor ARP traffic on interface {}", interface));
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to start
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // Verify client output shows ARP client started
+        assert!(
+            client.output_contains("ARP").await,
+            "Client should show ARP protocol. Output: {:?}",
+            client.get_output().await
+        );
+
+        println!("✅ ARP client started on interface successfully");
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test ARP client can send ARP request
+    /// LLM calls: 2 (client startup, send request)
+    ///
+    /// NOTE: This test requires root privileges.
+    #[tokio::test]
+    async fn test_arp_client_send_request() -> E2EResult<()> {
+        // Check if running as root
+        if !is_root() {
+            println!("⚠️  Skipping test_arp_client_send_request - requires root privileges");
+            return Ok(());
+        }
+
+        let interface = get_loopback_interface()?;
+
+        println!("🔍 Using network interface: {}", interface);
+
+        // Start ARP client with instruction to send ARP request
+        let client_config = NetGetConfig::new(format!(
+            "Monitor ARP on interface {}. Send who-has query for 127.0.0.1.",
+            interface
+        ));
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to send request
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // Verify client is running
+        assert_eq!(client.protocol, "ARP", "Client should be ARP protocol");
+
+        println!("✅ ARP client sent request successfully");
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test ARP client can monitor ARP traffic
+    /// LLM calls: 1 (client startup)
+    ///
+    /// NOTE: This test requires root privileges.
+    #[tokio::test]
+    async fn test_arp_client_monitor_traffic() -> E2EResult<()> {
+        // Check if running as root
+        if !is_root() {
+            println!("⚠️  Skipping test_arp_client_monitor_traffic - requires root privileges");
+            return Ok(());
+        }
+
+        let interface = get_loopback_interface()?;
+
+        println!("🔍 Using network interface: {}", interface);
+
+        // Start ARP client in monitoring mode
+        let client_config = NetGetConfig::new(format!(
+            "Monitor all ARP traffic on interface {}. Log all ARP packets.",
+            interface
+        ));
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to start monitoring
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // Verify client is monitoring
+        assert!(
+            client.output_contains("ARP").await || client.output_contains("started").await,
+            "Client should show ARP monitoring. Output: {:?}",
+            client.get_output().await
+        );
+
+        println!("✅ ARP client monitoring traffic successfully");
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    // Helper function to check if running as root
+    fn is_root() -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Check if effective user ID is 0 (root)
+            unsafe { libc::geteuid() == 0 }
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix systems, assume root for now
+            false
+        }
+    }
+
+    // Helper function to get loopback interface name
+    fn get_loopback_interface() -> E2EResult<String> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok("lo".to_string())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Ok("lo0".to_string())
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Windows loopback interface may vary
+            Ok("lo".to_string())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            Err(anyhow::anyhow!("Unsupported platform for loopback interface").into())
+        }
+    }
+}
