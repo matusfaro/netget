@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "isis")]
-        self.register(Arc::new(crate::client::isis::IsisClientProtocol::new()));
+        #[cfg(feature = "jsonrpc")]
+        self.register(Arc::new(crate::client::jsonrpc::JsonRpcClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

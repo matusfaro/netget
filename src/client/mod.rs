@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// IS-IS client
-#[cfg(feature = "isis")]
-pub mod isis;
-#[cfg(feature = "isis")]
-pub use isis::actions::IsisClientProtocol;
+// JSON-RPC client
+#[cfg(feature = "jsonrpc")]
+pub mod jsonrpc;
+#[cfg(feature = "jsonrpc")]
+pub use jsonrpc::actions::JsonRpcClientProtocol;
