@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "postgresql")]
-pub mod postgresql;
+#[cfg(feature = "rip")]
+pub mod rip;

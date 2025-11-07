@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// HTTP proxy client
-#[cfg(feature = "http_proxy")]
-pub mod http_proxy;
-#[cfg(feature = "http_proxy")]
-pub use http_proxy::actions::HttpProxyClientProtocol;
+// Phase 6: RIP client
+#[cfg(feature = "rip")]
+pub mod rip;
+#[cfg(feature = "rip")]
+pub use rip::actions::RipClientProtocol;
