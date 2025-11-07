@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// NTP client
-#[cfg(feature = "ntp")]
-pub mod ntp;
-#[cfg(feature = "ntp")]
-pub use ntp::actions::NtpClientProtocol;
+// Phase 6: DoT client
+#[cfg(feature = "dot")]
+pub mod dot;
+#[cfg(feature = "dot")]
+pub use dot::actions::DotClientProtocol;
