@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "stun")]
-        self.register(Arc::new(crate::client::stun::StunClientProtocol::new()));
+        #[cfg(feature = "tor-client")]
+        self.register(Arc::new(crate::client::tor::TorClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

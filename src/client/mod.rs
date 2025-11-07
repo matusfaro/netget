@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: STUN client
-#[cfg(feature = "stun")]
-pub mod stun;
-#[cfg(feature = "stun")]
-pub use stun::actions::StunClientProtocol;
+// Tor client (anonymous connections)
+#[cfg(feature = "tor-client")]
+pub mod tor;
+#[cfg(feature = "tor-client")]
+pub use tor::TorClientProtocol;
