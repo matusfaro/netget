@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Syslog client
+#[cfg(feature = "syslog")]
+pub mod syslog;
+#[cfg(feature = "syslog")]
+pub use syslog::actions::SyslogClientProtocol;
