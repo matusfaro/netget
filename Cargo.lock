@@ -6678,6 +6678,7 @@ dependencies = [
  "quinn",
  "rand 0.8.5",
  "rasn",
+ "rasn-smi",
  "rasn-snmp",
  "rcgen 0.14.5",
  "rdkafka",
