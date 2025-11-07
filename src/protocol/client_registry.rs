@@ -45,11 +45,14 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "bgp")]
-        self.register(Arc::new(crate::client::bgp::BgpClientProtocol::new()));
+        #[cfg(feature = "torrent-tracker")]
+        self.register(Arc::new(crate::client::torrent_tracker::TorrentTrackerClientProtocol::new()));
 
-        #[cfg(feature = "bitcoin")]
-        self.register(Arc::new(crate::client::bitcoin::BitcoinClientProtocol::new()));
+        #[cfg(feature = "torrent-dht")]
+        self.register(Arc::new(crate::client::torrent_dht::TorrentDhtClientProtocol::new()));
+
+        #[cfg(feature = "torrent-peer")]
+        self.register(Arc::new(crate::client::torrent_peer::TorrentPeerClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

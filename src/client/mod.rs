@@ -22,14 +22,20 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// BGP client
-#[cfg(feature = "bgp")]
-pub mod bgp;
-#[cfg(feature = "bgp")]
-pub use bgp::actions::BgpClientProtocol;
+// BitTorrent Tracker client
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::TorrentTrackerClientProtocol;
 
-// Bitcoin RPC client
-#[cfg(feature = "bitcoin")]
-pub mod bitcoin;
-#[cfg(feature = "bitcoin")]
-pub use bitcoin::actions::BitcoinClientProtocol;
+// BitTorrent DHT client
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::TorrentDhtClientProtocol;
+
+// BitTorrent Peer Wire client
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::TorrentPeerClientProtocol;
