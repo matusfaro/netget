@@ -196,6 +196,12 @@ pub mod mqtt;
 #[cfg(feature = "mqtt")]
 pub use mqtt::actions::MqttClientProtocol;
 
+// mysql client
+#[cfg(feature = "mysql")]
+pub mod mysql;
+#[cfg(feature = "mysql")]
+pub use mysql::actions::MysqlClientProtocol;
+
 // nfs client
 #[cfg(feature = "nfs")]
 pub mod nfs;
@@ -423,4 +429,3 @@ pub use xmlrpc::actions::XmlRpcClientProtocol;
 pub mod xmpp;
 #[cfg(feature = "xmpp")]
 pub use xmpp::actions::XmppClientProtocol;
-
