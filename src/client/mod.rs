@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// SNMP client
-#[cfg(feature = "snmp")]
-pub mod snmp;
-#[cfg(feature = "snmp")]
-pub use snmp::actions::SnmpClientProtocol;
+// Phase 6: SOCKS5 client
+#[cfg(feature = "socks5")]
+pub mod socks5;
+#[cfg(feature = "socks5")]
+pub use socks5::actions::Socks5ClientProtocol;
