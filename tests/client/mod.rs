@@ -10,3 +10,5 @@ pub mod redis;
 pub mod telnet;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
