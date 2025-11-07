@@ -65,10 +65,9 @@ impl DotClient {
         let server_name = remote_addr.split(':').next().unwrap_or("dns.server");
 
         // Create TLS config with root certificates
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(
-            webpki_roots::TLS_SERVER_ROOTS.iter().cloned()
-        );
+        let root_store = RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
 
         let config = ClientConfig::builder()
             .with_root_certificates(root_store)
@@ -169,6 +168,7 @@ impl DotClient {
                             action_json,
                             &write_half_arc,
                             &status_tx,
+                            &app_state,
                         ).await {
                             error!("DoT client {} action execution failed: {}", client_id, e);
                         }
@@ -359,6 +359,7 @@ impl DotClient {
                                 action_json,
                                 &write_half,
                                 &status_tx,
+                                &app_state,
                             ).await {
                                 error!("DoT client {} action execution failed: {}", client_id, e);
                             }
@@ -387,6 +388,7 @@ impl DotClient {
         action_json: serde_json::Value,
         write_half: &Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
         status_tx: &mpsc::UnboundedSender<String>,
+        app_state: &Arc<AppState>,
     ) -> Result<()> {
         let protocol = DotClientProtocol::new();
         let action_result = protocol.execute_action(action_json)?;
@@ -404,8 +406,11 @@ impl DotClient {
                 ).await?;
             }
             ClientActionResult::Disconnect => {
-                info!("DoT client {} disconnecting (action not fully implemented yet)", client_id);
-                // TODO: Proper disconnection
+                info!("DoT client {} disconnecting", client_id);
+                // Remove client from app state, which will cause the read loop to exit
+                app_state.remove_client(client_id).await;
+                let _ = status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             ClientActionResult::WaitForMore => {
                 debug!("DoT client {} waiting for more data", client_id);
