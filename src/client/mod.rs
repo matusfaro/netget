@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// OSPF client
-#[cfg(feature = "ospf")]
-pub mod ospf;
-#[cfg(feature = "ospf")]
-pub use ospf::actions::OspfClientProtocol;
+// Phase 6: SAML client
+#[cfg(feature = "saml")]
+pub mod saml;
+#[cfg(feature = "saml")]
+pub use saml::actions::SamlClientProtocol;
