@@ -71,8 +71,8 @@ isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
-grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "async-trait"]  # gRPC server with dynamic schema support
-etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
+grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "dep:tower", "dep:tempfile", "async-trait"]  # gRPC server with dynamic schema support
+etcd = ["grpc", "dep:etcd-client"]  # etcd v3 key-value store server (KV service via gRPC)
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
@@ -316,9 +316,6 @@ cassandra-protocol = { version = "3.3", optional = true }
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
 
-# SMB client (libsmbclient wrapper)
-pavao = { version = "0.1", optional = true }
-
 # STUN server (Session Traversal Utilities for NAT)
 webrtc-stun = { version = "0.1", optional = true }
 
@@ -375,6 +372,9 @@ prost = { version = "0.13", optional = true }
 prost-reflect = { version = "0.14", optional = true }
 prost-types = { version = "0.13", optional = true }
 tonic-reflection = { version = "0.12", optional = true }
+tower = { version = "0.5", optional = true }
+tempfile = { version = "3.13", optional = true }
+etcd-client = { version = "0.15", optional = true }
 
 # XML-RPC server and client (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }
@@ -434,8 +434,6 @@ async-openai = { version = "0.26", optional = true }
 tokio-test = "0.4"
 # For e2e test setup/teardown
 ctor = "0.2"
-# For temporary directories in tests
-tempfile = "3.13"
 
 # Terminal snapshot testing
 pty-process = "0.5"
@@ -488,8 +486,6 @@ async-openai = "0.26"
 prost = "0.13"
 prost-reflect = "0.14"
 prost-types = "0.13"
-# etcd client for e2e integration tests
-etcd-client = "0.15"
 # Tor client for e2e integration tests (Tor relay + directory)
 arti-client = "0.36"
 tor-rtcompat = "0.36"
@@ -508,4 +504,5 @@ sha1 = "0.10"  # For info_hash calculation
 
 [build-dependencies]
 # Protocol buffer compiler for etcd gRPC service
+prost-build = "0.13"
 tonic-build = "0.12"
