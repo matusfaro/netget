@@ -21,3 +21,21 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// BitTorrent Tracker client
+#[cfg(feature = "torrent-tracker")]
+pub mod torrent_tracker;
+#[cfg(feature = "torrent-tracker")]
+pub use torrent_tracker::TorrentTrackerClientProtocol;
+
+// BitTorrent DHT client
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-dht")]
+pub use torrent_dht::TorrentDhtClientProtocol;
+
+// BitTorrent Peer Wire client
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
+#[cfg(feature = "torrent-peer")]
+pub use torrent_peer::TorrentPeerClientProtocol;
