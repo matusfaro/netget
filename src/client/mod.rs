@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// BGP client
+#[cfg(feature = "bgp")]
+pub mod bgp;
+#[cfg(feature = "bgp")]
+pub use bgp::actions::BgpClientProtocol;
