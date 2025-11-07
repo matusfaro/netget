@@ -1,0 +1,271 @@
+# etcd Client Implementation
+
+## Overview
+etcd client for connecting to etcd v3 servers and performing key-value operations under LLM control.
+
+**Status**: Experimental
+**Protocol Version**: etcd v3 (gRPC)
+**Default Port**: 2379
+
+## Library Choices
+
+### Core Dependencies
+- **etcd-client** v0.14 - Official etcd v3 Rust client
+  - Provides async gRPC-based KV operations
+  - Handles connection management and retries
+  - Built on top of tonic (gRPC) and tokio
+- **tonic** - gRPC framework (dependency of etcd-client)
+- **tokio** - Async runtime
+
+**Rationale**: etcd-client is the official and most mature Rust client for etcd v3, providing a high-level API that abstracts the complexity of gRPC and protobuf encoding.
+
+## Architecture
+
+### Connection Model
+**Stateless with Reconnection**:
+- Client connects on startup to validate connectivity
+- Each operation (get/put/delete) creates a fresh etcd-client connection
+- No persistent connection state maintained
+- Operations are independent and idempotent
+
+**Why reconnect per operation?**:
+- etcd-client manages connection pooling internally
+- Simplifies error handling (no stale connection issues)
+- Matches the HTTP client pattern (stateless request-response)
+- LLM can issue operations without worrying about connection state
+
+### LLM Integration
+
+**Event Flow**:
+1. **Connect** → `etcd_connected` event → LLM generates initial actions
+2. **Operation** → Execute get/put/delete → `etcd_response_received` event → LLM decides next action
+3. **Disconnect** → Client cleanup
+
+**State Machine**:
+- Unlike TCP/Redis, etcd client doesn't use Idle/Processing/Accumulating states
+- Operations are synchronous and don't queue
+- Each LLM action triggers an immediate etcd operation
+
+### Action System
+
+**Async Actions** (user-triggered):
+- `etcd_get` - Retrieve key-value pairs
+- `etcd_put` - Store key-value pairs
+- `etcd_delete` - Delete keys
+- `disconnect` - Close client
+
+**Sync Actions** (response-triggered):
+- `etcd_get` - Follow-up get after response
+- `etcd_put` - Follow-up put after response
+
+**Custom Action Results**:
+- All etcd operations return `ClientActionResult::Custom` with operation-specific data
+- Action executor in event handler unpacks custom data and calls appropriate EtcdClient methods
+
+### Event Types
+
+**Defined Events**:
+- `etcd_connected` - Client successfully connected to server
+  - Parameters: `remote_addr` (string)
+
+- `etcd_response_received` - Operation completed
+  - Parameters:
+    - `operation` (string) - "get", "put", or "delete"
+    - `key` (string) - Key that was operated on
+    - `kvs` (array, for get) - Key-value pairs returned
+    - `count` (number, for get) - Total matching keys
+    - `more` (boolean, for get) - Whether more results exist
+    - `revision` (number, for put) - Revision after put
+    - `deleted` (number, for delete) - Number of keys deleted
+
+## Implementation Details
+
+### Get Operation
+```rust
+// LLM action: {"type": "etcd_get", "key": "/config/database"}
+etcd_client.get(key, None).await?
+
+// Response includes:
+// - kvs: Vec<KeyValue> with key, value, create_revision, mod_revision, version, lease
+// - count: Total matching keys
+// - more: Whether there are more results (pagination)
+```
+
+### Put Operation
+```rust
+// LLM action: {"type": "etcd_put", "key": "/config/database", "value": "postgres://..."}
+etcd_client.put(key, value, None).await?
+
+// Response includes:
+// - header: ResponseHeader with cluster_id, member_id, revision
+// - prev_kv: Previous key-value (if requested in options)
+```
+
+### Delete Operation
+```rust
+// LLM action: {"type": "etcd_delete", "key": "/config/database"}
+etcd_client.delete(key, None).await?
+
+// Response includes:
+// - deleted: Number of keys deleted
+// - prev_kvs: Deleted key-values (if requested in options)
+```
+
+### Options (Future Enhancement)
+etcd-client supports rich options that can be exposed to LLM:
+- **GetOptions**: `with_prefix()`, `with_range()`, `with_limit()`, `with_sort_order()`
+- **PutOptions**: `with_lease()`, `with_prev_kv()`
+- **DeleteOptions**: `with_prefix()`, `with_prev_kv()`
+
+Currently using `None` for all options (simple get/put/delete).
+
+## Logging
+
+**Dual Logging**:
+- **INFO**: Connection events ("etcd client 1 connected to localhost:2379")
+- **DEBUG**: Operation summaries ("etcd client 1 received 3 key-value pairs")
+- **ERROR**: Operation failures ("etcd client 1 LLM call failed after get")
+
+Both tracing macros and `status_tx` used for TUI visibility.
+
+## Limitations
+
+### Phase 1 (Current) - Basic KV Operations
+
+**Implemented**:
+- ✅ Get - Retrieve single keys
+- ✅ Put - Store key-value pairs
+- ✅ Delete - Delete keys
+
+**Not Implemented**:
+- ❌ Range queries - Get keys with prefix (requires GetOptions)
+- ❌ Watch - Real-time change notifications (streaming RPC)
+- ❌ Transactions - Compare-and-swap operations
+- ❌ Leases - TTL-based expiration
+- ❌ Authentication - User/password auth
+- ❌ TLS - Encrypted connections
+
+### No Connection Pooling Control
+- etcd-client manages connection pool internally
+- No explicit control over connection lifecycle
+- Reconnects on every operation (simple but potentially inefficient)
+
+### No Streaming RPCs
+- Watch requires bidirectional streaming
+- LeaseKeepAlive requires streaming
+- Current implementation is unary RPC only (request-response)
+
+## Known Issues
+
+### Reconnection Overhead
+- Each operation creates a new etcd-client connection
+- May be slow for high-frequency operations
+- **Mitigation**: etcd-client has built-in connection pooling
+
+### No Watch Support
+- LLM cannot be notified of key changes in real-time
+- Must poll with get operations
+- **Future**: Implement streaming RPCs for watch
+
+### Error Handling
+- etcd errors (key not found, etc.) propagate as Rust errors
+- LLM doesn't get structured error events
+- **Future**: Add `etcd_error_received` event
+
+## Example Prompts
+
+### Simple Get/Put
+```
+connect to etcd at localhost:2379
+Store configuration: PUT /config/database = "postgres://localhost:5432/mydb"
+Retrieve it back with GET /config/database
+```
+
+### Service Discovery Simulation
+```
+connect to etcd at localhost:2379
+Register service instances:
+  PUT /services/api/instance-1 = "http://10.0.1.5:8080"
+  PUT /services/api/instance-2 = "http://10.0.1.6:8080"
+Then retrieve /services/api/instance-1 to verify
+```
+
+### Configuration Management
+```
+connect to etcd at localhost:2379
+Store application config:
+  PUT /app/timeout = "30"
+  PUT /app/max_connections = "100"
+  PUT /app/log_level = "debug"
+Then retrieve /app/timeout
+```
+
+## Performance Characteristics
+
+### Latency
+- **Connect**: ~50-200ms (one-time handshake)
+- **Get/Put/Delete**: ~10-50ms per operation + 2-5s LLM processing
+- Total: ~2-5 seconds per LLM-controlled operation
+
+### Throughput
+- **Limited by LLM**: ~0.2-0.5 operations per second
+- etcd operations are fast (~10-50ms) but LLM processing dominates
+- Concurrent clients can operate independently
+
+### Network Efficiency
+- gRPC uses HTTP/2 (multiplexed, binary)
+- Protobuf encoding is compact
+- Reconnection per operation adds overhead (future optimization: persistent connection)
+
+## Security Considerations
+
+### No Authentication (Phase 1)
+- Connects to etcd without credentials
+- Assumes etcd server is open or on trusted network
+- **Future**: Add username/password auth support
+
+### No TLS (Phase 1)
+- Plaintext gRPC connection
+- Data transmitted unencrypted
+- **Future**: Add TLS support with certificate validation
+
+### Endpoint Validation
+- Client accepts arbitrary endpoints from user
+- No validation of hostname/IP
+- Could connect to malicious etcd servers
+
+## Future Enhancements
+
+### Phase 2: Advanced KV Operations
+- Range queries (prefix-based get)
+- Sorted results
+- Pagination with limit
+- Previous key-value retrieval
+
+### Phase 3: Transactions
+- Compare-and-swap operations
+- Atomic multi-key updates
+- Distributed locking support
+
+### Phase 4: Streaming
+- Watch for key changes
+- Real-time notifications to LLM
+- Event-driven architecture
+
+### Phase 5: Auth & Security
+- Username/password authentication
+- TLS encryption
+- Certificate validation
+
+## References
+- [etcd-client Documentation](https://docs.rs/etcd-client/)
+- [etcd v3 API](https://etcd.io/docs/v3.5/learning/api/)
+- [etcd gRPC Protocol](https://github.com/etcd-io/etcd/tree/main/api/etcdserverpb)
+
+## Key Design Principles
+
+1. **Simplicity** - Use high-level etcd-client API, avoid raw gRPC
+2. **Stateless** - Reconnect per operation, no connection state management
+3. **LLM-Friendly** - Structured actions (get/put/delete) not raw bytes
+4. **Incremental** - Start with basic KV, defer advanced features
+5. **Observable** - Dual logging for debugging and monitoring
