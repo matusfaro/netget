@@ -42,6 +42,7 @@ cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
+webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
@@ -121,6 +122,7 @@ all-protocols = [
     "smb",
     "stun",
     "turn",
+    "webrtc",
     "sip",
     "ldap",
     "imap",
@@ -313,6 +315,9 @@ webrtc-stun = { version = "0.1", optional = true }
 
 # TURN server (Traversal Using Relays around NAT)
 webrtc-turn = { version = "0.1", optional = true }
+
+# WebRTC client (peer-to-peer data channels, no media)
+webrtc = { version = "0.11", optional = true }
 
 # LDAP server (ASN.1 BER encoding for LDAP protocol)
 ldap3_proto = { version = "0.3", optional = true }
