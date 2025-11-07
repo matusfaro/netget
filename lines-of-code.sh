@@ -208,9 +208,9 @@ cat "$TEMP_ALL_DATES" | while read date; do
     echo "$date $estimated_loc" >> "$TEMP_DAILY_STATS"
 done
 
-# Display the last 15 days
+# Display all days
 if [ -f "$TEMP_DAILY_STATS" ] && [ -s "$TEMP_DAILY_STATS" ]; then
-    tail -15 "$TEMP_DAILY_STATS" | while read date loc; do
+    cat "$TEMP_DAILY_STATS" | while read date loc; do
         printf "  %s   %7d lines\n" "$date" "$loc"
     done
 else
