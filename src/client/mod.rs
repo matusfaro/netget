@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: DynamoDB client
-#[cfg(feature = "dynamo")]
-pub mod dynamodb;
-#[cfg(feature = "dynamo")]
-pub use dynamodb::actions::DynamoDbClientProtocol;
+// Kubernetes client
+#[cfg(feature = "kubernetes")]
+pub mod kubernetes;
+#[cfg(feature = "kubernetes")]
+pub use kubernetes::actions::KubernetesClientProtocol;
