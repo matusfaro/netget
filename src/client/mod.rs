@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: etcd client
+#[cfg(feature = "etcd")]
+pub mod etcd;
+#[cfg(feature = "etcd")]
+pub use etcd::actions::EtcdClientProtocol;
