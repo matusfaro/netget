@@ -8,14 +8,14 @@ default = ["all-protocols"]
 tcp = ["async-trait"]
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
-pypi = ["urlencoding"]  # PyPI (Python Package Index) client for searching and downloading packages
+pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
-dns = ["hickory-server", "hickory-proto"]
-dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # DNS-over-TLS server (and client)
+dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
+dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
@@ -38,7 +38,7 @@ redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
-cassandra = ["dep:cassandra-protocol", "dep:scylla", "tcp"]
+cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
@@ -52,7 +52,7 @@ elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
-npm = ["urlencoding"]  # NPM registry server/client uses urlencoding for package names
+npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
 oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
@@ -74,11 +74,11 @@ tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:toki
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
-git = ["dep:git2"]  # Git Smart HTTP server with LLM-controlled virtual repositories and Git client
+git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
-torrent-tracker = ["dep:serde_bencode", "urlencoding"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
+torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
@@ -241,15 +241,15 @@ pcap = "2.2"
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
 
-# DNS server (Hickory DNS, formerly Trust-DNS)
+# DNS server and client (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
+hickory-client = { version = "0.24", features = ["dns-over-rustls", "dns-over-https-rustls"], optional = true }
 
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2.0", optional = true }
-webpki-roots = { version = "0.26", optional = true }
 
 # HTTP/2 support for DoH
 h2 = { version = "0.4", optional = true }
@@ -305,9 +305,6 @@ nfsserve = { version = "0.10", optional = true }
 
 # Cassandra/CQL server
 cassandra-protocol = { version = "3.3", optional = true }
-
-# Cassandra/ScyllaDB client
-scylla = { version = "0.15", optional = true }
 
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
@@ -397,9 +394,6 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
-# Git client (libgit2 wrapper for Git protocol operations)
-git2 = { version = "0.19", optional = true }
-
 [dev-dependencies]
 # For async tests
 tokio-test = "0.4"
@@ -419,9 +413,6 @@ suppaftp = "6.0"
 nix = { version = "0.29", features = ["signal", "process", "term", "ioctl"] }
 # SNMP client for e2e integration tests
 snmp = "0.2"
-# DNS client for e2e integration tests (Hickory DNS, formerly Trust-DNS)
-# Includes TLS features for DoT and DoH testing
-hickory-client = { version = "0.24", features = ["dns-over-rustls", "dns-over-https-rustls"] }
 # NTP client for e2e integration tests
 rsntp = "4.0"
 # SSH client for e2e integration tests
@@ -469,6 +460,8 @@ etcd-client = "0.15"
 # Tor client for e2e integration tests (Tor relay + directory)
 arti-client = "0.36"
 tor-rtcompat = "0.36"
+# Git client for e2e integration tests
+git2 = "0.19"
 # AMQP 1.0 client for e2e integration tests
 rumqttc = "0.24"
 # Kafka client for e2e integration tests

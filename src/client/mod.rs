@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// DataLink client
-#[cfg(feature = "datalink")]
-pub mod datalink;
-#[cfg(feature = "datalink")]
-pub use datalink::actions::DataLinkClientProtocol;
+// Phase 6: DNS client
+#[cfg(feature = "dns")]
+pub mod dns;
+#[cfg(feature = "dns")]
+pub use dns::actions::DnsClientProtocol;

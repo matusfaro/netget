@@ -36,21 +36,17 @@ impl ClientProtocolRegistry {
 
     /// Register all available client protocols based on compiled features
     fn register_protocols(&mut self) {
-        // Phase 3: TCP client
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::client::tcp::TcpClientProtocol::new()));
 
-        // Phase 4: HTTP client
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
 
-        // Phase 5: Redis client
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        // DataLink client
-        #[cfg(feature = "datalink")]
-        self.register(Arc::new(crate::client::datalink::DataLinkClientProtocol::new()));
+        #[cfg(feature = "dns")]
+        self.register(Arc::new(crate::client::dns::DnsClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
