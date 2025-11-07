@@ -44,6 +44,9 @@ impl ClientProtocolRegistry {
 
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+
+        #[cfg(feature = "pypi")]
+        self.register(Arc::new(crate::client::pypi::PypiClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
