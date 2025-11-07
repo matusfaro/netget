@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Maven client
+#[cfg(feature = "maven")]
+pub mod maven;
+#[cfg(feature = "maven")]
+pub use maven::actions::MavenClientProtocol;
