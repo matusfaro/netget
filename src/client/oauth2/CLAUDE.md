@@ -93,8 +93,10 @@ When device code flow is initiated:
 1. Client displays verification URL and user code
 2. Spawns background task to poll every N seconds (server-specified interval)
 3. Polls up to 60 times (5 minutes with 5-second interval)
-4. Automatically fires `oauth2_token_obtained` event on success
-5. Stops polling if token obtained or timeout reached
+4. Uses direct HTTP POST to token endpoint (workaround for oauth2 crate limitation)
+5. Automatically fires `oauth2_token_obtained` event on success
+6. Stops polling if token obtained or timeout reached
+7. Ignores `authorization_pending` and `slow_down` errors during polling
 
 ### PKCE (Proof Key for Code Exchange)
 
@@ -171,8 +173,8 @@ open_client oauth2 https://provider.com/oauth --client_id=my-client --auth_url=h
 
 ## Dependencies
 
-- `oauth2` crate: OAuth2 client implementation
-- `reqwest`: HTTP client (via oauth2 crate)
+- `oauth2` crate v4.4: OAuth2 client implementation (password, client credentials, authorization code flows)
+- `reqwest`: HTTP client (used directly for device code polling, also via oauth2 crate)
 - Built-in types for type-safe token handling
 
 ## Testing Considerations

@@ -8,8 +8,8 @@ use oauth2::{
     basic::{BasicClient, BasicTokenType},
     reqwest::async_http_client,
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, DeviceAuthorizationUrl,
-    EmptyExtraTokenFields, PkceCodeChallenge, RedirectUrl, RefreshToken, ResourceOwnerPassword,
-    ResourceOwnerUsername, Scope, StandardDeviceAuthorizationResponse, StandardTokenResponse,
+    EmptyExtraDeviceAuthorizationFields, EmptyExtraTokenFields, PkceCodeChallenge, RedirectUrl,
+    RefreshToken, ResourceOwnerPassword, ResourceOwnerUsername, Scope, StandardTokenResponse,
     TokenResponse, TokenUrl,
 };
 use std::net::SocketAddr;
@@ -83,7 +83,8 @@ impl OAuth2Client {
                         scopes,
                     ))
                 })
-                .await?;
+                .await
+                .context("Client not found")??;
 
         // Build OAuth2 client
         let client_id_obj = ClientId::new(oauth_client_id);
@@ -99,18 +100,16 @@ impl OAuth2Client {
             AuthUrl::new(token_url.clone()).context("Invalid token URL for auth placeholder")?
         };
 
-        let mut oauth_client = BasicClient::new(
+        let _oauth_client = BasicClient::new(
             client_id_obj,
             client_secret_obj.clone(),
             auth_url_obj,
             Some(token_url_obj),
         );
 
-        // Set device authorization URL (for device code flow, typically at /device/code)
-        // Many providers use standard paths
-        if let Ok(device_auth_url) = DeviceAuthorizationUrl::new(format!("{}/device/code", remote_addr)) {
-            oauth_client = oauth_client.set_device_authorization_url(device_auth_url);
-        }
+        // Note: Device authorization URL would be set here if needed for device code flow
+        // Format: DeviceAuthorizationUrl::new(format!("{}/device/code", remote_addr))
+        // OAuth client is constructed here to validate configuration but not used yet
 
         // Store OAuth2 client configuration in protocol data
         app_state
@@ -408,18 +407,16 @@ impl OAuth2Client {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Ok::<_, anyhow::Error>((cid, csecret, aurl, turl, dscopes))
-            })
-            .await?;
+            }).await.context("Client not found")??;
 
         let oauth_client =
             Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
 
         // Build token request
+        let username_obj = ResourceOwnerUsername::new(username);
+        let password_obj = ResourceOwnerPassword::new(password);
         let mut token_request = oauth_client
-            .exchange_password(
-                &ResourceOwnerUsername::new(username),
-                &ResourceOwnerPassword::new(password),
-            );
+            .exchange_password(&username_obj, &password_obj);
 
         // Add scopes
         if let Some(scopes) = scopes_str {
@@ -496,8 +493,7 @@ impl OAuth2Client {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Ok::<_, anyhow::Error>((cid, csecret, aurl, turl, dscopes))
-            })
-            .await?;
+            }).await.context("Client not found")??;
 
         let oauth_client =
             Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
@@ -578,8 +574,7 @@ impl OAuth2Client {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
                     Ok::<_, anyhow::Error>((cid, csecret, aurl, turl, durl))
-                })
-                .await?;
+                }).await.context("Client not found")??;
 
         let oauth_client = Self::build_oauth_client(
             oauth_client_id,
@@ -603,15 +598,12 @@ impl OAuth2Client {
         }
 
         // Execute device authorization request
-        match device_auth_request.request_async(async_http_client).await {
+        match device_auth_request.request_async::<_, _, _, EmptyExtraDeviceAuthorizationFields>(async_http_client).await {
             Ok(device_response) => {
                 let verification_uri = device_response.verification_uri().to_string();
                 let user_code = device_response.user_code().secret().to_string();
                 let device_code = device_response.device_code().secret().to_string();
-                let interval = device_response
-                    .interval()
-                    .map(|d| d.as_secs())
-                    .unwrap_or(5);
+                let interval = device_response.interval().as_secs();
 
                 info!(
                     "OAuth2 client {} device code flow: visit {} and enter code {}",
@@ -706,7 +698,8 @@ impl OAuth2Client {
                                     .get_protocol_field("access_token")
                                     .is_some()
                             })
-                            .await;
+                            .await
+                            .unwrap_or(false);
 
                         if has_token {
                             break;
@@ -737,7 +730,7 @@ impl OAuth2Client {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get device code and OAuth client config
-        let (device_code_str, oauth_client_id, oauth_client_secret, auth_url, token_url) =
+        let (device_code_str, oauth_client_id, oauth_client_secret, _auth_url, token_url) =
             app_state
                 .with_client_mut(client_id, |client| {
                     let dc = client
@@ -764,43 +757,126 @@ impl OAuth2Client {
                         .map(|s| s.to_string())
                         .context("Missing token_url")?;
                     Ok::<_, anyhow::Error>((dc, cid, csecret, aurl, turl))
-                })
-                .await?;
+                }).await.context("Client not found")??;
 
-        let oauth_client =
-            Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
+        // Make direct HTTP request to token endpoint for device code polling
+        // This is a workaround since we can't reconstruct DeviceAuthorizationResponse
+        let client = reqwest::Client::new();
+        let mut params = vec![
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code_str.as_str()),
+            ("client_id", oauth_client_id.as_str()),
+        ];
 
-        // Parse device code response (we need to reconstruct it)
-        // This is a simplified implementation - in practice, we'd store the full response
-        let device_code_obj = oauth2::DeviceCode::new(device_code_str);
-        let device_response = StandardDeviceAuthorizationResponse::new(
-            device_code_obj,
-            oauth2::UserCode::new("placeholder".to_string()),
-            "https://placeholder.com".parse().unwrap(),
-        );
+        // Add client secret if present
+        let client_secret_param;
+        if let Some(ref secret) = oauth_client_secret {
+            client_secret_param = secret.clone();
+            params.push(("client_secret", client_secret_param.as_str()));
+        }
 
-        // Poll for token
-        match oauth_client
-            .exchange_device_access_token(&device_response)
-            .request_async(async_http_client, tokio::time::sleep, None)
-            .await
-        {
-            Ok(token_response) => {
-                Self::handle_token_response(
-                    client_id,
-                    token_response,
-                    app_state,
-                    llm_client,
-                    status_tx,
-                )
-                .await?;
+        match client.post(&token_url).form(&params).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let body: serde_json::Value = response.json().await.unwrap_or_default();
+
+                if status.is_success() {
+                    // Token obtained successfully
+                    if let Some(access_token) = body.get("access_token").and_then(|v| v.as_str()) {
+                        let token_type = body.get("token_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Bearer");
+                        let expires_in = body.get("expires_in")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(3600);
+                        let refresh_token = body.get("refresh_token")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let scope = body.get("scope")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        // Store tokens
+                        app_state
+                            .with_client_mut(client_id, |client| {
+                                client.set_protocol_field(
+                                    "access_token".to_string(),
+                                    serde_json::json!(access_token),
+                                );
+                                client.set_protocol_field(
+                                    "token_type".to_string(),
+                                    serde_json::json!(token_type),
+                                );
+                                client.set_protocol_field(
+                                    "expires_in".to_string(),
+                                    serde_json::json!(expires_in),
+                                );
+                                if let Some(rt) = &refresh_token {
+                                    client.set_protocol_field(
+                                        "refresh_token".to_string(),
+                                        serde_json::json!(rt),
+                                    );
+                                }
+                                if !scope.is_empty() {
+                                    client.set_protocol_field(
+                                        "scopes".to_string(),
+                                        serde_json::json!(scope),
+                                    );
+                                }
+                            })
+                            .await;
+
+                        info!("OAuth2 client {} device code token obtained", client_id);
+
+                        // Call LLM with token obtained event
+                        let protocol = Arc::new(OAuth2ClientProtocol::new());
+                        let event = Event::new(
+                            &OAUTH2_TOKEN_OBTAINED_EVENT,
+                            serde_json::json!({
+                                "access_token": "[REDACTED]",
+                                "token_type": token_type,
+                                "expires_in": expires_in,
+                                "refresh_token": if refresh_token.is_some() { "[REDACTED]" } else { "" },
+                                "scope": scope,
+                            }),
+                        );
+
+                        let instruction = app_state
+                            .get_instruction_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
+
+                        if let Ok(ClientLlmResult { actions: _, memory_updates }) =
+                            call_llm_for_client(
+                                &llm_client,
+                                &app_state,
+                                client_id.to_string(),
+                                &instruction,
+                                &memory,
+                                Some(&event),
+                                protocol.as_ref(),
+                                &status_tx,
+                            ).await
+                        {
+                            if let Some(mem) = memory_updates {
+                                app_state.set_memory_for_client(client_id, mem).await;
+                            }
+                        }
+                    }
+                } else {
+                    // Check for authorization_pending error
+                    let error = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    if error != "authorization_pending" && error != "slow_down" {
+                        error!("Device code polling error: {}", error);
+                    }
+                }
             }
             Err(e) => {
-                // Don't report as error if still pending authorization
-                let error_str = format!("{}", e);
-                if !error_str.contains("authorization_pending") {
-                    error!("Device code polling error: {}", e);
-                }
+                error!("Device code polling HTTP error: {}", e);
             }
         }
 
@@ -844,8 +920,7 @@ impl OAuth2Client {
                         .map(|s| s.to_string())
                         .context("Missing token_url")?;
                     Ok::<_, anyhow::Error>((rt, cid, csecret, aurl, turl))
-                })
-                .await?;
+                }).await.context("Client not found")??;
 
         let oauth_client =
             Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
@@ -922,8 +997,7 @@ impl OAuth2Client {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Ok::<_, anyhow::Error>((cid, csecret, Some(aurl), turl, dscopes))
-            })
-            .await?;
+            }).await.context("Client not found")??;
 
         let mut oauth_client = Self::build_oauth_client(
             oauth_client_id,
@@ -1028,8 +1102,7 @@ impl OAuth2Client {
                         .map(|s| s.to_string())
                         .context("Missing token_url")?;
                     Ok::<_, anyhow::Error>((pkce, redir, cid, csecret, aurl, turl))
-                })
-                .await?;
+                }).await.context("Client not found")??;
 
         let mut oauth_client = Self::build_oauth_client(
             oauth_client_id,
