@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "redis"))]
 mod redis_client_tests {
-    use super::super::super::helpers::*;
+    use crate::helpers::*;
     use std::time::Duration;
 
     /// Test Redis client connection and command execution
@@ -13,11 +13,7 @@ mod redis_client_tests {
     #[tokio::test]
     async fn test_redis_client_connect_and_command() -> E2EResult<()> {
         // Start a Redis server listening on an available port
-        let port = get_available_port().await?;
-        let server_config = NetGetConfig::new(format!(
-            "Listen on port {} via Redis. Accept PING commands and respond with PONG.",
-            port
-        ));
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via Redis. Accept PING commands and respond with PONG.",);
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -27,7 +23,7 @@ mod redis_client_tests {
         // Now start a Redis client that connects and sends a command
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via Redis. Send PING command and read response.",
-            port
+            server.port
         ));
 
         let mut client = start_netget_client(client_config).await?;
@@ -55,13 +51,8 @@ mod redis_client_tests {
     /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
     async fn test_redis_client_llm_controlled_commands() -> E2EResult<()> {
-        let port = get_available_port().await?;
-
         // Start a simple Redis server
-        let server_config = NetGetConfig::new(format!(
-            "Listen on port {} via Redis. Log all incoming commands.",
-            port
-        ));
+        let server_config = NetGetConfig::new("Listen on port {} via Redis. Log all incoming commands.");
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -70,7 +61,7 @@ mod redis_client_tests {
         // Client that sends specific commands based on LLM instruction
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via Redis. Execute SET key1 'value1' command.",
-            port
+            server.port
         ));
 
         let mut client = start_netget_client(client_config).await?;

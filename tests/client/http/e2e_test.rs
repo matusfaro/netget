@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "http"))]
 mod http_client_tests {
-    use super::super::super::helpers::*;
+    use crate::helpers::*;
     use std::time::Duration;
 
     /// Test HTTP client making a GET request
@@ -13,11 +13,7 @@ mod http_client_tests {
     #[tokio::test]
     async fn test_http_client_get_request() -> E2EResult<()> {
         // Start an HTTP server listening on an available port
-        let port = get_available_port().await?;
-        let server_config = NetGetConfig::new(format!(
-            "Listen on port {} via HTTP. Respond to GET requests with 'Hello from server'.",
-            port
-        ));
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP. Respond to GET requests with 'Hello from server'.");
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -27,7 +23,7 @@ mod http_client_tests {
         // Now start an HTTP client that makes a GET request
         let client_config = NetGetConfig::new(format!(
             "Connect to http://127.0.0.1:{} via HTTP. Send a GET request to / and read the response.",
-            port
+            server.port
         ));
 
         let mut client = start_netget_client(client_config).await?;
@@ -55,13 +51,8 @@ mod http_client_tests {
     /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
     async fn test_http_client_lllm_controlled_request() -> E2EResult<()> {
-        let port = get_available_port().await?;
-
         // Start a simple HTTP server
-        let server_config = NetGetConfig::new(format!(
-            "Listen on port {} via HTTP. Log all incoming requests.",
-            port
-        ));
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP. Log all incoming requests.");
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -70,7 +61,7 @@ mod http_client_tests {
         // Client that makes a specific request based on LLM instruction
         let client_config = NetGetConfig::new(format!(
             "Connect to http://127.0.0.1:{} via HTTP and send a GET request with custom headers.",
-            port
+            server.port
         ));
 
         let mut client = start_netget_client(client_config).await?;

@@ -313,7 +313,7 @@ Your response must be **pure JSON** only:
                 "description": a.description,
                 "is_tool": a.is_tool(),
                 "parameters": params_map,
-                "example": a.example
+                "example": a.example.to_string()
             })
         }).collect();
 
@@ -332,7 +332,7 @@ Your response must be **pure JSON** only:
                 "description": a.description,
                 "is_tool": a.is_tool(),
                 "parameters": params_map,
-                "example": a.example
+                "example": a.example.to_string()
             })
         }).collect();
 

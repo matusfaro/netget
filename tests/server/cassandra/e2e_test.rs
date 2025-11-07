@@ -101,7 +101,7 @@ mod e2e_cassandra {
     async fn test_cassandra_error_response() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Error Response ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9044. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      When receiving query 'SELECT * FROM nonexistent', respond with error: \
                      error_code=0x2200 message='Table does not exist'";
 
@@ -144,7 +144,7 @@ mod e2e_cassandra {
     async fn test_cassandra_multiple_queries() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Multiple Queries ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9045. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      For 'SELECT count(*) FROM users', return columns=[{name:'count',type:'int'}] rows=[[5]]. \
                      For 'SELECT * FROM users WHERE id=1', return columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] rows=[[1,'Alice']].";
 
@@ -200,7 +200,7 @@ mod e2e_cassandra {
     async fn test_cassandra_concurrent_connections() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Concurrent Connections ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9046. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      When receiving any SELECT query, respond with: \
                      columns=[{name:'value',type:'int'}] rows=[[42]]";
 
@@ -254,7 +254,7 @@ mod e2e_cassandra {
     async fn test_cassandra_prepared_statement() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Prepared Statement ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9047. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      When receiving PREPARE 'SELECT * FROM users WHERE id = ?', respond with: \
                      columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}]. \
                      When receiving EXECUTE with parameter '1', respond with: \
@@ -313,7 +313,7 @@ mod e2e_cassandra {
     async fn test_cassandra_multiple_prepared_statements() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Multiple Prepared Statements ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9048. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      For PREPARE 'SELECT * FROM users WHERE id = ?', respond with columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}]. \
                      For PREPARE 'SELECT count(*) FROM users', respond with columns=[{name:'count',type:'int'}]. \
                      For EXECUTE with any params, respond with appropriate test data.";
