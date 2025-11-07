@@ -47,6 +47,9 @@ impl ClientProtocolRegistry {
 
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::client::bgp::BgpClientProtocol::new()));
+
+        #[cfg(feature = "bitcoin")]
+        self.register(Arc::new(crate::client::bitcoin::BitcoinClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
