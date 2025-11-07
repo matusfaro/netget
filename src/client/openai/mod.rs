@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -192,9 +192,24 @@ impl OpenAiClient {
             request.max_tokens(tokens as u16);
         }
 
-        // TODO: Add function calling support when needed
-        if functions.is_some() {
-            info!("OpenAI client {}: Function calling requested but not yet implemented", client_id);
+        // Add function calling support
+        if let Some(functions_value) = functions {
+            if let Some(functions_array) = functions_value.as_array() {
+                let mut tools = Vec::new();
+                for func in functions_array {
+                    // Convert the function definition to OpenAI tool format
+                    if let Ok(tool) = serde_json::from_value::<async_openai::types::ChatCompletionTool>(func.clone()) {
+                        tools.push(tool);
+                    } else {
+                        warn!("OpenAI client {}: Failed to parse function definition: {:?}", client_id, func);
+                    }
+                }
+                if !tools.is_empty() {
+                    let tools_count = tools.len();
+                    request.tools(tools);
+                    info!("OpenAI client {}: Added {} function(s) to request", client_id, tools_count);
+                }
+            }
         }
 
         let request = request.build()
@@ -216,22 +231,44 @@ impl OpenAiClient {
                     "total_tokens": response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
                 });
 
-                info!("OpenAI client {} received response ({} tokens)",
+                // Extract tool_calls if present
+                let tool_calls = choice.message.tool_calls.as_ref().map(|calls| {
+                    calls.iter().map(|call| {
+                        serde_json::json!({
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.function.name,
+                                "arguments": call.function.arguments
+                            }
+                        })
+                    }).collect::<Vec<_>>()
+                });
+
+                info!("OpenAI client {} received response ({} tokens{})",
                     client_id,
-                    response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0)
+                    response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
+                    if tool_calls.is_some() { ", with tool calls" } else { "" }
                 );
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                     let protocol = Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
+                    let mut event_data = serde_json::json!({
+                        "response_type": "chat_completion",
+                        "content": content,
+                        "model": response.model,
+                        "usage": usage,
+                    });
+
+                    // Add tool_calls if present
+                    if let Some(calls) = tool_calls {
+                        event_data["tool_calls"] = serde_json::json!(calls);
+                    }
+
                     let event = Event::new(
                         &OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "response_type": "chat_completion",
-                            "content": content,
-                            "model": response.model,
-                            "usage": usage,
-                        }),
+                        event_data,
                     );
 
                     let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();

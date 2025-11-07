@@ -727,6 +727,7 @@ impl EventHandler {
                 max_executions,
                 server_id,
                 connection_id,
+                client_id,
                 instruction,
                 context,
                 script_runtime,
@@ -737,7 +738,7 @@ impl EventHandler {
             } => {
                 use crate::state::task::{ScheduledTask, TaskScope};
 
-                // Determine scope: Connection > Server > Global
+                // Determine scope: Connection > Server > Client > Global
                 let scope = if let Some(conn_id_str) = connection_id {
                     // Connection scope requires server_id
                     if let Some(sid) = server_id {
@@ -779,6 +780,17 @@ impl EventHandler {
                     }
                 } else if let Some(sid) = server_id {
                     TaskScope::Server(crate::state::ServerId::new(sid))
+                } else if let Some(cid) = client_id {
+                    let client_id_obj = crate::state::ClientId::new(cid);
+                    // Validate client exists
+                    if self.state.get_client(client_id_obj).await.is_none() {
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Client #{} not found for client-scoped task",
+                            cid
+                        ));
+                        return Ok(());
+                    }
+                    TaskScope::Client(client_id_obj)
                 } else {
                     TaskScope::Global
                 };
@@ -889,20 +901,33 @@ impl EventHandler {
                 // Add client to state (this allocates the real client ID)
                 let client_id = self.state.add_client(client).await;
 
-                // TODO: Set script configuration if provided (not yet implemented for clients)
-                // if let Some(runtime) = script_runtime {
-                //     self.state
-                //         .set_client_script_config(
-                //             client_id,
-                //             Some(runtime.clone()),
-                //             script_inline.clone(),
-                //             script_handles.clone().unwrap_or_default(),
-                //         )
-                //         .await;
-                // }
-                let _ = script_runtime; // Silence unused variable warning
-                let _ = script_inline; // Silence unused variable warning
-                let _ = script_handles; // Silence unused variable warning
+                // Set script configuration if provided
+                if script_runtime.is_some() || script_inline.is_some() || script_handles.is_some() {
+                    let selected_mode = self.state.get_selected_scripting_mode().await;
+                    match crate::scripting::ScriptManager::build_config(
+                        selected_mode,
+                        script_runtime.as_deref(),
+                        script_inline.as_deref(),
+                        script_handles,
+                    ) {
+                        Ok(Some(config)) => {
+                            let scripting_env = self.state.get_scripting_env().await;
+                            if scripting_env.is_available(config.language) {
+                                self.state.set_client_script_config(client_id, Some(config)).await;
+                                let _ = status_tx.send("[INFO] Script configuration applied to client".to_string());
+                            } else {
+                                let _ = status_tx.send(format!(
+                                    "[WARN] {} not available, script not configured",
+                                    config.language.as_str()
+                                ));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let _ = status_tx.send(format!("[ERROR] Failed to build script config: {}", e));
+                        }
+                    }
+                }
 
                 let _ = status_tx.send(format!(
                     "[CLIENT] Opening {} client #{} to {}...",
@@ -930,12 +955,51 @@ impl EventHandler {
                             client_id.as_u32()
                         ));
 
-                        // TODO: Create scheduled tasks if provided (TaskScope::Client not yet implemented)
-                        if let Some(_task_defs) = scheduled_tasks {
-                            let _ = status_tx.send(format!(
-                                "[WARN] Scheduled tasks for clients not yet supported (client #{})",
-                                client_id.as_u32()
-                            ));
+                        // Create scheduled tasks if provided
+                        if let Some(task_defs) = scheduled_tasks {
+                            for task_def in task_defs {
+                                let delay = if task_def.recurring {
+                                    task_def.delay_secs.or(task_def.interval_secs).unwrap_or(0)
+                                } else {
+                                    task_def.delay_secs.unwrap_or(0)
+                                };
+
+                                let task = if task_def.recurring {
+                                    let interval_secs = task_def.interval_secs.unwrap_or(delay);
+                                    crate::state::task::ScheduledTask::new_recurring(
+                                        crate::state::TaskId::new(0),
+                                        task_def.task_id.clone(),
+                                        crate::state::task::TaskScope::Client(client_id),
+                                        interval_secs,
+                                        task_def.max_executions,
+                                        task_def.instruction,
+                                        task_def.context,
+                                    )
+                                } else {
+                                    crate::state::task::ScheduledTask::new_one_shot(
+                                        crate::state::TaskId::new(0),
+                                        task_def.task_id.clone(),
+                                        crate::state::task::TaskScope::Client(client_id),
+                                        delay,
+                                        task_def.instruction,
+                                        task_def.context,
+                                    )
+                                };
+
+                                let task_id_num = self.state.add_task(task).await;
+
+                                let _ = status_tx.send(format!(
+                                    "[TASK] Created {} task '{}' (ID: {}) for client #{}",
+                                    if task_def.recurring {
+                                        "recurring"
+                                    } else {
+                                        "one-shot"
+                                    },
+                                    task_def.task_id,
+                                    task_id_num,
+                                    client_id.as_u32()
+                                ));
+                            }
                         }
                     }
                     Err(e) => {
@@ -966,8 +1030,12 @@ impl EventHandler {
                     .await;
                 let _ = status_tx.send(format!("[CLIENT] Closed client #{}", cid.as_u32()));
 
-                // TODO: Clean up tasks associated with this client (not yet implemented)
-                // self.state.cleanup_client_tasks(cid).await;
+                // Clean up tasks associated with this client
+                self.state.cleanup_client_tasks(cid).await;
+                let _ = status_tx.send(format!(
+                    "[TASK] Cleaned up tasks for client #{}",
+                    cid.as_u32()
+                ));
 
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
@@ -983,8 +1051,12 @@ impl EventHandler {
                         .await;
                     let _ = status_tx.send(format!("[CLIENT] Closed client #{}", client_id.as_u32()));
 
-                    // TODO: Clean up tasks associated with this client (not yet implemented)
-                    // self.state.cleanup_client_tasks(client_id).await;
+                    // Clean up tasks associated with this client
+                    self.state.cleanup_client_tasks(client_id).await;
+                    let _ = status_tx.send(format!(
+                        "[TASK] Cleaned up tasks for client #{}",
+                        client_id.as_u32()
+                    ));
                 }
 
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
