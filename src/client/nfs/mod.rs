@@ -3,24 +3,25 @@ pub mod actions;
 
 pub use actions::NfsClientProtocol;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::info;
 
+use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::ClientId;
+use crate::state::{ClientId, ClientStatus};
+use serde_json::json;
 
-// Note: nfs3_client API is currently incompatible
-// The crate exists but has different API than documented in CLIENT_PROTOCOL_FEASIBILITY.md
-// TODO: Research actual nfs3_client v0.7 API and implement properly
-// Issues:
-// - Client type not exported at crate root (maybe in submodule?)
-// - MountClient takes IO types with nfs3_client::io::AsyncRead/AsyncWrite (not tokio's)
-// - Need to figure out correct imports and trait bridging
-// nfs3_client dependency is available but not yet integrated
+#[cfg(feature = "nfs")]
+use nfs3_client::tokio::TokioConnector;
+#[cfg(feature = "nfs")]
+use nfs3_client::Nfs3ConnectionBuilder;
+
+use crate::client::nfs::actions::NFS_CLIENT_CONNECTED_EVENT;
 
 /// NFS client that connects to a remote NFS server
 pub struct NfsClient;
@@ -30,8 +31,8 @@ impl NfsClient {
     #[cfg(feature = "nfs")]
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
@@ -42,20 +43,84 @@ impl NfsClient {
         info!("NFS client {} attempting to connect to {} for export {}", client_id, server_addr, export_path);
         let _ = status_tx.send(format!("[CLIENT] NFS client {} connecting to {}", client_id, server_addr));
 
-        // TODO: Implement actual nfs3_client integration once API is clarified
-        // Current nfs3_client v0.7 has incompatible API with tokio and unclear exports
-        // Need to research actual API or consider alternative approach:
-        // 1. Figure out correct nfs3_client imports (Client might be in submodule)
-        // 2. Implement AsyncRead/AsyncWrite trait bridging with tokio_util::compat
-        // 3. Or consider libnfs-rs (C bindings) as alternative
-        // 4. Or implement raw NFS/RPC from scratch (significant work)
-        error!("NFS client not fully implemented - nfs3_client API needs clarification");
-        let _ = status_tx.send("[ERROR] NFS client not fully implemented yet".to_string());
+        // Extract just the server part (remove port if present)
+        let server = server_addr.split(':').next().unwrap_or(&server_addr);
 
-        return Err(anyhow::anyhow!(
-            "NFS client implementation incomplete - nfs3_client v0.7 API incompatible with current approach. \
-            Needs research into actual crate API or alternative implementation strategy."
-        ));
+        // Mount the NFS export
+        let connection = Nfs3ConnectionBuilder::new(TokioConnector, server, &export_path)
+            .mount()
+            .await
+            .context("Failed to mount NFS export")?;
+
+        info!("NFS client {} successfully mounted {}", client_id, export_path);
+        let _ = status_tx.send(format!("[CLIENT] NFS client {} mounted export {}", client_id, export_path));
+
+        // Get root file handle - nfs3_client uses root_nfs_fh3()
+        let root_fh = connection.root_nfs_fh3();
+        let root_fh_hex = hex::encode(&root_fh.data.0);
+
+        // Update client status to connected
+        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Get instruction for initial LLM call
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let protocol = Arc::new(NfsClientProtocol::new());
+
+            // Send connected event to LLM
+            let connected_event = Event::new(
+                &NFS_CLIENT_CONNECTED_EVENT,
+                json!({
+                    "export_path": export_path,
+                    "root_fh": root_fh_hex
+                }),
+            );
+
+            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &memory,
+                Some(&connected_event),
+                protocol.as_ref(),
+                &status_tx,
+            )
+            .await {
+                Ok(result) => {
+                    // Update memory if provided
+                    if let Some(new_memory) = result.memory_updates {
+                        app_state.set_memory_for_client(client_id, new_memory).await;
+                    }
+
+                    // Note: Actions from the LLM would need to be executed here
+                    // For now, NFS operations are not yet implemented
+                    info!("NFS client {} received {} actions from LLM", client_id, result.actions.len());
+                }
+                Err(e) => {
+                    info!("NFS client {} LLM call failed: {}", client_id, e);
+                }
+            }
+        }
+
+        // Spawn monitoring task
+        let app_state_clone = app_state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                // Check if client was removed
+                if app_state_clone.get_client(client_id).await.is_none() {
+                    info!("NFS client {} stopped", client_id);
+                    break;
+                }
+            }
+        });
+
+        // Return a dummy socket address (NFS doesn't use direct sockets)
+        Ok(format!("{}:2049", server).parse()?)
     }
 
     /// Parse NFS address into server address and export path
