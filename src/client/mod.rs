@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Git client
+#[cfg(feature = "git")]
+pub mod git;
+#[cfg(feature = "git")]
+pub use git::actions::GitClientProtocol;
