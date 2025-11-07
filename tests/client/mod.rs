@@ -4,6 +4,8 @@
 pub mod tcp;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "mysql")]
+pub mod mysql;
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "mdns")]
