@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "dhcp")]
-pub mod dhcp;
+#[cfg(feature = "grpc")]
+pub mod grpc;
