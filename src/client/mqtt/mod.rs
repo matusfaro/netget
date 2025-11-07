@@ -14,7 +14,7 @@ use tracing::{debug, error, info, trace};
 use crate::protocol::StartupParams;
 
 use crate::client::mqtt::actions::{
-    MQTT_CLIENT_CONNECTED_EVENT, MQTT_MESSAGE_RECEIVED_EVENT, MQTT_SUBSCRIBED_EVENT,
+    MQTT_CLIENT_CONNECTED_EVENT, MQTT_MESSAGE_RECEIVED_EVENT,
 };
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
@@ -82,7 +82,7 @@ impl MqttClient {
             client_id, host, port, mqtt_client_id);
 
         // Create MQTT client
-        let (mqtt_client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
+        let (mqtt_client, eventloop) = AsyncClient::new(mqttoptions, 10);
 
         // For returning the local address, we need to extract it from the eventloop
         // rumqttc doesn't expose local_addr directly, so we'll construct a fake SocketAddr
