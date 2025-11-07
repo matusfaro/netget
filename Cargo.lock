@@ -5564,17 +5564,6 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "jid"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4a52cacd869b804660986b10aa2076c3a4b6da644c7198f9fd0b613f4a7b249"
-dependencies = [
- "memchr",
- "minidom 0.15.2",
- "stringprep",
-]
-
-[[package]]
-name = "jid"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04ec04c561bce2a09e8782a8fa7f4804f794ebc8e8dd4c06967f3aa4403ab4fc"
@@ -6305,15 +6294,6 @@ dependencies = [
 
 [[package]]
 name = "minidom"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f45614075738ce1b77a1768912a60c0227525971b03e09122a05b8a34a2a6278"
-dependencies = [
- "rxml 0.9.1",
-]
-
-[[package]]
-name = "minidom"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e394a0e3c7ccc2daea3dffabe82f09857b6b510cb25af87d54bf3e910ac1642d"
@@ -6747,7 +6727,7 @@ dependencies = [
  "webrtc-turn",
  "x25519-dalek",
  "xmlrpc",
- "xmpp-parsers 0.20.0",
+ "xmpp-parsers",
 ]
 
 [[package]]
@@ -9834,23 +9814,12 @@ dependencies = [
 
 [[package]]
 name = "rxml"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a98f186c7a2f3abbffb802984b7f1dfd65dac8be1aafdaabbca4137f53f0dff7"
-dependencies = [
- "bytes",
- "rxml_validation 0.9.1",
- "smartstring",
-]
-
-[[package]]
-name = "rxml"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65bc94b580d0f5a6b7a2d604e597513d3c673154b52ddeccd1d5c32360d945ee"
 dependencies = [
  "bytes",
- "rxml_validation 0.11.0",
+ "rxml_validation",
 ]
 
 [[package]]
@@ -9863,7 +9832,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "rxml_proc",
- "rxml_validation 0.11.0",
+ "rxml_validation",
  "tokio",
 ]
 
@@ -9874,15 +9843,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d46a2e263a1beb8b39e69bffee9f2395f479cc02472c247af00e065006970ca7"
 dependencies = [
  "quote",
- "rxml_validation 0.11.0",
+ "rxml_validation",
  "syn 2.0.109",
 ]
-
-[[package]]
-name = "rxml_validation"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a197350ece202f19a166d1ad6d9d6de145e1d2a8ef47db299abe164dbd7530"
 
 [[package]]
 name = "rxml_validation"
@@ -10600,17 +10563,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "smartstring"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
-dependencies = [
- "autocfg",
- "static_assertions",
- "version_check",
-]
 
 [[package]]
 name = "smawk"
@@ -11612,7 +11564,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tokio-stream",
- "xmpp-parsers 0.22.0",
+ "xmpp-parsers",
  "xso",
 ]
 
@@ -14622,24 +14574,6 @@ dependencies = [
 
 [[package]]
 name = "xmpp-parsers"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0905d294e6e7f7668f4b3ca9c4a6343fd85355d21c44d2f1c8b1c027394048e"
-dependencies = [
- "base64 0.21.7",
- "blake2",
- "chrono",
- "digest 0.10.7",
- "jid 0.10.0",
- "minidom 0.15.2",
- "rustc_version",
- "sha1",
- "sha2 0.10.9",
- "sha3",
-]
-
-[[package]]
-name = "xmpp-parsers"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3fbca6d2a48e263c53479ba7cc198724a52fcac066f63f08ec2084b4455b9b"
@@ -14648,7 +14582,7 @@ dependencies = [
  "blake2",
  "chrono",
  "digest 0.10.7",
- "jid 0.12.1",
+ "jid",
  "log",
  "minidom 0.18.0",
  "serde_json",
@@ -14667,7 +14601,7 @@ checksum = "71699b74d769a35bd2b1dad02a3861bb4fe907d510b86230230d5d2bb1aac7c3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "jid 0.12.1",
+ "jid",
  "minidom 0.18.0",
  "rxml 0.13.3",
  "serde_json",
@@ -14683,7 +14617,7 @@ checksum = "3500ced69bcf662565b866595ad4a64773906a339f554ab834cfb2e10c527df9"
 dependencies = [
  "proc-macro2",
  "quote",
- "rxml_validation 0.11.0",
+ "rxml_validation",
  "syn 2.0.109",
 ]
 
