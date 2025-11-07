@@ -78,7 +78,7 @@ impl NtpClient {
                                 Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data: _ }) if name == "ntp_query" => {
                                     // Send NTP query
                                     let ntp_packet = Self::build_ntp_request();
-                                    if let Ok(_) = socket_clone.send_to(&ntp_packet, remote_sock_addr).await {
+                                    if socket_clone.send_to(&ntp_packet, remote_sock_addr).await.is_ok() {
                                         trace!("NTP client {} sent query to {}", client_id, remote_sock_addr);
 
                                         // Wait for response
