@@ -67,6 +67,7 @@ pub static ARP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 });
 
 /// ARP client protocol action handler
+#[derive(Default)]
 pub struct ArpClientProtocol;
 
 impl ArpClientProtocol {

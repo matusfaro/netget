@@ -33,7 +33,6 @@ use crate::state::{ClientId, ClientStatus};
 enum ConnectionState {
     Idle,
     Processing,
-    Accumulating,
 }
 
 /// Per-client data for LLM handling
@@ -371,9 +370,9 @@ impl ArpClient {
                                     // Set state back to idle
                                     client_data_task_clone.lock().await.state = ConnectionState::Idle;
                                 }
-                                ConnectionState::Processing | ConnectionState::Accumulating => {
-                                    // Queue the packet (in a real implementation, you might want to track these)
-                                    debug!("ARP client {} is processing, packet queued", client_id);
+                                ConnectionState::Processing => {
+                                    // Skip packet - already processing another one
+                                    debug!("ARP client {} is processing, skipping packet", client_id);
                                 }
                             }
                         });
