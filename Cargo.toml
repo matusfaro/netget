@@ -38,7 +38,7 @@ redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
-cassandra = ["dep:cassandra-protocol", "tcp"]
+cassandra = ["dep:cassandra-protocol", "dep:scylla", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
@@ -304,6 +304,9 @@ nfsserve = { version = "0.10", optional = true }
 
 # Cassandra/CQL server
 cassandra-protocol = { version = "3.3", optional = true }
+
+# Cassandra/ScyllaDB client
+scylla = { version = "0.15", optional = true }
 
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }

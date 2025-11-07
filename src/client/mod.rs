@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Cassandra client
+#[cfg(feature = "cassandra")]
+pub mod cassandra;
+#[cfg(feature = "cassandra")]
+pub use cassandra::actions::CassandraClientProtocol;
