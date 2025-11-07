@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "bitcoin")]
-pub mod bitcoin;
+#[cfg(feature = "bootp")]
+pub mod bootp;
