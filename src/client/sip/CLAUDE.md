@@ -132,8 +132,8 @@ struct ClientData {
 2. LLM decides to REGISTER → Send REGISTER with CSeq=1
 3. Receive 200 OK → Extract To tag, LLM decides next action
 4. LLM decides to INVITE → Send INVITE with CSeq=2, To tag from REGISTER
-5. Receive 180 Ringing → LLM waits for more
-6. Receive 200 OK → LLM sends ACK (not implemented yet)
+5. Receive 180 Ringing → Skipped by client (provisional response), wait for final
+6. Receive 200 OK → Client automatically sends ACK (RFC 3261 compliance)
 7. LLM decides to BYE → Send BYE with CSeq=3
 8. Receive 200 OK → Call terminated
 
@@ -153,17 +153,23 @@ The LLM controls the SIP client via actions:
    - Use case: Start voice/video session
    - Example: Call bob@example.com with SDP media offer
 
-3. **sip_bye**: Terminate active session
+3. **sip_ack**: Acknowledge INVITE 200 OK (usually automatic)
+   - Parameters: from, to, request_uri
+   - Use case: Complete INVITE 3-way handshake (auto-sent by client)
+   - Note: LLM can explicitly send ACK, but client sends it automatically
+   - Example: ACK bob@example.com after receiving 200 OK to INVITE
+
+4. **sip_bye**: Terminate active session
    - Parameters: from, to, request_uri
    - Use case: End call
    - Example: Hang up ongoing call
 
-4. **sip_options**: Query capabilities
+5. **sip_options**: Query capabilities
    - Parameters: from, to, request_uri
    - Use case: Check server/user availability
    - Example: Ping bob@example.com to check presence
 
-5. **sip_cancel**: Cancel pending request
+6. **sip_cancel**: Cancel pending request
    - Parameters: from, to, request_uri
    - Use case: Cancel INVITE before final response
    - Example: Cancel call while ringing
@@ -181,7 +187,8 @@ The LLM controls the SIP client via actions:
 - LLM decides: Typically sends REGISTER or OPTIONS
 
 **sip_client_response_received**:
-- Triggered: SIP response received from server
+- Triggered: SIP final response (2xx-6xx) received from server
+- Note: Provisional responses (1xx like 100 Trying, 180 Ringing) are logged but do NOT trigger LLM calls
 - Context:
   - status_code (200, 403, 486, etc.)
   - reason_phrase ("OK", "Forbidden", "Busy Here")
@@ -190,10 +197,12 @@ The LLM controls the SIP client via actions:
   - body (SDP if present)
 - LLM decides:
   - 200 OK to REGISTER → Send INVITE or wait
-  - 200 OK to INVITE → Should send ACK (not yet implemented)
-  - 180 Ringing → Wait for 200 OK
+  - 200 OK to INVITE → Client automatically sends ACK (LLM decides next action after)
   - 486 Busy Here → End dialog or retry
   - 403 Forbidden → Authentication or policy issue
+- Automatic Behavior:
+  - Client sends ACK immediately after 200 OK to INVITE (RFC 3261 requirement)
+  - Queued responses processed after LLM finishes processing current response
 
 ## SDP (Session Description Protocol)
 
@@ -244,27 +253,28 @@ a=rtpmap:0 PCMU/8000
    - LLM generates plausible SDP strings
    - No codec negotiation or media handling
 
-5. **No ACK Handling**
-   - ACK after 200 OK to INVITE not implemented
-   - Dialogs incomplete without ACK
-   - Would need special handling (ACK is not a normal request)
-
-6. **No Retransmission**
+5. **No Retransmission**
    - No transaction layer (retransmissions, timeouts)
    - Relies on single request-response
    - Network loss causes silent failure
 
-7. **Limited Dialog State**
+6. **Limited Dialog State**
    - Basic Call-ID, tags, CSeq tracking
    - No route set (Record-Route) handling
    - No early dialog vs. confirmed dialog distinction
+   - Queued responses processed sequentially
 
 ### Protocol Compliance Gaps
+
+**RFC 3261 Features Implemented**:
+- ACK request handling (automatic after 200 OK to INVITE) ✓
+- Provisional response handling (1xx responses skipped) ✓
+- Queued response processing (handles concurrent responses) ✓
+- Basic dialog state tracking (Call-ID, tags, CSeq) ✓
 
 **RFC 3261 Features Not Implemented**:
 - Transaction layer (retransmissions, timeouts, T1/T2 timers)
 - Digest authentication (401 challenges)
-- ACK request handling (3-way handshake completion)
 - TCP/TLS transports
 - SIP over WebSocket (WebRTC)
 - SUBSCRIBE/NOTIFY (presence)
@@ -391,12 +401,21 @@ Log final status.
 - RFC 4566: SDP - Session Description Protocol
 - RFC 5389: STUN (complementary protocol for NAT traversal with SIP)
 
+## Implemented Features
+
+**Completed** (RFC 3261 Basic Compliance):
+- ✓ ACK request handling (automatic after 200 OK to INVITE)
+- ✓ Provisional response handling (1xx responses skipped)
+- ✓ Queued response processing (handles concurrent responses)
+- ✓ Dialog state tracking (Call-ID, tags, CSeq)
+- ✓ SIP methods: REGISTER, INVITE, ACK, BYE, OPTIONS, CANCEL
+
 ## Future Enhancements
 
-**Priority 1** (Complete Basic Functionality):
-- ACK request handling (complete INVITE 3-way handshake)
+**Priority 1** (Enhanced Reliability):
 - Digest authentication (401 challenge/response)
 - Retransmission handling (transaction layer)
+- Error response handling improvements
 
 **Priority 2** (Advanced Features):
 - TCP transport support
@@ -406,9 +425,9 @@ Log final status.
 
 **Priority 3** (Production-Ready):
 - SIP URI parser (proper URI handling)
-- Provisional response handling (100 Trying, 180 Ringing)
-- Multiple dialog support
+- Multiple concurrent dialog support
 - RTP media integration (actual voice/video)
+- Re-INVITE (session modification)
 
 ## Testing Strategy
 
