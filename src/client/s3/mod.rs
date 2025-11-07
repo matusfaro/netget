@@ -96,6 +96,14 @@ impl S3Client {
                 "region".to_string(),
                 serde_json::json!(region),
             );
+            client.set_protocol_field(
+                "access_key_id".to_string(),
+                serde_json::json!(access_key_id),
+            );
+            client.set_protocol_field(
+                "secret_access_key".to_string(),
+                serde_json::json!(secret_access_key),
+            );
         }).await;
 
         // Update status
@@ -103,13 +111,97 @@ impl S3Client {
         let _ = status_tx.send(format!("[CLIENT] S3 client {} ready for {}", client_id, remote_addr));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Spawn background task to monitor for disconnection
+        // Call LLM initially with connected event
+        let remote_addr_clone = remote_addr.clone();
+        let llm_client_clone = _llm_client.clone();
+        let app_state_clone = app_state.clone();
+        let status_tx_clone = status_tx.clone();
+        let region_clone = region.clone();
+
         tokio::spawn(async move {
+            use crate::client::s3::actions::S3_CLIENT_CONNECTED_EVENT;
+
+            // Get initial instruction
+            let instruction = match app_state_clone.get_instruction_for_client(client_id).await {
+                Some(instr) => instr,
+                None => {
+                    error!("S3 client {} has no instruction", client_id);
+                    return;
+                }
+            };
+
+            let protocol = Arc::new(crate::client::s3::actions::S3ClientProtocol::new());
+            let event = Event::new(
+                &S3_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "endpoint": remote_addr_clone,
+                    "region": region_clone,
+                }),
+            );
+
+            let memory = app_state_clone.get_memory_for_client(client_id).await.unwrap_or_default();
+
+            match call_llm_for_client(
+                &llm_client_clone,
+                &app_state_clone,
+                client_id.to_string(),
+                &instruction,
+                &memory,
+                Some(&event),
+                protocol.as_ref(),
+                &status_tx_clone,
+            ).await {
+                Ok(ClientLlmResult { actions, memory_updates }) => {
+                    // Update memory
+                    if let Some(mem) = memory_updates {
+                        app_state_clone.set_memory_for_client(client_id, mem).await;
+                    }
+
+                    // Execute actions
+                    for action in actions {
+                        use crate::llm::actions::client_trait::ClientActionResult;
+                        match protocol.execute_action(action) {
+                            Ok(ClientActionResult::Custom { name, data }) => {
+                                // Execute S3 operation
+                                if let Err(e) = Self::execute_operation(
+                                    client_id,
+                                    name,
+                                    data,
+                                    app_state_clone.clone(),
+                                    llm_client_clone.clone(),
+                                    status_tx_clone.clone(),
+                                ).await {
+                                    error!("S3 client {} operation error: {}", client_id, e);
+                                    let _ = status_tx_clone.send(format!("[ERROR] S3 operation failed: {}", e));
+                                }
+                            }
+                            Ok(ClientActionResult::Disconnect) => {
+                                info!("S3 client {} disconnecting", client_id);
+                                app_state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+                                return;
+                            }
+                            Ok(ClientActionResult::WaitForMore) => {
+                                // S3 is request-response, wait for next user action
+                                break;
+                            }
+                            Err(e) => {
+                                error!("S3 client {} action error: {}", client_id, e);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error for S3 client {}: {}", client_id, e);
+                }
+            }
+
+            // Monitor for client removal
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
+                if app_state_clone.get_client(client_id).await.is_none() {
                     info!("S3 client {} stopped", client_id);
                     break;
                 }
