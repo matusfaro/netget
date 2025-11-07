@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: TURN client
+#[cfg(feature = "turn")]
+pub mod turn;
+#[cfg(feature = "turn")]
+pub use turn::actions::TurnClientProtocol;
