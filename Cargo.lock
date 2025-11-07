@@ -6459,6 +6459,7 @@ dependencies = [
  "once_cell",
  "openapi-rs",
  "opensrv-mysql",
+ "pavao",
  "pcap",
  "pgwire",
  "pnet",
@@ -7273,6 +7274,19 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "pavao"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a51a966a8b169575917ba1dd9fc49cf03997a639f1ada205931e01623f8e2c32"
+dependencies = [
+ "lazy_static",
+ "libc",
+ "log",
+ "pkg-config",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "pbkdf2"
