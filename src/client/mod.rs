@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: OAuth2 client
-#[cfg(feature = "oauth2")]
-pub mod oauth2;
-#[cfg(feature = "oauth2")]
-pub use oauth2::actions::OAuth2ClientProtocol;
+// Phase 6: OpenAI client
+#[cfg(feature = "openai")]
+pub mod openai;
+#[cfg(feature = "openai")]
+pub use openai::actions::OpenAiClientProtocol;

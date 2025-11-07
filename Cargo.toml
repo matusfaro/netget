@@ -37,24 +37,24 @@ postgresql = ["dep:pgwire", "async-trait"]
 redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 webdav = ["dav-server"]
-nfs = ["nfsserve", "nfs3_client"]
+nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
-ldap = ["dep:ldap3_proto", "dep:ldap3", "rasn"]
+ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
-mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
+mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
-openai = []  # OpenAI API uses only HTTP, no extra deps
-oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client with LLM-controlled flows
+openai = ["dep:async-openai"]  # OpenAI API client using async-openai library
+oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
@@ -76,7 +76,7 @@ openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
-kafka = ["dep:kafka-protocol", "dep:rdkafka"]  # Apache Kafka broker (server) and client with LLM control
+kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
 http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
@@ -301,8 +301,6 @@ dav-server = { version = "0.8", optional = true }
 
 # NFS server
 nfsserve = { version = "0.10", optional = true }
-# NFS client
-nfs3_client = { version = "0.7", optional = true }
 
 # Cassandra/CQL server
 cassandra-protocol = { version = "3.3", optional = true }
@@ -318,8 +316,6 @@ webrtc-turn = { version = "0.1", optional = true }
 
 # LDAP server (ASN.1 BER encoding for LDAP protocol)
 ldap3_proto = { version = "0.3", optional = true }
-# LDAP client (for client protocol)
-ldap3 = { version = "0.11", optional = true }
 # rasn is already included via snmp feature, but we explicitly depend on it for LDAP too
 
 # IMAP server (IMAP protocol parsing)
@@ -327,8 +323,6 @@ imap-codec = { version = "2.0.0-alpha.6", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
-# MQTT client (IoT messaging)
-rumqttc = { version = "0.24", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
@@ -392,7 +386,6 @@ matchit = { version = "0.8", optional = true }  # High-performance path router f
 
 # Kafka broker (wire protocol parsing and serialization)
 kafka-protocol = { version = "0.14", optional = true }  # Code-generated Kafka protocol support
-rdkafka = { version = "0.37", optional = true }  # Kafka client (librdkafka wrapper)
 
 # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed - RFC 9114)
 quinn = { version = "0.11", optional = true }  # Async QUIC implementation for HTTP/3
@@ -400,8 +393,8 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
-# OAuth2 client (multiple flows: password, device code, client credentials, authorization code)
-oauth2 = { version = "4.4", optional = true }  # OAuth2 flows with async HTTP client support
+# OpenAI client (async API access)
+async-openai = { version = "0.26", optional = true }  # OpenAI API client library
 
 [dev-dependencies]
 # For async tests
@@ -445,7 +438,8 @@ reqwest_dav = "0.2"
 nfs3_client = "0.7"
 # Cassandra/CQL client for e2e integration tests
 scylla = "1.3"
-# LDAP client - moved to optional dependency for client protocol
+# LDAP client for e2e integration tests
+ldap3 = "0.11"
 # IMAP client for e2e integration tests
 async-imap = "0.11"
 async-native-tls = "0.5"
