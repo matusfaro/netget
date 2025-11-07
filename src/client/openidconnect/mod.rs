@@ -24,12 +24,11 @@ use crate::client::openidconnect::actions::{
 
 use openidconnect::{
     core::{
-        CoreClient, CoreProviderMetadata, CoreResponseType, CoreTokenResponse,
+        CoreClient, CoreProviderMetadata, CoreTokenResponse,
         CoreUserInfoClaims,
     },
     reqwest::async_http_client,
-    ClientId as OidcClientId, ClientSecret, DeviceAuthorizationUrl,
-    EmptyAdditionalClaims, IssuerUrl, RedirectUrl, ResourceOwnerPassword,
+    ClientId as OidcClientId, ClientSecret, IssuerUrl, ResourceOwnerPassword,
     ResourceOwnerUsername, Scope, OAuth2TokenResponse,
 };
 
@@ -62,8 +61,8 @@ impl OpenIdConnectClient {
 
         // Spawn background task to handle LLM-requested actions
         let app_state_clone = app_state.clone();
-        let status_tx_clone = status_tx.clone();
-        let llm_client_clone = llm_client.clone();
+        let _status_tx_clone = status_tx.clone();
+        let _llm_client_clone = llm_client.clone();
 
         tokio::spawn(async move {
             // Wait for initial LLM call to discover configuration
@@ -281,28 +280,30 @@ impl OpenIdConnectClient {
         client_id: ClientId,
         _data: serde_json::Value,
         _llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
+        _app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         _protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        let _ = status_tx.send(format!("[CLIENT] Starting device code flow for client {}", client_id));
+        let _ = status_tx.send(format!("[CLIENT] Device code flow requested for client {}", client_id));
 
-        // Get provider metadata and client config
-        let provider_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("provider_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No provider URL found")?;
-
-        let issuer_url = IssuerUrl::new(provider_url)?;
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            issuer_url,
-            async_http_client,
-        ).await?;
-
-        // TODO: Device code flow requires device_authorization_endpoint
-        // This is a simplified placeholder - full implementation would poll for completion
-        let _ = status_tx.send("[INFO] Device code flow not fully implemented - use password or client credentials flow".to_string());
+        // Device code flow requires RFC 8628 support which is not fully implemented
+        // in openidconnect crate 3.5. This flow would require:
+        // 1. POST to /device/code endpoint to get device_code and user_code
+        // 2. Display user_code and verification_uri to user
+        // 3. Poll token endpoint until user authorizes
+        //
+        // For now, recommend using password or client credentials flow instead
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] Device Code Flow - Not Fully Supported".to_string());
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[INFO] Device code flow (RFC 8628) is not fully".to_string());
+        let _ = status_tx.send("[INFO] supported by the current openidconnect crate version.".to_string());
+        let _ = status_tx.send("[INFO] ".to_string());
+        let _ = status_tx.send("[INFO] Please use one of these alternatives:".to_string());
+        let _ = status_tx.send("[INFO] 1. Password flow (resource owner password credentials)".to_string());
+        let _ = status_tx.send("[INFO] 2. Client credentials flow (machine-to-machine)".to_string());
+        let _ = status_tx.send("[INFO] 3. Authorization code flow (requires browser redirect)".to_string());
+        let _ = status_tx.send("========================================".to_string());
 
         Ok(())
     }
