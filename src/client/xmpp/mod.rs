@@ -22,11 +22,12 @@ use crate::client::xmpp::actions::{
 };
 
 use tokio_xmpp::{Client as XmppClient, Event as XmppEvent};
+use tokio_xmpp::jid::Jid;
 use xmpp_parsers::{
-    message::{Body, Message, MessageType},
+    message::{Lang, Message, MessageType},
     presence::{Presence, Show as PresenceShow, Type as PresenceType},
-    Jid,
 };
+use futures::StreamExt;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -56,22 +57,15 @@ impl XmppClientConnection {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Parse JID and password from remote_addr or get from startup params
-        // Format: "user@domain:port/resource"
-        // Or get from instruction/startup params
+        let (jid, password, _server_addr) = Self::parse_connection_info(&remote_addr, &app_state, client_id).await?;
 
-        let (jid, password, server_addr) = Self::parse_connection_info(&remote_addr, &app_state, client_id).await?;
-
-        info!("XMPP client {} connecting to {} as {}", client_id, server_addr, jid);
-        let _ = status_tx.send(format!("[CLIENT] XMPP client {} connecting to {}...", client_id, server_addr));
+        info!("XMPP client {} connecting as {}", client_id, jid);
+        let _ = status_tx.send(format!("[CLIENT] XMPP client {} connecting...", client_id));
 
         // Create XMPP client
-        let mut xmpp_client = XmppClient::new(jid.clone(), &password);
+        let mut xmpp_client = XmppClient::new(jid.clone(), password);
 
-        // Connect
-        xmpp_client.set_reconnect(true);
-
-        // Store client in app state protocol_data for sending stanzas
-        let xmpp_writer = Arc::new(Mutex::new(xmpp_client.clone()));
+        // Store JID in app state
         app_state.with_client_mut(client_id, |client| {
             client.set_protocol_field(
                 "jid".to_string(),
@@ -101,6 +95,10 @@ impl XmppClientConnection {
             }),
         );
 
+        // Create channel for sending stanzas to the event loop
+        let (stanza_tx, mut stanza_rx) = mpsc::unbounded_channel();
+        let stanza_tx = Arc::new(stanza_tx);
+
         match call_llm_for_client(
             &llm_client,
             &app_state,
@@ -121,7 +119,7 @@ impl XmppClientConnection {
                     Self::execute_action_result(
                         action,
                         protocol.clone(),
-                        xmpp_writer.clone(),
+                        stanza_tx.clone(),
                         client_id,
                         &status_tx,
                     ).await;
@@ -132,68 +130,74 @@ impl XmppClientConnection {
             }
         }
 
-        // Spawn event loop
-        let xmpp_reader = xmpp_client;
+        // Spawn event loop that handles both sending and receiving
         tokio::spawn(async move {
             loop {
-                match xmpp_reader.wait_for_event().await {
-                    Ok(xmpp_event) => {
-                        trace!("XMPP client {} received event: {:?}", client_id, xmpp_event);
-
-                        // Handle event with LLM
-                        let mut client_data_lock = client_data.lock().await;
-
-                        match client_data_lock.state {
-                            ConnectionState::Idle => {
-                                // Process immediately
-                                client_data_lock.state = ConnectionState::Processing;
-                                drop(client_data_lock);
-
-                                Self::handle_xmpp_event(
-                                    xmpp_event,
-                                    &llm_client,
-                                    &app_state,
-                                    client_id,
-                                    &client_data,
-                                    protocol.clone(),
-                                    xmpp_writer.clone(),
-                                    &status_tx,
-                                ).await;
-
-                                // Process queued events
-                                let mut client_data_lock = client_data.lock().await;
-                                let queued = std::mem::take(&mut client_data_lock.queued_events);
-                                client_data_lock.state = ConnectionState::Idle;
-                                drop(client_data_lock);
-
-                                for queued_event in queued {
-                                    Self::handle_xmpp_event(
-                                        queued_event,
-                                        &llm_client,
-                                        &app_state,
-                                        client_id,
-                                        &client_data,
-                                        protocol.clone(),
-                                        xmpp_writer.clone(),
-                                        &status_tx,
-                                    ).await;
-                                }
-                            }
-                            ConnectionState::Processing => {
-                                // Queue event
-                                client_data_lock.queued_events.push(xmpp_event);
-                                client_data_lock.state = ConnectionState::Accumulating;
-                            }
-                            ConnectionState::Accumulating => {
-                                // Continue queuing
-                                client_data_lock.queued_events.push(xmpp_event);
-                            }
+                tokio::select! {
+                    // Handle outgoing stanzas
+                    Some(stanza) = stanza_rx.recv() => {
+                        if let Err(e) = xmpp_client.send_stanza(stanza).await {
+                            error!("Failed to send XMPP stanza: {}", e);
+                            let _ = status_tx.send(format!("[ERROR] Failed to send XMPP stanza: {}", e));
                         }
                     }
-                    Err(e) => {
-                        error!("XMPP client {} error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    // Handle incoming events
+                    Some(xmpp_event) = xmpp_client.next() => {
+                trace!("XMPP client {} received event: {:?}", client_id, xmpp_event);
+
+                // Handle event with LLM
+                let mut client_data_lock = client_data.lock().await;
+
+                match client_data_lock.state {
+                    ConnectionState::Idle => {
+                        // Process immediately
+                        client_data_lock.state = ConnectionState::Processing;
+                        drop(client_data_lock);
+
+                        Self::handle_xmpp_event(
+                            xmpp_event,
+                            &llm_client,
+                            &app_state,
+                            client_id,
+                            &client_data,
+                            protocol.clone(),
+                            stanza_tx.clone(),
+                            &status_tx,
+                        ).await;
+
+                        // Process queued events
+                        let mut client_data_lock = client_data.lock().await;
+                        let queued = std::mem::take(&mut client_data_lock.queued_events);
+                        client_data_lock.state = ConnectionState::Idle;
+                        drop(client_data_lock);
+
+                        for queued_event in queued {
+                            Self::handle_xmpp_event(
+                                queued_event,
+                                &llm_client,
+                                &app_state,
+                                client_id,
+                                &client_data,
+                                protocol.clone(),
+                                stanza_tx.clone(),
+                                &status_tx,
+                            ).await;
+                        }
+                    }
+                    ConnectionState::Processing => {
+                        // Queue event
+                        client_data_lock.queued_events.push(xmpp_event);
+                        client_data_lock.state = ConnectionState::Accumulating;
+                    }
+                    ConnectionState::Accumulating => {
+                        // Continue queuing
+                        client_data_lock.queued_events.push(xmpp_event);
+                    }
+                }
+                    }
+                    // No more events - connection closed
+                    else => {
+                        info!("XMPP client {} connection closed", client_id);
                         break;
                     }
                 }
@@ -231,8 +235,7 @@ impl XmppClientConnection {
         let (jid_str, password) = match (jid_str, password) {
             (Some(j), Some(p)) => (j, p),
             _ => {
-                // Parse from remote_addr: "user@domain:password@host:port"
-                // or "user@domain@password"
+                // Parse from remote_addr: "user@domain@password"
                 let parts: Vec<&str> = remote_addr.split('@').collect();
                 if parts.len() < 3 {
                     return Err(anyhow::anyhow!(
@@ -267,7 +270,7 @@ impl XmppClientConnection {
         client_id: ClientId,
         client_data: &Arc<Mutex<ClientData>>,
         protocol: Arc<XmppClientProtocol>,
-        xmpp_writer: Arc<Mutex<XmppClient>>,
+        stanza_tx: Arc<mpsc::UnboundedSender<tokio_xmpp::Stanza>>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
         let event_opt = match xmpp_event {
@@ -280,49 +283,49 @@ impl XmppClientConnection {
                 None
             }
             XmppEvent::Stanza(stanza) => {
-                // Parse stanza using xmpp-parsers
-                // Try to parse as Message
-                if let Ok(msg) = Message::try_from(stanza.clone()) {
-                    let from = msg.from.as_ref().map(|j| j.to_string()).unwrap_or_default();
-                    let to = msg.to.as_ref().map(|j| j.to_string()).unwrap_or_default();
-                    let body = msg.bodies.get("").map(|b| b.0.clone()).unwrap_or_default();
-                    let msg_type = format!("{:?}", msg.type_);
+                // Match on stanza type to avoid clone
+                use tokio_xmpp::Stanza;
+                match stanza {
+                    Stanza::Message(msg) => {
+                        let from = msg.from.as_ref().map(|j| j.to_string()).unwrap_or_default();
+                        let to = msg.to.as_ref().map(|j| j.to_string()).unwrap_or_default();
+                        let body = msg.bodies.get(&Lang::default()).cloned().unwrap_or_default();
+                        let msg_type = format!("{:?}", msg.type_);
 
-                    info!("XMPP client {} received message from {}: {}", client_id, from, body);
+                        info!("XMPP client {} received message from {}: {}", client_id, from, body);
 
-                    Some(Event::new(
-                        &XMPP_CLIENT_MESSAGE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "from": from,
-                            "to": to,
-                            "body": body,
-                            "message_type": msg_type,
-                        }),
-                    ))
-                }
-                // Try to parse as Presence
-                else if let Ok(presence) = Presence::try_from(stanza.clone()) {
-                    let from = presence.from.as_ref().map(|j| j.to_string()).unwrap_or_default();
-                    let presence_type = format!("{:?}", presence.type_);
-                    let show = presence.show.as_ref().map(|s| format!("{:?}", s)).unwrap_or_default();
-                    let status = presence.statuses.get("").map(|s| s.clone()).unwrap_or_default();
+                        Some(Event::new(
+                            &XMPP_CLIENT_MESSAGE_RECEIVED_EVENT,
+                            serde_json::json!({
+                                "from": from,
+                                "to": to,
+                                "body": body,
+                                "message_type": msg_type,
+                            }),
+                        ))
+                    }
+                    Stanza::Presence(presence) => {
+                        let from = presence.from.as_ref().map(|j| j.to_string()).unwrap_or_default();
+                        let presence_type = format!("{:?}", presence.type_);
+                        let show = presence.show.as_ref().map(|s| format!("{:?}", s)).unwrap_or_default();
+                        let status = presence.statuses.get(&Lang::default()).cloned().unwrap_or_default();
 
-                    debug!("XMPP client {} received presence from {}: {:?}", client_id, from, presence_type);
+                        debug!("XMPP client {} received presence from {}: {:?}", client_id, from, presence_type);
 
-                    Some(Event::new(
-                        &XMPP_CLIENT_PRESENCE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "from": from,
-                            "presence_type": presence_type,
-                            "show": show,
-                            "status": status,
-                        }),
-                    ))
-                }
-                // IQ or other stanza types
-                else {
-                    debug!("XMPP client {} received unknown stanza type", client_id);
-                    None
+                        Some(Event::new(
+                            &XMPP_CLIENT_PRESENCE_RECEIVED_EVENT,
+                            serde_json::json!({
+                                "from": from,
+                                "presence_type": presence_type,
+                                "show": show,
+                                "status": status,
+                            }),
+                        ))
+                    }
+                    Stanza::Iq(_iq) => {
+                        debug!("XMPP client {} received IQ stanza (not yet supported)", client_id);
+                        None
+                    }
                 }
             }
         };
@@ -349,7 +352,7 @@ impl XmppClientConnection {
                             Self::execute_action_result(
                                 action,
                                 protocol.clone(),
-                                xmpp_writer.clone(),
+                                stanza_tx.clone(),
                                 client_id,
                                 status_tx,
                             ).await;
@@ -367,7 +370,7 @@ impl XmppClientConnection {
     async fn execute_action_result(
         action: serde_json::Value,
         protocol: Arc<XmppClientProtocol>,
-        xmpp_writer: Arc<Mutex<XmppClient>>,
+        stanza_tx: Arc<mpsc::UnboundedSender<tokio_xmpp::Stanza>>,
         client_id: ClientId,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
@@ -385,9 +388,10 @@ impl XmppClientConnection {
                             if let Ok(jid) = to_jid {
                                 let mut message = Message::new(Some(jid));
                                 message.type_ = MessageType::Chat;
-                                message.bodies.insert(String::new(), Body(body.to_string()));
+                                message.bodies.insert(Lang::default(), body.to_string());
 
-                                if let Err(e) = xmpp_writer.lock().await.send_stanza(message.into()).await {
+                                use tokio_xmpp::Stanza;
+                                if let Err(e) = stanza_tx.send(Stanza::Message(message)) {
                                     error!("Failed to send XMPP message: {}", e);
                                     let _ = status_tx.send(format!("[ERROR] Failed to send XMPP message: {}", e));
                                 } else {
@@ -413,10 +417,11 @@ impl XmppClientConnection {
                         }
 
                         if let Some(status_str) = status {
-                            presence.statuses.insert(String::new(), status_str.to_string());
+                            presence.statuses.insert(Lang::default(), status_str.to_string());
                         }
 
-                        if let Err(e) = xmpp_writer.lock().await.send_stanza(presence.into()).await {
+                        use tokio_xmpp::Stanza;
+                        if let Err(e) = stanza_tx.send(Stanza::Presence(presence)) {
                             error!("Failed to send XMPP presence: {}", e);
                             let _ = status_tx.send(format!("[ERROR] Failed to send XMPP presence: {}", e));
                         } else {
@@ -430,7 +435,7 @@ impl XmppClientConnection {
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                 info!("XMPP client {} disconnecting", client_id);
-                // The client will disconnect when the loop ends
+                // The client will disconnect when the channel closes
             }
             Ok(_) => {}
             Err(e) => {
