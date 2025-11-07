@@ -21,7 +21,7 @@ dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
 whois = []  # WHOIS uses only TCP, no extra deps
-snmp = ["rasn-snmp", "rasn"]
+snmp = ["rasn-snmp", "rasn", "rasn-smi"]
 igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
@@ -264,6 +264,7 @@ dhcproto = { version = "0.12", optional = true }
 
 # SNMP agent
 rasn-snmp = { version = "0.18", optional = true }
+rasn-smi = { version = "0.18", optional = true }
 rasn = { version = "0.18", optional = true }
 
 # Syslog server

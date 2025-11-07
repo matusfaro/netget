@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, trace};
 
@@ -23,9 +23,11 @@ use crate::client::snmp::actions::{SNMP_CLIENT_CONNECTED_EVENT, SNMP_CLIENT_RESP
 
 // SNMP protocol support
 use rasn_snmp::{v1, v2, v2c};
-use rasn::{ber, types::Integer};
+use rasn_smi::v1::{SimpleSyntax as V1SimpleSyntax, ObjectSyntax as V1ObjectSyntax};
+use rasn_smi::v2::{SimpleSyntax as V2SimpleSyntax, ObjectSyntax as V2ObjectSyntax};
+use rasn::types::{Integer, ObjectIdentifier};
+use rasn::ber;
 use serde_json::Value;
-use rand;
 
 /// SNMP client configuration
 #[derive(Debug, Clone)]
@@ -54,29 +56,44 @@ enum SnmpVersion {
 }
 
 /// Parse startup parameters
-fn parse_startup_params(params: Option<Value>) -> SnmpConfig {
+fn parse_startup_params(params: Option<crate::protocol::StartupParams>) -> SnmpConfig {
     let mut config = SnmpConfig::default();
 
     if let Some(params) = params {
-        if let Some(community) = params.get("community").and_then(|v| v.as_str()) {
-            config.community = community.to_string();
+        if let Some(community) = params.get_optional_string("community") {
+            config.community = community;
         }
-        if let Some(version) = params.get("version").and_then(|v| v.as_str()) {
+        if let Some(version) = params.get_optional_string("version") {
             config.version = match version.to_lowercase().as_str() {
                 "v1" | "1" => SnmpVersion::V1,
                 "v2c" | "v2" | "2c" | "2" => SnmpVersion::V2c,
                 _ => SnmpVersion::V2c,
             };
         }
-        if let Some(timeout) = params.get("timeout_ms").and_then(|v| v.as_u64()) {
-            config.timeout_ms = timeout;
+        if let Some(timeout) = params.get_optional_i64("timeout_ms") {
+            config.timeout_ms = timeout as u64;
         }
-        if let Some(retries) = params.get("retries").and_then(|v| v.as_u64()) {
+        if let Some(retries) = params.get_optional_i64("retries") {
             config.retries = retries as u32;
         }
     }
 
     config
+}
+
+/// Helper function to parse OID string to ObjectIdentifier
+fn parse_oid(oid_str: &str) -> ObjectIdentifier {
+    let components: Vec<u32> = oid_str
+        .split('.')
+        .filter_map(|s| s.parse::<u32>().ok())
+        .collect();
+
+    if components.is_empty() {
+        // Return a default OID if parsing fails
+        ObjectIdentifier::new_unchecked(vec![1, 3, 6, 1, 2, 1, 1, 1, 0].into())
+    } else {
+        ObjectIdentifier::new_unchecked(components.into())
+    }
 }
 
 /// SNMP client that connects to an SNMP agent
@@ -90,7 +107,7 @@ impl SnmpClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
-        startup_params: Option<Value>,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         // Parse configuration
         let config = parse_startup_params(startup_params);
@@ -505,14 +522,14 @@ impl SnmpClient {
     /// Extract variables from v2c response
     fn extract_v2c_response(msg: &v2c::Message<v2::Pdus>) -> Result<(Vec<Value>, i32)> {
         let (var_binds, error_status) = match &msg.data {
-            v2::Pdus::Response(resp) => (&resp.0.variable_bindings, resp.0.error_status),
+            v2::Pdus::Response(resp) => (&resp.0.variable_bindings, resp.0.error_status as i32),
             _ => return Err(anyhow::anyhow!("Unexpected PDU type in response")),
         };
 
         let variables: Vec<Value> = var_binds.iter().map(|vb| {
             serde_json::json!({
                 "oid": vb.name.to_string(),
-                "value": Self::format_v2_value(&vb.data),
+                "value": Self::format_v2_value(&vb.value),
             })
         }).collect();
 
@@ -535,7 +552,7 @@ impl SnmpClient {
         let variables: Vec<Value> = var_binds.iter().map(|vb| {
             serde_json::json!({
                 "oid": vb.name.to_string(),
-                "value": Self::format_v1_value(&vb.data),
+                "value": Self::format_v1_value(&vb.value),
             })
         }).collect();
 
@@ -543,32 +560,44 @@ impl SnmpClient {
     }
 
     /// Format v2 value for JSON
-    fn format_v2_value(value: &v2::ObjectValue) -> Value {
-        use v2::ObjectValue::*;
+    fn format_v2_value(value: &v2::VarBindValue) -> Value {
+        use v2::VarBindValue;
         match value {
-            Value(val) => match val {
-                v2::Value::Number(n) => serde_json::json!(n),
-                v2::Value::String(s) => serde_json::json!(String::from_utf8_lossy(s)),
-                v2::Value::Object(_) => serde_json::json!("(object)"),
-                v2::Value::Empty => serde_json::json!(null),
+            VarBindValue::Unspecified => serde_json::json!(null),
+            VarBindValue::NoSuchObject => serde_json::json!("(no such object)"),
+            VarBindValue::NoSuchInstance => serde_json::json!("(no such instance)"),
+            VarBindValue::EndOfMibView => serde_json::json!("(end of MIB view)"),
+            VarBindValue::Value(obj_syntax) => Self::format_object_syntax_v2(obj_syntax),
+        }
+    }
+
+    fn format_object_syntax_v2(syntax: &V2ObjectSyntax) -> Value {
+        match syntax {
+            V2ObjectSyntax::Simple(V2SimpleSyntax::Integer(n)) => {
+                match n {
+                    Integer::Primitive(val) => serde_json::json!(val),
+                    Integer::Variable(val) => serde_json::json!(val.to_string()),
+                }
             },
-            Unspecified => serde_json::json!(null),
-            NoSuchObject => serde_json::json!("(no such object)"),
-            NoSuchInstance => serde_json::json!("(no such instance)"),
-            EndOfMibView => serde_json::json!("(end of MIB view)"),
+            V2ObjectSyntax::Simple(V2SimpleSyntax::String(s)) => serde_json::json!(String::from_utf8_lossy(s)),
+            V2ObjectSyntax::Simple(V2SimpleSyntax::ObjectId(_)) => serde_json::json!("(object-id)"),
+            V2ObjectSyntax::ApplicationWide(_) => serde_json::json!("(application-wide)"),
         }
     }
 
     /// Format v1 value for JSON
-    fn format_v1_value(value: &v1::ObjectValue) -> Value {
-        use v1::ObjectValue::*;
+    fn format_v1_value(value: &V1ObjectSyntax) -> Value {
         match value {
-            Value(val) => match val {
-                v1::Value::Number(n) => serde_json::json!(n),
-                v1::Value::String(s) => serde_json::json!(String::from_utf8_lossy(s)),
-                v1::Value::Object(_) => serde_json::json!("(object)"),
-                v1::Value::Empty => serde_json::json!(null),
+            V1ObjectSyntax::Simple(V1SimpleSyntax::Number(n)) => {
+                match n {
+                    Integer::Primitive(val) => serde_json::json!(val),
+                    Integer::Variable(val) => serde_json::json!(val.to_string()),
+                }
             },
+            V1ObjectSyntax::Simple(V1SimpleSyntax::String(s)) => serde_json::json!(String::from_utf8_lossy(s)),
+            V1ObjectSyntax::Simple(V1SimpleSyntax::Object(_)) => serde_json::json!("(object-id)"),
+            V1ObjectSyntax::Simple(V1SimpleSyntax::Empty) => serde_json::json!(null),
+            V1ObjectSyntax::ApplicationWide(_) => serde_json::json!("(application-wide)"),
         }
     }
 
@@ -577,12 +606,12 @@ impl SnmpClient {
     fn build_v2c_get_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
         let var_binds: Vec<v2::VarBind> = oids.iter().map(|oid| {
             v2::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data: v2::ObjectValue::Unspecified,
+                name: parse_oid(oid),
+                value: v2::VarBindValue::Unspecified,
             }
         }).collect();
 
-        let pdu = v2::Pdus::GetRequest(Box::new(v2::Pdu {
+        let pdu = v2::Pdus::GetRequest(v2::GetRequest(v2::Pdu {
             request_id,
             error_status: 0,
             error_index: 0,
@@ -590,23 +619,23 @@ impl SnmpClient {
         }));
 
         let message = v2c::Message {
-            version: 1,  // v2c uses version 1
+            version: Integer::Primitive(1),  // v2c uses version 1
             community: community.as_bytes().to_vec().into(),
             data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v2c GET request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GET request: {}", e))
     }
 
     fn build_v2c_getnext_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
         let var_binds: Vec<v2::VarBind> = oids.iter().map(|oid| {
             v2::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data: v2::ObjectValue::Unspecified,
+                name: parse_oid(oid),
+                value: v2::VarBindValue::Unspecified,
             }
         }).collect();
 
-        let pdu = v2::Pdus::GetNextRequest(Box::new(v2::Pdu {
+        let pdu = v2::Pdus::GetNextRequest(v2::GetNextRequest(v2::Pdu {
             request_id,
             error_status: 0,
             error_index: 0,
@@ -614,12 +643,12 @@ impl SnmpClient {
         }));
 
         let message = v2c::Message {
-            version: 1,
+            version: Integer::Primitive(1),
             community: community.as_bytes().to_vec().into(),
             data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v2c request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GETNEXT request: {}", e))
     }
 
     fn build_v2c_getbulk_request(
@@ -631,25 +660,25 @@ impl SnmpClient {
     ) -> Result<Vec<u8>> {
         let var_binds: Vec<v2::VarBind> = oids.iter().map(|oid| {
             v2::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data: v2::ObjectValue::Unspecified,
+                name: parse_oid(oid),
+                value: v2::VarBindValue::Unspecified,
             }
         }).collect();
 
-        let pdu = v2::Pdus::GetBulkRequest(Box::new(v2::BulkPdu {
+        let pdu = v2::Pdus::GetBulkRequest(v2::GetBulkRequest(v2::BulkPdu {
             request_id,
-            non_repeaters,
-            max_repetitions,
+            non_repeaters: non_repeaters as u32,
+            max_repetitions: max_repetitions as u32,
             variable_bindings: var_binds,
         }));
 
         let message = v2c::Message {
-            version: 1,
+            version: Integer::Primitive(1),
             community: community.as_bytes().to_vec().into(),
             data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v2c request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GETBULK request: {}", e))
     }
 
     fn build_v2c_set_request(variables: &[Value], community: &str, request_id: i32) -> Result<Vec<u8>> {
@@ -661,22 +690,22 @@ impl SnmpClient {
             let data = match value_type {
                 "integer" => {
                     let n = value.as_i64().unwrap_or(0);
-                    v2::ObjectValue::Value(v2::Value::Number(Integer::Primitive(n as isize)))
+                    v2::VarBindValue::Value(V2ObjectSyntax::Simple(V2SimpleSyntax::Integer(Integer::Primitive(n as isize))))
                 }
                 "string" => {
                     let s = value.as_str().unwrap_or("");
-                    v2::ObjectValue::Value(v2::Value::String(s.as_bytes().to_vec()))
+                    v2::VarBindValue::Value(V2ObjectSyntax::Simple(V2SimpleSyntax::String(s.as_bytes().to_vec().into())))
                 }
-                _ => v2::ObjectValue::Unspecified,
+                _ => v2::VarBindValue::Unspecified,
             };
 
             v2::VarBind {
-                name: oid.parse().unwrap_or_default(),
-                data,
+                name: parse_oid(oid),
+                value: data,
             }
         }).collect();
 
-        let pdu = v2::Pdus::SetRequest(Box::new(v2::Pdu {
+        let pdu = v2::Pdus::SetRequest(v2::SetRequest(v2::Pdu {
             request_id,
             error_status: 0,
             error_index: 0,
@@ -684,82 +713,60 @@ impl SnmpClient {
         }));
 
         let message = v2c::Message {
-            version: 1,
+            version: Integer::Primitive(1),
             community: community.as_bytes().to_vec().into(),
             data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v2c request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c SET request: {}", e))
     }
 
     fn build_v1_get_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
         let var_binds: Vec<v1::VarBind> = oids.iter().map(|oid| {
-            // Create OID from string - if parsing fails, use a simple default
-            let oid_obj = oid.split('.').fold(
-                rasn::types::ObjectIdentifier::new(vec![0, 0]),
-                |mut acc, part| {
-                    if let Ok(num) = part.parse::<u32>() {
-                        acc.push(num);
-                    }
-                    acc
-                }
-            );
-
             v1::VarBind {
-                name: oid_obj,
-                value: v1::ObjectValue::Value(v1::Value::Empty),
+                name: parse_oid(oid),
+                value: V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
             }
         }).collect();
 
-        let pdu = v1::Pdus::GetRequest(v1::GetRequest {
+        let pdu = v1::Pdus::GetRequest(v1::GetRequest(v1::Pdu {
             request_id: Integer::Primitive(request_id as isize),
             error_status: Integer::Primitive(0),
             error_index: Integer::Primitive(0),
             variable_bindings: var_binds,
-        });
+        }));
 
         let message = v1::Message {
             version: Integer::Primitive(0),  // v1 uses version 0
             community: community.as_bytes().to_vec().into(),
-            pdu,
+            data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v1 GET request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 GET request: {}", e))
     }
 
     fn build_v1_getnext_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
         let var_binds: Vec<v1::VarBind> = oids.iter().map(|oid| {
-            // Create OID from string
-            let oid_obj = oid.split('.').fold(
-                rasn::types::ObjectIdentifier::new(vec![0, 0]),
-                |mut acc, part| {
-                    if let Ok(num) = part.parse::<u32>() {
-                        acc.push(num);
-                    }
-                    acc
-                }
-            );
-
             v1::VarBind {
-                name: oid_obj,
-                value: v1::ObjectValue::Value(v1::Value::Empty),
+                name: parse_oid(oid),
+                value: V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
             }
         }).collect();
 
-        let pdu = v1::Pdus::GetNextRequest(v1::GetNextRequest {
+        let pdu = v1::Pdus::GetNextRequest(v1::GetNextRequest(v1::Pdu {
             request_id: Integer::Primitive(request_id as isize),
             error_status: Integer::Primitive(0),
             error_index: Integer::Primitive(0),
             variable_bindings: var_binds,
-        });
+        }));
 
         let message = v1::Message {
             version: Integer::Primitive(0),
             community: community.as_bytes().to_vec().into(),
-            pdu,
+            data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v1 request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 GETNEXT request: {}", e))
     }
 
     fn build_v1_set_request(variables: &[Value], community: &str, request_id: i32) -> Result<Vec<u8>> {
@@ -768,48 +775,37 @@ impl SnmpClient {
             let value_type = var.get("type").and_then(|v| v.as_str()).unwrap_or("string");
             let value = var.get("value").unwrap_or(&serde_json::json!(null));
 
-            // Create OID from string
-            let oid_obj = oid.split('.').fold(
-                rasn::types::ObjectIdentifier::new(vec![0, 0]),
-                |mut acc, part| {
-                    if let Ok(num) = part.parse::<u32>() {
-                        acc.push(num);
-                    }
-                    acc
-                }
-            );
-
             let value_obj = match value_type {
                 "integer" => {
                     let n = value.as_i64().unwrap_or(0);
-                    v1::ObjectValue::Value(v1::Value::Number(Integer::Primitive(n as isize)))
+                    V1ObjectSyntax::Simple(V1SimpleSyntax::Number(Integer::Primitive(n as isize)))
                 }
                 "string" => {
                     let s = value.as_str().unwrap_or("");
-                    v1::ObjectValue::Value(v1::Value::String(s.as_bytes().to_vec()))
+                    V1ObjectSyntax::Simple(V1SimpleSyntax::String(s.as_bytes().to_vec().into()))
                 }
-                _ => v1::ObjectValue::Value(v1::Value::Empty),
+                _ => V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
             };
 
             v1::VarBind {
-                name: oid_obj,
+                name: parse_oid(oid),
                 value: value_obj,
             }
         }).collect();
 
-        let pdu = v1::Pdus::SetRequest(v1::SetRequest {
+        let pdu = v1::Pdus::SetRequest(v1::SetRequest(v1::Pdu {
             request_id: Integer::Primitive(request_id as isize),
             error_status: Integer::Primitive(0),
             error_index: Integer::Primitive(0),
             variable_bindings: var_binds,
-        });
+        }));
 
         let message = v1::Message {
             version: Integer::Primitive(0),
             community: community.as_bytes().to_vec().into(),
-            pdu,
+            data: pdu,
         };
 
-        ber::encode(&message).context("Failed to encode SNMP v1 request")
+        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 SET request: {}", e))
     }
 }

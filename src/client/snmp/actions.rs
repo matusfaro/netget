@@ -2,7 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
-    ActionDefinition, Parameter,
+    ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -377,31 +377,35 @@ impl Client for SnmpClientProtocol {
         "Network Management"
     }
 
-    fn get_startup_params(&self) -> Vec<Parameter> {
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
-            Parameter {
+            ParameterDefinition {
                 name: "community".to_string(),
-                type_hint: "string".to_string(),
                 description: "SNMP community string (default: 'public')".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "version".to_string(),
                 type_hint: "string".to_string(),
+                required: false,
+                example: json!("public"),
+            },
+            ParameterDefinition {
+                name: "version".to_string(),
                 description: "SNMP version: 'v1' or 'v2c' (default: 'v2c')".to_string(),
+                type_hint: "string".to_string(),
                 required: false,
+                example: json!("v2c"),
             },
-            Parameter {
+            ParameterDefinition {
                 name: "timeout_ms".to_string(),
-                type_hint: "integer".to_string(),
                 description: "Request timeout in milliseconds (default: 5000)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "retries".to_string(),
                 type_hint: "integer".to_string(),
-                description: "Number of retries on timeout (default: 3)".to_string(),
                 required: false,
+                example: json!(5000),
+            },
+            ParameterDefinition {
+                name: "retries".to_string(),
+                description: "Number of retries on timeout (default: 3)".to_string(),
+                type_hint: "integer".to_string(),
+                required: false,
+                example: json!(3),
             },
         ]
     }
