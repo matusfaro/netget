@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: IMAP client
-#[cfg(feature = "imap")]
-pub mod imap;
-#[cfg(feature = "imap")]
-pub use imap::actions::ImapClientProtocol;
+// IRC client
+#[cfg(feature = "irc")]
+pub mod irc;
+#[cfg(feature = "irc")]
+pub use irc::actions::IrcClientProtocol;
