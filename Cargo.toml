@@ -75,6 +75,7 @@ grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:t
 etcd = ["grpc"]  # etcd v3 key-value store server (KV service via gRPC)
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
+tor-client = ["dep:arti-client", "dep:tor-rtcompat"]  # Tor client for anonymous connections through Tor network
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
@@ -155,6 +156,7 @@ all-protocols = [
     "grpc",
     "xmlrpc",
     "tor",
+    "tor-client",
     "vnc",
     "openapi",
     "openid",
@@ -394,6 +396,10 @@ hkdf = { version = "0.12", optional = true }  # HKDF for key derivation in ntor
 # x25519-dalek already used by wireguard feature, don't redeclare
 # tokio-rustls already available, don't redeclare
 # rcgen already used by proxy feature, don't redeclare
+
+# Tor client (arti) for anonymous connections
+arti-client = { version = "0.36", optional = true }  # Arti Tor client library
+tor-rtcompat = { version = "0.36", optional = true }  # Runtime compatibility layer for arti
 
 # Display module (for VNC and other protocols requiring image generation)
 tiny-skia = "0.11"  # 2D graphics rendering
