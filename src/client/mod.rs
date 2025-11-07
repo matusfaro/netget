@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// IGMP client
+#[cfg(feature = "igmp")]
+pub mod igmp;
+#[cfg(feature = "igmp")]
+pub use igmp::actions::IgmpClientProtocol;
