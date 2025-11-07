@@ -856,8 +856,8 @@ impl EventHandler {
                 protocol,
                 remote_addr,
                 instruction,
-                startup_params: _,
-                initial_memory: _,
+                startup_params,
+                initial_memory,
                 script_runtime: _,
                 script_language: _,
                 script_path: _,
@@ -865,9 +865,62 @@ impl EventHandler {
                 script_handles: _,
                 scheduled_tasks: _,
             } => {
-                // TODO: Implement client opening
-                let _ = status_tx.send(format!("[CLIENT] Opening {} client to {}... (not yet implemented)", protocol, remote_addr));
+                // Parse protocol name using client registry
+                let protocol_name = crate::protocol::CLIENT_REGISTRY
+                    .parse_from_str(&protocol)
+                    .unwrap_or_else(|| {
+                        let _ = status_tx.send(format!("[WARN] Unknown client protocol '{}', defaulting to TCP", protocol));
+                        "TCP".to_string()
+                    });
+
+                // Create client instance
+                use crate::state::client::ClientInstance;
+                let temp_id = crate::state::ClientId::new(0); // Temporary ID, will be replaced
+                let mut client_instance = ClientInstance::new(
+                    temp_id,
+                    remote_addr.clone(),
+                    protocol_name.clone(),
+                    instruction.clone(),
+                );
+
+                // Set initial memory if provided
+                if let Some(mem) = initial_memory {
+                    client_instance.memory = mem;
+                }
+
+                // Set startup params if provided
+                client_instance.startup_params = startup_params;
+
+                // Add client to state (this assigns the real ID)
+                let client_id = self.state.add_client(client_instance).await;
+
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Opening client #{} ({}) to {}",
+                    client_id.as_u32(),
+                    protocol_name,
+                    remote_addr
+                ));
                 let _ = status_tx.send(format!("[CLIENT] Instruction: {}", instruction));
+
+                // Start the client
+                match crate::cli::client_startup::start_client_by_id(&self.state, client_id, &self.llm, status_tx).await {
+                    Ok(_) => {
+                        // Client started successfully
+                    }
+                    Err(e) => {
+                        // Fatal error - log and update status to Error
+                        let error_msg = e.to_string();
+                        use crate::state::ClientStatus;
+                        self.state.update_client_status(client_id, ClientStatus::Error(error_msg.clone())).await;
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to start client #{}: {}",
+                            client_id.as_u32(),
+                            error_msg
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        // Don't return error, just log it
+                    }
+                }
             }
             CommonAction::CloseClient { client_id } => {
                 // TODO: Implement client closing
