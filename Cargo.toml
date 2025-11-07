@@ -36,6 +36,7 @@ ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "async-trait"]
 redis = ["dep:redis-protocol"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
+http_proxy = []  # HTTP proxy client for tunneling through HTTP proxies
 webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
@@ -115,6 +116,7 @@ all-protocols = [
     "postgresql",
     "redis",
     "proxy",
+    "http_proxy",
     "webdav",
     "nfs",
     "cassandra",

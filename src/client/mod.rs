@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// HTTP proxy client
+#[cfg(feature = "http_proxy")]
+pub mod http_proxy;
+#[cfg(feature = "http_proxy")]
+pub use http_proxy::actions::HttpProxyClientProtocol;

@@ -44,6 +44,9 @@ impl ClientProtocolRegistry {
 
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+
+        #[cfg(feature = "http_proxy")]
+        self.register(Arc::new(crate::client::http_proxy::HttpProxyClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
