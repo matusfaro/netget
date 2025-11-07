@@ -3,14 +3,14 @@ pub mod actions;
 
 pub use actions::IgmpClientProtocol;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
@@ -19,10 +19,11 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::igmp::actions::{IGMP_CLIENT_CONNECTED_EVENT, IGMP_CLIENT_DATA_RECEIVED_EVENT, IgmpClientProtocol};
+use crate::client::igmp::actions::{IGMP_CLIENT_CONNECTED_EVENT, IGMP_CLIENT_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ClientState {
     Idle,
     Processing,
@@ -82,14 +83,16 @@ impl IgmpClient {
         }));
 
         // Initial LLM call
+        let protocol = Arc::new(IgmpClientProtocol::new());
         let _ = call_llm_for_client(
-            client_id,
             &llm_client,
             &app_state,
-            &status_tx,
+            client_id.to_string(),
             &instruction,
             "",
             Some(&connected_event),
+            protocol.as_ref(),
+            &status_tx,
         )
         .await;
 
@@ -110,13 +113,6 @@ impl IgmpClient {
         let status_tx_clone = status_tx.clone();
         let llm_client_clone = llm_client.clone();
         let client_data_clone = client_data.clone();
-
-        // Convert tokio UdpSocket to std socket for socket2 operations
-        let std_socket = socket_arc.as_ref().try_clone()
-            .map(|s| {
-                s.into_std()
-            })
-            .ok();
 
         // Spawn read loop for receiving multicast data
         tokio::spawn(async move {
@@ -156,24 +152,25 @@ impl IgmpClient {
 
                                     // Call LLM
                                     match call_llm_for_client(
-                                        client_id,
                                         &llm_client_clone,
                                         &app_state_clone,
-                                        &status_tx_clone,
+                                        client_id.to_string(),
                                         &instruction,
                                         &memory,
                                         Some(&event),
+                                        protocol.as_ref(),
+                                        &status_tx_clone,
                                     )
                                     .await {
-                                        Ok(ClientLlmResult { actions, memory: new_memory }) => {
+                                        Ok(ClientLlmResult { actions, memory_updates }) => {
                                             // Update memory
-                                            if let Some(mem) = new_memory {
+                                            if let Some(mem) = memory_updates {
                                                 client_data_clone.lock().await.memory = mem;
                                             }
 
                                             // Execute actions
                                             for action in actions {
-                                                match protocol.as_ref().execute_action(action, &app_state_clone) {
+                                                match protocol.as_ref().execute_action(action) {
                                                     Ok(ClientActionResult::Custom { name, data }) => {
                                                         if name == "join_multicast_group" {
                                                             if let (Some(mcast), Some(iface)) = (
@@ -286,7 +283,7 @@ impl IgmpClient {
                     }
                     Err(e) => {
                         error!("IGMP client {} read error: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error).await;
+                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
                         let _ = status_tx_clone.send(format!("[CLIENT] IGMP client {} error: {}", client_id, e));
                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         break;
