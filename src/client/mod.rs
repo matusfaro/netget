@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: DNS client
+#[cfg(feature = "dns")]
+pub mod dns;
+#[cfg(feature = "dns")]
+pub use dns::actions::DnsClientProtocol;
