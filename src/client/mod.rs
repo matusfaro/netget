@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Cassandra client
-#[cfg(feature = "cassandra")]
-pub mod cassandra;
-#[cfg(feature = "cassandra")]
-pub use cassandra::actions::CassandraClientProtocol;
+// Phase 6: IPP client
+#[cfg(feature = "ipp")]
+pub mod ipp;
+#[cfg(feature = "ipp")]
+pub use ipp::actions::IppClientProtocol;
