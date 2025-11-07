@@ -6,22 +6,28 @@ The OpenID Connect (OIDC) client implements a full OAuth2/OIDC authentication cl
 
 ## Library Choice
 
-**Primary**: `openidconnect` crate v3.5
+**Primary**: `openidconnect` crate v3.5 + direct HTTP requests
 
 The `openidconnect` crate is the official Rust implementation of OpenID Connect, providing:
 - Full OpenID Connect Discovery (`.well-known/openid-configuration`)
-- Multiple OAuth2 flows (Password, Client Credentials, Device Code, Authorization Code)
+- OAuth2 flows: Password and Client Credentials (via library APIs)
 - Automatic token validation and JWT parsing
 - Type-safe API with strong guarantees
 - Built on top of the `oauth2` crate
 - Async HTTP client support via `reqwest`
 
-**Why this library**:
-- Official implementation with active maintenance
-- Comprehensive OAuth2/OIDC specification support
-- Type-safe configuration and error handling
-- Well-documented with extensive examples
-- Used by many production Rust applications
+**Additional implementations**:
+- **Device Code Flow (RFC 8628)**: Direct HTTP POST using `reqwest`
+  - openidconnect v3.5 doesn't expose device code APIs
+  - Manual implementation following RFC 8628 specification
+- **Authorization Code Flow**: Direct HTTP GET/POST + local `TcpListener`
+  - Requires local callback server not provided by openidconnect
+  - Manual query parameter parsing and code exchange
+
+**Why this approach**:
+- Hybrid: Use openidconnect for discovery and standard flows
+- Direct HTTP for flows requiring additional infrastructure
+- Maintains compatibility with all OIDC providers
 
 ## Architecture
 
@@ -60,18 +66,19 @@ Client state stored in `protocol_data`:
    - No user context
    - **Use case**: Service accounts, API access
 
-3. **Device Code Flow** (`start_device_flow`) - **Partially Implemented**
+3. **Device Code Flow** (`start_device_flow`) - **RFC 8628**
    - User authenticates via browser on another device
    - NetGet displays code and URL for user
-   - Polls for completion
+   - Polls for completion with proper interval and expiration handling
    - **Use case**: CLI apps, limited input devices
-   - **Status**: Placeholder - requires polling implementation
+   - **Implementation**: Direct HTTP POST to device authorization endpoint, background polling task
 
-4. **Authorization Code Flow** - **Not Implemented**
+4. **Authorization Code Flow** (`start_authorization_code_flow`)
    - Traditional web flow with browser redirect
-   - Requires local HTTP server to receive callback
+   - Local HTTP server receives callback on configurable port
+   - CSRF protection via state parameter
    - **Use case**: Web apps, desktop apps with browser
-   - **Status**: Future enhancement
+   - **Implementation**: Local TcpListener on localhost, query parameter parsing, code exchange
 
 ### LLM Integration
 
@@ -93,7 +100,8 @@ Client state stored in `protocol_data`:
 
 **Async (User-Triggered)**:
 - `discover_configuration`: Discover provider metadata
-- `start_device_flow`: Begin device code authentication
+- `start_device_flow`: Begin device code authentication (RFC 8628)
+- `start_authorization_code_flow`: Begin authorization code flow with local callback server
 - `exchange_password`: Authenticate with username/password
 - `exchange_client_credentials`: Get service account token
 - `refresh_token`: Refresh access token
@@ -162,17 +170,113 @@ let email = userinfo.email();     // Optional
 let name = userinfo.name();       // Optional
 ```
 
+### Device Code Flow Implementation
+
+```rust
+// 1. POST to /device/code endpoint
+let device_auth_url = format!("{}/device/code", issuer_url);
+let response = http_client.post(&device_auth_url)
+    .form(&[
+        ("client_id", client_id),
+        ("scope", scopes),
+    ])
+    .send()
+    .await?;
+
+// 2. Parse device_code, user_code, verification_uri
+let device_code = response["device_code"].as_str()?;
+let user_code = response["user_code"].as_str()?;
+let verification_uri = response["verification_uri"].as_str()?;
+
+// 3. Display to user
+info!("Go to {} and enter code: {}", verification_uri, user_code);
+
+// 4. Poll token endpoint in background
+tokio::spawn(async move {
+    loop {
+        let token_response = http_client.post(&token_endpoint)
+            .form(&[
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code", device_code),
+                ("client_id", client_id),
+            ])
+            .send()
+            .await?;
+
+        // Handle authorization_pending, slow_down, expired_token
+        match token_response.status() {
+            200 => break, // Success
+            400 => check_error_and_retry(),
+        }
+
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+    }
+});
+```
+
+### Authorization Code Flow Implementation
+
+```rust
+// 1. Generate CSRF state parameter
+let state: String = rand::thread_rng()
+    .sample_iter(&rand::distributions::Alphanumeric)
+    .take(32).map(char::from).collect();
+
+// 2. Build authorization URL
+let auth_url = format!(
+    "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
+    auth_endpoint,
+    urlencoding::encode(&client_id),
+    urlencoding::encode(&redirect_uri),
+    urlencoding::encode(scopes),
+    urlencoding::encode(&state)
+);
+
+info!("Open this URL in your browser:\n{}", auth_url);
+
+// 3. Start local callback server
+let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
+
+tokio::spawn(async move {
+    let (mut socket, _) = listener.accept().await?;
+
+    // 4. Parse HTTP request and extract query parameters
+    let query_string = extract_query_string(&request)?;
+    let params = parse_query_params(&query_string)?;
+
+    // 5. Verify state parameter
+    if params["state"] != expected_state {
+        return Err("CSRF protection failed");
+    }
+
+    // 6. Exchange authorization code for tokens
+    let token_response = http_client.post(&token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", &params["code"]),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+        ])
+        .send()
+        .await?;
+
+    // 7. Store tokens
+    store_tokens(token_response).await?;
+});
+```
+
 ## Limitations
 
-1. **Device Code Flow**: Partially implemented
-   - Requires polling mechanism for completion
-   - Device authorization endpoint not always available
-   - Full implementation would need background polling task
+1. **Device Code Flow**: Requires provider support
+   - Not all OIDC providers support RFC 8628 device code flow
+   - Provider must expose `/device/code` endpoint
+   - Implementation uses direct HTTP requests (not openidconnect crate APIs)
 
-2. **Authorization Code Flow**: Not implemented
-   - Requires local HTTP server for callback
-   - Browser automation complexity
-   - Better suited for desktop/web apps than CLI
+2. **Authorization Code Flow**: Localhost only
+   - Local HTTP server binds to 127.0.0.1 (localhost)
+   - User must open browser on same machine
+   - Configurable port (default 8080)
+   - Implementation uses direct HTTP requests and TcpListener
 
 3. **Token Expiration**: Manual refresh required
    - No automatic token refresh on expiry
@@ -251,20 +355,27 @@ Connect to https://accounts.google.com as OpenID Connect client
 Start device code flow for user authentication
 ```
 
+### Authorization Code Flow
+```
+Connect to https://auth.example.com as OpenID Connect client
+Start authorization code flow with callback on port 8080
+```
+
 ## Future Enhancements
 
-1. **Full Device Code Flow**: Implement polling with timeout
-2. **Authorization Code Flow**: Add local HTTP server for callbacks
-3. **Automatic Token Refresh**: Background task to refresh before expiry
-4. **PKCE**: Enable for authorization code flow security
-5. **Multiple Providers**: Support connecting to multiple providers simultaneously
-6. **Token Introspection**: Validate tokens via introspection endpoint
-7. **Revocation**: Revoke tokens on disconnect
-8. **Session Management**: Track multiple sessions with different users
+1. **Automatic Token Refresh**: Background task to refresh before expiry
+2. **PKCE**: Enable for authorization code flow security (Proof Key for Code Exchange)
+3. **Multiple Providers**: Support connecting to multiple providers simultaneously
+4. **Token Introspection**: Validate tokens via introspection endpoint
+5. **Revocation**: Revoke tokens on disconnect
+6. **Session Management**: Track multiple sessions with different users
+7. **Browser Auto-Launch**: Automatically open browser for device code and authorization flows
+8. **Custom Callback Paths**: Support configurable callback paths for authorization code flow
 
 ## References
 
 - OpenID Connect Specification: https://openid.net/specs/openid-connect-core-1_0.html
 - OAuth2 RFC 6749: https://tools.ietf.org/html/rfc6749
+- Device Code Flow RFC 8628: https://tools.ietf.org/html/rfc8628
 - `openidconnect` crate docs: https://docs.rs/openidconnect/
 - OAuth2 flows explained: https://oauth.net/2/grant-types/
