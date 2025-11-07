@@ -6,9 +6,7 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "socks5")]
-pub mod socks5;
+#[cfg(feature = "telnet")]
+pub mod telnet;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
-#[cfg(feature = "oauth2")]
-pub mod oauth2;
