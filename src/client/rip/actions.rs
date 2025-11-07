@@ -63,6 +63,12 @@ pub static RIP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 /// RIP client protocol action handler
 pub struct RipClientProtocol;
 
+impl Default for RipClientProtocol {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl RipClientProtocol {
     pub fn new() -> Self {
         Self
