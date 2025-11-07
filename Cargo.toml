@@ -51,6 +51,7 @@ socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
+s3-client = ["dep:aws-config", "dep:aws-sdk-s3"]  # S3 client (AWS S3 and S3-compatible services like MinIO)
 sqs = []  # AWS SQS (Simple Queue Service) uses only HTTP, no extra deps
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
@@ -130,6 +131,7 @@ all-protocols = [
     "elasticsearch",
     "dynamo",
     "s3",
+    "s3-client",
     "sqs",
     "npm",
     "openai",
@@ -392,6 +394,10 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
+# AWS SDK for S3 client
+aws-config = { version = "1.5", optional = true, features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.55", optional = true }
 
 [dev-dependencies]
 # For async tests
