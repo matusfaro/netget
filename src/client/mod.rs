@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// IRC client
-#[cfg(feature = "irc")]
-pub mod irc;
-#[cfg(feature = "irc")]
-pub use irc::actions::IrcClientProtocol;
+// IS-IS client
+#[cfg(feature = "isis")]
+pub mod isis;
+#[cfg(feature = "isis")]
+pub use isis::actions::IsisClientProtocol;
