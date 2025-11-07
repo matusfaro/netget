@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// SMB client
+#[cfg(feature = "smb")]
+pub mod smb;
+#[cfg(feature = "smb")]
+pub use smb::actions::SmbClientProtocol;
