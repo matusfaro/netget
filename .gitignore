@@ -20,3 +20,4 @@ ollama.lock
 *.njsproj
 *.sln
 *.sw?
+target-etcd-build/
