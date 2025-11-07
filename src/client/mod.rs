@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: TURN client
-#[cfg(feature = "turn")]
-pub mod turn;
-#[cfg(feature = "turn")]
-pub use turn::actions::TurnClientProtocol;
+// Git client
+#[cfg(feature = "git")]
+pub mod git;
+#[cfg(feature = "git")]
+pub use git::actions::GitClientProtocol;
