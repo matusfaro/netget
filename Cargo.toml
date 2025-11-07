@@ -498,3 +498,6 @@ sha1 = "0.10"  # For info_hash calculation
 [build-dependencies]
 # Protocol buffer compiler for etcd gRPC service
 tonic-build = "0.12"
+# Pure Rust protobuf compiler (alternative to protoc binary)
+protox = "0.7"
+prost = "0.13"
