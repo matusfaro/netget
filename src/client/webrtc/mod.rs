@@ -90,7 +90,7 @@ impl WebRtcClient {
         info!("WebRTC client {} created data channel", client_id);
 
         // Clone for callbacks
-        let pc_clone = Arc::clone(&peer_connection);
+        let _pc_clone = Arc::clone(&peer_connection);
         let dc_clone = Arc::clone(&data_channel);
         let app_state_clone = Arc::clone(&app_state);
         let status_tx_clone = status_tx.clone();
