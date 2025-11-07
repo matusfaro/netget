@@ -77,10 +77,11 @@ impl TemplateEngine {
             }
 
             // Get the full relative path
+            let file_name = file_path.file_name().unwrap().to_string_lossy().to_string();
             let relative_path = if prefix.is_empty() {
-                file_path.to_string_lossy().to_string()
+                file_name
             } else {
-                format!("{}/{}", prefix, file_path.file_name().unwrap().to_string_lossy())
+                format!("{}/{}", prefix, file_name)
             };
 
             // Convert to template name (without .hbs extension)
@@ -101,12 +102,18 @@ impl TemplateEngine {
                 == Some("partials");
 
             if is_partial {
-                // Register as partial with namespace
-                let partial_name = template_name.replace("/partials/", "::");
+                // Register as partial with both path and namespace syntax for compatibility
                 handlebars
-                    .register_partial(&partial_name, content)
-                    .with_context(|| format!("Failed to register partial: {}", partial_name))?;
-                debug!("Registered partial: {}", partial_name);
+                    .register_partial(&template_name, content)
+                    .with_context(|| format!("Failed to register partial: {}", template_name))?;
+                debug!("Registered partial: {}", template_name);
+
+                // Also register with namespace syntax (convert "shared/partials/role" -> "shared::role")
+                let namespace_name = template_name.replace("/", "::");
+                handlebars
+                    .register_partial(&namespace_name, content)
+                    .with_context(|| format!("Failed to register namespaced partial: {}", namespace_name))?;
+                debug!("Registered namespaced partial: {}", namespace_name);
             } else {
                 // Register as template
                 handlebars

@@ -1,4 +1,4 @@
-{{> shared::role }}
+{{> shared/partials/role }}
 
 {{#if global_instructions}}
 ## Global Instructions
@@ -19,16 +19,16 @@ Output: {{{this.output}}}
 
 {{/each}}
 {{/if}}
-{{> network_request::instructions }}
+{{> network_request/partials/instructions }}
 
-{{> shared::actions tool_actions=tool_actions regular_actions=regular_actions }}
+{{> shared/partials/actions tool_actions=tool_actions regular_actions=regular_actions }}
 
-{{> shared::memory }}
+{{> shared/partials/memory }}
 
 {{#if scripting_enabled}}
-{{> shared::scripting selected_mode=selected_scripting_mode }}
+{{> shared/partials/scripting selected_mode=selected_scripting_mode }}
 
 {{/if}}
-{{> shared::response_format }}
+{{> shared/partials/response_format }}
 
-{{> shared::current_state active_server=active_server can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}
+{{> shared/partials/current_state active_server=active_server can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}

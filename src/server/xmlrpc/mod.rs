@@ -87,9 +87,7 @@ impl XmlRpcServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::XmlRpc {
-                                recent_methods: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
 
                         app_state

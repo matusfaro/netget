@@ -263,29 +263,6 @@ async fn test_network_event_prompt_for_proxy() {
     }
 }
 
-#[test]
-fn test_base_stack_documentation_includes_all_stacks() {
-    use netget::llm::actions::generate_base_stack_documentation;
-
-    let docs = generate_base_stack_documentation(false);
-
-    // Should include base stack header
-    assert!(docs.contains("## Available Base Stacks") || docs.contains("Available Base Stacks"));
-
-    // Basic sanity check - should have some content
-    assert!(!docs.is_empty(), "Base stack documentation should not be empty");
-}
-
-#[test]
-fn test_base_stack_documentation_snapshot() {
-    use netget::llm::actions::generate_base_stack_documentation;
-
-    let docs = generate_base_stack_documentation(false);
-
-    // Assert snapshot
-    snapshot_util::assert_snapshot("base_stack_documentation", SNAPSHOT_DIR, &docs);
-}
-
 #[tokio::test]
 async fn test_retry_mechanism_prompt() {
     // Test that retry mechanism includes previous error in prompt

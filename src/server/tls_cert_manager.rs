@@ -335,6 +335,15 @@ pub fn extract_tls_config_from_params(
 mod tests {
     use super::*;
 
+    // Initialize rustls crypto provider once for all tests
+    static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+    fn init_rustls() {
+        INIT.get_or_init(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+    }
+
     #[test]
     fn test_default_cert_spec() {
         let spec = CertificateSpec::default();
@@ -345,6 +354,7 @@ mod tests {
 
     #[test]
     fn test_generate_self_signed_cert() {
+        init_rustls();
         let spec = CertificateSpec::default();
         let cert = generate_self_signed_cert(&spec);
         assert!(cert.is_ok());
@@ -352,12 +362,14 @@ mod tests {
 
     #[test]
     fn test_generate_default_tls_config() {
+        init_rustls();
         let config = generate_default_tls_config();
         assert!(config.is_ok());
     }
 
     #[test]
     fn test_generate_custom_tls_config() {
+        init_rustls();
         let config = generate_custom_tls_config(
             Some("test.example.com".to_string()),
             Some(vec!["test.local".to_string(), "*.test.local".to_string()]),

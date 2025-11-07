@@ -75,9 +75,7 @@ impl JsonRpcServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::JsonRpc {
-                                recent_methods: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -516,16 +514,20 @@ async fn track_method_call(
     connection_id: ConnectionId,
     method: &str,
 ) -> anyhow::Result<()> {
-    use crate::state::server::ProtocolConnectionInfo;
+    
 
     app_state.with_server_mut(server_id, |server| {
         if let Some(conn) = server.connections.get_mut(&connection_id) {
-            if let ProtocolConnectionInfo::JsonRpc { recent_methods } = &mut conn.protocol_info {
+            if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                let mut recent_methods: Vec<String> = obj.get("recent_methods")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
                 recent_methods.push(method.to_string());
                 // Keep only last 10 methods
                 if recent_methods.len() > 10 {
                     recent_methods.remove(0);
                 }
+                obj.insert("recent_methods".to_string(), serde_json::to_value(&recent_methods).unwrap_or(serde_json::json!([])));
             }
         }
     }).await;

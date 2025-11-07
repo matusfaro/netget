@@ -3,9 +3,9 @@
 # Runs E2E tests in isolation with proper feature gating
 #
 # Usage:
-#   ./e2e-test.sh                    # Run all E2E tests
-#   ./e2e-test.sh whois dns http     # Run specific protocol tests
-#   ./e2e-test.sh --list             # List available protocols
+#   ./test-e2e.sh                    # Run all E2E tests
+#   ./test-e2e.sh whois dns http     # Run specific protocol tests
+#   ./test-e2e.sh --list             # List available protocols
 #
 # Features:
 # - Validates feature gates exist in Cargo.toml

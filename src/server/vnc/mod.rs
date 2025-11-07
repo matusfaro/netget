@@ -9,7 +9,7 @@ use crate::display::{DisplayCanvas, DisplayCommand};
 use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo, ProtocolState};
+use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
 use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -29,8 +29,6 @@ const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 #[repr(u8)]
 enum SecurityType {
     None = 1,
-    #[allow(dead_code)]
-    VncAuth = 2, // Not yet implemented
 }
 
 /// VNC pixel format
@@ -145,16 +143,7 @@ impl VncServer {
             last_activity: now,
             status: ConnectionStatus::Active,
             status_changed_at: now,
-            protocol_info: ProtocolConnectionInfo::Vnc {
-                write_half: write_half_arc.clone(),
-                state: ProtocolState::Idle,
-                queued_data: Vec::new(),
-                authenticated: false,
-                username: None,
-                framebuffer_width: 800,
-                framebuffer_height: 600,
-                pixel_format: VncPixelFormat::default_rgb888(),
-            },
+            protocol_info: ProtocolConnectionInfo::empty(),
         };
         app_state.add_connection_to_server(server_id, conn_state).await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());

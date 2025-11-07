@@ -12,7 +12,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
-use tracing::debug;
 
 /// DC client state for tracking user information
 #[derive(Clone, Debug)]

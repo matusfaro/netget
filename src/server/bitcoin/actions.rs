@@ -160,7 +160,7 @@ impl BitcoinProtocol {
 
         let magic = match network {
             "mainnet" | "main" => Magic::BITCOIN,
-            "testnet" | "test" => Magic::TESTNET,
+            "testnet" | "test" => Magic::TESTNET3,
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => Magic::BITCOIN,
@@ -235,7 +235,7 @@ impl BitcoinProtocol {
 
         let magic = match network {
             "mainnet" | "main" => Magic::BITCOIN,
-            "testnet" | "test" => Magic::TESTNET,
+            "testnet" | "test" => Magic::TESTNET3,
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => Magic::BITCOIN,
@@ -259,7 +259,7 @@ impl BitcoinProtocol {
 
         let magic = match network {
             "mainnet" | "main" => Magic::BITCOIN,
-            "testnet" | "test" => Magic::TESTNET,
+            "testnet" | "test" => Magic::TESTNET3,
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => Magic::BITCOIN,
@@ -288,7 +288,7 @@ impl BitcoinProtocol {
 
         let magic = match network {
             "mainnet" | "main" => Magic::BITCOIN,
-            "testnet" | "test" => Magic::TESTNET,
+            "testnet" | "test" => Magic::TESTNET3,
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => Magic::BITCOIN,
@@ -317,7 +317,7 @@ impl BitcoinProtocol {
 
         let magic = match network {
             "mainnet" | "main" => Magic::BITCOIN,
-            "testnet" | "test" => Magic::TESTNET,
+            "testnet" | "test" => Magic::TESTNET3,
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => Magic::BITCOIN,

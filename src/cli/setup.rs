@@ -167,10 +167,16 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
     Ok(())
 }
 
-/// Guard to ensure terminal cleanup happens
-#[allow(dead_code)]
+/// Guard to reset terminal state on drop
 pub struct TerminalGuard {
     enhanced_supported: bool,
+}
+
+impl TerminalGuard {
+    #[allow(dead_code)]
+    pub fn new(enhanced_supported: bool) -> Self {
+        Self { enhanced_supported }
+    }
 }
 
 impl Drop for TerminalGuard {

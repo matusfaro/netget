@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use base64::Engine;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::Incoming;
@@ -17,7 +18,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde_json::{json, Value};
+use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
@@ -25,8 +26,8 @@ use crate::server::connection::ConnectionId;
 use crate::server::npm::actions::NpmProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::action_helper::call_llm;
-use crate::llm::actions::protocol_trait::Server;
 use crate::state::app_state::AppState;
+use crate::protocol::EventType;
 
 /// NPM registry server that delegates to LLM
 pub struct NpmServer;
@@ -71,9 +72,7 @@ impl NpmServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Npm {
-                                recent_requests: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -164,19 +163,19 @@ async fn handle_npm_request(
 
     // Route the request
     let (event_type, description) = if path == "/-/all" {
-        (actions::NPM_LIST_REQUEST, "NPM package list request".to_string())
+        ("NPM_LIST_REQUEST", "NPM package list request".to_string())
     } else if path.starts_with("/-/v1/search") {
-        (actions::NPM_SEARCH_REQUEST, format!("NPM package search: {}", query))
+        ("NPM_SEARCH_REQUEST", format!("NPM package search: {}", query))
     } else if path.contains("/-/") {
         // Tarball request: /{package}/-/{tarball}.tgz
         let parts: Vec<&str> = path.split("/-/").collect();
         let package_name = parts.get(0).unwrap_or(&"").trim_start_matches('/');
         let tarball_name = parts.get(1).unwrap_or(&"");
-        (actions::NPM_TARBALL_REQUEST, format!("NPM tarball request: package={}, tarball={}", package_name, tarball_name))
+        ("NPM_TARBALL_REQUEST", format!("NPM tarball request: package={}, tarball={}", package_name, tarball_name))
     } else {
         // Package metadata request: /{package}
         let package_name = path.trim_start_matches('/');
-        (actions::NPM_PACKAGE_REQUEST, format!("NPM package metadata request: {}", package_name))
+        ("NPM_PACKAGE_REQUEST", format!("NPM package metadata request: {}", package_name))
     };
 
     trace!("NPM event: {}: {}", event_type, &description);
@@ -194,14 +193,17 @@ async fn handle_npm_request(
             .unwrap());
     }
 
-    // Build NPM event - need to find the EventType from protocol
-    let event_types = protocol.as_ref().get_event_types();
-    let event_type_obj = event_types.iter()
-        .find(|et| et.id() == event_type)
-        .expect("Event type should exist");
+    // Build NPM event - use the static event type references
+    let event_type_static: &'static EventType = match &event_type[..] {
+        "NPM_PACKAGE_REQUEST" => &actions::NPM_PACKAGE_REQUEST,
+        "NPM_TARBALL_REQUEST" => &actions::NPM_TARBALL_REQUEST,
+        "NPM_LIST_REQUEST" => &actions::NPM_LIST_REQUEST,
+        "NPM_SEARCH_REQUEST" => &actions::NPM_SEARCH_REQUEST,
+        _ => panic!("Unknown NPM event type: {}", event_type),
+    };
 
     let event = crate::protocol::Event::new(
-        event_type_obj,
+        event_type_static,
         json!({
             "method": method.as_str(),
             "path": path,
@@ -289,7 +291,9 @@ async fn process_npm_action_result(
                         .unwrap();
 
                     // Decode base64
-                    let decoded = base64::decode(tarball_data).unwrap_or_default();
+                    let decoded = base64::engine::general_purpose::STANDARD
+                        .decode(tarball_data)
+                        .unwrap_or_default();
 
                     debug!("NPM package tarball response: {} bytes", decoded.len());
                     let _ = status_tx.send(format!("[DEBUG] Sending NPM tarball: {} bytes", decoded.len()));

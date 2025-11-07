@@ -59,6 +59,23 @@ export CARGO_TARGET_DIR="${PROJECT_ROOT}/target-claude/claude-$$"
 # Create directory if it doesn't exist
 mkdir -p "$CARGO_TARGET_DIR"
 
+# Check for sccache
+if [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
+    echo "⚠️  WARNING: RUSTC_WRAPPER is not set to sccache" >&2
+    echo "" >&2
+    echo "To speed up builds, install sccache:" >&2
+    echo "  cargo install sccache" >&2
+    echo "" >&2
+    echo "Then add to your ~/.bashrc, ~/.zshrc, or shell config:" >&2
+    echo "  export RUSTC_WRAPPER=sccache" >&2
+    echo "  export SCCACHE_CACHE_SIZE=50G" >&2
+    echo "" >&2
+    echo "Or set it for this session:" >&2
+    echo "  export RUSTC_WRAPPER=sccache" >&2
+    echo "  export SCCACHE_CACHE_SIZE=50G" >&2
+    echo "" >&2
+fi
+
 # Echo the target directory and session info for visibility
 echo "=== Cargo Isolated Build ===" >&2
 echo "Session PID: $$" >&2

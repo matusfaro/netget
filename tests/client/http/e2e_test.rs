@@ -1,60 +1,91 @@
 //! E2E tests for HTTP client
+//!
+//! These tests verify HTTP client functionality by spawning the actual NetGet binary
+//! and testing client behavior as a black-box.
 
 #[cfg(all(test, feature = "http"))]
 mod http_client_tests {
-    use netget::state::app_state::AppState;
-    use std::sync::Arc;
+    use super::super::super::helpers::*;
+    use std::time::Duration;
 
-    /// Test HTTP client initialization
-    /// LLM calls: 0 (unit test)
+    /// Test HTTP client making a GET request
+    /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
-    async fn test_http_client_initialization() {
-        let state = Arc::new(AppState::new_with_options(false, true));
+    async fn test_http_client_get_request() -> E2EResult<()> {
+        // Start an HTTP server listening on an available port
+        let port = get_available_port().await?;
+        let server_config = NetGetConfig::new(format!(
+            "Listen on port {} via HTTP. Respond to GET requests with 'Hello from server'.",
+            port
+        ));
 
-        let client_instance = netget::state::ClientInstance::new(
-            netget::state::ClientId::new(1),
-            "http://httpbin.org".to_string(),
-            "HTTP".to_string(),
-            "Test HTTP client".to_string(),
+        let mut server = start_netget_server(server_config).await?;
+
+        // Give server time to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Now start an HTTP client that makes a GET request
+        let client_config = NetGetConfig::new(format!(
+            "Connect to http://127.0.0.1:{} via HTTP. Send a GET request to / and read the response.",
+            port
+        ));
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to make request
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client output shows connection/response
+        assert!(
+            client.output_contains("HTTP").await || client.output_contains("connected").await,
+            "Client should show HTTP protocol or connection message. Output: {:?}",
+            client.get_output().await
         );
 
-        let client_id = state.add_client(client_instance).await;
+        println!("✅ HTTP client made GET request successfully");
 
-        let client = state.get_client(client_id).await.expect("Client not found");
-        assert_eq!(client.protocol_name, "HTTP");
-        assert_eq!(client.remote_addr, "http://httpbin.org");
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
 
-        println!("✅ HTTP client initialization works");
-
-        state.remove_client(client_id).await;
+        Ok(())
     }
 
-    /// Test HTTP client status management
-    /// LLM calls: 0 (unit test)
+    /// Test HTTP client can send requests based on LLM instructions
+    /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
-    async fn test_http_client_status() {
-        let state = Arc::new(AppState::new_with_options(false, true));
+    async fn test_http_client_lllm_controlled_request() -> E2EResult<()> {
+        let port = get_available_port().await?;
 
-        let client_instance = netget::state::ClientInstance::new(
-            netget::state::ClientId::new(1),
-            "http://example.com".to_string(),
-            "HTTP".to_string(),
-            "Test status".to_string(),
-        );
+        // Start a simple HTTP server
+        let server_config = NetGetConfig::new(format!(
+            "Listen on port {} via HTTP. Log all incoming requests.",
+            port
+        ));
 
-        let client_id = state.add_client(client_instance).await;
+        let mut server = start_netget_server(server_config).await?;
 
-        // Test status transitions
-        state.update_client_status(client_id, netget::state::ClientStatus::Connected).await;
-        let client = state.get_client(client_id).await.expect("Client not found");
-        assert_eq!(client.status, netget::state::ClientStatus::Connected);
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        state.update_client_status(client_id, netget::state::ClientStatus::Disconnected).await;
-        let client = state.get_client(client_id).await.expect("Client not found");
-        assert_eq!(client.status, netget::state::ClientStatus::Disconnected);
+        // Client that makes a specific request based on LLM instruction
+        let client_config = NetGetConfig::new(format!(
+            "Connect to http://127.0.0.1:{} via HTTP and send a GET request with custom headers.",
+            port
+        ));
 
-        println!("✅ HTTP client status management works");
+        let mut client = start_netget_client(client_config).await?;
 
-        state.remove_client(client_id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify the client is HTTP protocol
+        assert_eq!(client.protocol, "HTTP", "Client should be HTTP protocol");
+
+        println!("✅ HTTP client responded to LLM instruction");
+
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
     }
 }

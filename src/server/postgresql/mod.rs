@@ -111,7 +111,7 @@ impl PostgresqlServer {
                                 last_activity: now,
                                 status: ConnectionStatus::Active,
                                 status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::Postgresql,
+                                protocol_info: ProtocolConnectionInfo::empty(),
                             };
                             server
                                 .app_state

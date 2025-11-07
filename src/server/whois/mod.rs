@@ -61,9 +61,7 @@ impl WhoisServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Whois {
-                                recent_queries: vec![],
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state
                             .add_connection_to_server(server_id, conn_state)

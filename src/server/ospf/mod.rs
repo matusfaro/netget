@@ -25,8 +25,7 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "ospf")]
 use actions::{
-    OspfProtocol, OSPF_DATABASE_DESCRIPTION_EVENT, OSPF_HELLO_EVENT,
-    OSPF_LINK_STATE_ACK_EVENT, OSPF_LINK_STATE_REQUEST_EVENT, OSPF_LINK_STATE_UPDATE_EVENT,
+    OspfProtocol, OSPF_HELLO_EVENT,
 };
 #[cfg(feature = "ospf")]
 use crate::protocol::Event;
@@ -37,7 +36,7 @@ use crate::server::socket_helpers::create_ospf_raw_socket;
 #[cfg(feature = "ospf")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "ospf")]
-use crate::state::server::{ConnectionState, ConnectionStatus, OspfNeighborState, ProtocolConnectionInfo};
+use crate::state::server::OspfNeighborState;
 
 // OSPF Constants
 const OSPF_VERSION: u8 = 2;
@@ -59,7 +58,9 @@ const OSPF_ALL_DROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 6);
 /// OSPF neighbor information
 #[cfg(feature = "ospf")]
 struct OspfNeighbor {
+    #[allow(dead_code)]
     router_id: String,
+    #[allow(dead_code)]
     neighbor_ip: Ipv4Addr,
     connection_id: ConnectionId,
     state: OspfNeighborState,
@@ -73,8 +74,11 @@ struct OspfNeighbor {
 #[cfg(feature = "ospf")]
 struct OspfState {
     socket_fd: i32,
+    #[allow(dead_code)]
     interface_ip: Ipv4Addr,
+    #[allow(dead_code)]
     router_id: String,
+    #[allow(dead_code)]
     area_id: String,
     neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>>,
 }
@@ -528,14 +532,18 @@ impl OspfServer {
         ospf_data: &[u8],
     ) -> Result<()> {
         unsafe {
-            let dest_addr = libc::sockaddr_in {
-                sin_family: libc::AF_INET as u16,
-                sin_port: 0, // Raw IP, no port
-                sin_addr: libc::in_addr {
-                    s_addr: u32::from(dest_ip).to_be(),
-                },
-                sin_zero: [0; 8],
-            };
+            let mut dest_addr = std::mem::zeroed::<libc::sockaddr_in>();
+            #[cfg(target_os = "macos")]
+            {
+                dest_addr.sin_family = libc::AF_INET as libc::sa_family_t;
+                dest_addr.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                dest_addr.sin_family = libc::AF_INET as u16;
+            }
+            dest_addr.sin_port = 0; // Raw IP, no port
+            dest_addr.sin_addr.s_addr = u32::from(dest_ip).to_be();
 
             let n = libc::sendto(
                 socket_fd,

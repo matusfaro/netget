@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 /// NNTP protocol action handler
 pub struct NntpProtocol {
     /// Map of active connections to their state (if needed in future)
+    #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ()>>>,
 }
 

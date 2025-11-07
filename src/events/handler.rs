@@ -207,9 +207,10 @@ impl EventHandler {
         // Get available actions for retry correction messages
         let selected_mode = self.state.get_selected_scripting_mode().await;
         let scripting_env = self.state.get_scripting_env().await;
-        // Initially disable open_server - it will be enabled after read_base_stack_docs is called in the conversation loop
+        // Initially disable open_server and open_client - they will be enabled after read_base_stack_docs is called in the conversation loop
         let is_open_server_enabled = false;
-        let mut available_actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled);
+        let is_open_client_enabled = false;
+        let mut available_actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled, is_open_client_enabled);
         available_actions.extend(get_all_tool_actions(web_search_mode));
         available_actions.extend(protocol_async_actions);
 

@@ -4,10 +4,7 @@
 //! 1. User input handler - interprets user commands and manages the server
 //! 2. Network event handler - handles incoming network events based on instructions
 
-use crate::llm::actions::{
-    generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions,
-    ActionDefinition,
-};
+use crate::llm::actions::{generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions, ActionDefinition};
 use crate::llm::ollama_client::Message;
 use crate::llm::template_engine::{TemplateDataBuilder, TEMPLATE_ENGINE};
 use crate::state::app_state::AppState;
@@ -414,9 +411,10 @@ Your response must be **pure JSON** only:
     ) -> String {
         let selected_mode = state.get_selected_scripting_mode().await;
         let scripting_env = state.get_scripting_env().await;
-        // Initially disable open_server - it will be enabled after read_base_stack_docs is called
+        // Initially disable open_server and open_client - they will be enabled after read_base_stack_docs is called
         let is_open_server_enabled = false;
-        let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled);
+        let is_open_client_enabled = false;
+        let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled, is_open_client_enabled);
 
         // Add tool actions
         let web_search_mode = state.get_web_search_mode().await;
@@ -554,9 +552,10 @@ Understand what the user wants and respond with the appropriate actions to make 
         let (server_id, actions, trigger, instructions) = match &task.scope {
             TaskScope::Global => {
                 // Global task: use user input actions
-                // Initially disable open_server (tasks don't use tool calling loop)
+                // Initially disable open_server and open_client (tasks don't use tool calling loop)
                 let is_open_server_enabled = false;
-                let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled);
+                let is_open_client_enabled = false;
+                let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled, is_open_client_enabled);
 
                 // Add tool actions
                 let web_search_mode = state.get_web_search_mode().await;

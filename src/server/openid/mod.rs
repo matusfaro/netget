@@ -20,7 +20,7 @@ use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;

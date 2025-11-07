@@ -8,7 +8,25 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
+
+// NPM event type constants (matching IDs used in get_npm_event_types)
+pub static NPM_PACKAGE_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("NPM_PACKAGE_REQUEST", "NPM client requests package metadata")
+});
+
+pub static NPM_TARBALL_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("NPM_TARBALL_REQUEST", "NPM client requests package tarball")
+});
+
+pub static NPM_LIST_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("NPM_LIST_REQUEST", "NPM client requests all packages list")
+});
+
+pub static NPM_SEARCH_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("NPM_SEARCH_REQUEST", "NPM client searches for packages")
+});
 
 /// NPM protocol action handler
 pub struct NpmProtocol {}
@@ -331,8 +349,3 @@ fn get_npm_event_types() -> Vec<EventType> {
     ]
 }
 
-/// NPM package request event type
-pub const NPM_PACKAGE_REQUEST: &str = "NPM_PACKAGE_REQUEST";
-pub const NPM_TARBALL_REQUEST: &str = "NPM_TARBALL_REQUEST";
-pub const NPM_LIST_REQUEST: &str = "NPM_LIST_REQUEST";
-pub const NPM_SEARCH_REQUEST: &str = "NPM_SEARCH_REQUEST";

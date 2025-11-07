@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use super::client::{ClientId, ClientInstance};
-use super::server::{ProtocolConnectionInfo, ServerId, ServerInstance};
+use super::server::{ServerId, ServerInstance};
 use super::task::{ScheduledTask, TaskId};
 use crate::server::connection::ConnectionId;
 
@@ -966,11 +966,9 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let ProtocolConnectionInfo::Generic { data } = &mut conn.protocol_info {
-                    if let Some(obj) = data.as_object_mut() {
-                        obj.insert("authenticated".to_string(), serde_json::Value::Bool(authenticated));
-                        obj.insert("username".to_string(), serde_json::to_value(&username).unwrap_or(serde_json::Value::Null));
-                    }
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert("authenticated".to_string(), serde_json::Value::Bool(authenticated));
+                    obj.insert("username".to_string(), serde_json::to_value(&username).unwrap_or(serde_json::Value::Null));
                 }
             }
         }
@@ -985,13 +983,11 @@ impl AppState {
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
-                if let ProtocolConnectionInfo::Generic { data } = &mut conn.protocol_info {
-                    if let Some(obj) = data.as_object_mut() {
-                        obj.insert("last_message_type".to_string(), serde_json::Value::String(last_message_type.clone()));
-                        // Mark handshake complete if we've seen both version and verack
-                        if last_message_type == "verack" {
-                            obj.insert("handshake_complete".to_string(), serde_json::Value::Bool(true));
-                        }
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert("last_message_type".to_string(), serde_json::Value::String(last_message_type.clone()));
+                    // Mark handshake complete if we've seen both version and verack
+                    if last_message_type == "verack" {
+                        obj.insert("handshake_complete".to_string(), serde_json::Value::Bool(true));
                     }
                 }
             }

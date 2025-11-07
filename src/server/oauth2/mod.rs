@@ -19,7 +19,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::server::connection::ConnectionId;
 use crate::server::oauth2::actions::{OAuth2Protocol, OAUTH2_AUTHORIZE_EVENT, OAUTH2_TOKEN_EVENT, OAUTH2_INTROSPECT_EVENT, OAUTH2_REVOKE_EVENT};
@@ -179,10 +179,8 @@ async fn handle_oauth2_request(
     };
 
     // Update connection stats
-    if let Ok(ref resp) = response {
-        let body_size = resp.body().size_hint().exact().unwrap_or(0);
-        app_state.update_connection_stats(server_id, connection_id, None, Some(body_size), None, Some(1)).await;
-    }
+    let body_size = response.as_ref().ok().map(|resp| resp.body().size_hint().exact().unwrap_or(0)).unwrap_or(0);
+    app_state.update_connection_stats(server_id, connection_id, None, Some(body_size), None, Some(1)).await;
 
     let _ = status_tx.send("__UPDATE_UI__".to_string());
     response
@@ -352,7 +350,7 @@ async fn handle_introspect_request(
     server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
+    _status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<OAuth2Protocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Parse form body
@@ -417,7 +415,7 @@ async fn handle_revoke_request(
     server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
+    _status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<OAuth2Protocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Parse form body

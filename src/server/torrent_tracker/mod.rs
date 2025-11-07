@@ -65,9 +65,7 @@ impl TorrentTrackerServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::TorrentTracker {
-                                recent_requests: Vec::new(),
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         state_clone.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_clone.send("__UPDATE_UI__".to_string());
@@ -102,7 +100,7 @@ impl TorrentTrackerServer {
     async fn handle_connection(
         stream: tokio::net::TcpStream,
         peer_addr: SocketAddr,
-        local_addr: SocketAddr,
+        _local_addr: SocketAddr,
         connection_id: ConnectionId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,

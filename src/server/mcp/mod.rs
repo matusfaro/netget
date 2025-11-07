@@ -252,15 +252,7 @@ async fn handle_initialize(
             last_activity: std::time::Instant::now(),
             status: ConnectionStatus::Active,
             status_changed_at: std::time::Instant::now(),
-            protocol_info: ProtocolConnectionInfo::Mcp {
-                session_id: session_id.clone(),
-                initialized: false,
-                capabilities: serde_json::json!({}),
-                subscriptions: std::collections::HashSet::new(),
-                tools: std::collections::HashMap::new(),
-                resources: std::collections::HashMap::new(),
-                prompts: std::collections::HashMap::new(),
-            },
+            protocol_info: ProtocolConnectionInfo::empty(),
         },
     ).await;
 

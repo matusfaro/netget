@@ -47,12 +47,17 @@ const LLC_CTRL: u8 = 0x03; // Unnumbered Information
 
 // IS-IS TLV Types (commonly used)
 const ISIS_TLV_AREA_ADDRESSES: u8 = 1;
+#[allow(dead_code)]
 const ISIS_TLV_NEIGHBORS: u8 = 6;
+#[allow(dead_code)]
 const ISIS_TLV_PADDING: u8 = 8;
+#[allow(dead_code)]
 const ISIS_TLV_LSP_ENTRIES: u8 = 9;
 const ISIS_TLV_PROTOCOLS_SUPPORTED: u8 = 129;
 const ISIS_TLV_IP_INTERFACE_ADDRESSES: u8 = 132;
+#[allow(dead_code)]
 const ISIS_TLV_IP_INTERNAL_REACHABILITY: u8 = 128;
+#[allow(dead_code)]
 const ISIS_TLV_EXTENDED_REACHABILITY: u8 = 22;
 const ISIS_TLV_HOSTNAME: u8 = 137;
 
@@ -178,7 +183,7 @@ impl IsisServer {
 
                         let _dst_mac = &data[0..6];
                         let src_mac = &data[6..12];
-                        let eth_type = u16::from_be_bytes([data[12], data[13]]);
+                        let _eth_type = u16::from_be_bytes([data[12], data[13]]);
 
                         // Check for IS-IS: LLC/SNAP headers after Ethernet
                         // Ethernet (14) + LLC (3) = 17 bytes minimum
@@ -354,11 +359,7 @@ impl IsisServer {
             last_activity: now,
             status: ConnectionStatus::Active,
             status_changed_at: now,
-            protocol_info: ProtocolConnectionInfo::Isis {
-                adjacency_state: "init".to_string(),
-                neighbor_system_id: None,
-                level: level.to_string(),
-            },
+            protocol_info: ProtocolConnectionInfo::empty(),
         };
         app_state.add_connection_to_server(server_id, conn_state).await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -587,7 +588,7 @@ impl IsisServer {
     }
 
     /// Get MAC address of interface (platform-specific)
-    fn get_interface_mac(interface: &str) -> Result<[u8; 6]> {
+    fn get_interface_mac(_interface: &str) -> Result<[u8; 6]> {
         // Try to get MAC from system
         #[cfg(target_os = "linux")]
         {

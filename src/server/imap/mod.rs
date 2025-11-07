@@ -91,14 +91,7 @@ impl ImapServer {
                                 last_activity: std::time::Instant::now(),
                                 status: ConnectionStatus::Active,
                                 status_changed_at: std::time::Instant::now(),
-                                protocol_info: ProtocolConnectionInfo::Imap {
-                                    state: ProtocolState::Idle,
-                                    queued_data: Vec::new(),
-                                    session_state: ImapSessionState::NotAuthenticated,
-                                    authenticated_user: None,
-                                    selected_mailbox: None,
-                                    mailbox_read_only: false,
-                                },
+                                protocol_info: ProtocolConnectionInfo::empty(),
                             },
                         ).await;
 
@@ -225,14 +218,7 @@ impl ImapServer {
                                 last_activity: std::time::Instant::now(),
                                 status: ConnectionStatus::Active,
                                 status_changed_at: std::time::Instant::now(),
-                                protocol_info: ProtocolConnectionInfo::Imap {
-                                    state: ProtocolState::Idle,
-                                    queued_data: Vec::new(),
-                                    session_state: ImapSessionState::NotAuthenticated,
-                                    authenticated_user: None,
-                                    selected_mailbox: None,
-                                    mailbox_read_only: false,
-                                },
+                                protocol_info: ProtocolConnectionInfo::empty(),
                             },
                         ).await;
 

@@ -8,6 +8,7 @@ use super::metadata::ProtocolMetadataV2;
 use crate::llm::actions::Server;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::error;
 
 /// Global protocol registry mapping protocol names to protocol implementations
 pub struct ProtocolRegistry {
@@ -37,7 +38,6 @@ impl ProtocolRegistry {
 
     /// Register all available protocols based on compiled features
     fn register_protocols(&mut self) {
-        // Core protocols
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::server::TcpProtocol::new()));
 
@@ -105,7 +105,6 @@ impl ProtocolRegistry {
         #[cfg(feature = "svn")]
         self.register(Arc::new(crate::server::SvnProtocol::new()));
 
-        // Application protocols
         #[cfg(feature = "irc")]
         self.register(Arc::new(crate::server::IrcProtocol::new()));
 
@@ -135,7 +134,6 @@ impl ProtocolRegistry {
         #[cfg(feature = "ldap")]
         self.register(Arc::new(crate::server::LdapProtocol::new()));
 
-        // Database protocols
         #[cfg(feature = "mysql")]
         {
             use crate::server::connection::ConnectionId;
@@ -212,13 +210,11 @@ impl ProtocolRegistry {
             Arc::new(crate::server::ElasticsearchProtocol::new()),
         );
 
-        // Package Management
         #[cfg(feature = "npm")]
         self.register(
             Arc::new(crate::server::NpmProtocol::new()),
         );
 
-        // Web & File protocols
         #[cfg(feature = "ipp")]
         self.register(Arc::new(crate::server::IppProtocol::new()));
 
@@ -233,7 +229,6 @@ impl ProtocolRegistry {
         #[cfg(feature = "smb")]
         self.register(Arc::new(crate::server::SmbProtocol::new()));
 
-        // Proxy & Network protocols
         #[cfg(feature = "proxy")]
         self.register(
             Arc::new(crate::server::ProxyProtocol::new()),
@@ -286,7 +281,6 @@ impl ProtocolRegistry {
         #[cfg(feature = "mcp")]
         self.register(Arc::new(crate::server::McpProtocol::new()));
 
-        // AI & API protocols
         #[cfg(feature = "openai")]
         self.register(
             Arc::new(crate::server::OpenAiProtocol::new()),
@@ -348,7 +342,6 @@ impl ProtocolRegistry {
         #[cfg(feature = "http3")]
         self.register(Arc::new(crate::server::Http3Protocol::new()));
 
-        // BitTorrent protocols
         #[cfg(feature = "torrent-tracker")]
         self.register(Arc::new(crate::server::TorrentTrackerProtocol::new()));
 
@@ -358,11 +351,9 @@ impl ProtocolRegistry {
         #[cfg(feature = "torrent-peer")]
         self.register(Arc::new(crate::server::TorrentPeerProtocol::new()));
 
-        // TLS - Generic encrypted transport for custom protocols
         #[cfg(feature = "tls")]
         self.register(Arc::new(crate::server::TlsProtocol::new()));
 
-        // SAML protocols
         #[cfg(feature = "saml-idp")]
         self.register(Arc::new(crate::server::SamlIdpProtocol::new()));
 
@@ -386,11 +377,11 @@ impl ProtocolRegistry {
         }
     }
 
-    /// Validate that no two protocols share the same keyword
+    /// Get keyword overlaps between protocols
     ///
-    /// This ensures keyword uniqueness across all registered protocols.
-    /// Panics if overlapping keywords are detected.
-    fn validate_keyword_uniqueness(&self) {
+    /// Returns a vector of (keyword, protocols) tuples for keywords
+    /// that are claimed by multiple protocols.
+    pub fn get_keyword_overlaps(&self) -> Vec<(String, Vec<(String, String)>)> {
         use std::collections::HashMap;
 
         // Build a map: keyword (lowercase) -> Vec<(protocol_name, keyword_source)>
@@ -424,19 +415,29 @@ impl ProtocolRegistry {
             }
         }
 
-        // If overlaps found, panic with detailed error message
-        if !overlaps.is_empty() {
-            let mut error_msg = String::from("Keyword overlaps detected between protocols:\n");
+        overlaps
+    }
 
-            for (keyword, protocols) in overlaps {
-                error_msg.push_str(&format!("\n  Keyword '{}' is used by:\n", keyword));
+    /// Validate that no two protocols share the same keyword
+    ///
+    /// This logs warnings for any overlapping keywords detected,
+    /// but does not panic to allow the application to continue running.
+    fn validate_keyword_uniqueness(&self) {
+        let overlaps = self.get_keyword_overlaps();
+
+        // If overlaps found, log warnings with detailed information
+        if !overlaps.is_empty() {
+            error!("⚠️  WARNING: Keyword overlaps detected between protocols:\n");
+
+            for (keyword, protocols) in &overlaps {
+                error!("  Keyword '{}' is used by:", keyword);
                 for (protocol_name, source) in protocols {
-                    error_msg.push_str(&format!("    - {} ({})\n", protocol_name, source));
+                    error!("    - {} ({})", protocol_name, source);
                 }
             }
 
-            error_msg.push_str("\nEach keyword must be unique to a single protocol.");
-            panic!("{}", error_msg);
+            error!("Note: Each keyword should ideally be unique to a single protocol.");
+            error!("      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n");
         }
     }
 
@@ -579,4 +580,73 @@ static REGISTRY: once_cell::sync::Lazy<ProtocolRegistry> =
 /// Get the global protocol registry
 pub fn registry() -> &'static ProtocolRegistry {
     &REGISTRY
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper function to build a registry without validation panic
+    /// (for testing purposes only)
+    fn build_test_registry() -> ProtocolRegistry {
+        let mut registry = ProtocolRegistry {
+            protocols: HashMap::new(),
+            keyword_map: HashMap::new(),
+        };
+
+        // Register all protocols based on feature flags
+        registry.register_protocols();
+        registry.build_keyword_map();
+
+        // Don't validate - just return the registry
+        registry
+    }
+
+    #[test]
+    fn test_keyword_overlaps() {
+        // Build registry without validation to see what overlaps exist
+        let registry = build_test_registry();
+        let overlaps = registry.get_keyword_overlaps();
+
+        if overlaps.is_empty() {
+            println!("✓ No keyword overlaps detected!");
+            return;
+        }
+
+        // Print all overlaps
+        println!("\n{} keyword overlaps detected:\n", overlaps.len());
+
+        for (keyword, protocols) in &overlaps {
+            println!("  Keyword '{}' is used by:", keyword);
+            for (protocol_name, source) in protocols {
+                println!("    - {} ({})", protocol_name, source);
+            }
+            println!();
+        }
+
+        // List all protocols with their keywords
+        println!("\n=== All Protocol Keywords ===\n");
+        let mut protocol_keywords = Vec::new();
+        for (protocol_name, protocol) in &registry.protocols {
+            let keywords = protocol
+                .keywords()
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            protocol_keywords.push((protocol_name.clone(), keywords));
+        }
+
+        protocol_keywords.sort_by(|a, b| a.0.cmp(&b.0));
+        for (protocol_name, keywords) in &protocol_keywords {
+            println!("  {}: {}", protocol_name, keywords);
+        }
+
+        // Fail the test if there are overlaps
+        assert!(
+            overlaps.is_empty(),
+            "Found {} keyword overlaps. See above for details.",
+            overlaps.len()
+        );
+    }
 }

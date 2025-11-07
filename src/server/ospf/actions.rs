@@ -30,17 +30,17 @@ impl OspfProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let network_mask = action
+        let _network_mask = action
             .get("network_mask")
             .and_then(|v| v.as_str())
             .unwrap_or("255.255.255.0");
 
-        let hello_interval = action
+        let _hello_interval = action
             .get("hello_interval")
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as u16;
 
-        let router_dead_interval = action
+        let _router_dead_interval = action
             .get("router_dead_interval")
             .and_then(|v| v.as_u64())
             .unwrap_or(40) as u32;
@@ -50,12 +50,12 @@ impl OspfProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as u8;
 
-        let dr = action
+        let _dr = action
             .get("dr")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let bdr = action
+        let _bdr = action
             .get("bdr")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
@@ -76,12 +76,12 @@ impl OspfProtocol {
     }
 
     fn execute_send_database_description(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let router_id = action
+        let _router_id = action
             .get("router_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let area_id = action
+        let _area_id = action
             .get("area_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
@@ -111,12 +111,12 @@ impl OspfProtocol {
     }
 
     fn execute_send_link_state_request(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let router_id = action
+        let _router_id = action
             .get("router_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let area_id = action
+        let _area_id = action
             .get("area_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
@@ -137,12 +137,12 @@ impl OspfProtocol {
     }
 
     fn execute_send_link_state_update(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let router_id = action
+        let _router_id = action
             .get("router_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let area_id = action
+        let _area_id = action
             .get("area_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
@@ -163,12 +163,12 @@ impl OspfProtocol {
     }
 
     fn execute_send_link_state_ack(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let router_id = action
+        let _router_id = action
             .get("router_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let area_id = action
+        let _area_id = action
             .get("area_id")
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
@@ -750,7 +750,7 @@ impl Server for OspfProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["ospf", "open shortest path first", "routing"]
+        vec!["ospf", "open shortest path first"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

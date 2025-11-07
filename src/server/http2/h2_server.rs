@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -161,7 +161,7 @@ where
 
     // Handle incoming requests
     while let Some(result) = h2_conn.accept().await {
-        let (request, mut send_response) = result?;
+        let (request, send_response) = result?;
 
         let llm_clone = llm_client.clone();
         let app_state_clone = app_state.clone();
@@ -257,7 +257,7 @@ pub async fn handle_h2_request(
 
     // Create push manager for this request
     let push_manager = Arc::new(Mutex::new(PushManager::new()));
-    let push_manager_clone = push_manager.clone();
+    let _push_manager_clone = push_manager.clone();
 
     // Store push manager in app state for action access
     // (This would require extending AppState, for now we'll use a simpler approach)

@@ -219,14 +219,7 @@ impl WireguardServer {
                         last_activity: now,
                         status: ConnectionStatus::Active,
                         status_changed_at: now,
-                        protocol_info: ProtocolConnectionInfo::Wireguard {
-                            public_key: peer_key.clone(),
-                            endpoint: remote_addr.map(|a| a.to_string()),
-                            allowed_ips: peer.allowed_ips.iter()
-                                .map(|ip| ip.to_string())
-                                .collect(),
-                            last_handshake: peer.last_handshake,
-                        },
+                        protocol_info: ProtocolConnectionInfo::empty(),
                     };
 
                     app_state.add_connection_to_server(server_id, conn_state).await;

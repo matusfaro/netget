@@ -64,13 +64,7 @@ impl SipServer {
                             last_activity: now,
                             status: ConnectionStatus::Active,
                             status_changed_at: now,
-                            protocol_info: ProtocolConnectionInfo::Sip {
-                                dialog_id: None,
-                                from: None,
-                                to: None,
-                                state: "idle".to_string(),
-                                call_id: None,
-                            },
+                            protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state
                             .add_connection_to_server(server_id, conn_state)

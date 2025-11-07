@@ -96,7 +96,7 @@ impl RedisServer {
                                 last_activity: now,
                                 status: ConnectionStatus::Active,
                                 status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::Redis {},
+                                protocol_info: ProtocolConnectionInfo::empty(),
                             };
                             server
                                 .app_state
@@ -110,7 +110,6 @@ impl RedisServer {
                             app_state: server.app_state.clone(),
                             status_tx: status_tx.clone(),
                             server_id: server.server_id,
-                            remote_addr: addr,
                         };
 
                         tokio::spawn(async move {
@@ -139,8 +138,6 @@ struct RedisHandler {
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
-    #[allow(dead_code)]
-    remote_addr: SocketAddr,
 }
 
 impl RedisHandler {
