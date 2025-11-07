@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "ipp")]
-        self.register(Arc::new(crate::client::ipp::IppClientProtocol::new()));
+        #[cfg(feature = "ntp")]
+        self.register(Arc::new(crate::client::ntp::NtpClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
