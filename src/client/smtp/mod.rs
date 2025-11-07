@@ -110,6 +110,7 @@ impl SmtpClient {
     }
 
     /// Send an email via SMTP
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_email(
         client_id: ClientId,
         from: String,
@@ -180,7 +181,7 @@ impl SmtpClient {
         }).await.context("Task join error")??;
 
         info!("SMTP client {} sent email successfully: {:?}", client_id, result);
-        let _ = status_tx.send(format!("[CLIENT] SMTP email sent successfully"));
+        let _ = status_tx.send("[CLIENT] SMTP email sent successfully".to_string());
 
         // Call LLM with sent event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
