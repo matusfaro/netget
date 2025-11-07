@@ -6,5 +6,5 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "webdav")]
-pub mod webdav;
+#[cfg(feature = "wireguard")]
+pub mod wireguard;
