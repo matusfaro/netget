@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: SQS client
-#[cfg(feature = "sqs")]
-pub mod sqs;
-#[cfg(feature = "sqs")]
-pub use sqs::actions::SqsClientProtocol;
+// Phase 6: Telnet client
+#[cfg(feature = "telnet")]
+pub mod telnet;
+#[cfg(feature = "telnet")]
+pub use telnet::actions::TelnetClientProtocol;
