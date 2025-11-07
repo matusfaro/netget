@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: SIP client
+#[cfg(feature = "sip")]
+pub mod sip;
+#[cfg(feature = "sip")]
+pub use sip::actions::SipClientProtocol;
