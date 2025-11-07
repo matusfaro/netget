@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: WebDAV client
-#[cfg(feature = "webdav")]
-pub mod webdav;
-#[cfg(feature = "webdav")]
-pub use webdav::actions::WebdavClientProtocol;
+// WebRTC client (data channels only, no media)
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
+#[cfg(feature = "webrtc")]
+pub use webrtc::actions::WebRtcClientProtocol;
