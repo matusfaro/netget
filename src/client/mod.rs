@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Syslog client
-#[cfg(feature = "syslog")]
-pub mod syslog;
-#[cfg(feature = "syslog")]
-pub use syslog::actions::SyslogClientProtocol;
+// WHOIS client
+#[cfg(feature = "whois")]
+pub mod whois;
+#[cfg(feature = "whois")]
+pub use whois::actions::WhoisClientProtocol;
