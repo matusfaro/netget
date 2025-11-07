@@ -54,6 +54,7 @@ elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client
 dynamodb = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client (alternate name)
 s3 = []  # S3-compatible object storage server (LLM-controlled responses, no storage)
+s3-client = ["aws-config", "aws-sdk-s3"]  # S3 client (AWS S3 and S3-compatible services like MinIO)
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS client
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
@@ -136,6 +137,7 @@ all-protocols = [
     "elasticsearch",
     "dynamo",
     "s3",
+    "s3-client",
     "sqs",
     "npm",
     "openai",
@@ -415,10 +417,11 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
 
-# AWS SDK for SQS and DynamoDB clients
+# AWS SDK for SQS, DynamoDB, and S3 clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.86", optional = true }
 aws-sdk-dynamodb = { version = "1.52", optional = true }
+aws-sdk-s3 = { version = "1.55", optional = true }
 
 [dev-dependencies]
 # For async tests
