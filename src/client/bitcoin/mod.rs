@@ -9,13 +9,14 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::bitcoin::actions::BITCOIN_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
+use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::bitcoin::actions::BITCOIN_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// Bitcoin RPC client that connects to Bitcoin Core node
 pub struct BitcoinClient;
@@ -24,7 +25,7 @@ impl BitcoinClient {
     /// Connect to a Bitcoin Core RPC server with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -59,6 +60,69 @@ impl BitcoinClient {
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
         let _ = status_tx.send(format!("[CLIENT] Bitcoin RPC client {} ready for {}", client_id, remote_addr));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Call LLM to decide initial action
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let protocol = Arc::new(crate::client::bitcoin::actions::BitcoinClientProtocol::new());
+            let event = Event::new(
+                &crate::client::bitcoin::actions::BITCOIN_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "rpc_url": rpc_url,
+                }),
+            );
+
+            let llm_client_clone = llm_client.clone();
+            let app_state_clone = app_state.clone();
+            let status_tx_clone = status_tx.clone();
+            tokio::spawn(async move {
+                match call_llm_for_client(
+                    &llm_client_clone,
+                    &app_state_clone,
+                    client_id.to_string(),
+                    &instruction,
+                    &String::new(),
+                    Some(&event),
+                    protocol.as_ref(),
+                    &status_tx_clone,
+                ).await {
+                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                        // Update memory
+                        if let Some(mem) = memory_updates {
+                            app_state_clone.set_memory_for_client(client_id, mem).await;
+                        }
+
+                        // Execute actions
+                        for action in actions {
+                            match protocol.execute_action(action) {
+                                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) if name == "bitcoin_rpc" => {
+                                    let method = data.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    let params = data.get("params").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+                                    if let Err(e) = BitcoinClient::execute_rpc_command(
+                                        client_id,
+                                        method,
+                                        params,
+                                        app_state_clone.clone(),
+                                        llm_client_clone.clone(),
+                                        status_tx_clone.clone(),
+                                    ).await {
+                                        error!("Bitcoin RPC request failed: {}", e);
+                                    }
+                                }
+                                Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                    info!("Bitcoin RPC client {} disconnecting", client_id);
+                                    app_state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("LLM error for Bitcoin RPC client {}: {}", client_id, e);
+                    }
+                }
+            });
+        }
 
         // Spawn background task that monitors for client disconnection
         tokio::spawn(async move {
@@ -162,6 +226,10 @@ impl BitcoinClient {
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
                             }
+
+                            // Note: We don't execute follow-up actions here.
+                            // The LLM will be called again on the next response or user interaction.
+                            // This avoids recursion complexity and keeps the action flow simple.
                         }
                         Err(e) => {
                             error!("LLM error for Bitcoin RPC client {}: {}", client_id, e);
