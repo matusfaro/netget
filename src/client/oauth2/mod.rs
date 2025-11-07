@@ -726,11 +726,11 @@ impl OAuth2Client {
     async fn poll_device_code(
         client_id: NetGetClientId,
         app_state: Arc<AppState>,
-        _llm_client: OllamaClient,
-        _status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get device code and OAuth client config
-        let (_device_code_str, _oauth_client_id, _oauth_client_secret, _auth_url, _token_url) =
+        let (device_code_str, oauth_client_id, oauth_client_secret, _auth_url, token_url) =
             app_state
                 .with_client_mut(client_id, |client| {
                     let dc = client
@@ -759,16 +759,126 @@ impl OAuth2Client {
                     Ok::<_, anyhow::Error>((dc, cid, csecret, aurl, turl))
                 }).await.context("Client not found")??;
 
-        // Device code polling requires storing the full DeviceAuthorizationResponse object
-        // For now, this is not implemented - would require storing the response in protocol_data
-        // TODO: Store full device authorization response for polling
-        info!("Device code polling not yet implemented - store full response for polling");
+        // Make direct HTTP request to token endpoint for device code polling
+        // This is a workaround since we can't reconstruct DeviceAuthorizationResponse
+        let client = reqwest::Client::new();
+        let mut params = vec![
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code_str.as_str()),
+            ("client_id", oauth_client_id.as_str()),
+        ];
 
-        // Return OK for now - in a full implementation, we would:
-        // 1. Retrieve stored device_response from protocol_data
-        // 2. Build oauth_client
-        // 3. Call exchange_device_access_token with the response
-        // 4. Handle token or authorization_pending error
+        // Add client secret if present
+        let client_secret_param;
+        if let Some(ref secret) = oauth_client_secret {
+            client_secret_param = secret.clone();
+            params.push(("client_secret", client_secret_param.as_str()));
+        }
+
+        match client.post(&token_url).form(&params).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let body: serde_json::Value = response.json().await.unwrap_or_default();
+
+                if status.is_success() {
+                    // Token obtained successfully
+                    if let Some(access_token) = body.get("access_token").and_then(|v| v.as_str()) {
+                        let token_type = body.get("token_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Bearer");
+                        let expires_in = body.get("expires_in")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(3600);
+                        let refresh_token = body.get("refresh_token")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let scope = body.get("scope")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        // Store tokens
+                        app_state
+                            .with_client_mut(client_id, |client| {
+                                client.set_protocol_field(
+                                    "access_token".to_string(),
+                                    serde_json::json!(access_token),
+                                );
+                                client.set_protocol_field(
+                                    "token_type".to_string(),
+                                    serde_json::json!(token_type),
+                                );
+                                client.set_protocol_field(
+                                    "expires_in".to_string(),
+                                    serde_json::json!(expires_in),
+                                );
+                                if let Some(rt) = &refresh_token {
+                                    client.set_protocol_field(
+                                        "refresh_token".to_string(),
+                                        serde_json::json!(rt),
+                                    );
+                                }
+                                if !scope.is_empty() {
+                                    client.set_protocol_field(
+                                        "scopes".to_string(),
+                                        serde_json::json!(scope),
+                                    );
+                                }
+                            })
+                            .await;
+
+                        info!("OAuth2 client {} device code token obtained", client_id);
+
+                        // Call LLM with token obtained event
+                        let protocol = Arc::new(OAuth2ClientProtocol::new());
+                        let event = Event::new(
+                            &OAUTH2_TOKEN_OBTAINED_EVENT,
+                            serde_json::json!({
+                                "access_token": "[REDACTED]",
+                                "token_type": token_type,
+                                "expires_in": expires_in,
+                                "refresh_token": if refresh_token.is_some() { "[REDACTED]" } else { "" },
+                                "scope": scope,
+                            }),
+                        );
+
+                        let instruction = app_state
+                            .get_instruction_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
+
+                        if let Ok(ClientLlmResult { actions: _, memory_updates }) =
+                            call_llm_for_client(
+                                &llm_client,
+                                &app_state,
+                                client_id.to_string(),
+                                &instruction,
+                                &memory,
+                                Some(&event),
+                                protocol.as_ref(),
+                                &status_tx,
+                            ).await
+                        {
+                            if let Some(mem) = memory_updates {
+                                app_state.set_memory_for_client(client_id, mem).await;
+                            }
+                        }
+                    }
+                } else {
+                    // Check for authorization_pending error
+                    let error = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    if error != "authorization_pending" && error != "slow_down" {
+                        error!("Device code polling error: {}", error);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Device code polling HTTP error: {}", e);
+            }
+        }
 
         Ok(())
     }
