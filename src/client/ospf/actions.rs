@@ -165,6 +165,7 @@ pub static OSPF_CLIENT_LSU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
 });
 
 /// OSPF client protocol action handler
+#[derive(Default)]
 pub struct OspfClientProtocol;
 
 impl OspfClientProtocol {
