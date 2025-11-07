@@ -157,6 +157,41 @@ Both tracing macros and `status_tx` used for TUI visibility.
 
 ## Known Issues
 
+### protoc Binary Dependency
+- **Status**: etcd-client v0.15 requires protoc binary at build time
+- **Workaround**: Install protoc or download from https://github.com/protocolbuffers/protobuf/releases
+- **NetGet Integration**: NetGet's build.rs now uses protox (pure Rust) for etcd server protobuf compilation
+- **Limitation**: etcd-client crate's build.rs still requires protoc (cannot be controlled from our build.rs)
+
+**protox Integration Investigation**:
+- Successfully integrated protox v0.7 in NetGet's build.rs
+- Our etcd server protobuf compilation (proto/etcd/rpc.proto) works WITHOUT protoc binary
+- However, etcd-client dependency has its own build.rs that calls tonic-build/prost-build with protoc
+- Error when protoc unavailable: "Could not find `protoc`" from etcd-client v0.15.0 build script
+
+**Potential Solutions** (future work):
+1. **Fork etcd-client**: Modify its build.rs to use protox instead of requiring protoc
+2. **Alternative library**: Use etcd-rs or implement custom gRPC client with protox
+3. **Upstream PR**: Submit PR to etcd-client to add protox support
+4. **Accept dependency**: Document protoc requirement (current approach)
+
+**Why This Matters**:
+- protoc binary is large (~2MB) and platform-specific
+- Requires system package manager or manual download
+- protox is pure Rust, works anywhere Rust compiles
+- Reduces build environment setup complexity
+
+**Current Status**: protoc binary required for building etcd client feature. Install via:
+```bash
+# Debian/Ubuntu
+apt-get install protobuf-compiler
+
+# Or download binary
+wget https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
+unzip protoc-28.3-linux-x86_64.zip -d $HOME/protoc
+export PATH="$HOME/protoc/bin:$PATH"
+```
+
 ### Reconnection Overhead
 - Each operation creates a new etcd-client connection
 - May be slow for high-frequency operations
