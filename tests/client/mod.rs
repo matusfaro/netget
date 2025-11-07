@@ -6,5 +6,7 @@ pub mod tcp;
 pub mod http;
 #[cfg(feature = "redis")]
 pub mod redis;
-#[cfg(feature = "ssh")]
-pub mod ssh;
+#[cfg(feature = "wireguard")]
+pub mod wireguard;
+#[cfg(feature = "oauth2")]
+pub mod oauth2;

@@ -57,7 +57,7 @@ s3 = []  # S3-compatible object storage server (LLM-controlled responses, no sto
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS client
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = []  # OpenAI API uses only HTTP, no extra deps
-oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
+oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client with LLM-controlled flows
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
@@ -415,6 +415,9 @@ quinn = { version = "0.11", optional = true }  # Async QUIC implementation for H
 
 # BitTorrent protocols (bencode encoding/decoding)
 serde_bencode = { version = "0.2", optional = true }  # Bencode serialization for BitTorrent protocols
+
+# OAuth2 client (multiple flows: password, device code, client credentials, authorization code)
+oauth2 = { version = "4.4", optional = true }  # OAuth2 flows with async HTTP client support
 
 # AWS SDK for SQS and DynamoDB clients
 aws-config = { version = "1.5", features = ["behavior-version-latest"], optional = true }
