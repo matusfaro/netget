@@ -74,6 +74,7 @@ tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:toki
 vnc = ["dep:rfb", "async-trait"]  # VNC server with LLM-controlled display generation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
+openidconnect = ["dep:openidconnect"]  # OpenID Connect client for authentication flows
 git = []  # Git Smart HTTP server with LLM-controlled virtual repositories
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker with LLM-controlled message routing
@@ -150,6 +151,7 @@ all-protocols = [
     "vnc",
     "openapi",
     "openid",
+    "openidconnect",
     "git",
     "mercurial",
     "kafka",
@@ -323,6 +325,9 @@ imap-codec = { version = "2.0.0-alpha.6", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
+
+# OpenID Connect client
+openidconnect = { version = "3.5", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }
