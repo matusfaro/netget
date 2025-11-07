@@ -8,7 +8,7 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::sync::LazyLock;
 
 /// IGMP client connected event
@@ -165,7 +165,7 @@ impl Client for IgmpClientProtocol {
         ]
     }
 
-    fn get_sync_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -181,7 +181,6 @@ impl Client for IgmpClientProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        _state: &AppState,
     ) -> Result<ClientActionResult> {
         let action_type = action["type"]
             .as_str()
@@ -271,10 +270,10 @@ impl Client for IgmpClientProtocol {
         }
     }
 
-    fn get_event_types(&self) -> Vec<&'static EventType> {
+    fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            &IGMP_CLIENT_CONNECTED_EVENT,
-            &IGMP_CLIENT_DATA_RECEIVED_EVENT,
+            IGMP_CLIENT_CONNECTED_EVENT.clone(),
+            IGMP_CLIENT_DATA_RECEIVED_EVENT.clone(),
         ]
     }
 
@@ -286,17 +285,6 @@ impl Client for IgmpClientProtocol {
         "Network"
     }
 
-    fn get_startup_params(&self) -> Vec<Parameter> {
-        vec![
-            Parameter {
-                name: "bind_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Local address to bind (default: 0.0.0.0:0)".to_string(),
-                required: false,
-            },
-        ]
-    }
-
     fn keywords(&self) -> Vec<&'static str> {
         vec!["igmp", "multicast", "igmp client", "multicast client"]
     }
@@ -306,10 +294,10 @@ impl Client for IgmpClientProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .description("IGMP multicast group management client")
-            .example_prompt("Join multicast group 239.1.2.3 and wait for data")
-            .libraries(vec!["tokio (UDP socket)", "socket2 (multicast join/leave)"])
-            .notes("Supports IPv4 multicast only. Uses socket options (no raw packets).")
+            .implementation("socket2 for multicast join/leave, tokio UdpSocket for data")
+            .llm_control("Join/leave multicast groups, send/receive multicast data")
+            .e2e_testing("UDP sender/receiver for multicast packets")
+            .notes("IPv4 multicast only, uses socket options (no raw IGMP)")
             .build()
     }
 
