@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// OpenID Connect client
-#[cfg(feature = "openidconnect")]
-pub mod openidconnect;
-#[cfg(feature = "openidconnect")]
-pub use openidconnect::actions::OpenIdConnectClientProtocol;
+// OSPF client
+#[cfg(feature = "ospf")]
+pub mod ospf;
+#[cfg(feature = "ospf")]
+pub use ospf::actions::OspfClientProtocol;
