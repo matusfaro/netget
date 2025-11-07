@@ -93,6 +93,7 @@ pub static PYPI_FILE_DOWNLOADED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// PyPI client protocol action handler
+#[derive(Default)]
 pub struct PypiClientProtocol;
 
 impl PypiClientProtocol {
