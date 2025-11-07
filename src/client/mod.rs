@@ -10,6 +10,12 @@ pub mod tcp;
 #[cfg(feature = "tcp")]
 pub use tcp::actions::TcpClientProtocol;
 
+// UDP client
+#[cfg(feature = "udp")]
+pub mod udp;
+#[cfg(feature = "udp")]
+pub use udp::actions::UdpClientProtocol;
+
 // Phase 4: HTTP client
 #[cfg(feature = "http")]
 pub mod http;
