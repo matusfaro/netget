@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// S3 client
-#[cfg(feature = "s3-client")]
-pub mod s3;
-#[cfg(feature = "s3-client")]
-pub use s3::actions::S3ClientProtocol;
+// Phase 6: STUN client
+#[cfg(feature = "stun")]
+pub mod stun;
+#[cfg(feature = "stun")]
+pub use stun::actions::StunClientProtocol;

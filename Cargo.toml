@@ -40,7 +40,7 @@ webdav = ["dav-server"]
 nfs = ["nfsserve"]
 cassandra = ["dep:cassandra-protocol", "tcp"]
 smb = ["smb-msg"]
-stun = ["dep:webrtc-stun"]
+stun = ["dep:stunclient"]
 turn = ["dep:webrtc-turn"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
@@ -310,8 +310,8 @@ cassandra-protocol = { version = "3.3", optional = true }
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
 
-# STUN server (Session Traversal Utilities for NAT)
-webrtc-stun = { version = "0.1", optional = true }
+# STUN client (Session Traversal Utilities for NAT)
+stunclient = { version = "0.4", optional = true, features = ["tokio"] }
 
 # TURN server (Traversal Using Relays around NAT)
 webrtc-turn = { version = "0.1", optional = true }
