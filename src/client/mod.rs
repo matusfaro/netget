@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: RIP client
+#[cfg(feature = "rip")]
+pub mod rip;
+#[cfg(feature = "rip")]
+pub use rip::actions::RipClientProtocol;
