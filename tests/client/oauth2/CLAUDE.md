@@ -60,45 +60,18 @@
 
 ### Mock OAuth2 Server
 
-**Implementation Options**:
+**Implementation**: ✅ **COMPLETED**
+   - Uses `axum` (from mcp feature) to create simple token endpoint
+   - Responds to POST `/oauth/token` with mock tokens
+   - Supports all grant_types: password, client_credentials, refresh_token, device_code
+   - Dynamically allocates ports to avoid conflicts
+   - Separate error server for testing error scenarios
 
-1. **Embedded HTTP Server** (Recommended)
-   - Use `axum` or `hyper` to create simple token endpoint
-   - Respond to POST `/oauth/token` with mock tokens
-   - Support different grant_types (password, client_credentials, refresh_token)
-
-2. **External Mock Server**
-   - Use `wiremock` crate for HTTP stubbing
-   - Define request/response mappings
-   - More complex but flexible
-
-**Example Mock Server**:
-```rust
-async fn mock_oauth_server() -> String {
-    let app = Router::new()
-        .route("/oauth/token", post(handle_token_request));
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    format!("http://127.0.0.1:{}", addr.port())
-}
-
-async fn handle_token_request(Form(params): Form<TokenRequest>) -> Json<TokenResponse> {
-    // Return mock tokens based on grant_type
-    Json(TokenResponse {
-        access_token: "mock-access-token".to_string(),
-        token_type: "Bearer".to_string(),
-        expires_in: Some(3600),
-        refresh_token: Some("mock-refresh-token".to_string()),
-        scope: params.scope,
-    })
-}
-```
+**Features**:
+- `start_mock_oauth_server()` - Returns different tokens based on grant type
+- `start_mock_oauth_server_with_errors()` - Returns 400 errors for testing error handling
+- Automatic port allocation using `TcpListener::bind("127.0.0.1:0")`
+- Conditional compilation with `#[cfg(feature = "mcp")]`
 
 ### Test Utilities
 
