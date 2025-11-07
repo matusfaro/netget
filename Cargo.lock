@@ -6680,7 +6680,8 @@ dependencies = [
  "rasn",
  "rasn-snmp",
  "rcgen 0.14.5",
- "rdkafka",
+ "rdkafka 0.36.2",
+ "rdkafka 0.37.0",
  "redis",
  "redis-protocol",
  "regex",
@@ -8804,6 +8805,24 @@ name = "rdkafka"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1beea247b9a7600a81d4cc33f659ce1a77e1988323d7d2809c7ed1c21f4c316d"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "libc",
+ "log",
+ "rdkafka-sys",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "slab",
+ "tokio",
+]
+
+[[package]]
+name = "rdkafka"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b52c81ac3cac39c9639b95c20452076e74b8d9a71bc6fc4d83407af2ea6fff"
 dependencies = [
  "futures-channel",
  "futures-util",
