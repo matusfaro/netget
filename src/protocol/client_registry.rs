@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "vnc")]
-        self.register(Arc::new(crate::client::vnc::VncClientProtocol::new()));
+        #[cfg(feature = "webdav")]
+        self.register(Arc::new(crate::client::webdav::WebdavClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
