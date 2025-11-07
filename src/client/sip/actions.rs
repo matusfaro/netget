@@ -43,6 +43,7 @@ impl Client for SipClientProtocol {
             // User-triggered actions
             sip_register_action(),
             sip_invite_action(),
+            sip_ack_action(),
             sip_bye_action(),
             sip_options_action(),
             sip_cancel_action(),
@@ -163,6 +164,29 @@ impl Client for SipClientProtocol {
 
                 Ok(ClientActionResult::Custom {
                     name: "sip_options".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                    }),
+                })
+            }
+            "sip_ack" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_ack".to_string(),
                     data: json!({
                         "from": from,
                         "to": to,
@@ -407,6 +431,39 @@ fn sip_invite_action() -> ActionDefinition {
             "to": "sip:bob@example.com",
             "request_uri": "sip:bob@example.com",
             "sdp": "v=0\no=alice 2890844526 2890844526 IN IP4 192.0.2.1\ns=Call\nc=IN IP4 192.0.2.1\nt=0 0\nm=audio 49170 RTP/AVP 0\na=rtpmap:0 PCMU/8000\n"
+        }),
+    }
+}
+
+fn sip_ack_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "sip_ack".to_string(),
+        description: "Send SIP ACK request to acknowledge INVITE 200 OK (usually automatic)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "from".to_string(),
+                type_hint: "string".to_string(),
+                description: "Caller SIP URI".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "to".to_string(),
+                type_hint: "string".to_string(),
+                description: "Callee SIP URI".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "request_uri".to_string(),
+                type_hint: "string".to_string(),
+                description: "Request URI (usually same as 'to')".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "sip_ack",
+            "from": "sip:alice@example.com",
+            "to": "sip:bob@example.com",
+            "request_uri": "sip:bob@example.com"
         }),
     }
 }

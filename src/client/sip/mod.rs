@@ -171,6 +171,19 @@ impl SipClient {
                             client_id, response.method, response.status_code
                         );
 
+                        // Handle provisional responses (1xx) without calling LLM
+                        if response.status_code >= 100 && response.status_code < 200 {
+                            info!(
+                                "SIP client {} received provisional response {} {}, skipping LLM",
+                                client_id, response.status_code, response.reason_phrase
+                            );
+                            let _ = status_clone.send(format!(
+                                "[CLIENT] SIP {} response: {} {}",
+                                client_id, response.status_code, response.reason_phrase
+                            ));
+                            continue;
+                        }
+
                         // Handle response with LLM
                         let mut client_data_lock = client_data_clone.lock().await;
 
@@ -243,16 +256,120 @@ impl SipClient {
                                     }
                                 }
 
+                                // Send automatic ACK for 200 OK response to INVITE (RFC 3261)
+                                if response.method == "INVITE" && response.status_code == 200 {
+                                    info!("SIP client {} sending automatic ACK for INVITE 200 OK", client_id);
+
+                                    let client_data_lock = client_data_clone.lock().await;
+                                    let ack_request = Self::build_ack_request(
+                                        &response,
+                                        client_data_lock.call_id.as_ref().unwrap(),
+                                        client_data_lock.from_tag.as_ref().unwrap(),
+                                        client_data_lock.cseq - 1, // Use same CSeq as INVITE
+                                    );
+                                    drop(client_data_lock);
+
+                                    match socket_clone.send(&ack_request).await {
+                                        Ok(sent) => {
+                                            info!("SIP client {} sent ACK ({} bytes)", client_id, sent);
+                                            let _ = status_clone.send(format!(
+                                                "[CLIENT] SIP client {} sent ACK",
+                                                client_id
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            error!("SIP client {} ACK send error: {}", client_id, e);
+                                        }
+                                    }
+                                }
+
                                 // Reset state
                                 let mut lock = client_data_clone.lock().await;
                                 lock.state = ConnectionState::Idle;
 
                                 // Process queued data if any
                                 if !lock.queued_data.is_empty() {
-                                    let _queued = lock.queued_data.clone();
+                                    let queued = lock.queued_data.clone();
                                     lock.queued_data.clear();
                                     drop(lock);
-                                    // Re-process queued data (not implemented for simplicity)
+
+                                    info!(
+                                        "SIP client {} processing {} bytes of queued data",
+                                        client_id,
+                                        queued.len()
+                                    );
+
+                                    // Parse and process queued response
+                                    if let Ok(queued_response) = Self::parse_sip_response(&queued) {
+                                        // Skip provisional responses in queue
+                                        if queued_response.status_code >= 200 {
+                                            // Set state to Processing for queued response
+                                            client_data_clone.lock().await.state = ConnectionState::Processing;
+
+                                            // Extract To tag if present
+                                            if let Some(to_tag) = &queued_response.to_tag {
+                                                client_data_clone.lock().await.to_tag = Some(to_tag.clone());
+                                            }
+
+                                            // Call LLM for queued response
+                                            if let Some(instruction) =
+                                                state_clone.get_instruction_for_client(client_id).await
+                                            {
+                                                let event = Event::new(
+                                                    &SIP_CLIENT_RESPONSE_RECEIVED_EVENT,
+                                                    serde_json::json!({
+                                                        "status_code": queued_response.status_code,
+                                                        "reason_phrase": queued_response.reason_phrase,
+                                                        "method": queued_response.method,
+                                                        "call_id": queued_response.call_id,
+                                                        "from": queued_response.from,
+                                                        "to": queued_response.to,
+                                                        "body": queued_response.body,
+                                                    }),
+                                                );
+
+                                                match call_llm_for_client(
+                                                    &llm_clone,
+                                                    &state_clone,
+                                                    client_id.to_string(),
+                                                    &instruction,
+                                                    &client_data_clone.lock().await.memory,
+                                                    Some(&event),
+                                                    protocol_clone.as_ref(),
+                                                    &status_clone,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(ClientLlmResult {
+                                                        actions,
+                                                        memory_updates,
+                                                    }) => {
+                                                        if let Some(mem) = memory_updates {
+                                                            client_data_clone.lock().await.memory = mem;
+                                                        }
+
+                                                        for action in actions {
+                                                            Self::execute_sip_action(
+                                                                action,
+                                                                &socket_clone,
+                                                                &protocol_clone,
+                                                                &client_data_clone,
+                                                                client_id,
+                                                                &status_clone,
+                                                            )
+                                                            .await;
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        error!("LLM error for queued SIP response {}: {}", client_id, e);
+                                                    }
+                                                }
+                                            }
+
+                                            // Reset state after processing queued response
+                                            client_data_clone.lock().await.state = ConnectionState::Idle;
+                                        }
+                                    }
                                 }
                             }
                             ConnectionState::Processing => {
@@ -295,7 +412,7 @@ impl SipClient {
         match protocol.as_ref().execute_action(action.clone()) {
             Ok(ClientActionResult::Custom { name, data }) => {
                 match name.as_str() {
-                    "sip_register" | "sip_invite" | "sip_bye" | "sip_options" | "sip_cancel" => {
+                    "sip_register" | "sip_invite" | "sip_ack" | "sip_bye" | "sip_options" | "sip_cancel" => {
                         // Build and send SIP request
                         let mut client_data_lock = client_data.lock().await;
 
@@ -451,6 +568,7 @@ impl SipClient {
         let sip_method = match method {
             "sip_register" => "REGISTER",
             "sip_invite" => "INVITE",
+            "sip_ack" => "ACK",
             "sip_bye" => "BYE",
             "sip_options" => "OPTIONS",
             "sip_cancel" => "CANCEL",
@@ -512,6 +630,74 @@ impl SipClient {
         }
 
         request.into_bytes()
+    }
+
+    /// Build ACK request for INVITE 3-way handshake (RFC 3261)
+    fn build_ack_request(
+        response: &SipResponse,
+        call_id: &str,
+        from_tag: &str,
+        cseq: u32,
+    ) -> Vec<u8> {
+        // Extract URIs from response headers
+        let from_uri = Self::extract_uri(&response.from).unwrap_or("sip:user@localhost");
+        let to_uri = Self::extract_uri(&response.to).unwrap_or("sip:server@localhost");
+
+        // ACK uses same Request-URI as INVITE, which is the To URI
+        let request_uri = to_uri;
+
+        // Build request line
+        let mut request = format!("ACK {} SIP/2.0\r\n", request_uri);
+
+        // Add Via header
+        request.push_str("Via: SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bK-netget-");
+        request.push_str(&Self::generate_branch());
+        request.push_str("\r\n");
+
+        // Add From header (with tag)
+        request.push_str(&format!("From: <{}>;tag={}\r\n", from_uri, from_tag));
+
+        // Add To header (with tag from response - ACK must include To tag)
+        if let Some(to_tag) = &response.to_tag {
+            request.push_str(&format!("To: <{}>;tag={}\r\n", to_uri, to_tag));
+        } else {
+            request.push_str(&format!("To: <{}>\r\n", to_uri));
+        }
+
+        // Add Call-ID header
+        request.push_str(&format!("Call-ID: {}\r\n", call_id));
+
+        // Add CSeq header (same number as INVITE, but ACK method)
+        request.push_str(&format!("CSeq: {} ACK\r\n", cseq));
+
+        // ACK has no body
+        request.push_str("Content-Length: 0\r\n");
+        request.push_str("\r\n");
+
+        request.into_bytes()
+    }
+
+    /// Extract SIP URI from header value (removes display name and parameters)
+    fn extract_uri(header_value: &str) -> Option<&str> {
+        // Handle format: "Display Name" <sip:user@host>;tag=xyz
+        // or: sip:user@host;tag=xyz
+        // or: <sip:user@host>
+
+        let trimmed = header_value.trim();
+
+        // Check for angle brackets
+        if let Some(start) = trimmed.find('<') {
+            if let Some(end) = trimmed.find('>') {
+                return Some(&trimmed[start + 1..end]);
+            }
+        }
+
+        // No angle brackets, extract until semicolon or end
+        if let Some(semicolon) = trimmed.find(';') {
+            return Some(&trimmed[..semicolon]);
+        }
+
+        Some(trimmed)
     }
 
     /// Generate a random Call-ID
