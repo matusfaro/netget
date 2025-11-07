@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// VNC client
+#[cfg(feature = "vnc")]
+pub mod vnc;
+#[cfg(feature = "vnc")]
+pub use vnc::actions::VncClientProtocol;
