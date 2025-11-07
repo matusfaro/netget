@@ -10,7 +10,6 @@ use anyhow::{Context, Result};
 use handlebars::Handlebars;
 use include_dir::{include_dir, Dir};
 use once_cell::sync::Lazy;
-use std::error::Error;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, error, info, warn};
 
