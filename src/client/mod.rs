@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// JSON-RPC client
+#[cfg(feature = "jsonrpc")]
+pub mod jsonrpc;
+#[cfg(feature = "jsonrpc")]
+pub use jsonrpc::actions::JsonRpcClientProtocol;
