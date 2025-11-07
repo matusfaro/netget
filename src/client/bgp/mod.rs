@@ -40,14 +40,6 @@ const BGP_MSG_UPDATE: u8 = 2;
 const BGP_MSG_NOTIFICATION: u8 = 3;
 const BGP_MSG_KEEPALIVE: u8 = 4;
 
-/// Connection state for LLM processing
-#[derive(Debug, Clone, PartialEq)]
-enum ConnectionState {
-    Idle,
-    Processing,
-    Accumulating,
-}
-
 /// BGP session state
 #[derive(Debug, Clone, PartialEq)]
 enum BgpState {
@@ -59,9 +51,7 @@ enum BgpState {
 
 /// Per-client data for LLM handling
 struct ClientData {
-    state: ConnectionState,
     bgp_state: BgpState,
-    queued_data: Vec<u8>,
     memory: String,
     peer_as: Option<u32>,
     peer_router_id: Option<String>,
@@ -129,9 +119,7 @@ impl BgpClient {
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
-            state: ConnectionState::Idle,
             bgp_state: BgpState::Connect,
-            queued_data: Vec::new(),
             memory: String::new(),
             peer_as: None,
             peer_router_id: None,
