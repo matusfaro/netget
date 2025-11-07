@@ -46,7 +46,7 @@ sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "dep:ldap3", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
-mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
+mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
 socks5 = []  # SOCKS5 uses only TCP, no extra deps
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = []  # DynamoDB uses only HTTP, no extra deps
@@ -325,6 +325,8 @@ imap-codec = { version = "2.0.0-alpha.6", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
+# MQTT client (IoT messaging)
+rumqttc = { version = "0.24", optional = true }
 
 # BGP server (Border Gateway Protocol)
 netgauze-bgp-pkt = { version = "0.7", optional = true, features = ["serde", "codec"] }

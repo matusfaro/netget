@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: LDAP client
-#[cfg(feature = "ldap")]
-pub mod ldap;
-#[cfg(feature = "ldap")]
-pub use ldap::actions::LdapClientProtocol;
+// Phase 6: MQTT client
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
+#[cfg(feature = "mqtt")]
+pub use mqtt::actions::MqttClientProtocol;
