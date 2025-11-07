@@ -57,23 +57,168 @@ impl WebdavClient {
         let _ = status_tx.send(format!("[CLIENT] WebDAV client {} ready for {}", client_id, remote_addr));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // For WebDAV client, we'll spawn a background task that processes LLM-requested actions
-        // The actual requests are made on-demand via actions, not in a read loop
+        // Send initial connected event to LLM
         tokio::spawn(async move {
-            // This task monitors for client disconnection requests
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                let protocol = Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
+                let event = Event::new(
+                    &crate::client::webdav::actions::WEBDAV_CLIENT_CONNECTED_EVENT,
+                    serde_json::json!({
+                        "base_url": app_state.with_client_mut(client_id, |c|
+                            c.get_protocol_field("base_url").and_then(|v| v.as_str().map(|s| s.to_string()))
+                        ).await.flatten().unwrap_or_default(),
+                    }),
+                );
 
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("WebDAV client {} stopped", client_id);
-                    break;
+                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+
+                match call_llm_for_client(
+                    &_llm_client,
+                    &app_state,
+                    client_id.to_string(),
+                    &instruction,
+                    &memory,
+                    Some(&event),
+                    protocol.as_ref(),
+                    &status_tx,
+                ).await {
+                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                        // Update memory
+                        if let Some(mem) = memory_updates {
+                            app_state.set_memory_for_client(client_id, mem).await;
+                        }
+
+                        // Execute actions
+                        for action in actions {
+                            if let Err(e) = Self::execute_webdav_action(
+                                action,
+                                &protocol,
+                                &_llm_client,
+                                &app_state,
+                                &status_tx,
+                                client_id,
+                                &instruction,
+                            ).await {
+                                error!("Failed to execute WebDAV action: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("LLM error for WebDAV client {}: {}", client_id, e);
+                    }
                 }
             }
         });
 
         // Return a dummy local address (WebDAV is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())
+    }
+
+    /// Execute a WebDAV action from the LLM
+    async fn execute_webdav_action(
+        action: serde_json::Value,
+        protocol: &Arc<WebdavClientProtocol>,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+        _instruction: &str,
+    ) -> Result<()> {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+
+        let result = protocol.as_ref().execute_action(action)?;
+
+        match result {
+            ClientActionResult::Custom { name, data } if name == "webdav_request" => {
+                let method = data.get("method")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'method' in webdav_request")?
+                    .to_string();
+
+                let path = data.get("path")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'path' in webdav_request")?
+                    .to_string();
+
+                // Build headers from action data
+                let mut headers = Vec::new();
+
+                // Add Depth header for PROPFIND/COPY
+                if let Some(depth) = data.get("depth").and_then(|v| v.as_str()) {
+                    headers.push(("Depth".to_string(), depth.to_string()));
+                }
+
+                // Add Destination header for COPY/MOVE
+                if let Some(destination) = data.get("destination").and_then(|v| v.as_str()) {
+                    // Get base URL and construct full destination URL
+                    let base_url = app_state.with_client_mut(client_id, |c|
+                        c.get_protocol_field("base_url").and_then(|v| v.as_str().map(|s| s.to_string()))
+                    ).await.flatten().unwrap_or_default();
+
+                    let dest_url = if destination.starts_with("http") {
+                        destination.to_string()
+                    } else {
+                        format!("{}{}", base_url, destination)
+                    };
+                    headers.push(("Destination".to_string(), dest_url));
+                }
+
+                // Add Overwrite header for COPY/MOVE
+                if let Some(overwrite) = data.get("overwrite").and_then(|v| v.as_bool()) {
+                    headers.push(("Overwrite".to_string(), if overwrite { "T" } else { "F" }.to_string()));
+                }
+
+                // Add Content-Type for PUT
+                if let Some(content_type) = data.get("content_type").and_then(|v| v.as_str()) {
+                    headers.push(("Content-Type".to_string(), content_type.to_string()));
+                } else if method == "PUT" {
+                    headers.push(("Content-Type".to_string(), "application/octet-stream".to_string()));
+                } else if method == "PROPFIND" {
+                    headers.push(("Content-Type".to_string(), "application/xml".to_string()));
+                }
+
+                // Build request body
+                let body = if method == "PROPFIND" {
+                    // Build PROPFIND XML body
+                    let properties = data.get("properties")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect::<Vec<String>>()
+                        });
+                    Some(Self::build_propfind_body(properties))
+                } else if method == "PUT" {
+                    // Use content from action
+                    data.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
+                } else {
+                    None
+                };
+
+                // Make the WebDAV request
+                Self::make_request(
+                    client_id,
+                    method,
+                    path,
+                    Some(headers),
+                    body,
+                    Arc::clone(app_state),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                ).await?;
+            }
+            ClientActionResult::Disconnect => {
+                info!("WebDAV client {} disconnecting", client_id);
+                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                let _ = status_tx.send(format!("[CLIENT] WebDAV client {} disconnected", client_id));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Unexpected action result: {:?}", result));
+            }
+        }
+
+        Ok(())
     }
 
     /// Make a WebDAV request
