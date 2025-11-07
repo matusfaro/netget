@@ -27,7 +27,7 @@ syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait"]
 svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = []  # IRC uses only TCP, no extra deps
-xmpp = []  # XMPP uses only TCP, no extra deps (manual XML stream handling)
+xmpp = ["dep:tokio-xmpp", "dep:xmpp-parsers"]  # XMPP/Jabber instant messaging client
 telnet = ["nectar"]
 smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen"]
 mdns = ["mdns-sd"]
@@ -325,6 +325,10 @@ ldap3_proto = { version = "0.3", optional = true }
 
 # IMAP server (IMAP protocol parsing)
 imap-codec = { version = "2.0.0-alpha.6", optional = true }
+
+# XMPP/Jabber client (instant messaging)
+tokio-xmpp = { version = "5.0", optional = true }
+xmpp-parsers = { version = "0.20", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }

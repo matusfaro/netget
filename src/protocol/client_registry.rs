@@ -45,8 +45,8 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "xmlrpc")]
-        self.register(Arc::new(crate::client::xmlrpc::XmlRpcClientProtocol::new()));
+        #[cfg(feature = "xmpp")]
+        self.register(Arc::new(crate::client::xmpp::XmppClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
