@@ -39,6 +39,9 @@ impl ClientProtocolRegistry {
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::client::tcp::TcpClientProtocol::new()));
 
+        #[cfg(feature = "udp")]
+        self.register(Arc::new(crate::client::udp::UdpClientProtocol::new()));
+
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
 
