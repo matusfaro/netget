@@ -48,7 +48,7 @@ sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn"]
 imap = ["imap-codec"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
-mqtt = ["dep:rumqttd"]  # MQTT broker for IoT messaging
+mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client
@@ -336,6 +336,8 @@ xmpp-parsers = { version = "0.20", optional = true }
 
 # MQTT broker (IoT messaging)
 rumqttd = { version = "0.20", optional = true }
+# MQTT client (IoT messaging)
+rumqttc = { version = "0.24", optional = true }
 
 # SOCKS5 client (proxy protocol client)
 tokio-socks = { version = "0.5", optional = true }
