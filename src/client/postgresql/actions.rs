@@ -67,6 +67,7 @@ pub static POSTGRESQL_CLIENT_QUERY_RESULT_EVENT: LazyLock<EventType> = LazyLock:
 });
 
 /// PostgreSQL client protocol action handler
+#[derive(Default)]
 pub struct PostgresqlClientProtocol;
 
 impl PostgresqlClientProtocol {
