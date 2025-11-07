@@ -21,3 +21,9 @@ pub use http::actions::HttpClientProtocol;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
+
+// Phase 6: DoT client
+#[cfg(feature = "dot")]
+pub mod dot;
+#[cfg(feature = "dot")]
+pub use dot::actions::DotClientProtocol;
