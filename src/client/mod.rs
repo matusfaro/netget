@@ -22,8 +22,8 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// Phase 6: BOOTP client
-#[cfg(feature = "bootp")]
-pub mod bootp;
-#[cfg(feature = "bootp")]
-pub use bootp::actions::BootpClientProtocol;
+// Cassandra client
+#[cfg(feature = "cassandra")]
+pub mod cassandra;
+#[cfg(feature = "cassandra")]
+pub use cassandra::actions::CassandraClientProtocol;
