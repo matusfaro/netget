@@ -44,6 +44,9 @@ impl ClientProtocolRegistry {
 
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+
+        #[cfg(feature = "oauth2")]
+        self.register(Arc::new(crate::client::oauth2::OAuth2ClientProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
