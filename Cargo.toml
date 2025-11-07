@@ -16,7 +16,7 @@ arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handlin
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
-doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
+doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "hickory-client/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server & client
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = []  # NTP uses only standard UDP, no extra deps
@@ -241,9 +241,10 @@ pcap = "2.2"
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
 
-# DNS server (Hickory DNS, formerly Trust-DNS)
+# DNS server & client (Hickory DNS, formerly Trust-DNS)
 hickory-server = { version = "0.24", optional = true }
 hickory-proto = { version = "0.24", optional = true }
+hickory-client = { version = "0.24", optional = true }
 
 # TLS support for DoT and DoH
 rustls = { version = "0.23", features = ["ring"], optional = true }

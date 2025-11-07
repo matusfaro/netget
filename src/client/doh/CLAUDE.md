@@ -1,0 +1,338 @@
+# DNS-over-HTTPS (DoH) Client Implementation
+
+## Overview
+DNS-over-HTTPS client implementing RFC 8484 for secure DNS queries over HTTPS transport. The LLM controls DNS query decisions while hickory-client handles the DoH protocol, HTTPS transport, and TLS encryption.
+
+**Status**: Experimental (Client Protocol)
+**RFC**: RFC 8484 (DNS Queries over HTTPS)
+**Default Port**: 443 (HTTPS)
+
+## Library Choices
+
+### Primary: hickory-client
+- **Crate**: `hickory-client` (formerly trust-dns-client)
+- **Version**: 0.24+
+- **Features**: `dns-over-https-rustls`
+- **Purpose**: Complete DoH client implementation with async support
+
+**Rationale**: hickory-client provides mature, production-ready DNS-over-HTTPS support with:
+- Built-in HTTPS transport layer (HTTP/2 over TLS)
+- DNS message parsing and construction
+- Automatic connection management
+- Async/await support via Tokio
+- Support for all standard DNS record types
+
+### Supporting Libraries
+- **hickory-proto**: DNS protocol primitives (Name, RecordType, etc.)
+- **tokio**: Async runtime for DNS operations
+- **reqwest**: Used by hickory for HTTPS transport
+- **rustls**: TLS implementation for secure connections
+
+## Architecture
+
+### Connection Model
+DoH client is **stateless at the application level**:
+1. Initialize HTTPS client connection to DoH server
+2. Maintain persistent HTTP/2 connection for query multiplexing
+3. Each DNS query is an independent HTTPS request
+4. Responses trigger LLM calls for decision-making
+5. LLM can issue follow-up queries based on responses
+
+### LLM Integration Points
+
+#### 1. Initial Connection
+When client connects to DoH server:
+- Event: `doh_connected` with server URL
+- LLM receives connection confirmation
+- Can issue immediate queries or wait for user input
+
+#### 2. DNS Query Results
+When DNS response received:
+- Event: `doh_response_received` with parsed answers
+- LLM analyzes response (IP addresses, CNAME chains, etc.)
+- Can issue follow-up queries (e.g., resolve CNAME targets)
+- Can extract and report specific information
+
+### State Machine
+DoH client uses a simplified state model:
+- **Idle**: Waiting for user action
+- **Querying**: DNS query in flight
+- **Processing Response**: LLM analyzing results
+
+Unlike connection-based protocols, DoH doesn't maintain persistent read loops. Queries are triggered by LLM actions.
+
+## LLM Actions
+
+### Async Actions (User-Triggered)
+**`query_dns`** - Make a DNS query over HTTPS
+- **Parameters**:
+  - `domain` (string, required): Domain name to query
+  - `record_type` (string, optional): DNS record type (A, AAAA, MX, TXT, CNAME, NS, SOA, PTR, SRV, etc.)
+  - `use_get` (boolean, optional): Use HTTP GET instead of POST (default: false)
+- **Example**:
+  ```json
+  {
+    "type": "query_dns",
+    "domain": "example.com",
+    "record_type": "A",
+    "use_get": false
+  }
+  ```
+
+**`disconnect`** - Disconnect from DoH server
+- No parameters
+- Closes HTTPS connection
+
+### Sync Actions (Response-Triggered)
+**`query_dns`** - Make follow-up query based on response
+- Same parameters as async version
+- Allows CNAME following, MX resolution, etc.
+
+**`wait_for_more`** - Pause and wait for user input
+- Stops automatic query chain
+- Returns control to user
+
+## Events
+
+### `doh_connected`
+Triggered when DoH client successfully connects to server.
+
+**Parameters**:
+- `server_url` (string): DoH server URL
+
+**Example**:
+```json
+{
+  "event_type": "doh_connected",
+  "server_url": "https://dns.google/dns-query"
+}
+```
+
+### `doh_response_received`
+Triggered when DNS response received and parsed.
+
+**Parameters**:
+- `query_id` (number): DNS query transaction ID
+- `domain` (string): Domain name queried
+- `query_type` (string): Record type requested
+- `answers` (array): Parsed DNS answers with name, type, TTL, data
+- `status` (string): Response code (NoError, NXDomain, ServFail, etc.)
+
+**Example**:
+```json
+{
+  "event_type": "doh_response_received",
+  "query_id": 12345,
+  "domain": "example.com",
+  "query_type": "A",
+  "answers": [
+    {
+      "name": "example.com.",
+      "type": "A",
+      "ttl": 86400,
+      "data": "93.184.216.34"
+    }
+  ],
+  "status": "NoError"
+}
+```
+
+## DoH Server Providers
+
+### Google Public DNS
+- **URL**: `https://dns.google/dns-query`
+- **Features**: Fast, reliable, supports both GET and POST
+- **Privacy**: Logs queries with user IP
+
+### Cloudflare DNS
+- **URL**: `https://cloudflare-dns.com/dns-query`
+- **Alternative**: `https://1.1.1.1/dns-query`
+- **Features**: Privacy-focused, no logging
+- **Performance**: Very fast
+
+### Quad9
+- **URL**: `https://dns.quad9.net/dns-query`
+- **Features**: Security-focused, blocks malicious domains
+
+### Custom/Self-Hosted
+Can connect to any RFC 8484 compliant DoH server, including NetGet's own DoH server.
+
+## Implementation Details
+
+### DNS Record Type Support
+All standard DNS record types supported by hickory-client:
+- **A**: IPv4 address
+- **AAAA**: IPv6 address
+- **CNAME**: Canonical name
+- **MX**: Mail exchange
+- **TXT**: Text records
+- **NS**: Name server
+- **SOA**: Start of authority
+- **PTR**: Pointer (reverse DNS)
+- **SRV**: Service location
+- And many more...
+
+### HTTP Method Selection
+**POST (Default)**:
+- DNS query sent as binary request body
+- Content-Type: `application/dns-message`
+- More efficient, supports larger queries
+- Recommended for programmatic use
+
+**GET (Optional)**:
+- DNS query base64url-encoded in `dns=` parameter
+- URL: `/dns-query?dns=<base64url>`
+- Can be cached by HTTP proxies
+- Useful for browser-based queries
+
+### Connection Management
+- **Persistent Connection**: HTTP/2 connection reused for multiple queries
+- **Connection Pooling**: hickory-client manages connection lifecycle
+- **Timeout**: 30-second query timeout (configurable)
+- **Retries**: No automatic retries (LLM decides)
+
+### Error Handling
+- **Connection Errors**: Reported to LLM via status messages
+- **DNS Errors**: Included in response (NXDomain, ServFail, etc.)
+- **Timeout**: Reported as error, LLM can retry
+- **Invalid Responses**: Logged and reported
+
+## Known Limitations
+
+### 1. No Response Caching
+- Each query hits DoH server directly
+- No local DNS cache
+- LLM must manage repeated queries
+
+**Workaround**: LLM can use memory to cache results.
+
+### 2. Single Query at a Time
+- Queries are sequential, not concurrent
+- Multiple queries require multiple LLM actions
+
+**Workaround**: LLM can issue multiple `query_dns` actions in one response.
+
+### 3. No DNSSEC Validation
+- DNSSEC signatures not validated client-side
+- Trust relies on DoH server's validation
+
+**Future Enhancement**: Enable hickory-client's DNSSEC features.
+
+### 4. Fixed Timeout
+- 30-second timeout not configurable per-query
+- May be too short for some use cases
+
+**Workaround**: Modify timeout in code if needed.
+
+### 5. No Query Cancellation
+- Once query sent, cannot be cancelled
+- Must wait for response or timeout
+
+**Future Enhancement**: Add cancellation support.
+
+### 6. Limited to Standard DNS
+- No support for DNS extensions (EDNS, etc.)
+- No custom DNS headers
+
+**Reason**: hickory-client handles protocol details internally.
+
+## Example Usage Patterns
+
+### Basic Domain Resolution
+```
+Connect to https://dns.google/dns-query
+Query example.com A record
+Report the IP address
+```
+
+LLM will:
+1. Receive `doh_connected` event
+2. Issue `query_dns` action for example.com
+3. Receive `doh_response_received` with IP
+4. Report IP to user
+
+### CNAME Following
+```
+Connect to https://cloudflare-dns.com/dns-query
+Resolve www.example.com and follow any CNAMEs to final IP
+```
+
+LLM will:
+1. Query www.example.com (type A)
+2. If CNAME returned, extract target domain
+3. Issue follow-up query for CNAME target
+4. Repeat until A/AAAA record found
+
+### Mail Server Discovery
+```
+Connect to https://dns.quad9.net/dns-query
+Find mail servers for example.com
+```
+
+LLM will:
+1. Query example.com MX records
+2. Parse MX records (priority, hostname)
+3. Optionally resolve MX hostnames to IPs
+4. Report ordered list of mail servers
+
+### Reverse DNS Lookup
+```
+Connect to DoH server
+Do reverse DNS lookup for 8.8.8.8
+```
+
+LLM will:
+1. Convert IP to PTR format (8.8.8.8.in-addr.arpa)
+2. Query PTR record
+3. Report hostname
+
+## Performance Characteristics
+
+### Latency
+- **Connection Setup**: ~100-200ms (TLS + HTTP/2 handshake)
+- **Per Query**: ~20-100ms (network RTT to DoH server)
+- **LLM Processing**: ~2-5 seconds (if LLM call needed)
+
+### Throughput
+- **With Scripting**: Not applicable (queries are async actions)
+- **Without Scripting**: Limited by LLM call time
+- **HTTP/2 Multiplexing**: Supports concurrent queries (future enhancement)
+
+### Comparison to Traditional DNS
+- **vs UDP DNS**: Higher latency (HTTPS overhead), but encrypted
+- **vs DoT**: Similar performance, HTTP/2 better for multiplexing
+- **vs Standard DNS Client**: More privacy, bypasses censorship
+
+## Security Considerations
+
+### Privacy Benefits
+- **Encrypted Queries**: ISP/network cannot see DNS queries
+- **HTTPS Transport**: Queries indistinguishable from web traffic
+- **No DNS Spoofing**: HTTPS prevents tampering
+- **Server Authentication**: TLS verifies server identity
+
+### Trust Model
+- **Trust DoH Server**: Server sees all queries
+- **No Local Trust**: Local network cannot intercept
+- **Public Server Risks**: Google/Cloudflare see your queries
+
+### Recommendations
+- Use privacy-focused DoH providers (Cloudflare, Quad9)
+- Self-host DoH server for maximum privacy
+- Combine with VPN for IP privacy
+
+## Future Enhancements
+
+1. **Concurrent Queries**: Issue multiple queries in parallel
+2. **DNSSEC Support**: Validate DNSSEC signatures
+3. **Response Caching**: Local cache to reduce queries
+4. **Custom Timeout**: Per-query timeout configuration
+5. **Connection Pooling**: Multiple DoH servers
+6. **Fallback Support**: Automatic failover to backup servers
+7. **Query Statistics**: Track query count, latency, errors
+
+## References
+- [RFC 8484: DNS Queries over HTTPS (DoH)](https://datatracker.ietf.org/doc/html/rfc8484)
+- [hickory-client Documentation](https://docs.rs/hickory-client/)
+- [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh)
+- [Cloudflare DoH](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/)
