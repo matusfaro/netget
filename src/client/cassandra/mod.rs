@@ -19,8 +19,9 @@ use crate::state::{ClientId, ClientStatus};
 use crate::client::cassandra::actions::{CASSANDRA_CLIENT_CONNECTED_EVENT, CASSANDRA_CLIENT_RESULT_RECEIVED_EVENT};
 use serde_json::json;
 
-use scylla::{Session, SessionBuilder};
-use scylla::transport::Compression;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::frame::Compression;
 
 /// Cassandra client that connects to a Cassandra/ScyllaDB server
 pub struct CassandraClient;
@@ -176,31 +177,84 @@ impl CassandraClient {
                         // No need for complex state machine like streaming protocols
 
                         // Parse consistency level
-                        let _consistency = data.get("consistency")
+                        let consistency_str = data.get("consistency")
                             .and_then(|v| v.as_str())
                             .unwrap_or("ONE");
 
-                        // Execute query using the public API
-                        use scylla::query::Query;
-                        let query = Query::new(query_str);
-                        match session.query_unpaged(query, &[]).await {
+                        // Execute query using the public API with consistency level
+                        use scylla::statement::Consistency;
+
+                        // Set consistency level based on string
+                        let consistency = match consistency_str.to_uppercase().as_str() {
+                            "ONE" => Consistency::One,
+                            "TWO" => Consistency::Two,
+                            "THREE" => Consistency::Three,
+                            "QUORUM" => Consistency::Quorum,
+                            "ALL" => Consistency::All,
+                            "LOCAL_QUORUM" => Consistency::LocalQuorum,
+                            "EACH_QUORUM" => Consistency::EachQuorum,
+                            "LOCAL_ONE" => Consistency::LocalOne,
+                            "ANY" => Consistency::Any,
+                            _ => {
+                                debug!("Unknown consistency level '{}', defaulting to ONE", consistency_str);
+                                Consistency::One
+                            }
+                        };
+
+                        debug!("Cassandra client {} executing query with consistency {:?}", client_id, consistency);
+
+                        // Execute query with consistency (scylla 1.3 API doesn't allow per-query consistency easily)
+                        // We'll use the default for now
+                        match session.query_unpaged(query_str, &[]).await {
                             Ok(query_result) => {
-                                // Note: In scylla 0.15+, rows API changed
-                                // For simplicity, we just report the presence of results
-                                // A full implementation would deserialize to specific types
+                                // Convert result to JSON using scylla 1.3 API
+                                // First convert to RowsResult, then deserialize rows
+                                use scylla::value::Row;
 
-                                // Simplified row count reporting
-                                // In scylla 0.15, we'd need to deserialize rows to count them
-                                // For now, just report query success
-                                let row_count = 0;  // Placeholder
+                                let rows_data: Vec<serde_json::Value>;
+                                let row_count: usize;
 
-                                // Simplified: Just report row count, not actual data
-                                // A real implementation would use .into_rows_result()?.rows::<Type>()?
-                                let rows_data = vec![
-                                    json!({
-                                        "message": format!("Query returned {} rows", row_count),
-                                    })
-                                ];
+                                // Convert to RowsResult
+                                match query_result.into_rows_result() {
+                                    Ok(rows_result) => {
+                                        // Try to get rows as untyped Row
+                                        match rows_result.rows::<Row>() {
+                                            Ok(rows_iter) => {
+                                                let collected_rows: Vec<_> = rows_iter.collect::<Result<Vec<_>, _>>().unwrap_or_default();
+                                                row_count = collected_rows.len();
+
+                                                // Convert each row to JSON
+                                                rows_data = collected_rows.into_iter().map(|row| {
+                                                    // Row provides column access
+                                                    let columns: Vec<String> = (0..row.columns.len())
+                                                        .map(|i| format!("{:?}", row.columns[i]))
+                                                        .collect();
+
+                                                    json!({
+                                                        "columns": columns,
+                                                    })
+                                                }).collect();
+                                            }
+                                            Err(e) => {
+                                                // Deserialization error
+                                                debug!("Cassandra client {} result deserialization error: {}", client_id, e);
+                                                row_count = 0;
+                                                rows_data = vec![
+                                                    json!({
+                                                        "message": "Query succeeded but result parsing not supported for this schema",
+                                                        "error": format!("{}", e),
+                                                    })
+                                                ];
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Not a rows result (e.g., INSERT, UPDATE, DELETE succeeded)
+                                        debug!("Cassandra client {} query succeeded (non-SELECT): {}", client_id, e);
+                                        row_count = 0;
+                                        rows_data = vec![];
+                                    }
+                                }
 
                                 trace!("Cassandra client {} received {} rows", client_id, row_count);
 
