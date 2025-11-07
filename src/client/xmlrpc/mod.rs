@@ -17,7 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::xmlrpc::actions::XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::client::xmlrpc::actions::{XMLRPC_CLIENT_CONNECTED_EVENT, XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// XML-RPC client that calls methods on remote servers
 pub struct XmlRpcClient;
@@ -55,6 +55,71 @@ impl XmlRpcClient {
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
         let _ = status_tx.send(format!("[CLIENT] XML-RPC client {} ready for {}", client_id, server_url));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Call LLM with initial connected event to trigger first action
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let protocol = Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
+            let event = Event::new(
+                &XMLRPC_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "server_url": server_url,
+                }),
+            );
+
+            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+
+            if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+                &_llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &memory,
+                Some(&event),
+                protocol.as_ref(),
+                &status_tx,
+            ).await {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+
+                // Execute initial actions
+                for action in actions {
+                    match protocol.execute_action(action) {
+                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data })
+                            if name == "xmlrpc_call" => {
+                            if let (Some(method), Some(params)) = (
+                                data.get("method_name").and_then(|v| v.as_str()),
+                                data.get("params").and_then(|v| v.as_array())
+                            ) {
+                                // Spawn initial method call
+                                let app_state_clone = app_state.clone();
+                                let llm_client_clone = _llm_client.clone();
+                                let status_tx_clone = status_tx.clone();
+                                let method_clone = method.to_string();
+                                let params_clone = params.clone();
+
+                                tokio::spawn(async move {
+                                    let _ = Self::call_method(
+                                        client_id,
+                                        method_clone,
+                                        params_clone,
+                                        app_state_clone,
+                                        llm_client_clone,
+                                        status_tx_clone,
+                                    ).await;
+                                });
+                            }
+                        }
+                        Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            info!("XML-RPC client {} disconnecting on initial action", client_id);
+                            return Ok("0.0.0.0:0".parse().unwrap());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         // Spawn background task that monitors for client disconnection
         tokio::spawn(async move {
