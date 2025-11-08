@@ -601,5 +601,20 @@ pub use usb::serial::UsbSerialServer;
 #[cfg(feature = "usb-serial")]
 pub use usb::UsbSerialProtocol;
 
+#[cfg(feature = "usb-msc")]
+pub use usb::msc::UsbMscServer;
+#[cfg(feature = "usb-msc")]
+pub use usb::UsbMscProtocol;
+
+#[cfg(feature = "usb-fido2")]
+pub use usb::fido2::UsbFido2Server;
+#[cfg(feature = "usb-fido2")]
+pub use usb::UsbFido2Protocol;
+
+#[cfg(feature = "usb-smartcard")]
+pub use usb::smartcard::UsbSmartCardServer;
+#[cfg(feature = "usb-smartcard")]
+pub use usb::UsbSmartCardProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
