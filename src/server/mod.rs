@@ -24,6 +24,13 @@ pub use tcp::TcpServer;
 #[cfg(feature = "tcp")]
 pub use tcp::actions::TcpProtocol;
 
+#[cfg(feature = "socket_file")]
+pub mod socket_file;
+#[cfg(feature = "socket_file")]
+pub use socket_file::SocketFileServer;
+#[cfg(feature = "socket_file")]
+pub use socket_file::actions::SocketFileProtocol;
+
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]
