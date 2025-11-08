@@ -124,8 +124,8 @@ pub struct ClientInstance {
     pub status_changed_at: Instant,
     /// Protocol-specific startup parameters
     pub startup_params: Option<serde_json::Value>,
-    /// Script configuration for handling protocol events
-    pub script_config: Option<crate::scripting::ScriptConfig>,
+    /// Event handler configuration for handling protocol events
+    pub event_handler_config: Option<crate::scripting::EventHandlerConfig>,
     /// Protocol-specific client data (flexible storage)
     ///
     /// This replaces protocol-specific feature-gated fields.
@@ -152,7 +152,7 @@ impl ClientInstance {
             created_at: now,
             status_changed_at: now,
             startup_params: None,
-            script_config: None,
+            event_handler_config: None,
             protocol_data: serde_json::Value::Object(serde_json::Map::new()),
             log_files: HashMap::new(),
         }

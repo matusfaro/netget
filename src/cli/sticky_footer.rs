@@ -54,6 +54,7 @@ pub struct ConnectionInfo {
     pub model: String,
     pub scripting_env: String,
     pub web_search_mode: WebSearchMode,
+    pub event_handler_mode: crate::state::app_state::EventHandlerMode,
 }
 
 impl Default for ConnectionInfo {
@@ -62,6 +63,7 @@ impl Default for ConnectionInfo {
             model: String::new(),
             scripting_env: String::new(),
             web_search_mode: WebSearchMode::On,
+            event_handler_mode: crate::state::app_state::EventHandlerMode::default(),
         }
     }
 }
@@ -1142,6 +1144,10 @@ impl StickyFooter {
             SetForegroundColor(web_color),
             Print(format!("{}", web_status)),
             ResetColor,
+            SetForegroundColor(self.palette.dimmed),
+            Print(" | ^h Handler:"),
+            ResetColor,
+            Print(format!("{}", self.connection_info.event_handler_mode.as_str())),
         )?;
 
         // Add dependency status indicator

@@ -22,17 +22,6 @@ pub struct ServerTaskDefinition {
     pub instruction: String,
     #[serde(default)]
     pub context: Option<serde_json::Value>,
-    // Script configuration fields
-    #[serde(default)]
-    pub script_runtime: Option<String>,
-    #[serde(default)]
-    pub script_language: Option<String>,
-    #[serde(default)]
-    pub script_path: Option<String>,
-    #[serde(default)]
-    pub script_inline: Option<String>,
-    #[serde(default)]
-    pub script_handles: Option<Vec<String>>,
 }
 
 /// Common actions available in all contexts
@@ -53,17 +42,9 @@ pub enum CommonAction {
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
-        // Script configuration fields
+        // Event handler configuration
         #[serde(default)]
-        script_runtime: Option<String>,
-        #[serde(default)]
-        script_language: Option<String>,
-        #[serde(default)]
-        script_path: Option<String>,
-        #[serde(default)]
-        script_inline: Option<String>,
-        #[serde(default)]
-        script_handles: Option<Vec<String>>,
+        event_handlers: Option<Vec<serde_json::Value>>,
         // Scheduled tasks to create with this server
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
@@ -86,17 +67,9 @@ pub enum CommonAction {
         startup_params: Option<serde_json::Value>,
         #[serde(default)]
         initial_memory: Option<String>,
-        // Script configuration fields
+        // Event handler configuration
         #[serde(default)]
-        script_runtime: Option<String>,
-        #[serde(default)]
-        script_language: Option<String>,
-        #[serde(default)]
-        script_path: Option<String>,
-        #[serde(default)]
-        script_inline: Option<String>,
-        #[serde(default)]
-        script_handles: Option<Vec<String>>,
+        event_handlers: Option<Vec<serde_json::Value>>,
         // Scheduled tasks to create with this client
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
@@ -132,22 +105,6 @@ pub enum CommonAction {
 
     /// Append to global memory
     AppendMemory { value: String },
-
-    /// Update script configuration for a running server
-    UpdateScript {
-        server_id: u32,
-        operation: String,
-        #[serde(default)]
-        script_runtime: Option<String>,
-        #[serde(default)]
-        script_language: Option<String>,
-        #[serde(default)]
-        script_path: Option<String>,
-        #[serde(default)]
-        script_inline: Option<String>,
-        #[serde(default)]
-        script_handles: Option<Vec<String>>,
-    },
 
     /// Append content to a log file
     AppendToLog {
@@ -278,68 +235,27 @@ pub fn open_server_action(
             Parameter {
                 name: "scheduled_tasks".to_string(),
                 type_hint: "array".to_string(),
-                description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_runtime, script_inline, script_handles). When script_inline is provided, script_runtime MUST also be specified.".to_string(),
+                description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).".to_string(),
                 required: false,
             },
         ];
 
-    // Add script parameters based on scripting mode
-    match selected_mode {
-            crate::state::app_state::ScriptingMode::On => {
-                // ON mode: LLM chooses runtime from available options
-                let available_runtimes = env.format_available();
-                parameters.extend(vec![
-                Parameter {
-                    name: "script_runtime".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "REQUIRED when script_inline is provided: Choose runtime for script execution. Available: {}. Choose the best runtime for the task.",
-                        available_runtimes
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Optional: Inline script code to handle deterministic responses instead of LLM. Must match the script_runtime language. If provided, the script will be executed for network events and script_runtime MUST be specified.".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-            }
-            crate::state::app_state::ScriptingMode::Off => {
-                // OFF mode: no script parameters
-            }
-            crate::state::app_state::ScriptingMode::Python
-            | crate::state::app_state::ScriptingMode::JavaScript
-            | crate::state::app_state::ScriptingMode::Go
-            | crate::state::app_state::ScriptingMode::Perl => {
-                // Specific language mode: only show that language
-                let lang = selected_mode.as_str();
-                parameters.extend(vec![
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Optional: Inline {} script code to handle deterministic responses instead of LLM. If provided, the script will be executed for network events.",
-                        lang
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-    }
+    // Add event_handlers parameter with description based on handler mode
+    let handler_mode_guidance = "You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or \"*\" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.";
+
+    let available_runtimes = env.format_available();
+    let event_handlers_description = format!(
+        "Optional: Array of event handlers to configure how events are processed. {}\\n\\nEach handler has:\\n- event_pattern: Event ID to match (e.g., \\\"tcp_data_received\\\") or \\\"*\\\" for all events\\n- handler: Object with:\\n  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n  - For script: language ({}), code (inline script)\\n  - For static: actions (array of action objects)\\n\\nExample script handler: {{\\\"event_pattern\\\": \\\"ssh_auth\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'send_data','data':'OK'}}]}}))\\\"}}}}\\n\\nExample static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_data\\\", \\\"data\\\": \\\"Welcome\\\"}}]}}}}\\n\\nExample LLM handler: {{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\"}}}}",
+        handler_mode_guidance,
+        available_runtimes
+    );
+
+    parameters.push(Parameter {
+        name: "event_handlers".to_string(),
+        type_hint: "array".to_string(),
+        description: event_handlers_description,
+        required: false,
+    });
 
     let example = json!({
         "type": "open_server",
@@ -446,61 +362,22 @@ pub fn open_client_action(
         },
     ];
 
-    // Add script parameters based on scripting mode
-    match selected_mode {
-        crate::state::app_state::ScriptingMode::On => {
-            let available_runtimes = env.format_available();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_runtime".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Optional: Choose runtime for script execution. Available: {}",
-                        available_runtimes
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Optional: Inline script code to handle client responses instead of LLM. Must match the script_runtime language.".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles (e.g., [\"data_received\"]). Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-        crate::state::app_state::ScriptingMode::Off => {
-            // OFF mode: no script parameters
-        }
-        crate::state::app_state::ScriptingMode::Python
-        | crate::state::app_state::ScriptingMode::JavaScript
-        | crate::state::app_state::ScriptingMode::Go
-        | crate::state::app_state::ScriptingMode::Perl => {
-            let lang = selected_mode.as_str();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Optional: Inline {} script code to handle client responses instead of LLM.",
-                        lang
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles (e.g., [\"data_received\"]). Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-    }
+    // Add event_handlers parameter
+    let handler_mode_guidance = "You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or \"*\" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.";
+
+    let available_runtimes = env.format_available();
+    let event_handlers_description = format!(
+        "Optional: Array of event handlers to configure how client events are processed. {}\\n\\nEach handler has:\\n- event_pattern: Event ID to match (e.g., \\\"http_response_received\\\") or \\\"*\\\" for all events\\n- handler: Object with:\\n  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n  - For script: language ({}), code (inline script)\\n  - For static: actions (array of action objects)\\n\\nExample script handler: {{\\\"event_pattern\\\": \\\"redis_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'execute_redis_command','command':'PING'}}]}}))\\\"}}}}\\n\\nExample static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}",
+        handler_mode_guidance,
+        available_runtimes
+    );
+
+    parameters.push(Parameter {
+        name: "event_handlers".to_string(),
+        type_hint: "array".to_string(),
+        description: event_handlers_description,
+        required: false,
+    });
 
     let example = json!({
         "type": "open_client",
@@ -665,99 +542,6 @@ pub fn append_memory_action() -> ActionDefinition {
         example: json!({
             "type": "append_memory",
             "value": "connection_count: 5\nlast_file_requested: readme.md"
-        }),
-    }
-}
-
-/// Get action definition for update_script
-pub fn update_script_action(
-    selected_mode: crate::state::app_state::ScriptingMode,
-    env: &crate::scripting::ScriptingEnvironment,
-) -> ActionDefinition {
-    let mut parameters = vec![
-        Parameter {
-            name: "server_id".to_string(),
-            type_hint: "number".to_string(),
-            description: "Server ID to update (e.g., 1, 2)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "operation".to_string(),
-            type_hint: "string".to_string(),
-            description: "Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)".to_string(),
-            required: true,
-        },
-    ];
-
-    // Add script parameters based on scripting mode
-    match selected_mode {
-        crate::state::app_state::ScriptingMode::On => {
-            // ON mode: LLM chooses runtime from available options
-            let available_runtimes = env.format_available();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_runtime".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Required when script_inline is provided: Choose runtime for script execution. Available: {}",
-                        available_runtimes
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Inline script code (required for 'set' operation). Must match the script_runtime language. When provided, script_runtime MUST also be specified.".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-        crate::state::app_state::ScriptingMode::Off => {
-            // OFF mode: no script parameters needed (only operation for disable)
-        }
-        crate::state::app_state::ScriptingMode::Python
-        | crate::state::app_state::ScriptingMode::JavaScript
-        | crate::state::app_state::ScriptingMode::Go
-        | crate::state::app_state::ScriptingMode::Perl => {
-            let lang = selected_mode.as_str();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Inline {} script code (required for 'set' operation)",
-                        lang
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description:
-                        "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')"
-                            .to_string(),
-                    required: false,
-                },
-            ]);
-        }
-    }
-
-    ActionDefinition {
-        name: "update_script".to_string(),
-        description: "Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.".to_string(),
-        parameters,
-        example: json!({
-            "type": "update_script",
-            "server_id": 1,
-            "operation": "set",
-            "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
-            "script_handles": ["ssh_auth"]
         }),
     }
 }
@@ -997,11 +781,6 @@ pub fn get_all_common_actions(
         show_message_action(),
         append_to_log_action(),
     ];
-
-    // Only include update_script if scripting is enabled (not OFF mode)
-    if selected_mode != crate::state::app_state::ScriptingMode::Off {
-        actions.insert(7, update_script_action(selected_mode, env)); // Insert after close_all_clients (adjusted index)
-    }
 
     actions
 }
