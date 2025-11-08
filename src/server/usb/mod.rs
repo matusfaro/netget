@@ -15,6 +15,18 @@ pub mod descriptors;
 #[cfg(feature = "usb-keyboard")]
 pub mod keyboard;
 
+#[cfg(feature = "usb-mouse")]
+pub mod mouse;
+
+#[cfg(feature = "usb-serial")]
+pub mod serial;
+
 // Re-export protocol implementations
 #[cfg(feature = "usb-keyboard")]
 pub use keyboard::actions::UsbKeyboardProtocol;
+
+#[cfg(feature = "usb-mouse")]
+pub use mouse::actions::UsbMouseProtocol;
+
+#[cfg(feature = "usb-serial")]
+pub use serial::actions::UsbSerialProtocol;

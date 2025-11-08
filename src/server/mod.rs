@@ -584,5 +584,15 @@ pub use usb::keyboard::UsbKeyboardServer;
 #[cfg(feature = "usb-keyboard")]
 pub use usb::UsbKeyboardProtocol;
 
+#[cfg(feature = "usb-mouse")]
+pub use usb::mouse::UsbMouseServer;
+#[cfg(feature = "usb-mouse")]
+pub use usb::UsbMouseProtocol;
+
+#[cfg(feature = "usb-serial")]
+pub use usb::serial::UsbSerialServer;
+#[cfg(feature = "usb-serial")]
+pub use usb::UsbSerialProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
