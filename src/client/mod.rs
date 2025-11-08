@@ -322,6 +322,12 @@ pub mod socks5;
 #[cfg(feature = "socks5")]
 pub use socks5::actions::Socks5ClientProtocol;
 
+// socket_file client
+#[cfg(all(feature = "socket_file", unix))]
+pub mod socket_file;
+#[cfg(all(feature = "socket_file", unix))]
+pub use socket_file::SocketFileClientProtocol;
+
 // sqs client
 #[cfg(feature = "sqs")]
 pub mod sqs;
