@@ -177,7 +177,7 @@ impl ClientRegistry {
         #[cfg(feature = "s3")]
         self.register(Arc::new(crate::client::s3::S3ClientProtocol::new()));
 
-        #[cfg(feature = "saml-idp")]
+        #[cfg(feature = "saml")]
         self.register(Arc::new(crate::client::saml::SamlClientProtocol::new()));
 
         #[cfg(feature = "sip")]

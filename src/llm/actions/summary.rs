@@ -90,9 +90,6 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("append_memory: \"{}\"", preview)
         }
-        CommonAction::UpdateScript { server_id, operation, .. } => {
-            format!("update_script: #{} {}", server_id, operation)
-        }
         CommonAction::AppendToLog {
             output_name,
             content,

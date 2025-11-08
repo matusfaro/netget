@@ -4,7 +4,7 @@ pub mod actions;
 pub use actions::WireguardClientProtocol;
 
 use anyhow::{Context, Result};
-use defguard_wireguard_rs::{host::Peer, key::Key, InterfaceConfiguration, WGApi, WireguardInterfaceApi};
+use defguard_wireguard_rs::{host::Peer, key::Key, InterfaceConfiguration, WireguardInterfaceApi};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, LazyLock};
@@ -12,6 +12,13 @@ use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time;
 use tracing::{debug, error, info, warn};
+
+// Platform-specific WGApi type
+#[cfg(target_os = "macos")]
+type WGApi = defguard_wireguard_rs::WGApi<defguard_wireguard_rs::Userspace>;
+
+#[cfg(not(target_os = "macos"))]
+type WGApi = defguard_wireguard_rs::WGApi<defguard_wireguard_rs::Kernel>;
 
 use crate::client::wireguard::actions::{
     WIREGUARD_CLIENT_CONNECTED_EVENT, WIREGUARD_CLIENT_DISCONNECTED_EVENT,
