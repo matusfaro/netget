@@ -363,3 +363,378 @@ pub fn char_to_usage(ch: char) -> Option<(u8, bool)> {
         _ => None,
     }
 }
+
+// ============================================================================
+// HID Mouse Descriptors
+// ============================================================================
+
+/// HID mouse report descriptor (boot protocol compatible)
+/// Defines the format of mouse input reports:
+/// - Byte 0: Button states (left, right, middle)
+/// - Byte 1: X movement (signed, relative)
+/// - Byte 2: Y movement (signed, relative)
+/// - Byte 3: Wheel movement (signed, vertical scroll)
+#[cfg(feature = "usb-mouse")]
+pub fn build_hid_mouse_report_descriptor() -> Vec<u8> {
+    vec![
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x02, // Usage (Mouse)
+        0xA1, 0x01, // Collection (Application)
+
+        0x09, 0x01, //   Usage (Pointer)
+        0xA1, 0x00, //   Collection (Physical)
+
+        // Buttons (byte 0)
+        0x05, 0x09, //     Usage Page (Button)
+        0x19, 0x01, //     Usage Minimum (1) - Left button
+        0x29, 0x03, //     Usage Maximum (3) - Middle button
+        0x15, 0x00, //     Logical Minimum (0)
+        0x25, 0x01, //     Logical Maximum (1)
+        0x95, 0x03, //     Report Count (3 buttons)
+        0x75, 0x01, //     Report Size (1 bit)
+        0x81, 0x02, //     Input (Data, Variable, Absolute) - Button bits
+
+        // Padding (5 bits to complete the byte)
+        0x95, 0x01, //     Report Count (1)
+        0x75, 0x05, //     Report Size (5 bits)
+        0x81, 0x01, //     Input (Constant) - Padding
+
+        // X and Y movement (bytes 1-2)
+        0x05, 0x01, //     Usage Page (Generic Desktop)
+        0x09, 0x30, //     Usage (X)
+        0x09, 0x31, //     Usage (Y)
+        0x15, 0x81, //     Logical Minimum (-127)
+        0x25, 0x7F, //     Logical Maximum (127)
+        0x75, 0x08, //     Report Size (8 bits)
+        0x95, 0x02, //     Report Count (2) - X and Y
+        0x81, 0x06, //     Input (Data, Variable, Relative) - X,Y movement
+
+        // Wheel (byte 3)
+        0x09, 0x38, //     Usage (Wheel)
+        0x15, 0x81, //     Logical Minimum (-127)
+        0x25, 0x7F, //     Logical Maximum (127)
+        0x75, 0x08, //     Report Size (8 bits)
+        0x95, 0x01, //     Report Count (1)
+        0x81, 0x06, //     Input (Data, Variable, Relative) - Wheel
+
+        0xC0,       //   End Collection (Physical)
+        0xC0,       // End Collection (Application)
+    ]
+}
+
+/// Build a complete HID mouse configuration descriptor
+/// Includes: Configuration, Interface, HID, and Endpoint descriptors
+#[cfg(feature = "usb-mouse")]
+pub fn build_hid_mouse_config_descriptor() -> Vec<u8> {
+    let mut desc = Vec::new();
+
+    // Configuration descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::CONFIGURATION, // bDescriptorType
+        34, 0, // wTotalLength (will be calculated)
+        1,    // bNumInterfaces
+        1,    // bConfigurationValue
+        0,    // iConfiguration (no string)
+        0xA0, // bmAttributes (bus powered, remote wakeup)
+        50,   // bMaxPower (100mA)
+    ]);
+
+    // Interface descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::INTERFACE, // bDescriptorType
+        0,    // bInterfaceNumber
+        0,    // bAlternateSetting
+        1,    // bNumEndpoints (1 interrupt IN endpoint)
+        device_class::HID, // bInterfaceClass (HID)
+        1,    // bInterfaceSubClass (Boot Interface)
+        2,    // bInterfaceProtocol (Mouse)
+        0,    // iInterface (no string)
+    ]);
+
+    // HID descriptor (9 bytes)
+    let report_desc = build_hid_mouse_report_descriptor();
+    let report_desc_len = report_desc.len() as u16;
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::HID, // bDescriptorType (HID)
+        0x11, 0x01, // bcdHID (HID 1.11)
+        0x00, // bCountryCode (not localized)
+        0x01, // bNumDescriptors
+        descriptor_type::HID_REPORT, // bDescriptorType (Report)
+        (report_desc_len & 0xff) as u8, // wDescriptorLength (low)
+        (report_desc_len >> 8) as u8,   // wDescriptorLength (high)
+    ]);
+
+    // Endpoint descriptor (7 bytes) - Interrupt IN
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT, // bDescriptorType
+        0x81, // bEndpointAddress (EP1 IN)
+        transfer_type::INTERRUPT, // bmAttributes (Interrupt)
+        0x04, 0x00, // wMaxPacketSize (4 bytes)
+        10,   // bInterval (10ms polling interval)
+    ]);
+
+    // Update total length
+    let total_len = desc.len() as u16;
+    desc[2] = (total_len & 0xff) as u8;
+    desc[3] = (total_len >> 8) as u8;
+
+    desc
+}
+
+/// HID mouse input report builder
+/// 4 bytes: [buttons, x, y, wheel]
+#[cfg(feature = "usb-mouse")]
+pub struct MouseReport {
+    pub buttons: u8,  // Bit 0: left, Bit 1: right, Bit 2: middle
+    pub x: i8,        // X movement (-127 to 127)
+    pub y: i8,        // Y movement (-127 to 127)
+    pub wheel: i8,    // Wheel movement (-127 to 127)
+}
+
+#[cfg(feature = "usb-mouse")]
+impl MouseReport {
+    /// Create empty mouse report (no movement, no buttons)
+    pub fn new() -> Self {
+        Self {
+            buttons: 0,
+            x: 0,
+            y: 0,
+            wheel: 0,
+        }
+    }
+
+    /// Convert to 4-byte array for USB transmission
+    pub fn to_bytes(&self) -> [u8; 4] {
+        [
+            self.buttons,
+            self.x as u8,
+            self.y as u8,
+            self.wheel as u8,
+        ]
+    }
+}
+
+#[cfg(feature = "usb-mouse")]
+impl Default for MouseReport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// HID mouse button bit positions
+#[cfg(feature = "usb-mouse")]
+pub mod mouse_buttons {
+    pub const LEFT: u8 = 0x01;
+    pub const RIGHT: u8 = 0x02;
+    pub const MIDDLE: u8 = 0x04;
+}
+
+// ============================================================================
+// CDC ACM (Serial) Descriptors
+// ============================================================================
+
+/// CDC ACM descriptor subtypes
+#[cfg(feature = "usb-serial")]
+pub mod cdc_descriptor_subtype {
+    pub const HEADER: u8 = 0x00;
+    pub const CALL_MANAGEMENT: u8 = 0x01;
+    pub const ACM: u8 = 0x02;
+    pub const UNION: u8 = 0x06;
+}
+
+/// Build CDC ACM configuration descriptor
+/// CDC ACM uses two interfaces: Communication (control) and Data (bulk I/O)
+#[cfg(feature = "usb-serial")]
+pub fn build_cdc_acm_config_descriptor() -> Vec<u8> {
+    let mut desc = Vec::new();
+
+    // Configuration descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::CONFIGURATION,
+        67, 0, // wTotalLength (will be calculated)
+        2,    // bNumInterfaces (Communication + Data)
+        1,    // bConfigurationValue
+        0,    // iConfiguration
+        0xC0, // bmAttributes (self-powered)
+        50,   // bMaxPower (100mA)
+    ]);
+
+    // Interface 0: Communication Class Interface (control)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::INTERFACE,
+        0,    // bInterfaceNumber
+        0,    // bAlternateSetting
+        1,    // bNumEndpoints (1 interrupt endpoint)
+        device_class::COMM, // bInterfaceClass (CDC)
+        0x02, // bInterfaceSubClass (ACM)
+        0x01, // bInterfaceProtocol (AT commands)
+        0,    // iInterface
+    ]);
+
+    // CDC Header Functional Descriptor (5 bytes)
+    desc.extend_from_slice(&[
+        5,    // bLength
+        0x24, // bDescriptorType (CS_INTERFACE)
+        cdc_descriptor_subtype::HEADER,
+        0x10, 0x01, // bcdCDC (1.10)
+    ]);
+
+    // CDC Call Management Functional Descriptor (5 bytes)
+    desc.extend_from_slice(&[
+        5,    // bLength
+        0x24, // bDescriptorType (CS_INTERFACE)
+        cdc_descriptor_subtype::CALL_MANAGEMENT,
+        0x00, // bmCapabilities (no call management)
+        0x01, // bDataInterface (interface 1)
+    ]);
+
+    // CDC ACM Functional Descriptor (4 bytes)
+    desc.extend_from_slice(&[
+        4,    // bLength
+        0x24, // bDescriptorType (CS_INTERFACE)
+        cdc_descriptor_subtype::ACM,
+        0x02, // bmCapabilities (supports line coding)
+    ]);
+
+    // CDC Union Functional Descriptor (5 bytes)
+    desc.extend_from_slice(&[
+        5,    // bLength
+        0x24, // bDescriptorType (CS_INTERFACE)
+        cdc_descriptor_subtype::UNION,
+        0x00, // bMasterInterface (interface 0)
+        0x01, // bSlaveInterface (interface 1)
+    ]);
+
+    // Endpoint descriptor: Interrupt IN (control)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x81, // bEndpointAddress (EP1 IN)
+        transfer_type::INTERRUPT,
+        0x08, 0x00, // wMaxPacketSize (8 bytes)
+        16,   // bInterval (16ms)
+    ]);
+
+    // Interface 1: Data Class Interface (bulk data)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::INTERFACE,
+        1,    // bInterfaceNumber
+        0,    // bAlternateSetting
+        2,    // bNumEndpoints (bulk IN + bulk OUT)
+        device_class::CDC_DATA, // bInterfaceClass
+        0x00, // bInterfaceSubClass
+        0x00, // bInterfaceProtocol
+        0,    // iInterface
+    ]);
+
+    // Endpoint descriptor: Bulk OUT (host to device)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x02, // bEndpointAddress (EP2 OUT)
+        transfer_type::BULK,
+        0x40, 0x00, // wMaxPacketSize (64 bytes)
+        0,    // bInterval (ignored for bulk)
+    ]);
+
+    // Endpoint descriptor: Bulk IN (device to host)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x83, // bEndpointAddress (EP3 IN)
+        transfer_type::BULK,
+        0x40, 0x00, // wMaxPacketSize (64 bytes)
+        0,    // bInterval (ignored for bulk)
+    ]);
+
+    // Update total length
+    let total_len = desc.len() as u16;
+    desc[2] = (total_len & 0xff) as u8;
+    desc[3] = (total_len >> 8) as u8;
+
+    desc
+}
+
+/// CDC ACM Line Coding structure
+/// Used in SET_LINE_CODING and GET_LINE_CODING requests
+#[cfg(feature = "usb-serial")]
+#[derive(Debug, Clone, Copy)]
+pub struct LineCoding {
+    pub baud_rate: u32,     // Bits per second
+    pub stop_bits: u8,      // 0=1 stop bit, 1=1.5, 2=2 stop bits
+    pub parity: u8,         // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
+    pub data_bits: u8,      // 5, 6, 7, 8, or 16
+}
+
+#[cfg(feature = "usb-serial")]
+impl LineCoding {
+    /// Create default line coding (115200 8N1)
+    pub fn default_115200_8n1() -> Self {
+        Self {
+            baud_rate: 115200,
+            stop_bits: 0, // 1 stop bit
+            parity: 0,    // No parity
+            data_bits: 8,
+        }
+    }
+
+    /// Convert to 7-byte array for USB transmission
+    pub fn to_bytes(&self) -> [u8; 7] {
+        [
+            (self.baud_rate & 0xff) as u8,
+            ((self.baud_rate >> 8) & 0xff) as u8,
+            ((self.baud_rate >> 16) & 0xff) as u8,
+            ((self.baud_rate >> 24) & 0xff) as u8,
+            self.stop_bits,
+            self.parity,
+            self.data_bits,
+        ]
+    }
+
+    /// Parse from 7-byte array
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            baud_rate: u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            stop_bits: bytes[4],
+            parity: bytes[5],
+            data_bits: bytes[6],
+        }
+    }
+}
+
+/// CDC ACM Control Line State
+/// DTR (Data Terminal Ready) and RTS (Request To Send)
+#[cfg(feature = "usb-serial")]
+#[derive(Debug, Clone, Copy)]
+pub struct ControlLineState {
+    pub dtr: bool, // Data Terminal Ready
+    pub rts: bool, // Request To Send
+}
+
+#[cfg(feature = "usb-serial")]
+impl ControlLineState {
+    pub fn from_value(value: u16) -> Self {
+        Self {
+            dtr: (value & 0x01) != 0,
+            rts: (value & 0x02) != 0,
+        }
+    }
+
+    pub fn to_value(&self) -> u16 {
+        let mut value = 0u16;
+        if self.dtr {
+            value |= 0x01;
+        }
+        if self.rts {
+            value |= 0x02;
+        }
+        value
+    }
+}

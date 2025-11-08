@@ -362,6 +362,12 @@ impl ServerRegistry {
 
         #[cfg(feature = "usb-keyboard")]
         self.register(Arc::new(crate::server::UsbKeyboardProtocol::new()));
+
+        #[cfg(feature = "usb-mouse")]
+        self.register(Arc::new(crate::server::UsbMouseProtocol::new()));
+
+        #[cfg(feature = "usb-serial")]
+        self.register(Arc::new(crate::server::UsbSerialProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
