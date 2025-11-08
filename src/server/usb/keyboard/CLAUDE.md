@@ -215,7 +215,7 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 }
 ```
 
-## Current Status: Experimental (Placeholder)
+## Current Status: Experimental (USB/IP Integrated)
 
 ### What Works
 - ✅ Protocol registration and discovery
@@ -224,25 +224,30 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 - ✅ Character-to-HID-usage mapping
 - ✅ Server trait implementation (spawn, execute_action)
 - ✅ TCP listener for USB/IP connections
+- ✅ USB/IP server integration using usbip crate
+- ✅ UsbHidKeyboardHandler from usbip crate
+- ✅ Device creation with HID keyboard interface
+- ✅ LLM action execution (type_text, press_key, release_all_keys)
+- ✅ Keyboard event queue (pending_key_events)
 
-### What's Missing (TODO)
-- ❌ Full USB/IP protocol implementation
-- ❌ URB (USB Request Block) handling
-- ❌ Device enumeration responses
-- ❌ Control transfer processing (SETUP packets)
-- ❌ Interrupt endpoint data transmission
-- ❌ HID report generation from LLM actions
-- ❌ LED status reading from host
+### What's Limited (Known Issues)
+- ⚠️ **Build Requirement**: Requires libusb-1.0-dev to compile (see Build Requirements above)
+- ⚠️ **press_key_combo**: Not yet implemented (requires custom HID report construction)
+- ⚠️ **LED status events**: Not yet implemented (requires URB output report parsing)
+- ⚠️ **Modifier keys**: Currently limited by UsbHidKeyboardReport::from_ascii()
+- ⚠️ **Special keys**: F-keys, arrow keys not yet supported (ASCII only)
+- ⚠️ **Testing**: Not yet tested with real usbip client
 
-### Implementation Path Forward
+### Implementation Status
 
-1. **Integrate usbip crate**: Replace placeholder with actual USB/IP server
-2. **Device Export**: Implement OP_REQ_DEVLIST and OP_REQ_IMPORT responses
-3. **Descriptor Handling**: Send device/config/HID descriptors on GET_DESCRIPTOR requests
-4. **Endpoint Setup**: Create interrupt IN endpoint (0x81) for keyboard reports
-5. **URB Processing**: Handle CMD_SUBMIT and CMD_UNLINK for keyboard reports
-6. **LLM Action Execution**: Convert type_text/press_key into HID reports
-7. **LED Reading**: Parse SET_REPORT for LED status updates
+**Phase 1 Complete** (USB/IP Integration):
+1. ✅ Integrated usbip crate (v0.3)
+2. ✅ Device export using UsbIpServer::new_simulated()
+3. ✅ Descriptor handling via usbip::hid::UsbHidKeyboardHandler
+4. ✅ Endpoint setup (interrupt IN endpoint 0x81)
+5. ✅ URB processing (handled by usbip crate)
+6. ✅ LLM action execution (type_text converts to HID reports)
+7. ⏳ LED reading (deferred to future enhancement)
 
 ## Limitations
 

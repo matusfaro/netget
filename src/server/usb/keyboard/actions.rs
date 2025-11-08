@@ -64,6 +64,8 @@ pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(||
 pub struct UsbKeyboardProtocol {
     /// Map of active connections (for async actions)
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+    /// Map of USB/IP keyboard handlers for each connection
+    handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
 }
 
 #[cfg(feature = "usb-keyboard")]
@@ -77,7 +79,25 @@ impl UsbKeyboardProtocol {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
+            handlers: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Store the USB/IP keyboard handler for a connection
+    pub async fn set_handler(
+        &self,
+        connection_id: ConnectionId,
+        handler: Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
+    ) {
+        self.handlers.lock().await.insert(connection_id, handler);
+    }
+
+    /// Get the USB/IP keyboard handler for a connection
+    async fn get_handler(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Option<Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>> {
+        self.handlers.lock().await.get(&connection_id).cloned()
     }
 }
 
@@ -170,26 +190,62 @@ impl Server for UsbKeyboardProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        _connection_id: Option<ConnectionId>,
+        connection_id: Option<ConnectionId>,
         _app_state: &AppState,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
 
+        let connection_id = connection_id.context("USB keyboard actions require connection_id")?;
+
+        // Get handler (need to use blocking approach since execute_action is sync)
+        let handler = {
+            let handlers = self.handlers.blocking_lock();
+            handlers
+                .get(&connection_id)
+                .cloned()
+                .context("No USB keyboard handler found for connection")?
+        };
+
         match action_type {
             "type_text" => {
                 let text = action["text"]
                     .as_str()
                     .context("type_text requires 'text' field")?;
-                // TODO: Implement text typing via USB/IP
-                Ok(ActionResult::NoAction)
+                let typing_speed_ms = action["typing_speed_ms"].as_u64().unwrap_or(50);
+
+                // Queue keyboard events for each character
+                let mut handler_guard = handler.lock().unwrap();
+                if let Some(hid) = handler_guard
+                    .as_any()
+                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
+                {
+                    for ch in text.chars() {
+                        if ch.is_ascii() {
+                            let report = usbip::hid::UsbHidKeyboardReport::from_ascii(ch as u8);
+                            hid.pending_key_events.push_back(report);
+                            // Sleep between characters for natural typing
+                            if typing_speed_ms > 0 {
+                                std::thread::sleep(std::time::Duration::from_millis(typing_speed_ms));
+                            }
+                        }
+                    }
+                    tracing::info!(
+                        "Queued {} keyboard events for connection {}",
+                        text.len(),
+                        connection_id
+                    );
+                    Ok(ActionResult::NoAction)
+                } else {
+                    Err(anyhow::anyhow!("Handler is not a USB HID keyboard handler"))
+                }
             }
             "press_key" => {
                 let key = action["key"]
                     .as_str()
                     .context("press_key requires 'key' field")?;
-                let modifiers = action["modifiers"]
+                let _modifiers: Vec<String> = action["modifiers"]
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -198,11 +254,27 @@ impl Server for UsbKeyboardProtocol {
                             .collect()
                     })
                     .unwrap_or_default();
-                // TODO: Implement key press via USB/IP
-                Ok(ActionResult::NoAction)
+
+                // Convert key to ASCII and send
+                let mut handler_guard = handler.lock().unwrap();
+                if let Some(hid) = handler_guard
+                    .as_any()
+                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
+                {
+                    if key.len() == 1 && key.is_ascii() {
+                        let report = usbip::hid::UsbHidKeyboardReport::from_ascii(key.as_bytes()[0]);
+                        hid.pending_key_events.push_back(report);
+                        tracing::info!("Queued key press '{}' for connection {}", key, connection_id);
+                        Ok(ActionResult::NoAction)
+                    } else {
+                        Err(anyhow::anyhow!("Unsupported key: {}", key))
+                    }
+                } else {
+                    Err(anyhow::anyhow!("Handler is not a USB HID keyboard handler"))
+                }
             }
             "press_key_combo" => {
-                let keys = action["keys"]
+                let _keys = action["keys"]
                     .as_array()
                     .context("press_key_combo requires 'keys' array")?
                     .iter()
@@ -210,11 +282,24 @@ impl Server for UsbKeyboardProtocol {
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>();
                 // TODO: Implement key combination via USB/IP
+                // This requires building a custom HID report with multiple keys pressed
+                tracing::warn!("press_key_combo not yet implemented for USB keyboard");
                 Ok(ActionResult::NoAction)
             }
             "release_all_keys" => {
-                // TODO: Implement releasing all keys via USB/IP
-                Ok(ActionResult::NoAction)
+                // Send empty report (all keys released)
+                let mut handler_guard = handler.lock().unwrap();
+                if let Some(hid) = handler_guard
+                    .as_any()
+                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
+                {
+                    let empty_report = usbip::hid::UsbHidKeyboardReport::new();
+                    hid.pending_key_events.push_back(empty_report);
+                    tracing::info!("Released all keys for connection {}", connection_id);
+                    Ok(ActionResult::NoAction)
+                } else {
+                    Err(anyhow::anyhow!("Handler is not a USB HID keyboard handler"))
+                }
             }
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
