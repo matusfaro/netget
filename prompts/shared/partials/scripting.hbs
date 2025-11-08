@@ -45,6 +45,42 @@ Use the **same action types** available to you as the LLM (e.g., `ssh_auth_decis
 
 **DO NOT** write raw protocol code (like `res.writeHead()` or socket operations).
 
+### Random Data in Scripts
+
+**IMPORTANT:** When scripts need random or mock data, use your language's built-in random functions:
+
+**Python:**
+```python
+import random, uuid
+random_id = str(uuid.uuid4())  # UUID
+random_num = random.randint(1, 100)  # Integer
+random_str = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16))  # String
+```
+
+**JavaScript:**
+```javascript
+const crypto = require('crypto');
+const randomId = crypto.randomUUID();  // UUID
+const randomNum = Math.floor(Math.random() * 100);  // Integer
+const randomStr = crypto.randomBytes(16).toString('hex');  // Hex string
+```
+
+**Go:**
+```go
+import "crypto/rand"; import "math/rand"; import "github.com/google/uuid"
+id := uuid.New().String()  // UUID
+num := rand.Intn(100)  // Integer
+bytes := make([]byte, 16); rand.Read(bytes)  // Random bytes
+```
+
+**Perl:**
+```perl
+use UUID::Tiny ':std'; use String::Random;
+my $id = create_uuid_as_string();  # UUID
+my $num = int(rand(100));  # Integer
+my $str = String::Random->new->randregex('[a-z0-9]{16}');  # String
+```
+
 ### Examples
 
 **Example 1 - SSH Authentication (Python):**
