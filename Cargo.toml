@@ -86,6 +86,8 @@ usb-keyboard = ["usb-common"]  # USB HID Keyboard virtual device
 usb-mouse = ["usb-common"]  # USB HID Mouse virtual device
 usb-serial = ["usb-common"]  # USB CDC ACM Serial virtual device
 usb-msc = ["usb-common", "memmap2"]  # USB Mass Storage Class virtual device (flash drive/disk)
+usb-fido2 = ["usb-common", "ring", "serde_cbor"]  # USB FIDO2/U2F Security Key virtual device
+usb-smartcard = ["usb-common"]  # USB Smart Card (CCID) virtual device via vsmartcard (simplified vpcd protocol)
 usb = ["usb-common"]  # Low-level USB device with full descriptor control
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
@@ -183,6 +185,8 @@ all-protocols = [
     "usb-mouse",
     "usb-serial",
     "usb-msc",
+    "usb-fido2",
+    "usb-smartcard",
     "usb",
 ]
 
@@ -513,6 +517,10 @@ usbip = { version = "0.3", optional = true }
 
 # Memory-mapped file I/O for USB MSC disk images
 memmap2 = { version = "0.9", optional = true }
+
+# USB FIDO2 dependencies
+ring = { version = "0.17", optional = true }  # ECDSA P-256 cryptography for FIDO2
+serde_cbor = { version = "0.11", optional = true }  # CBOR encoding for CTAP2
 
 [dev-dependencies]
 # For async tests

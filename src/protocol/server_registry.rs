@@ -374,6 +374,12 @@ impl ServerRegistry {
 
         #[cfg(feature = "usb-msc")]
         self.register(Arc::new(crate::server::UsbMscProtocol::new()));
+
+        #[cfg(feature = "usb-fido2")]
+        self.register(Arc::new(crate::server::UsbFido2Protocol::new()));
+
+        #[cfg(feature = "usb-smartcard")]
+        self.register(Arc::new(crate::server::UsbSmartCardProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

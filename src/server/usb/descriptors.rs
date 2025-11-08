@@ -534,6 +534,108 @@ pub mod mouse_buttons {
 }
 
 // ============================================================================
+// FIDO2 HID Descriptors
+// ============================================================================
+
+/// FIDO HID report descriptor (CTAPHID protocol)
+/// Uses 64-byte input and output reports for CTAPHID transport
+#[cfg(feature = "usb-fido2")]
+pub const FIDO_HID_REPORT_DESCRIPTOR: &[u8] = &[
+    0x06, 0xD0, 0xF1, // Usage Page (FIDO Alliance)
+    0x09, 0x01,       // Usage (U2F Authenticator Device)
+    0xA1, 0x01,       // Collection (Application)
+
+    // Input report (device to host)
+    0x09, 0x20,       //   Usage (Input Report Data)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x75, 0x08,       //   Report Size (8 bits)
+    0x95, 0x40,       //   Report Count (64 bytes)
+    0x81, 0x02,       //   Input (Data, Variable, Absolute)
+
+    // Output report (host to device)
+    0x09, 0x21,       //   Usage (Output Report Data)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x75, 0x08,       //   Report Size (8 bits)
+    0x95, 0x40,       //   Report Count (64 bytes)
+    0x91, 0x02,       //   Output (Data, Variable, Absolute)
+
+    0xC0,             // End Collection
+];
+
+/// Build a complete FIDO2 HID configuration descriptor
+/// Includes: Configuration, Interface, HID, and Endpoint descriptors
+#[cfg(feature = "usb-fido2")]
+pub fn build_fido2_hid_config_descriptor() -> Vec<u8> {
+    let mut desc = Vec::new();
+
+    // Configuration descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::CONFIGURATION,
+        34, 0, // wTotalLength (9 + 9 + 9 + 7 + 7 = 41, but we'll calculate)
+        1,    // bNumInterfaces
+        1,    // bConfigurationValue
+        0,    // iConfiguration
+        0xA0, // bmAttributes (bus-powered, remote wakeup)
+        50,   // bMaxPower (100mA)
+    ]);
+
+    // Interface descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::INTERFACE,
+        0,    // bInterfaceNumber
+        0,    // bAlternateSetting
+        2,    // bNumEndpoints (IN and OUT)
+        device_class::HID, // bInterfaceClass (HID)
+        0,    // bInterfaceSubClass (No subclass)
+        0,    // bInterfaceProtocol (None)
+        0,    // iInterface
+    ]);
+
+    // HID descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::HID, // bDescriptorType (HID)
+        0x11, 0x01, // bcdHID (HID 1.11)
+        0,    // bCountryCode (not localized)
+        1,    // bNumDescriptors (1 report descriptor)
+        descriptor_type::HID_REPORT, // bDescriptorType (Report)
+        (FIDO_HID_REPORT_DESCRIPTOR.len() & 0xFF) as u8,
+        ((FIDO_HID_REPORT_DESCRIPTOR.len() >> 8) & 0xFF) as u8,
+    ]);
+
+    // Endpoint descriptor - IN (7 bytes)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x81, // bEndpointAddress (IN, endpoint 1)
+        0x03, // bmAttributes (Interrupt)
+        64, 0, // wMaxPacketSize (64 bytes)
+        5,    // bInterval (5ms polling)
+    ]);
+
+    // Endpoint descriptor - OUT (7 bytes)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x01, // bEndpointAddress (OUT, endpoint 1)
+        0x03, // bmAttributes (Interrupt)
+        64, 0, // wMaxPacketSize (64 bytes)
+        5,    // bInterval (5ms polling)
+    ]);
+
+    // Update total length
+    let total_len = desc.len() as u16;
+    desc[2] = (total_len & 0xFF) as u8;
+    desc[3] = ((total_len >> 8) & 0xFF) as u8;
+
+    desc
+}
+
+// ============================================================================
 // CDC ACM (Serial) Descriptors
 // ============================================================================
 
