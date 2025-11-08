@@ -44,14 +44,50 @@ Virtual USB HID mouse using USB/IP protocol. LLM controls cursor movement, butto
 - `usb_mouse_attached`: Device imported by host
 - `usb_mouse_detached`: Device removed
 
-## Status
+## Current Status: Experimental (USB/IP Integrated)
 
-**Experimental**: Framework complete, USB/IP integration needed.
+### What Works
+- ✅ Protocol registration and discovery
+- ✅ Action/event definitions
+- ✅ HID descriptor builders (mouse report descriptor)
+- ✅ Server trait implementation (spawn, execute_action)
+- ✅ TCP listener for USB/IP connections
+- ✅ USB/IP server integration using usbip crate
+- ✅ UsbHidMouseHandler from usbip crate
+- ✅ Device creation with HID mouse interface
+- ✅ LLM action execution (move_relative, click, scroll)
+- ✅ Mouse event queue (pending_mouse_events)
+
+### What's Limited (Known Issues)
+- ⚠️ **Build Requirement**: Requires libusb-1.0-dev to compile
+- ⚠️ **move_absolute**: Not yet implemented (requires position tracking)
+- ⚠️ **drag**: Not yet implemented (requires smooth movement + position tracking)
+- ⚠️ **Relative Movements Only**: HID boot protocol uses relative positioning
+- ⚠️ **Testing**: Not yet tested with real usbip client
+
+### Implementation Status
+
+**Phase 1 Complete** (USB/IP Integration):
+1. ✅ Integrated usbip crate (v0.3)
+2. ✅ Device export using UsbIpServer::new_simulated()
+3. ✅ Handler via usbip::hid::UsbHidMouseHandler
+4. ✅ Endpoint setup (interrupt IN endpoint 0x81)
+5. ✅ URB processing (handled by usbip crate)
+6. ✅ LLM action execution (move_relative, click, scroll convert to HID reports)
 
 ## Build
 
 Same requirements as usb-keyboard (libusb-1.0-dev).
 
 ```bash
+# Ubuntu/Debian
+sudo apt-get install libusb-1.0-0-dev pkg-config
+
+# Build with USB mouse feature
 ./cargo-isolated.sh build --no-default-features --features usb-mouse
 ```
+
+## OS Support
+
+- **Server**: Linux/macOS/Windows (theoretically)
+- **Client**: **Linux only** (requires vhci-hcd kernel module)
