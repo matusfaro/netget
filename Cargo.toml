@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = ["all-protocols"]
 tcp = ["async-trait"]
+socket_file = []  # Unix domain socket for IPC (Unix/Linux/macOS only, gated with #[cfg(unix)]), no extra deps
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
@@ -90,8 +91,10 @@ torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer d
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
+usb = ["dep:nusb"]  # USB device client for low-level USB device interaction
 all-protocols = [
     "tcp",
+    "socket_file",
     "http",
     "http2",
     "http3",
@@ -171,6 +174,7 @@ all-protocols = [
     "tls",
     "saml-idp",
     "saml-sp",
+    "usb",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
@@ -190,7 +194,7 @@ textwrap = "0.16"
 termbg = "0.5"  # Terminal background detection for adaptive theming
 
 # HTTP client for Ollama
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "http2"] }
 
 # Ollama Rust client
 ollama-rs = "0.3"
@@ -490,6 +494,8 @@ kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] 
 k8s-openapi = { version = "0.24", optional = true, features = ["v1_30"] }
 # NFS types for NFSv3 protocol
 nfs3_types = { version = "0.4", optional = true }
+# USB client
+nusb = { version = "0.1", optional = true }
 
 [dev-dependencies]
 # For async tests

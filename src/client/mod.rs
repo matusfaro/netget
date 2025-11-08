@@ -394,6 +394,12 @@ pub mod udp;
 #[cfg(feature = "udp")]
 pub use udp::actions::UdpClientProtocol;
 
+// usb client
+#[cfg(feature = "usb")]
+pub mod usb;
+#[cfg(feature = "usb")]
+pub use usb::actions::UsbClientProtocol;
+
 // vnc client
 #[cfg(feature = "vnc")]
 pub mod vnc;
