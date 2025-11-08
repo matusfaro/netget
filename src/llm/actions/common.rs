@@ -575,7 +575,7 @@ pub fn append_to_log_action() -> ActionDefinition {
 
 /// Get action definition for schedule_task
 pub fn schedule_task_action(
-    _selected_mode: crate::state::app_state::ScriptingMode,
+    selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
 ) -> ActionDefinition {
     let mut parameters = vec![
@@ -752,7 +752,7 @@ pub fn list_tasks_action() -> ActionDefinition {
 /// 4. Task Management - Schedule/cancel tasks
 /// 5. System/Utility - Model changes, messages, logging
 pub fn get_all_common_actions(
-    _selected_mode: crate::state::app_state::ScriptingMode,
+    selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
@@ -787,7 +787,7 @@ pub fn get_all_common_actions(
 
 /// Get common actions for user input (all common actions with enhanced open_server and open_client)
 pub fn get_user_input_common_actions(
-    _selected_mode: crate::state::app_state::ScriptingMode,
+    selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
