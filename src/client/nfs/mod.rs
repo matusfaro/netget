@@ -19,9 +19,9 @@ use crate::state::{ClientId, ClientStatus};
 use serde_json::json;
 
 #[cfg(feature = "nfs")]
-use nfs3_client::{Nfs3ConnectionBuilder, Nfs3Client, MountClient};
+use nfs3_client::{Nfs3ConnectionBuilder, tokio::TokioConnector};
 #[cfg(feature = "nfs")]
-use nfs3_types::*;
+use nfs3_types::nfs3::*;
 
 use crate::client::nfs::actions::{NFS_CLIENT_CONNECTED_EVENT, NFS_CLIENT_OPERATION_RESULT_EVENT};
 
