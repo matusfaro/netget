@@ -97,6 +97,41 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 - Modifying shared code: `--no-default-features --features tcp,http,dns` (representative subset)
 - Full validation: `--all-features` (use sparingly)
 
+### Claude Code for Web Environment (CRITICAL)
+
+**Detection**: Claude Code for Web can be detected via environment variables:
+- Primary: `CLAUDE_CODE_REMOTE=true` (most reliable)
+- Secondary: `CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE=cloud_default`
+- Tertiary: `CLAUDE_CODE_ENTRYPOINT=remote` or `IS_SANDBOX=yes`
+
+**Bluetooth-BLE Restriction**: The `bluetooth-ble` feature MUST be skipped in Claude Code for Web:
+- Depends on system library `libbluetooth-dev` which is not available in the web environment
+- Attempting to build with `bluetooth-ble` feature will fail with missing library errors
+- Always use `--no-default-features` with explicit feature selection in Claude Code for Web
+- Avoid `--all-features` in Claude Code for Web as it includes `bluetooth-ble`
+
+**Example safe builds for Claude Code for Web**:
+```bash
+# SAFE: Explicit features without bluetooth-ble
+./cargo-isolated.sh build --no-default-features --features tcp,http,dns
+
+# SAFE: Single protocol
+./cargo-isolated.sh build --no-default-features --features tcp
+
+# UNSAFE: Will try to build bluetooth-ble
+./cargo-isolated.sh build --all-features  # DON'T USE IN WEB
+```
+
+**Detection in code**: Check environment variable before building:
+```bash
+if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
+    echo "Running in Claude Code for Web - skipping bluetooth-ble"
+    ./cargo-isolated.sh build --no-default-features --features tcp,http,dns
+else
+    ./cargo-isolated.sh build --all-features
+fi
+```
+
 ### Efficient Build & Test Iteration (CRITICAL)
 
 **Building and testing takes a long time** (10s-2min depending on features). **NEVER rebuild/retest after each individual fix.** Instead:
