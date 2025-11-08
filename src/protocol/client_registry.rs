@@ -180,7 +180,7 @@ impl ClientRegistry {
         #[cfg(feature = "sip")]
         self.register(Arc::new(crate::client::sip::SipClientProtocol::new()));
 
-        #[cfg(feature = "smb")]
+        #[cfg(feature = "smb-client")]
         self.register(Arc::new(crate::client::smb::SmbClientProtocol::new()));
 
         #[cfg(feature = "smtp")]
