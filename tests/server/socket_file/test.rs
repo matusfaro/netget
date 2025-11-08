@@ -2,8 +2,10 @@
 //!
 //! These tests spawn the actual NetGet binary with socket file prompts
 //! and validate the responses using UnixStream connections.
+//!
+//! Platform: Unix/Linux only
 
-#![cfg(feature = "socket_file")]
+#![cfg(all(feature = "socket_file", unix))]
 
 use super::super::super::helpers::{self, ServerConfig, E2EResult};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

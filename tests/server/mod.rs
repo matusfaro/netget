@@ -112,7 +112,7 @@ pub mod ssh;
 pub mod stun;
 #[cfg(feature = "tcp")]
 pub mod tcp;
-#[cfg(feature = "socket_file")]
+#[cfg(all(feature = "socket_file", unix))]
 pub mod socket_file;
 #[cfg(feature = "telnet")]
 pub mod telnet;

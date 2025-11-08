@@ -1,4 +1,7 @@
 //! Socket file protocol actions implementation
+//!
+//! Platform: Unix/Linux only (uses Unix domain sockets)
+#![cfg(unix)]
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
