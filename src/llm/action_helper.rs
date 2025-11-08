@@ -77,110 +77,30 @@ pub async fn call_llm_with_actions(
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
 ) -> Result<ExecutionResult> {
-    // TRY SCRIPT FIRST if configured
-    let script_config = state.get_script_config(server_id).await;
-    if let Some(ref config) = script_config {
-        // Extract event type ID from event description
-        let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
+    // TRY EVENT HANDLER FIRST if configured
+    let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
 
-        // Check if script handles this event type
-        if config.handles_context(&event_type_id) {
-            // Get server info to build script input
-            let server_info = state.get_server(server_id).await;
-
-            if let Some(server) = server_info {
-                // Build connection context if available
-                let connection_context = if let Some(conn_id) = connection_id {
-                    // Try to get connection info from server
-                    server.connections.get(&conn_id).map(|conn_state| {
-                        crate::scripting::types::ConnectionContext {
-                            id: conn_id.to_string(),
-                            remote_addr: conn_state.remote_addr.to_string(),
-                            bytes_received: conn_state.bytes_received,
-                            bytes_sent: conn_state.bytes_sent,
-                        }
-                    })
-                } else {
-                    None
-                };
-
-                // Build structured input for script
-                let event_json = event_data.clone().unwrap_or_else(|| {
-                    serde_json::json!({"description": event_description})
-                });
-
-                let script_input = crate::scripting::types::ScriptInput {
-                    event_type_id: event_type_id.clone(),
-                    server: crate::scripting::types::ServerContext {
-                        id: server.id.as_u32(),
-                        port: server.port,
-                        stack: crate::protocol::server_registry::registry()
-                            .stack_name_by_protocol(&server.protocol_name)
-                            .unwrap_or("UNKNOWN")
-                            .to_string(),
-                        memory: server.memory.clone(),
-                        instruction: server.instruction.clone(),
-                    },
-                    connection: connection_context,
-                    event: event_json,
-                };
-
-                // Try to execute the script
-                match crate::scripting::ScriptManager::try_execute(Some(config), &script_input) {
-                    Ok(Some(script_response)) => {
-                        // Script handled it successfully!
-                        debug!(
-                            "Script handled event (context: {}, {} actions)",
-                            event_type_id,
-                            script_response.actions.len()
-                        );
-
-                        // Register SCRIPT conversation for tracking
-                        let truncated_desc = if event_description.len() > 30 {
-                            format!("SCRIPT \"{}...\"", &event_description[..27])
-                        } else {
-                            format!("SCRIPT \"{}\"", event_description)
-                        };
-                        let conv_id = format!("script-{}-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), rand::random::<u32>());
-                        state.register_conversation(
-                            conv_id.clone(),
-                            crate::state::app_state::ConversationSource::Network { server_id, connection_id },
-                            truncated_desc,
-                        ).await;
-
-                        // Execute the script's actions (extract actions from ScriptResponse)
-                        let result = execute_actions(
-                            script_response.actions,
-                            state,
-                            protocol,
-                        )
-                        .await
-                        .context("Failed to execute script actions")?;
-
-                        // End conversation tracking
-                        state.end_conversation(&conv_id).await;
-
-                        return Ok(result);
-                    }
-                    Ok(None) => {
-                        // Script requested fallback or doesn't handle this context
-                        debug!("Script returned None, falling back to LLM");
-                    }
-                    Err(e) => {
-                        // Script execution failed, fall back to LLM
-                        warn!("Script execution failed ({}), falling back to LLM", e);
-                    }
-                }
-            }
-        } else {
-            debug!(
-                "Script does not handle context '{}', using LLM",
-                event_type_id
-            );
+    match crate::llm::event_handler_executor::try_execute_event_handler(
+        state,
+        server_id,
+        connection_id,
+        &event_type_id,
+        event_description,
+        event_data.clone(),
+        protocol,
+    )
+    .await?
+    {
+        crate::llm::event_handler_executor::EventHandlerResult::Handled(result) => {
+            // Handler executed successfully (script or static)
+            return Ok(result);
+        }
+        crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm => {
+            // No handler or handler requested LLM fallback - proceed with LLM call
         }
     }
 
-    // FALLBACK TO LLM (normal path if no script or script failed/requested fallback)
+    // FALLBACK TO LLM (normal path if no handler or handler requested fallback)
 
     // Get model from state
     let model = state.get_ollama_model().await;

@@ -10,6 +10,7 @@ pub mod conversation_state; // Conversation history management
 pub mod template_engine; // Handlebars template engine
 pub mod event_instructions; // Event-specific instructions
 pub mod default_instructions; // Default instructions registry
+pub mod event_handler_executor; // Event handler execution (script/static/llm)
 
 // Old modules
 pub mod client;
