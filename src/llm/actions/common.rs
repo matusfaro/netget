@@ -22,17 +22,6 @@ pub struct ServerTaskDefinition {
     pub instruction: String,
     #[serde(default)]
     pub context: Option<serde_json::Value>,
-    // Script configuration fields
-    #[serde(default)]
-    pub script_runtime: Option<String>,
-    #[serde(default)]
-    pub script_language: Option<String>,
-    #[serde(default)]
-    pub script_path: Option<String>,
-    #[serde(default)]
-    pub script_inline: Option<String>,
-    #[serde(default)]
-    pub script_handles: Option<Vec<String>>,
 }
 
 /// Common actions available in all contexts
@@ -53,17 +42,9 @@ pub enum CommonAction {
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
-        // Script configuration fields
+        // Event handler configuration
         #[serde(default)]
-        script_runtime: Option<String>,
-        #[serde(default)]
-        script_language: Option<String>,
-        #[serde(default)]
-        script_path: Option<String>,
-        #[serde(default)]
-        script_inline: Option<String>,
-        #[serde(default)]
-        script_handles: Option<Vec<String>>,
+        event_handlers: Option<Vec<serde_json::Value>>,
         // Scheduled tasks to create with this server
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
@@ -86,17 +67,9 @@ pub enum CommonAction {
         startup_params: Option<serde_json::Value>,
         #[serde(default)]
         initial_memory: Option<String>,
-        // Script configuration fields
+        // Event handler configuration
         #[serde(default)]
-        script_runtime: Option<String>,
-        #[serde(default)]
-        script_language: Option<String>,
-        #[serde(default)]
-        script_path: Option<String>,
-        #[serde(default)]
-        script_inline: Option<String>,
-        #[serde(default)]
-        script_handles: Option<Vec<String>>,
+        event_handlers: Option<Vec<serde_json::Value>>,
         // Scheduled tasks to create with this client
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,

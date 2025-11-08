@@ -110,11 +110,13 @@ pub async fn run_rolling_tui(
     let scripting_mode = state.get_selected_scripting_mode().await;
     let scripting_status = format_scripting_mode(scripting_mode);
     let web_search_mode = state.get_web_search_mode().await;
+    let event_handler_mode = state.get_event_handler_mode().await;
 
     footer.set_connection_info(ConnectionInfo {
         model: app.connection_info.model.clone(),
         scripting_env: scripting_status,
         web_search_mode,
+        event_handler_mode,
     });
     footer.set_packet_stats(app.packet_stats.clone());
     footer.set_log_level(app.log_level);
@@ -915,6 +917,30 @@ async fn handle_key_event(
             return Ok(false);
         }
 
+        // Ctrl+H to cycle event handler mode (ANY -> SCRIPT -> STATIC -> LLM -> ANY)
+        KeyCode::Char('h') | KeyCode::Char('H') if modifiers.contains(KeyModifiers::CONTROL) => {
+            let new_mode = state.cycle_event_handler_mode().await;
+            let message = match new_mode {
+                crate::state::app_state::EventHandlerMode::Any => {
+                    "Handler mode: ANY - LLM chooses handler types (script/static/llm) as appropriate"
+                }
+                crate::state::app_state::EventHandlerMode::Script => {
+                    "Handler mode: SCRIPT - LLM must configure all events with script handlers"
+                }
+                crate::state::app_state::EventHandlerMode::Static => {
+                    "Handler mode: STATIC - LLM must configure all events with static response handlers"
+                }
+                crate::state::app_state::EventHandlerMode::Llm => {
+                    "Handler mode: LLM - LLM must configure all events to be handled by LLM (no scripts/static)"
+                }
+            };
+            print_output_line(message, footer, &palette)?;
+
+            update_ui_from_state(app, state, footer).await;
+            footer.render(&mut stdout())?;
+            return Ok(false);
+        }
+
         // Ctrl+N or Alt+N to insert newline
         KeyCode::Char('n') | KeyCode::Char('N') if modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT) => {
             footer.input_mut().insert_newline();
@@ -1536,11 +1562,13 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     let scripting_mode = state.get_selected_scripting_mode().await;
     let scripting_status = format_scripting_mode(scripting_mode);
     let web_search_mode = state.get_web_search_mode().await;
+    let event_handler_mode = state.get_event_handler_mode().await;
 
     footer.set_connection_info(ConnectionInfo {
         model: app.connection_info.model.clone(),
         scripting_env: scripting_status,
         web_search_mode,
+        event_handler_mode,
     });
 
     // CRITICAL: Handle footer size changes (expansion/shrinking)

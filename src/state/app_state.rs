@@ -163,6 +163,42 @@ impl Default for WebSearchMode {
     }
 }
 
+/// Event handler mode - controls how LLM should configure event handlers
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventHandlerMode {
+    /// LLM chooses handler types (script/static/llm) as appropriate
+    Any,
+    /// Force all events to use script handlers
+    Script,
+    /// Force all events to use static response handlers
+    Static,
+    /// Force all events to use LLM handlers
+    Llm,
+}
+
+impl EventHandlerMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Any => "ANY",
+            Self::Script => "SCRIPT",
+            Self::Static => "STATIC",
+            Self::Llm => "LLM",
+        }
+    }
+}
+
+impl std::fmt::Display for EventHandlerMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl Default for EventHandlerMode {
+    fn default() -> Self {
+        Self::Any
+    }
+}
+
 /// Request for web search approval (sent from tool executor to UI)
 pub struct WebApprovalRequest {
     pub url: String,
@@ -203,6 +239,8 @@ struct AppStateInner {
     scripting_env: crate::scripting::ScriptingEnvironment,
     /// Currently selected scripting mode (LLM, Python, or JavaScript)
     selected_scripting_mode: ScriptingMode,
+    /// Event handler mode (controls how LLM configures event handlers)
+    event_handler_mode: EventHandlerMode,
     /// Web search mode (On/Off/Ask)
     web_search_mode: WebSearchMode,
     /// Channel for sending web approval requests to UI
@@ -243,6 +281,7 @@ impl AppState {
 
         // Default to ON mode - LLM chooses runtime dynamically
         let selected_scripting_mode = ScriptingMode::On;
+        let event_handler_mode = EventHandlerMode::default();
 
         // Generate unique instance ID: process_id + timestamp + random bytes
         let instance_id = Self::generate_instance_id();
@@ -257,6 +296,7 @@ impl AppState {
                 ollama_model: "qwen3-coder:30b".to_string(),
                 scripting_env,
                 selected_scripting_mode,
+                event_handler_mode,
                 web_search_mode: WebSearchMode::On, // Default to enabled
                 web_approval_tx: None, // Will be set by TUI
                 include_disabled_protocols,
@@ -348,7 +388,7 @@ impl AppState {
                 status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
                 startup_params: s.startup_params.clone(),
-                script_config: s.script_config.clone(),
+                event_handler_config: s.event_handler_config.clone(),
                 protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
             }
@@ -380,7 +420,7 @@ impl AppState {
                 status_changed_at: s.status_changed_at,
                 local_addr: s.local_addr,
                 startup_params: s.startup_params.clone(),
-                script_config: s.script_config.clone(),
+                event_handler_config: s.event_handler_config.clone(),
                 protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
             })
@@ -500,6 +540,29 @@ impl AppState {
         (next, true)
     }
 
+    /// Get the currently selected event handler mode
+    pub async fn get_event_handler_mode(&self) -> EventHandlerMode {
+        self.inner.read().await.event_handler_mode
+    }
+
+    /// Set the event handler mode
+    pub async fn set_event_handler_mode(&self, mode: EventHandlerMode) {
+        self.inner.write().await.event_handler_mode = mode;
+    }
+
+    /// Cycle event handler mode through ANY -> SCRIPT -> STATIC -> LLM -> ANY
+    /// Returns the new mode
+    pub async fn cycle_event_handler_mode(&self) -> EventHandlerMode {
+        let mut inner = self.inner.write().await;
+        inner.event_handler_mode = match inner.event_handler_mode {
+            EventHandlerMode::Any => EventHandlerMode::Script,
+            EventHandlerMode::Script => EventHandlerMode::Static,
+            EventHandlerMode::Static => EventHandlerMode::Llm,
+            EventHandlerMode::Llm => EventHandlerMode::Any,
+        };
+        inner.event_handler_mode
+    }
+
     /// Get the current web search mode
     pub async fn get_web_search_mode(&self) -> WebSearchMode {
         self.inner.read().await.web_search_mode
@@ -551,25 +614,25 @@ impl AppState {
         self.inner.read().await.system_capabilities.clone()
     }
 
-    /// Update script configuration for a server
-    pub async fn set_script_config(
+    /// Update event handler configuration for a server
+    pub async fn set_event_handler_config(
         &self,
         server_id: ServerId,
-        config: Option<crate::scripting::ScriptConfig>,
+        config: Option<crate::scripting::EventHandlerConfig>,
     ) {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
-            server.script_config = config;
+            server.event_handler_config = config;
         }
     }
 
-    /// Get script configuration for a server
-    pub async fn get_script_config(
+    /// Get event handler configuration for a server
+    pub async fn get_event_handler_config(
         &self,
         server_id: ServerId,
-    ) -> Option<crate::scripting::ScriptConfig> {
+    ) -> Option<crate::scripting::EventHandlerConfig> {
         self.inner.read().await
             .servers.get(&server_id)
-            .and_then(|s| s.script_config.clone())
+            .and_then(|s| s.event_handler_config.clone())
     }
 
     /// Get a summary of current state for LLM context
@@ -1056,7 +1119,7 @@ impl AppState {
                 created_at: c.created_at,
                 status_changed_at: c.status_changed_at,
                 startup_params: c.startup_params.clone(),
-                script_config: c.script_config.clone(),
+                event_handler_config: c.event_handler_config.clone(),
                 protocol_data: c.protocol_data.clone(),
                 log_files: c.log_files.clone(),
             }
@@ -1087,7 +1150,7 @@ impl AppState {
                 created_at: c.created_at,
                 status_changed_at: c.status_changed_at,
                 startup_params: c.startup_params.clone(),
-                script_config: c.script_config.clone(),
+                event_handler_config: c.event_handler_config.clone(),
                 protocol_data: c.protocol_data.clone(),
                 log_files: c.log_files.clone(),
             })
@@ -1169,28 +1232,28 @@ impl AppState {
             .map(f)
     }
 
-    /// Update script configuration for a client
-    pub async fn set_client_script_config(
+    /// Update event handler configuration for a client
+    pub async fn set_client_event_handler_config(
         &self,
         client_id: ClientId,
-        config: Option<crate::scripting::ScriptConfig>,
+        config: Option<crate::scripting::EventHandlerConfig>,
     ) {
         if let Some(client) = self.inner.write().await.clients.get_mut(&client_id) {
-            client.script_config = config;
+            client.event_handler_config = config;
         }
     }
 
-    /// Get script configuration for a client
-    pub async fn get_client_script_config(
+    /// Get event handler configuration for a client
+    pub async fn get_client_event_handler_config(
         &self,
         client_id: ClientId,
-    ) -> Option<crate::scripting::ScriptConfig> {
+    ) -> Option<crate::scripting::EventHandlerConfig> {
         self.inner
             .read()
             .await
             .clients
             .get(&client_id)
-            .and_then(|c| c.script_config.clone())
+            .and_then(|c| c.event_handler_config.clone())
     }
 
     /// Cleanup old disconnected clients (removes clients that have been disconnected for more than max_age_secs)
