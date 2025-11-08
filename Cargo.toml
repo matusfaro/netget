@@ -79,6 +79,11 @@ tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:toki
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
+usb-common = ["dep:usbip"]  # Common USB/IP functionality for USB device protocols
+usb-keyboard = ["usb-common"]  # USB HID Keyboard virtual device
+usb-mouse = ["usb-common"]  # USB HID Mouse virtual device
+usb-serial = ["usb-common"]  # USB CDC ACM Serial virtual device
+usb = ["usb-common"]  # Low-level USB device with full descriptor control
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
 git = ["dep:git2"]  # Git client support
@@ -169,6 +174,10 @@ all-protocols = [
     "tls",
     "saml-idp",
     "saml-sp",
+    "usb-keyboard",
+    "usb-mouse",
+    "usb-serial",
+    "usb",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
@@ -488,6 +497,9 @@ kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] 
 k8s-openapi = { version = "0.24", optional = true, features = ["v1_30"] }
 # NFS types for NFSv3 protocol
 nfs3_types = { version = "0.4", optional = true }
+
+# USB/IP protocol for virtual USB device creation
+usbip = { version = "0.3", optional = true }
 
 [dev-dependencies]
 # For async tests
