@@ -79,7 +79,7 @@ vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implemen
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
-kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.31 API support
+kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
 git = ["dep:git2"]  # Git client support
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol", "dep:rdkafka"]  # Apache Kafka broker and client
@@ -475,9 +475,9 @@ git2 = { version = "0.19", optional = true }
 rumqttc = { version = "0.24", optional = true }
 # Kafka client
 rdkafka = { version = "0.36", optional = true }
-# Kubernetes client with v1.31 API support
+# Kubernetes client with v1.30 API support (latest in k8s-openapi 0.22)
 kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] }
-k8s-openapi = { version = "0.22", optional = true, features = ["v1_31"] }
+k8s-openapi = { version = "0.22", optional = true, features = ["v1_30"] }
 
 [dev-dependencies]
 # For async tests
