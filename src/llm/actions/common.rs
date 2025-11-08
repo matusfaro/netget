@@ -178,7 +178,7 @@ pub fn show_message_action() -> ActionDefinition {
 
 /// Get action definition for open_server
 pub fn open_server_action(
-    selected_mode: crate::state::app_state::ScriptingMode,
+    _selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_enabled: bool,
 ) -> ActionDefinition {
@@ -306,7 +306,7 @@ pub fn close_all_servers_action() -> ActionDefinition {
 
 /// Get action definition for open_client
 pub fn open_client_action(
-    selected_mode: crate::state::app_state::ScriptingMode,
+    _selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_enabled: bool,
 ) -> ActionDefinition {
@@ -757,7 +757,7 @@ pub fn get_all_common_actions(
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    let mut actions = vec![
+    let actions = vec![
         // === Server Management ===
         open_server_action(selected_mode, env, is_open_server_enabled),
         close_server_action(),
