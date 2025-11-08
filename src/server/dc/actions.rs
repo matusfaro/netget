@@ -1,7 +1,7 @@
 //! DC protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -115,252 +115,246 @@ impl DcProtocol {
     }
 }
 
-impl Server for DcProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::dc::DcServer;
-
-            DcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "hub_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Name of the DC hub".to_string(),
-                required: false,
-                example: serde_json::json!("NetGet DC Hub"),
-            },
-            crate::llm::actions::ParameterDefinition {
-                name: "hub_topic".to_string(),
-                type_hint: "string".to_string(),
-                description: "Hub topic/description".to_string(),
-                required: false,
-                example: serde_json::json!("Welcome to NetGet DC Hub"),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // DC could have async actions like broadcast_message in the future
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_dc_lock_action(),
-            send_dc_hello_action(),
-            send_dc_hubname_action(),
-            send_dc_message_action(),
-            send_dc_broadcast_action(),
-            send_dc_userlist_action(),
-            send_dc_search_result_action(),
-            send_dc_kick_action(),
-            send_dc_redirect_action(),
-            send_dc_raw_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing action type")?;
-
-        match action_type {
-            "send_dc_lock" => {
-                let lock = action
-                    .get("lock")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("EXTENDEDPROTOCOLABCABCABCABCABCABC");
-                let pk = action
-                    .get("pk")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("NetGetHub");
-
-                let msg = format!("$Lock {} Pk={}|", lock, pk);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_hello" => {
-                let nickname = action
-                    .get("nickname")
-                    .and_then(|v| v.as_str())
-                    .context("Missing nickname")?;
-
-                let msg = format!("$Hello {}|", nickname);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_hubname" => {
-                let name = action
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .context("Missing hub name")?;
-
-                let msg = format!("$HubName {}|", name);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_message" => {
-                let target = action
-                    .get("target")
-                    .and_then(|v| v.as_str())
-                    .context("Missing target")?;
-                let source = action
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Hub");
-                let message = action
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .context("Missing message")?;
-
-                let msg = format!("$To: {} From: {} $<{}> {}|", target, source, source, message);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_broadcast" => {
-                let source = action
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .context("Missing source")?;
-                let message = action
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .context("Missing message")?;
-
-                let msg = format!("<{}> {}|", source, message);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_userlist" => {
-                let users = action
-                    .get("users")
-                    .and_then(|v| v.as_array())
-                    .context("Missing users array")?;
-
-                let user_list: Vec<String> = users
-                    .iter()
-                    .filter_map(|u| u.as_str().map(|s| s.to_string()))
-                    .collect();
-
-                let msg = format!("$NickList {}$$|", user_list.join("$$"));
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_search_result" => {
-                let source = action
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .context("Missing source")?;
-                let filename = action
-                    .get("filename")
-                    .and_then(|v| v.as_str())
-                    .context("Missing filename")?;
-                let size = action
-                    .get("size")
-                    .and_then(|v| v.as_u64())
-                    .context("Missing size")?;
-                let slots = action
-                    .get("slots")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1);
-                let hub_name = action
-                    .get("hub_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("NetGetHub");
-
-                // $SR source filename\x05size slots/totalslots\x05hubname|
-                let msg = format!("$SR {} {}\x05{} {}/{}\x05{}|",
-                    source, filename, size, slots, slots, hub_name);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_kick" => {
-                let nickname = action
-                    .get("nickname")
-                    .and_then(|v| v.as_str())
-                    .context("Missing nickname")?;
-
-                let msg = format!("$Kick {}|", nickname);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_redirect" => {
-                let address = action
-                    .get("address")
-                    .and_then(|v| v.as_str())
-                    .context("Missing address")?;
-
-                let msg = format!("$ForceMove {}|", address);
-                Ok(ActionResult::Output(msg.into_bytes()))
-            }
-            "send_dc_raw" => {
-                let mut command = action
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .context("Missing command")?
-                    .to_string();
-
-                // Ensure pipe terminator
-                if !command.ends_with('|') {
-                    command.push('|');
-                }
-
-                Ok(ActionResult::Output(command.into_bytes()))
-            }
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_connection" => Ok(ActionResult::CloseConnection),
-            _ => Err(anyhow::anyhow!("Unknown DC action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for DcProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "hub_name".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Name of the DC hub".to_string(),
+                    required: false,
+                    example: serde_json::json!("NetGet DC Hub"),
+                },
+                crate::llm::actions::ParameterDefinition {
+                    name: "hub_topic".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Hub topic/description".to_string(),
+                    required: false,
+                    example: serde_json::json!("Welcome to NetGet DC Hub"),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "DC"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            DC_COMMAND_RECEIVED_EVENT.clone()
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>DC"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["dc", "direct connect", "dc++", "nmdc", "via dc"]
-    }
-
-    fn metadata(&self) -> ProtocolMetadataV2 {
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual NMDC protocol implementation - text-based with pipe delimiters")
-            .llm_control("Authentication (Lock/Key/Hello), chat messages, search results, user management (kick/redirect)")
-            .e2e_testing("Not yet implemented")
-            .notes("NMDC protocol only (ADC not supported). No key validation or P2P connection handling.")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "DC (Direct Connect) hub server - peer-to-peer file sharing protocol with chat and search capabilities"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a DC hub server"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Application"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // DC could have async actions like broadcast_message in the future
+            Vec::new()
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_dc_lock_action(),
+                send_dc_hello_action(),
+                send_dc_hubname_action(),
+                send_dc_message_action(),
+                send_dc_broadcast_action(),
+                send_dc_userlist_action(),
+                send_dc_search_result_action(),
+                send_dc_kick_action(),
+                send_dc_redirect_action(),
+                send_dc_raw_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "DC"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                DC_COMMAND_RECEIVED_EVENT.clone()
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>DC"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["dc", "direct connect", "dc++", "nmdc", "via dc"]
+        }
+        fn metadata(&self) -> ProtocolMetadataV2 {
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual NMDC protocol implementation - text-based with pipe delimiters")
+                .llm_control("Authentication (Lock/Key/Hello), chat messages, search results, user management (kick/redirect)")
+                .e2e_testing("Not yet implemented")
+                .notes("NMDC protocol only (ADC not supported). No key validation or P2P connection handling.")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "DC (Direct Connect) hub server - peer-to-peer file sharing protocol with chat and search capabilities"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a DC hub server"
+        }
+        fn group_name(&self) -> &'static str {
+            "Application"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for DcProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::dc::DcServer;
+    
+                DcServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing action type")?;
+    
+            match action_type {
+                "send_dc_lock" => {
+                    let lock = action
+                        .get("lock")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("EXTENDEDPROTOCOLABCABCABCABCABCABC");
+                    let pk = action
+                        .get("pk")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("NetGetHub");
+    
+                    let msg = format!("$Lock {} Pk={}|", lock, pk);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_hello" => {
+                    let nickname = action
+                        .get("nickname")
+                        .and_then(|v| v.as_str())
+                        .context("Missing nickname")?;
+    
+                    let msg = format!("$Hello {}|", nickname);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_hubname" => {
+                    let name = action
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .context("Missing hub name")?;
+    
+                    let msg = format!("$HubName {}|", name);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_message" => {
+                    let target = action
+                        .get("target")
+                        .and_then(|v| v.as_str())
+                        .context("Missing target")?;
+                    let source = action
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Hub");
+                    let message = action
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .context("Missing message")?;
+    
+                    let msg = format!("$To: {} From: {} $<{}> {}|", target, source, source, message);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_broadcast" => {
+                    let source = action
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .context("Missing source")?;
+                    let message = action
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .context("Missing message")?;
+    
+                    let msg = format!("<{}> {}|", source, message);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_userlist" => {
+                    let users = action
+                        .get("users")
+                        .and_then(|v| v.as_array())
+                        .context("Missing users array")?;
+    
+                    let user_list: Vec<String> = users
+                        .iter()
+                        .filter_map(|u| u.as_str().map(|s| s.to_string()))
+                        .collect();
+    
+                    let msg = format!("$NickList {}$$|", user_list.join("$$"));
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_search_result" => {
+                    let source = action
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .context("Missing source")?;
+                    let filename = action
+                        .get("filename")
+                        .and_then(|v| v.as_str())
+                        .context("Missing filename")?;
+                    let size = action
+                        .get("size")
+                        .and_then(|v| v.as_u64())
+                        .context("Missing size")?;
+                    let slots = action
+                        .get("slots")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1);
+                    let hub_name = action
+                        .get("hub_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("NetGetHub");
+    
+                    // $SR source filename\x05size slots/totalslots\x05hubname|
+                    let msg = format!("$SR {} {}\x05{} {}/{}\x05{}|",
+                        source, filename, size, slots, slots, hub_name);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_kick" => {
+                    let nickname = action
+                        .get("nickname")
+                        .and_then(|v| v.as_str())
+                        .context("Missing nickname")?;
+    
+                    let msg = format!("$Kick {}|", nickname);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_redirect" => {
+                    let address = action
+                        .get("address")
+                        .and_then(|v| v.as_str())
+                        .context("Missing address")?;
+    
+                    let msg = format!("$ForceMove {}|", address);
+                    Ok(ActionResult::Output(msg.into_bytes()))
+                }
+                "send_dc_raw" => {
+                    let mut command = action
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .context("Missing command")?
+                        .to_string();
+    
+                    // Ensure pipe terminator
+                    if !command.ends_with('|') {
+                        command.push('|');
+                    }
+    
+                    Ok(ActionResult::Output(command.into_bytes()))
+                }
+                "wait_for_more" => Ok(ActionResult::WaitForMore),
+                "close_connection" => Ok(ActionResult::CloseConnection),
+                _ => Err(anyhow::anyhow!("Unknown DC action: {}", action_type)),
+            }
+        }
+}
+
 
 /// Event type ID for DC command received
 pub static DC_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {

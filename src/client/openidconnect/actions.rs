@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -121,366 +122,360 @@ impl OpenIdConnectClientProtocol {
     }
 }
 
-impl Client for OpenIdConnectClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::openidconnect::OpenIdConnectClient;
-            OpenIdConnectClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "client_id".to_string(),
-                description: "OAuth2/OIDC client ID".to_string(),
-                type_hint: "string".to_string(),
-                required: true,
-                example: json!("my-application-id"),
-            },
-            ParameterDefinition {
-                name: "client_secret".to_string(),
-                description: "OAuth2/OIDC client secret (if using confidential client)".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("secret-key-12345"),
-            },
-            ParameterDefinition {
-                name: "redirect_uri".to_string(),
-                description: "OAuth2 redirect URI for authorization code flow".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("http://localhost:8080/callback"),
-            },
-            ParameterDefinition {
-                name: "scopes".to_string(),
-                description: "OAuth2 scopes to request (space-separated)".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("openid profile email"),
-            },
-            ParameterDefinition {
-                name: "flow".to_string(),
-                description: "OAuth2/OIDC flow type (device_code, password, client_credentials, authorization_code)".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("device_code"),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "discover_configuration".to_string(),
-                description: "Discover OpenID Connect provider configuration from .well-known/openid-configuration".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "discover_configuration"
-                }),
-            },
-            ActionDefinition {
-                name: "start_device_flow".to_string(),
-                description: "Start OAuth2 device code flow for CLI authentication".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "scopes".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Space-separated OAuth scopes".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "start_device_flow",
-                    "scopes": "openid profile email"
-                }),
-            },
-            ActionDefinition {
-                name: "start_authorization_code_flow".to_string(),
-                description: "Start OAuth2 authorization code flow with local HTTP callback server".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "scopes".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Space-separated OAuth scopes".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "port".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Local callback server port (default: 8080)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "start_authorization_code_flow",
-                    "scopes": "openid profile email",
-                    "port": 8080
-                }),
-            },
-            ActionDefinition {
-                name: "exchange_password".to_string(),
-                description: "Exchange username/password for tokens (Resource Owner Password Credentials flow)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "username".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Username".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "password".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Password".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "scopes".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Space-separated OAuth scopes".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "exchange_password",
-                    "username": "user@example.com",
-                    "password": "secret123",
-                    "scopes": "openid profile"
-                }),
-            },
-            ActionDefinition {
-                name: "exchange_client_credentials".to_string(),
-                description: "Exchange client credentials for access token (machine-to-machine)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "scopes".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Space-separated OAuth scopes".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "exchange_client_credentials",
-                    "scopes": "api.read api.write"
-                }),
-            },
-            ActionDefinition {
-                name: "refresh_token".to_string(),
-                description: "Refresh access token using refresh token".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "refresh_token"
-                }),
-            },
-            ActionDefinition {
-                name: "fetch_userinfo".to_string(),
-                description: "Fetch user information from UserInfo endpoint using access token".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "fetch_userinfo"
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the OpenID Connect provider".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "fetch_userinfo".to_string(),
-                description: "Fetch user information after receiving tokens".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "fetch_userinfo"
-                }),
-            },
-            ActionDefinition {
-                name: "refresh_token".to_string(),
-                description: "Refresh access token in response to expiration".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "refresh_token"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "discover_configuration" => {
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_discover".to_string(),
-                    data: json!({}),
-                })
-            }
-            "start_device_flow" => {
-                let scopes = action
-                    .get("scopes")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_device_flow".to_string(),
-                    data: json!({
-                        "scopes": scopes,
-                    }),
-                })
-            }
-            "start_authorization_code_flow" => {
-                let scopes = action
-                    .get("scopes")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                let port = action
-                    .get("port")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(8080) as u16;
-
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_authorization_code".to_string(),
-                    data: json!({
-                        "scopes": scopes,
-                        "port": port,
-                    }),
-                })
-            }
-            "exchange_password" => {
-                let username = action
-                    .get("username")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'username' field")?
-                    .to_string();
-
-                let password = action
-                    .get("password")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'password' field")?
-                    .to_string();
-
-                let scopes = action
-                    .get("scopes")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_password_flow".to_string(),
-                    data: json!({
-                        "username": username,
-                        "password": password,
-                        "scopes": scopes,
-                    }),
-                })
-            }
-            "exchange_client_credentials" => {
-                let scopes = action
-                    .get("scopes")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_client_credentials".to_string(),
-                    data: json!({
-                        "scopes": scopes,
-                    }),
-                })
-            }
-            "refresh_token" => {
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_refresh_token".to_string(),
-                    data: json!({}),
-                })
-            }
-            "fetch_userinfo" => {
-                Ok(ClientActionResult::Custom {
-                    name: "oidc_fetch_userinfo".to_string(),
-                    data: json!({}),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown OpenID Connect client action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for OpenIdConnectClientProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "client_id".to_string(),
+                    description: "OAuth2/OIDC client ID".to_string(),
+                    type_hint: "string".to_string(),
+                    required: true,
+                    example: json!("my-application-id"),
+                },
+                ParameterDefinition {
+                    name: "client_secret".to_string(),
+                    description: "OAuth2/OIDC client secret (if using confidential client)".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    example: json!("secret-key-12345"),
+                },
+                ParameterDefinition {
+                    name: "redirect_uri".to_string(),
+                    description: "OAuth2 redirect URI for authorization code flow".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    example: json!("http://localhost:8080/callback"),
+                },
+                ParameterDefinition {
+                    name: "scopes".to_string(),
+                    description: "OAuth2 scopes to request (space-separated)".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    example: json!("openid profile email"),
+                },
+                ParameterDefinition {
+                    name: "flow".to_string(),
+                    description: "OAuth2/OIDC flow type (device_code, password, client_credentials, authorization_code)".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    example: json!("device_code"),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "OpenIDConnect"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "oidc_discovered".to_string(),
-                description: "Triggered when OIDC provider configuration is discovered".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oidc_token_received".to_string(),
-                description: "Triggered when OAuth/OIDC tokens are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oidc_userinfo_received".to_string(),
-                description: "Triggered when UserInfo data is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>OIDC"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["openidconnect", "oidc", "openid connect", "oauth2 client"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("openidconnect crate with full OAuth2/OIDC flows")
-            .llm_control("Full control over authentication flows (device code, password, client credentials)")
-            .e2e_testing("Local OIDC provider or public test providers")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "OpenID Connect client for OAuth2/OIDC authentication"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to OpenID Connect provider at https://accounts.google.com and authenticate"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Authentication"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "discover_configuration".to_string(),
+                    description: "Discover OpenID Connect provider configuration from .well-known/openid-configuration".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "discover_configuration"
+                    }),
+                },
+                ActionDefinition {
+                    name: "start_device_flow".to_string(),
+                    description: "Start OAuth2 device code flow for CLI authentication".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "scopes".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Space-separated OAuth scopes".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "start_device_flow",
+                        "scopes": "openid profile email"
+                    }),
+                },
+                ActionDefinition {
+                    name: "start_authorization_code_flow".to_string(),
+                    description: "Start OAuth2 authorization code flow with local HTTP callback server".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "scopes".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Space-separated OAuth scopes".to_string(),
+                            required: false,
+                        },
+                        Parameter {
+                            name: "port".to_string(),
+                            type_hint: "number".to_string(),
+                            description: "Local callback server port (default: 8080)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "start_authorization_code_flow",
+                        "scopes": "openid profile email",
+                        "port": 8080
+                    }),
+                },
+                ActionDefinition {
+                    name: "exchange_password".to_string(),
+                    description: "Exchange username/password for tokens (Resource Owner Password Credentials flow)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "username".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Username".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "password".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Password".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "scopes".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Space-separated OAuth scopes".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "exchange_password",
+                        "username": "user@example.com",
+                        "password": "secret123",
+                        "scopes": "openid profile"
+                    }),
+                },
+                ActionDefinition {
+                    name: "exchange_client_credentials".to_string(),
+                    description: "Exchange client credentials for access token (machine-to-machine)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "scopes".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Space-separated OAuth scopes".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "exchange_client_credentials",
+                        "scopes": "api.read api.write"
+                    }),
+                },
+                ActionDefinition {
+                    name: "refresh_token".to_string(),
+                    description: "Refresh access token using refresh token".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "refresh_token"
+                    }),
+                },
+                ActionDefinition {
+                    name: "fetch_userinfo".to_string(),
+                    description: "Fetch user information from UserInfo endpoint using access token".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "fetch_userinfo"
+                    }),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from the OpenID Connect provider".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "fetch_userinfo".to_string(),
+                    description: "Fetch user information after receiving tokens".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "fetch_userinfo"
+                    }),
+                },
+                ActionDefinition {
+                    name: "refresh_token".to_string(),
+                    description: "Refresh access token in response to expiration".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "refresh_token"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "OpenIDConnect"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "oidc_discovered".to_string(),
+                    description: "Triggered when OIDC provider configuration is discovered".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "oidc_token_received".to_string(),
+                    description: "Triggered when OAuth/OIDC tokens are received".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "oidc_userinfo_received".to_string(),
+                    description: "Triggered when UserInfo data is received".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>OIDC"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["openidconnect", "oidc", "openid connect", "oauth2 client"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("openidconnect crate with full OAuth2/OIDC flows")
+                .llm_control("Full control over authentication flows (device code, password, client credentials)")
+                .e2e_testing("Local OIDC provider or public test providers")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "OpenID Connect client for OAuth2/OIDC authentication"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to OpenID Connect provider at https://accounts.google.com and authenticate"
+        }
+        fn group_name(&self) -> &'static str {
+            "Authentication"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for OpenIdConnectClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::openidconnect::OpenIdConnectClient;
+                OpenIdConnectClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "discover_configuration" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_discover".to_string(),
+                        data: json!({}),
+                    })
+                }
+                "start_device_flow" => {
+                    let scopes = action
+                        .get("scopes")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_device_flow".to_string(),
+                        data: json!({
+                            "scopes": scopes,
+                        }),
+                    })
+                }
+                "start_authorization_code_flow" => {
+                    let scopes = action
+                        .get("scopes")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+    
+                    let port = action
+                        .get("port")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(8080) as u16;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_authorization_code".to_string(),
+                        data: json!({
+                            "scopes": scopes,
+                            "port": port,
+                        }),
+                    })
+                }
+                "exchange_password" => {
+                    let username = action
+                        .get("username")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'username' field")?
+                        .to_string();
+    
+                    let password = action
+                        .get("password")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'password' field")?
+                        .to_string();
+    
+                    let scopes = action
+                        .get("scopes")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_password_flow".to_string(),
+                        data: json!({
+                            "username": username,
+                            "password": password,
+                            "scopes": scopes,
+                        }),
+                    })
+                }
+                "exchange_client_credentials" => {
+                    let scopes = action
+                        .get("scopes")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_client_credentials".to_string(),
+                        data: json!({
+                            "scopes": scopes,
+                        }),
+                    })
+                }
+                "refresh_token" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_refresh_token".to_string(),
+                        data: json!({}),
+                    })
+                }
+                "fetch_userinfo" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "oidc_fetch_userinfo".to_string(),
+                        data: json!({}),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                _ => Err(anyhow::anyhow!("Unknown OpenID Connect client action: {}", action_type)),
+            }
+        }
+}
+

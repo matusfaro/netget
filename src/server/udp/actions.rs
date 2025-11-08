@@ -1,7 +1,7 @@
 //! UDP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -31,87 +31,82 @@ impl UdpProtocol {
     }
 }
 
-impl Server for UdpProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::udp::UdpServer;
-            UdpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![send_to_address_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![send_udp_response_action(), ignore_datagram_action()]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_to_address" => self.execute_send_to_address(action),
-            "send_udp_response" => self.execute_send_udp_response(action),
-            "ignore_datagram" => Ok(ActionResult::NoAction),
-            _ => Err(anyhow::anyhow!("Unknown UDP action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for UdpProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![send_to_address_action()]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "UDP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_udp_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["udp"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Beta)
-            .implementation("Manual UDP socket handling with tokio")
-            .llm_control("Full datagram control - all sent/received data")
-            .e2e_testing("std::net::UdpSocket")
-            .notes("Stateless, used by DNS/DHCP/NTP")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "UDP datagram server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Listen on port 5000 via UDP"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![send_udp_response_action(), ignore_datagram_action()]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "UDP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_udp_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["udp"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Beta)
+                .implementation("Manual UDP socket handling with tokio")
+                .llm_control("Full datagram control - all sent/received data")
+                .e2e_testing("std::net::UdpSocket")
+                .notes("Stateless, used by DNS/DHCP/NTP")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "UDP datagram server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Listen on port 5000 via UDP"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for UdpProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::udp::UdpServer;
+                UdpServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_to_address" => self.execute_send_to_address(action),
+                "send_udp_response" => self.execute_send_udp_response(action),
+                "ignore_datagram" => Ok(ActionResult::NoAction),
+                _ => Err(anyhow::anyhow!("Unknown UDP action: {}", action_type)),
+            }
+        }
+}
+
 
 impl UdpProtocol {
     /// Execute send_to_address async action
