@@ -389,6 +389,7 @@ impl ConversationHandler {
                                 ToolAction::ReadBaseStackDocs { .. } => "read_base_stack_docs",
                                 ToolAction::ListNetworkInterfaces => "list_network_interfaces",
                                 ToolAction::ListModels => "list_models",
+                                ToolAction::GenerateRandom { .. } => "generate_random",
                             };
                             state.add_tool_call(tool_name.to_string(), tool_action.describe());
                         }
