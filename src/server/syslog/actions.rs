@@ -1,7 +1,7 @@
 //! Syslog protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,91 +19,86 @@ impl SyslogProtocol {
     }
 }
 
-impl Server for SyslogProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::syslog::SyslogServer;
-            SyslogServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // Syslog has async actions for forwarding logs
-        vec![forward_syslog_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            store_syslog_message_action(),
-            ignore_syslog_message_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "forward_syslog" => self.execute_forward_syslog(action),
-            "store_syslog_message" => self.execute_store_syslog_message(action),
-            "ignore_syslog_message" => Ok(ActionResult::NoAction),
-            _ => Err(anyhow::anyhow!("Unknown Syslog action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for SyslogProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // Syslog has async actions for forwarding logs
+            vec![forward_syslog_action()]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Syslog"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_syslog_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>SYSLOG"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["syslog"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("syslog_loose v0.22 for parsing RFC 3164/5424 messages")
-            .llm_control("Message filtering, storage, forwarding, alerting")
-            .e2e_testing("logger command (Linux/macOS built-in)")
-            .notes("RFC 3164 and RFC 5424 support, UDP transport")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Syslog server for log aggregation and analysis"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Syslog Port 514 collect system logs and alert on critical errors"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                store_syslog_message_action(),
+                ignore_syslog_message_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Syslog"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_syslog_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>SYSLOG"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["syslog"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("syslog_loose v0.22 for parsing RFC 3164/5424 messages")
+                .llm_control("Message filtering, storage, forwarding, alerting")
+                .e2e_testing("logger command (Linux/macOS built-in)")
+                .notes("RFC 3164 and RFC 5424 support, UDP transport")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Syslog server for log aggregation and analysis"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Syslog Port 514 collect system logs and alert on critical errors"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SyslogProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::syslog::SyslogServer;
+                SyslogServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "forward_syslog" => self.execute_forward_syslog(action),
+                "store_syslog_message" => self.execute_store_syslog_message(action),
+                "ignore_syslog_message" => Ok(ActionResult::NoAction),
+                _ => Err(anyhow::anyhow!("Unknown Syslog action: {}", action_type)),
+            }
+        }
+}
+
 
 impl SyslogProtocol {
     /// Execute forward_syslog async action

@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::{ConnectContext, EventType};
@@ -76,309 +77,303 @@ impl ArpClientProtocol {
     }
 }
 
-impl Client for ArpClientProtocol {
-    fn connect(
-        &self,
-        ctx: ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::arp::ArpClient;
-            ArpClient::start_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_arp_request".to_string(),
-                description: "Send an ARP request (who-has query)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "sender_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source MAC address (format: aa:bb:cc:dd:ee:ff)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sender_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source IP address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "target_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target IP address to query".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_arp_request",
-                    "sender_mac": "aa:bb:cc:dd:ee:ff",
-                    "sender_ip": "192.168.1.100",
-                    "target_ip": "192.168.1.1"
-                }),
-            },
-            ActionDefinition {
-                name: "send_arp_reply".to_string(),
-                description: "Send an ARP reply (gratuitous ARP)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "sender_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source MAC address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sender_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source IP address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "target_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target MAC address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "target_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target IP address".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_arp_reply",
-                    "sender_mac": "aa:bb:cc:dd:ee:ff",
-                    "sender_ip": "192.168.1.100",
-                    "target_mac": "11:22:33:44:55:66",
-                    "target_ip": "192.168.1.1"
-                }),
-            },
-            ActionDefinition {
-                name: "stop_capture".to_string(),
-                description: "Stop ARP capture and close client".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "stop_capture"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_arp_request".to_string(),
-                description: "Send ARP request in response to received ARP packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "sender_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source MAC address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sender_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source IP address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "target_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target IP to query".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_arp_request",
-                    "sender_mac": "aa:bb:cc:dd:ee:ff",
-                    "sender_ip": "192.168.1.100",
-                    "target_ip": "192.168.1.1"
-                }),
-            },
-            ActionDefinition {
-                name: "send_arp_reply".to_string(),
-                description: "Send ARP reply in response to received ARP packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "sender_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source MAC address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sender_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Source IP address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "target_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target MAC address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "target_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target IP address".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_arp_reply",
-                    "sender_mac": "aa:bb:cc:dd:ee:ff",
-                    "sender_ip": "192.168.1.100",
-                    "target_mac": "11:22:33:44:55:66",
-                    "target_ip": "192.168.1.1"
-                }),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Continue monitoring for ARP packets".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_arp_request" => {
-                let sender_mac = action
-                    .get("sender_mac")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'sender_mac' field")?;
-                let sender_ip = action
-                    .get("sender_ip")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'sender_ip' field")?;
-                let target_ip = action
-                    .get("target_ip")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'target_ip' field")?;
-
-                Ok(ClientActionResult::Custom {
+// Implement Protocol trait (common functionality)
+impl Protocol for ArpClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
                     name: "send_arp_request".to_string(),
-                    data: json!({
-                        "sender_mac": sender_mac,
-                        "sender_ip": sender_ip,
-                        "target_ip": target_ip,
+                    description: "Send an ARP request (who-has query)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "sender_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source MAC address (format: aa:bb:cc:dd:ee:ff)".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "sender_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source IP address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "target_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Target IP address to query".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_arp_request",
+                        "sender_mac": "aa:bb:cc:dd:ee:ff",
+                        "sender_ip": "192.168.1.100",
+                        "target_ip": "192.168.1.1"
                     }),
-                })
-            }
-            "send_arp_reply" => {
-                let sender_mac = action
-                    .get("sender_mac")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'sender_mac' field")?;
-                let sender_ip = action
-                    .get("sender_ip")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'sender_ip' field")?;
-                let target_mac = action
-                    .get("target_mac")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'target_mac' field")?;
-                let target_ip = action
-                    .get("target_ip")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'target_ip' field")?;
-
-                Ok(ClientActionResult::Custom {
+                },
+                ActionDefinition {
                     name: "send_arp_reply".to_string(),
-                    data: json!({
-                        "sender_mac": sender_mac,
-                        "sender_ip": sender_ip,
-                        "target_mac": target_mac,
-                        "target_ip": target_ip,
+                    description: "Send an ARP reply (gratuitous ARP)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "sender_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source MAC address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "sender_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source IP address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "target_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Target MAC address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "target_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Target IP address".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_arp_reply",
+                        "sender_mac": "aa:bb:cc:dd:ee:ff",
+                        "sender_ip": "192.168.1.100",
+                        "target_mac": "11:22:33:44:55:66",
+                        "target_ip": "192.168.1.1"
                     }),
-                })
-            }
-            "stop_capture" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown ARP client action: {}", action_type)),
+                },
+                ActionDefinition {
+                    name: "stop_capture".to_string(),
+                    description: "Stop ARP capture and close client".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "stop_capture"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "ARP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "arp_client_started".to_string(),
-                description: "Triggered when ARP client starts capturing".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "arp_response_received".to_string(),
-                description: "Triggered when ARP packet is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>ARP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["arp", "arp client", "address resolution", "layer 2"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("pcap + pnet for ARP packet capture and injection")
-            .llm_control("Send ARP requests/replies, monitor ARP traffic")
-            .e2e_testing("Requires root privileges for packet injection")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "ARP client for sending ARP requests and monitoring ARP traffic"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Monitor ARP on eth0 and send who-has query for 192.168.1.1"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![ParameterDefinition {
-            name: "interface".to_string(),
-            type_hint: "string".to_string(),
-            description: "Network interface name (e.g., eth0, en0)".to_string(),
-            required: true,
-            example: json!("eth0"),
-        }]
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "send_arp_request".to_string(),
+                    description: "Send ARP request in response to received ARP packet".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "sender_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source MAC address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "sender_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source IP address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "target_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Target IP to query".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_arp_request",
+                        "sender_mac": "aa:bb:cc:dd:ee:ff",
+                        "sender_ip": "192.168.1.100",
+                        "target_ip": "192.168.1.1"
+                    }),
+                },
+                ActionDefinition {
+                    name: "send_arp_reply".to_string(),
+                    description: "Send ARP reply in response to received ARP packet".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "sender_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source MAC address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "sender_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Source IP address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "target_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Target MAC address".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "target_ip".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Target IP address".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_arp_reply",
+                        "sender_mac": "aa:bb:cc:dd:ee:ff",
+                        "sender_ip": "192.168.1.100",
+                        "target_mac": "11:22:33:44:55:66",
+                        "target_ip": "192.168.1.1"
+                    }),
+                },
+                ActionDefinition {
+                    name: "wait_for_more".to_string(),
+                    description: "Continue monitoring for ARP packets".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "wait_for_more"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "ARP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "arp_client_started".to_string(),
+                    description: "Triggered when ARP client starts capturing".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "arp_response_received".to_string(),
+                    description: "Triggered when ARP packet is received".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>ARP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["arp", "arp client", "address resolution", "layer 2"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("pcap + pnet for ARP packet capture and injection")
+                .llm_control("Send ARP requests/replies, monitor ARP traffic")
+                .e2e_testing("Requires root privileges for packet injection")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "ARP client for sending ARP requests and monitoring ARP traffic"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Monitor ARP on eth0 and send who-has query for 192.168.1.1"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![ParameterDefinition {
+                name: "interface".to_string(),
+                type_hint: "string".to_string(),
+                description: "Network interface name (e.g., eth0, en0)".to_string(),
+                required: true,
+                example: json!("eth0"),
+            }]
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for ArpClientProtocol {
+        fn connect(
+            &self,
+            ctx: ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::arp::ArpClient;
+                ArpClient::start_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_arp_request" => {
+                    let sender_mac = action
+                        .get("sender_mac")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'sender_mac' field")?;
+                    let sender_ip = action
+                        .get("sender_ip")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'sender_ip' field")?;
+                    let target_ip = action
+                        .get("target_ip")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'target_ip' field")?;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "send_arp_request".to_string(),
+                        data: json!({
+                            "sender_mac": sender_mac,
+                            "sender_ip": sender_ip,
+                            "target_ip": target_ip,
+                        }),
+                    })
+                }
+                "send_arp_reply" => {
+                    let sender_mac = action
+                        .get("sender_mac")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'sender_mac' field")?;
+                    let sender_ip = action
+                        .get("sender_ip")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'sender_ip' field")?;
+                    let target_mac = action
+                        .get("target_mac")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'target_mac' field")?;
+                    let target_ip = action
+                        .get("target_ip")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'target_ip' field")?;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "send_arp_reply".to_string(),
+                        data: json!({
+                            "sender_mac": sender_mac,
+                            "sender_ip": sender_ip,
+                            "target_mac": target_mac,
+                            "target_ip": target_ip,
+                        }),
+                    })
+                }
+                "stop_capture" => Ok(ClientActionResult::Disconnect),
+                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+                _ => Err(anyhow::anyhow!("Unknown ARP client action: {}", action_type)),
+            }
+        }
+}
+

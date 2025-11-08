@@ -1,7 +1,7 @@
 //! PostgreSQL protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -36,115 +36,109 @@ impl PostgresqlProtocol {
     }
 }
 
-impl Server for PostgresqlProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::postgresql::PostgresqlServer;
-            let send_first = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
-                .unwrap_or(false);
-
-            PostgresqlServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                send_first,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "send_first".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether the server should send the first message after connection (not typically needed for PostgreSQL)".to_string(),
-                required: false,
-                example: json!(false),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_postgresql_connections_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            postgresql_query_response_action(),
-            postgresql_error_response_action(),
-            postgresql_ok_response_action(),
-            close_this_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "postgresql_query_response" => self.execute_postgresql_query_response(action),
-            "postgresql_error_response" => self.execute_postgresql_error_response(action),
-            "postgresql_ok_response" => self.execute_postgresql_ok_response(action),
-            "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_postgresql_connections" => self.execute_list_postgresql_connections(action),
-            _ => Err(anyhow::anyhow!(
-                "Unknown PostgreSQL action: {}",
-                action_type
-            )),
+// Implement Protocol trait (common functionality)
+impl Protocol for PostgresqlProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "send_first".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Whether the server should send the first message after connection (not typically needed for PostgreSQL)".to_string(),
+                    required: false,
+                    example: json!(false),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "PostgreSQL"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_postgresql_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>PostgreSQL"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["postgres", "psql"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("pgwire v0.26 protocol library")
-            .llm_control("Query responses (columns, rows, types)")
-            .e2e_testing("tokio-postgres client")
-            .notes("Extended query timeout issue")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "PostgreSQL database server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a PostgreSQL server on port 5432"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![list_postgresql_connections_action()]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                postgresql_query_response_action(),
+                postgresql_error_response_action(),
+                postgresql_ok_response_action(),
+                close_this_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "PostgreSQL"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_postgresql_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>PostgreSQL"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["postgres", "psql"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("pgwire v0.26 protocol library")
+                .llm_control("Query responses (columns, rows, types)")
+                .e2e_testing("tokio-postgres client")
+                .notes("Extended query timeout issue")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "PostgreSQL database server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a PostgreSQL server on port 5432"
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for PostgresqlProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::postgresql::PostgresqlServer;
+                let send_first = ctx.startup_params
+                    .as_ref()
+                    .and_then(|p| p.get_optional_bool("send_first"))
+                    .unwrap_or(false);
+    
+                PostgresqlServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    send_first,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "postgresql_query_response" => self.execute_postgresql_query_response(action),
+                "postgresql_error_response" => self.execute_postgresql_error_response(action),
+                "postgresql_ok_response" => self.execute_postgresql_ok_response(action),
+                "close_this_connection" => Ok(ActionResult::CloseConnection),
+                "list_postgresql_connections" => self.execute_list_postgresql_connections(action),
+                _ => Err(anyhow::anyhow!(
+                    "Unknown PostgreSQL action: {}",
+                    action_type
+                )),
+            }
+        }
+}
+
 
 impl PostgresqlProtocol {
     fn execute_postgresql_query_response(&self, action: serde_json::Value) -> Result<ActionResult> {

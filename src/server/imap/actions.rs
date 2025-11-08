@@ -10,7 +10,7 @@
 //! - APPEND for adding messages
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -336,114 +336,109 @@ impl ImapProtocol {
     }
 }
 
-impl Server for ImapProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::imap::ImapServer;
-            ImapServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // IMAP doesn't need async actions for now (all commands are synchronous request/response)
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_imap_greeting_action(),
-            send_imap_response_action(),
-            send_imap_untagged_action(),
-            send_imap_capability_action(),
-            send_imap_list_action(),
-            send_imap_status_action(),
-            send_imap_fetch_action(),
-            send_imap_search_action(),
-            send_imap_exists_action(),
-            send_imap_recent_action(),
-            send_imap_flags_action(),
-            send_imap_expunge_action(),
-            wait_for_more_action(),
-            close_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_imap_greeting" => self.execute_send_imap_greeting(action),
-            "send_imap_response" => self.execute_send_imap_response(action),
-            "send_imap_untagged" => self.execute_send_imap_untagged(action),
-            "send_imap_capability" => self.execute_send_imap_capability(action),
-            "send_imap_list" => self.execute_send_imap_list(action),
-            "send_imap_status" => self.execute_send_imap_status(action),
-            "send_imap_fetch" => self.execute_send_imap_fetch(action),
-            "send_imap_search" => self.execute_send_imap_search(action),
-            "send_imap_exists" => self.execute_send_imap_exists(action),
-            "send_imap_recent" => self.execute_send_imap_recent(action),
-            "send_imap_flags" => self.execute_send_imap_flags(action),
-            "send_imap_expunge" => self.execute_send_imap_expunge(action),
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_connection" => Ok(ActionResult::CloseConnection),
-            _ => Err(anyhow::anyhow!("Unknown IMAP action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for ImapProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // IMAP doesn't need async actions for now (all commands are synchronous request/response)
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "IMAP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_imap_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>IMAP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["imap"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual IMAP4rev1 parsing")
-            .llm_control("Authentication + mailbox ops + FETCH")
-            .e2e_testing("async-imap client")
-            .notes("Session state machine, no persistence")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "IMAP mail server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an IMAP mail server on port 143"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Application"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_imap_greeting_action(),
+                send_imap_response_action(),
+                send_imap_untagged_action(),
+                send_imap_capability_action(),
+                send_imap_list_action(),
+                send_imap_status_action(),
+                send_imap_fetch_action(),
+                send_imap_search_action(),
+                send_imap_exists_action(),
+                send_imap_recent_action(),
+                send_imap_flags_action(),
+                send_imap_expunge_action(),
+                wait_for_more_action(),
+                close_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "IMAP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_imap_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>IMAP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["imap"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual IMAP4rev1 parsing")
+                .llm_control("Authentication + mailbox ops + FETCH")
+                .e2e_testing("async-imap client")
+                .notes("Session state machine, no persistence")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "IMAP mail server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an IMAP mail server on port 143"
+        }
+        fn group_name(&self) -> &'static str {
+            "Application"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for ImapProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::imap::ImapServer;
+                ImapServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_imap_greeting" => self.execute_send_imap_greeting(action),
+                "send_imap_response" => self.execute_send_imap_response(action),
+                "send_imap_untagged" => self.execute_send_imap_untagged(action),
+                "send_imap_capability" => self.execute_send_imap_capability(action),
+                "send_imap_list" => self.execute_send_imap_list(action),
+                "send_imap_status" => self.execute_send_imap_status(action),
+                "send_imap_fetch" => self.execute_send_imap_fetch(action),
+                "send_imap_search" => self.execute_send_imap_search(action),
+                "send_imap_exists" => self.execute_send_imap_exists(action),
+                "send_imap_recent" => self.execute_send_imap_recent(action),
+                "send_imap_flags" => self.execute_send_imap_flags(action),
+                "send_imap_expunge" => self.execute_send_imap_expunge(action),
+                "wait_for_more" => Ok(ActionResult::WaitForMore),
+                "close_connection" => Ok(ActionResult::CloseConnection),
+                _ => Err(anyhow::anyhow!("Unknown IMAP action: {}", action_type)),
+            }
+        }
+}
+
 
 // ============================================================================
 // Action Definitions
