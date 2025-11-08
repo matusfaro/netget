@@ -105,6 +105,9 @@ impl ServerRegistry {
         #[cfg(feature = "ssh")]
         self.register(Arc::new(crate::server::SshProtocol::new()));
 
+        #[cfg(all(feature = "ssh-agent", unix))]
+        self.register(Arc::new(crate::server::SshAgentProtocol::new()));
+
         #[cfg(feature = "svn")]
         self.register(Arc::new(crate::server::SvnProtocol::new()));
 
