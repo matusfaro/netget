@@ -25,6 +25,7 @@ bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for con
 bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
 bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
 bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
+bluetooth-ble-beacon = ["bluetooth-ble"]  # BLE beacon (iBeacon, Eddystone)
 whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
@@ -181,6 +182,7 @@ all-protocols = [
     "bluetooth-ble",
     "bluetooth-ble-keyboard",
     "bluetooth-ble-mouse",
+    "bluetooth-ble-beacon",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests

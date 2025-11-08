@@ -8,6 +8,8 @@ pub mod bluetooth_ble;
 pub mod bluetooth_ble_keyboard;
 #[cfg(feature = "bluetooth-ble-mouse")]
 pub mod bluetooth_ble_mouse;
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub mod bluetooth_ble_beacon;
 #[cfg(feature = "isis")]
 pub mod isis;
 #[cfg(feature = "rip")]
