@@ -106,22 +106,6 @@ pub enum CommonAction {
     /// Append to global memory
     AppendMemory { value: String },
 
-    /// Update script configuration for a running server
-    UpdateScript {
-        server_id: u32,
-        operation: String,
-        #[serde(default)]
-        script_runtime: Option<String>,
-        #[serde(default)]
-        script_language: Option<String>,
-        #[serde(default)]
-        script_path: Option<String>,
-        #[serde(default)]
-        script_inline: Option<String>,
-        #[serde(default)]
-        script_handles: Option<Vec<String>>,
-    },
-
     /// Append content to a log file
     AppendToLog {
         output_name: String,
@@ -642,99 +626,6 @@ pub fn append_memory_action() -> ActionDefinition {
     }
 }
 
-/// Get action definition for update_script
-pub fn update_script_action(
-    selected_mode: crate::state::app_state::ScriptingMode,
-    env: &crate::scripting::ScriptingEnvironment,
-) -> ActionDefinition {
-    let mut parameters = vec![
-        Parameter {
-            name: "server_id".to_string(),
-            type_hint: "number".to_string(),
-            description: "Server ID to update (e.g., 1, 2)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "operation".to_string(),
-            type_hint: "string".to_string(),
-            description: "Operation: 'set' (replace entire config), 'add_contexts' (add context types), 'remove_contexts' (remove context types), or 'disable' (remove script, use LLM only)".to_string(),
-            required: true,
-        },
-    ];
-
-    // Add script parameters based on scripting mode
-    match selected_mode {
-        crate::state::app_state::ScriptingMode::On => {
-            // ON mode: LLM chooses runtime from available options
-            let available_runtimes = env.format_available();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_runtime".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Required when script_inline is provided: Choose runtime for script execution. Available: {}",
-                        available_runtimes
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Inline script code (required for 'set' operation). Must match the script_runtime language. When provided, script_runtime MUST also be specified.".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-        crate::state::app_state::ScriptingMode::Off => {
-            // OFF mode: no script parameters needed (only operation for disable)
-        }
-        crate::state::app_state::ScriptingMode::Python
-        | crate::state::app_state::ScriptingMode::JavaScript
-        | crate::state::app_state::ScriptingMode::Go
-        | crate::state::app_state::ScriptingMode::Perl => {
-            let lang = selected_mode.as_str();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Inline {} script code (required for 'set' operation)",
-                        lang
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description:
-                        "Context types to handle (for 'set' or 'add_contexts'/'remove_contexts')"
-                            .to_string(),
-                    required: false,
-                },
-            ]);
-        }
-    }
-
-    ActionDefinition {
-        name: "update_script".to_string(),
-        description: "Update or modify script configuration for a running server. Use this to change authentication logic, add/remove context types, or disable scripts entirely.".to_string(),
-        parameters,
-        example: json!({
-            "type": "update_script",
-            "server_id": 1,
-            "operation": "set",
-            "script_inline": "import json\nimport sys\ndata=json.load(sys.stdin)\nprint(json.dumps({'actions':[{'type':'show_message','message':'Updated!'}]}))",
-            "script_handles": ["ssh_auth"]
-        }),
-    }
-}
-
 /// Get action definition for append_to_log
 pub fn append_to_log_action() -> ActionDefinition {
     ActionDefinition {
@@ -970,11 +861,6 @@ pub fn get_all_common_actions(
         show_message_action(),
         append_to_log_action(),
     ];
-
-    // Only include update_script if scripting is enabled (not OFF mode)
-    if selected_mode != crate::state::app_state::ScriptingMode::Off {
-        actions.insert(7, update_script_action(selected_mode, env)); // Insert after close_all_clients (adjusted index)
-    }
 
     actions
 }

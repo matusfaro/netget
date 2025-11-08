@@ -161,11 +161,6 @@ async fn execute_common_action(
             }
         }
 
-        CommonAction::UpdateScript { .. } => {
-            // This should be handled by the caller
-            warn!("update_script action cannot be executed by action executor - must be handled by caller");
-        }
-
         CommonAction::AppendToLog {
             output_name,
             content,
