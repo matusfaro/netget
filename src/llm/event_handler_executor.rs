@@ -8,7 +8,7 @@
 
 use crate::llm::actions::executor::{execute_actions, ExecutionResult};
 use crate::llm::actions::protocol_trait::Server;
-use crate::scripting::{EventHandlerConfig, EventHandlerType};
+use crate::scripting::EventHandlerType;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
@@ -175,14 +175,16 @@ async fn execute_script_handler(
         return Ok(EventHandlerResult::FallbackToLlm);
     }
 
-    // Execute the script
-    match crate::scripting::executor::execute_script(script_language, code, &script_input) {
-        Ok(response) => {
-            if response.fallback_to_llm {
-                debug!("Script requested fallback to LLM");
-                return Ok(EventHandlerResult::FallbackToLlm);
-            }
+    // Build ScriptConfig for execution
+    let script_config = crate::scripting::types::ScriptConfig {
+        language: script_language,
+        source: crate::scripting::types::ScriptSource::Inline(code.to_string()),
+        handles_contexts: vec![event_type_id.to_string()],
+    };
 
+    // Execute the script
+    match crate::scripting::executor::execute_script(&script_config, &script_input) {
+        Ok(response) => {
             debug!(
                 "Script handled event '{}' ({} actions)",
                 event_type_id,

@@ -287,9 +287,9 @@ pub mod s3;
 pub use s3::actions::S3ClientProtocol;
 
 // saml client
-#[cfg(feature = "saml-idp")]
+#[cfg(feature = "saml")]
 pub mod saml;
-#[cfg(feature = "saml-idp")]
+#[cfg(feature = "saml")]
 pub use saml::actions::SamlClientProtocol;
 
 // sip client

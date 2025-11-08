@@ -290,13 +290,16 @@ pub async fn call_llm(
     protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
     // TRY SCRIPT FIRST if configured
-    let script_config = state.get_script_config(server_id).await;
-    if let Some(ref config) = script_config {
+    // Get server to check if it has script config in event handlers
+    let server_info = state.get_server(server_id).await;
+    if let Some(server) = server_info {
         // Use the event ID as event_type_id for script routing
         let event_type_id = event.id().to_string();
 
-        // Check if script handles this event type
-        if config.handles_context(&event_type_id) {
+        // Check if any event handler is configured for this event type
+        // Note: Script handling is done via event handlers, not a separate config
+        // This section needs refactoring - for now, skip to LLM
+        if false {
             // Get server info to build script input
             let server_info = state.get_server(server_id).await;
 
