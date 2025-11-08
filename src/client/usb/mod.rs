@@ -4,6 +4,7 @@ pub mod actions;
 pub use actions::UsbClientProtocol;
 
 use anyhow::{anyhow, Context, Result};
+use nusb::transfer::{ControlOut, ControlType, Recipient, RequestBuffer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -334,37 +335,34 @@ impl UsbClient {
 
                             // Execute control transfer
                             let interface_clone = interface.clone();
-                            let result = tokio::task::spawn_blocking(move || {
-                                if out_data.is_empty() && length > 0 {
-                                    // IN transfer
-                                    let mut buffer = vec![0u8; length];
-                                    let bytes_read = interface_clone.control_in(
-                                        request_type,
-                                        request,
-                                        value,
-                                        index,
-                                        &mut buffer,
-                                        Duration::from_secs(5)
-                                    )?;
-                                    buffer.truncate(bytes_read);
-                                    Ok::<Vec<u8>, nusb::Error>(buffer)
-                                } else {
-                                    // OUT transfer
-                                    interface_clone.control_out(
-                                        request_type,
-                                        request,
-                                        value,
-                                        index,
-                                        &out_data,
-                                        Duration::from_secs(5)
-                                    )?;
-                                    Ok(Vec::new())
-                                }
-                            })
-                            .await;
+                            let result = if out_data.is_empty() && length > 0 {
+                                // IN transfer
+                                let buffer = RequestBuffer::new(length);
+                                let result = interface_clone.control_in(
+                                    ControlType::Vendor,
+                                    Recipient::Device,
+                                    request,
+                                    value,
+                                    index,
+                                    buffer,
+                                ).await;
+                                Ok::<Vec<u8>, nusb::Error>(result.data.to_vec())
+                            } else {
+                                // OUT transfer
+                                let control_out = ControlOut {
+                                    control_type: ControlType::Vendor,
+                                    recipient: Recipient::Device,
+                                    request,
+                                    value,
+                                    index,
+                                    data: &out_data,
+                                };
+                                interface_clone.control_out(control_out).await;
+                                Ok(Vec::new())
+                            };
 
                             match result {
-                                Ok(Ok(response_data)) if !response_data.is_empty() => {
+                                Ok(response_data) if !response_data.is_empty() => {
                                     debug!(
                                         "USB client {} control transfer received {} bytes",
                                         client_id,
@@ -407,14 +405,11 @@ impl UsbClient {
                                         }
                                     }
                                 }
-                                Ok(Ok(_)) => {
+                                Ok(_) => {
                                     trace!("USB client {} control transfer completed", client_id);
                                 }
-                                Ok(Err(e)) => {
-                                    error!("USB client {} control transfer error: {}", client_id, e);
-                                }
                                 Err(e) => {
-                                    error!("USB client {} control transfer task error: {}", client_id, e);
+                                    error!("USB client {} control transfer error: {}", client_id, e);
                                 }
                             }
                         }
@@ -431,20 +426,14 @@ impl UsbClient {
                             );
 
                             let interface_clone = interface.clone();
-                            let result = tokio::task::spawn_blocking(move || {
-                                interface_clone.bulk_out(endpoint, &out_data, Duration::from_secs(5))
-                            })
-                            .await;
+                            let result = interface_clone.bulk_out(endpoint, out_data).await;
 
                             match result {
-                                Ok(Ok(_)) => {
+                                Ok(_) => {
                                     trace!("USB client {} bulk OUT completed", client_id);
                                 }
-                                Ok(Err(e)) => {
-                                    error!("USB client {} bulk OUT error: {}", client_id, e);
-                                }
                                 Err(e) => {
-                                    error!("USB client {} bulk OUT task error: {}", client_id, e);
+                                    error!("USB client {} bulk OUT error: {}", client_id, e);
                                 }
                             }
                         }
@@ -458,16 +447,11 @@ impl UsbClient {
                             );
 
                             let interface_clone = interface.clone();
-                            let result = tokio::task::spawn_blocking(move || {
-                                let mut buffer = vec![0u8; length];
-                                let bytes_read = interface_clone.bulk_in(endpoint, &mut buffer, Duration::from_secs(5))?;
-                                buffer.truncate(bytes_read);
-                                Ok::<Vec<u8>, nusb::Error>(buffer)
-                            })
-                            .await;
+                            let buffer = RequestBuffer::new(length);
+                            let result = interface_clone.bulk_in(endpoint, buffer).await;
 
-                            match result {
-                                Ok(Ok(response_data)) => {
+                            let response_data = result.data.to_vec();
+                            if !response_data.is_empty() {
                                     debug!(
                                         "USB client {} bulk IN received {} bytes",
                                         client_id,
@@ -510,13 +494,6 @@ impl UsbClient {
                                             )).await;
                                         }
                                     }
-                                }
-                                Ok(Err(e)) => {
-                                    error!("USB client {} bulk IN error: {}", client_id, e);
-                                }
-                                Err(e) => {
-                                    error!("USB client {} bulk IN task error: {}", client_id, e);
-                                }
                             }
                         }
                         "interrupt_transfer_in" => {
@@ -529,16 +506,11 @@ impl UsbClient {
                             );
 
                             let interface_clone = interface.clone();
-                            let result = tokio::task::spawn_blocking(move || {
-                                let mut buffer = vec![0u8; length];
-                                let bytes_read = interface_clone.interrupt_in(endpoint, &mut buffer, Duration::from_secs(5))?;
-                                buffer.truncate(bytes_read);
-                                Ok::<Vec<u8>, nusb::Error>(buffer)
-                            })
-                            .await;
+                            let buffer = RequestBuffer::new(length);
+                            let result = interface_clone.interrupt_in(endpoint, buffer).await;
 
-                            match result {
-                                Ok(Ok(response_data)) => {
+                            let response_data = result.data.to_vec();
+                            if !response_data.is_empty() {
                                     debug!(
                                         "USB client {} interrupt IN received {} bytes",
                                         client_id,
@@ -581,13 +553,6 @@ impl UsbClient {
                                             )).await;
                                         }
                                     }
-                                }
-                                Ok(Err(e)) => {
-                                    error!("USB client {} interrupt IN error: {}", client_id, e);
-                                }
-                                Err(e) => {
-                                    error!("USB client {} interrupt IN task error: {}", client_id, e);
-                                }
                             }
                         }
                         "claim_interface" => {

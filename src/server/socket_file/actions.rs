@@ -153,7 +153,7 @@ impl Server for SocketFileProtocol {
             // Extract socket_path and send_first from startup_params
             let socket_path = ctx.startup_params
                 .as_ref()
-                .and_then(|p| p.get_string("socket_path"))
+                .and_then(|p| Some(p.get_string("socket_path")))
                 .ok_or_else(|| anyhow::anyhow!("socket_path parameter is required"))?;
 
             let send_first = ctx.startup_params
