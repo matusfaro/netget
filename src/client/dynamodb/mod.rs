@@ -4,6 +4,7 @@ pub mod actions;
 pub use actions::DynamoDbClientProtocol;
 
 use anyhow::{Context, Result};
+use aws_smithy_types::Blob;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -357,9 +358,9 @@ impl DynamoDbClient {
                                 &base64::engine::general_purpose::STANDARD,
                                 s,
                             ) {
-                                AttributeValue::B(aws_smithy_types::Blob::new(bytes))
+                                AttributeValue::B(Blob::new(bytes))
                             } else {
-                                AttributeValue::B(aws_smithy_types::Blob::new(Vec::new()))
+                                AttributeValue::B(Blob::new(Vec::new()))
                             }
                         }),
                         "BOOL" => value.as_bool().map(AttributeValue::Bool),
