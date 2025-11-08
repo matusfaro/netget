@@ -604,5 +604,12 @@ pub use bluetooth_ble_mouse::BluetoothBleMouse;
 #[cfg(feature = "bluetooth-ble-mouse")]
 pub use bluetooth_ble_mouse::actions::BluetoothBleMouseProtocol;
 
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub mod bluetooth_ble_beacon;
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub use bluetooth_ble_beacon::BluetoothBleBeacon;
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub use bluetooth_ble_beacon::actions::BluetoothBleBeaconProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

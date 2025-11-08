@@ -371,6 +371,9 @@ impl ServerRegistry {
 
         #[cfg(feature = "bluetooth-ble-mouse")]
         self.register(Arc::new(crate::server::BluetoothBleMouseProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-beacon")]
+        self.register(Arc::new(crate::server::BluetoothBleBeaconProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
