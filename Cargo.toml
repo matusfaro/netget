@@ -89,6 +89,7 @@ torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer d
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
+usb = ["dep:nusb"]  # USB device client for low-level USB device interaction
 all-protocols = [
     "tcp",
     "http",
@@ -169,6 +170,7 @@ all-protocols = [
     "tls",
     "saml-idp",
     "saml-sp",
+    "usb",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
@@ -488,6 +490,8 @@ kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] 
 k8s-openapi = { version = "0.24", optional = true, features = ["v1_30"] }
 # NFS types for NFSv3 protocol
 nfs3_types = { version = "0.4", optional = true }
+# USB client
+nusb = { version = "0.1", optional = true }
 
 [dev-dependencies]
 # For async tests
