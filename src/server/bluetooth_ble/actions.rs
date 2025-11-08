@@ -13,9 +13,9 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 /// Bluetooth server started event
-pub static BLUETOOTH_SERVER_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+pub static BLUETOOTH_BLE_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
-        "bluetooth_server_started",
+        "bluetooth_ble_started",
         "Bluetooth Low Energy GATT server started and ready for configuration",
     )
     .with_parameters(vec![
@@ -74,16 +74,16 @@ pub static BLUETOOTH_SUBSCRIBE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// Bluetooth server protocol handler
-pub struct BluetoothServerProtocol;
+pub struct BluetoothBleProtocol;
 
-impl BluetoothServerProtocol {
+impl BluetoothBleProtocol {
     pub fn new() -> Self {
         Self
     }
 }
 
 // Implement Protocol trait (common functionality)
-impl Protocol for BluetoothServerProtocol {
+impl Protocol for BluetoothBleProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -120,12 +120,12 @@ impl Protocol for BluetoothServerProtocol {
     }
 
     fn protocol_name(&self) -> &'static str {
-        "BLUETOOTH_SERVER"
+        "BLUETOOTH_BLE"
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            BLUETOOTH_SERVER_STARTED_EVENT.clone(),
+            BLUETOOTH_BLE_STARTED_EVENT.clone(),
             BLUETOOTH_STATE_CHANGED_EVENT.clone(),
             BLUETOOTH_READ_REQUEST_EVENT.clone(),
             BLUETOOTH_WRITE_REQUEST_EVENT.clone(),
@@ -138,7 +138,7 @@ impl Protocol for BluetoothServerProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "gatt", "peripheral", "bluetooth_server"]
+        vec!["bluetooth", "ble", "gatt", "peripheral", "bluetooth_ble"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
@@ -167,7 +167,7 @@ impl Protocol for BluetoothServerProtocol {
 }
 
 // Implement Server trait (server-specific functionality)
-impl Server for BluetoothServerProtocol {
+impl Server for BluetoothBleProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
@@ -187,7 +187,7 @@ impl Server for BluetoothServerProtocol {
                 .unwrap_or(&ctx.instruction)
                 .to_string();
 
-            crate::server::bluetooth_server::BluetoothServer::spawn_with_llm_actions(
+            crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
                 ctx.app_state,

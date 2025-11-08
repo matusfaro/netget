@@ -16,13 +16,13 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use actions::{BluetoothServerProtocol, BLUETOOTH_SERVER_STARTED_EVENT, BLUETOOTH_STATE_CHANGED_EVENT,
+use actions::{BluetoothBleProtocol, BLUETOOTH_BLE_STARTED_EVENT, BLUETOOTH_STATE_CHANGED_EVENT,
     BLUETOOTH_READ_REQUEST_EVENT, BLUETOOTH_WRITE_REQUEST_EVENT, BLUETOOTH_SUBSCRIBE_EVENT};
 
-#[cfg(feature = "bluetooth-server")]
+#[cfg(feature = "bluetooth-ble")]
 use ble_peripheral_rust::{Peripheral, PeripheralEvent, Service, Characteristic,
     CharacteristicProperty, AttributePermission, RequestResponse, ReadRequestResponse, WriteRequestResponse};
-#[cfg(feature = "bluetooth-server")]
+#[cfg(feature = "bluetooth-ble")]
 use ble_peripheral_rust::uuid::Uuid;
 
 /// Connection state for LLM processing
@@ -52,11 +52,11 @@ struct ServerData {
 }
 
 /// Bluetooth Low Energy GATT server
-pub struct BluetoothServer;
+pub struct BluetoothBle;
 
-impl BluetoothServer {
+impl BluetoothBle {
     /// Spawn the BLE GATT server with integrated LLM actions
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     pub async fn spawn_with_llm_actions(
         device_name: String,
         llm_client: OllamaClient,
@@ -101,11 +101,11 @@ impl BluetoothServer {
             queued_events: Vec::new(),
         }));
 
-        let protocol = Arc::new(BluetoothServerProtocol::new());
+        let protocol = Arc::new(BluetoothBleProtocol::new());
 
         // Call LLM with server started event to get initial configuration
         let started_event = Event::new(
-            &BLUETOOTH_SERVER_STARTED_EVENT,
+            &BLUETOOTH_BLE_STARTED_EVENT,
             serde_json::json!({
                 "device_name": device_name,
                 "instruction": instruction,
@@ -167,7 +167,7 @@ impl BluetoothServer {
     }
 
     /// Execute a single LLM action
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn execute_action(
         server_data: &Arc<Mutex<ServerData>>,
         device_name: &str,
@@ -207,7 +207,7 @@ impl BluetoothServer {
     }
 
     /// Add a GATT service
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn execute_add_service(
         server_data: &Arc<Mutex<ServerData>>,
         action: serde_json::Value,
@@ -322,7 +322,7 @@ impl BluetoothServer {
     }
 
     /// Start BLE advertising
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn execute_start_advertising(
         server_data: &Arc<Mutex<ServerData>>,
         device_name: &str,
@@ -346,7 +346,7 @@ impl BluetoothServer {
     }
 
     /// Stop BLE advertising
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn execute_stop_advertising(
         server_data: &Arc<Mutex<ServerData>>,
         status_tx: &mpsc::UnboundedSender<String>,
@@ -364,7 +364,7 @@ impl BluetoothServer {
     }
 
     /// Send notification to subscribed clients
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn execute_send_notification(
         server_data: &Arc<Mutex<ServerData>>,
         action: serde_json::Value,
@@ -406,7 +406,7 @@ impl BluetoothServer {
     }
 
     /// Main event processing loop
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn event_loop(
         mut event_rx: mpsc::Receiver<PeripheralEvent>,
         server_id: crate::state::ServerId,
@@ -414,7 +414,7 @@ impl BluetoothServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_data: Arc<Mutex<ServerData>>,
-        protocol: Arc<BluetoothServerProtocol>,
+        protocol: Arc<BluetoothBleProtocol>,
     ) {
         while let Some(event) = event_rx.recv().await {
             match event {
@@ -676,14 +676,14 @@ impl BluetoothServer {
     }
 
     /// Call LLM with an event and execute resulting actions
-    #[cfg(feature = "bluetooth-server")]
+    #[cfg(feature = "bluetooth-ble")]
     async fn call_llm_for_event(
         server_id: &crate::state::ServerId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         server_data: &Arc<Mutex<ServerData>>,
-        protocol: &Arc<BluetoothServerProtocol>,
+        protocol: &Arc<BluetoothBleProtocol>,
         event: Event,
     ) -> Result<crate::llm::LlmResult> {
         let memory = server_data.lock().await.memory.clone();
@@ -728,8 +728,8 @@ impl BluetoothServer {
     }
 }
 
-#[cfg(not(feature = "bluetooth-server"))]
-impl BluetoothServer {
+#[cfg(not(feature = "bluetooth-ble"))]
+impl BluetoothBle {
     pub async fn spawn_with_llm_actions(
         _device_name: String,
         _llm_client: OllamaClient,
@@ -738,6 +738,6 @@ impl BluetoothServer {
         _server_id: crate::state::ServerId,
         _instruction: String,
     ) -> Result<std::net::SocketAddr> {
-        anyhow::bail!("Bluetooth server support not enabled - compile with --features bluetooth-server")
+        anyhow::bail!("Bluetooth server support not enabled - compile with --features bluetooth-ble")
     }
 }

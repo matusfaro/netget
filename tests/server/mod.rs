@@ -2,8 +2,12 @@
 
 #[cfg(feature = "bgp")]
 pub mod bgp;
-#[cfg(feature = "bluetooth-server")]
-pub mod bluetooth_server;
+#[cfg(feature = "bluetooth-ble")]
+pub mod bluetooth_ble;
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub mod bluetooth_ble_keyboard;
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub mod bluetooth_ble_mouse;
 #[cfg(feature = "isis")]
 pub mod isis;
 #[cfg(feature = "rip")]
