@@ -405,7 +405,6 @@ async fn wait_for_netget_startup_with_capture(
         let mut servers = Vec::new();
         let mut clients: std::collections::HashMap<String, NetGetClient> = std::collections::HashMap::new();
         let mut server_confirmations: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut startup_complete = false;
         let mut had_any_startup = false;
 
         while let Some(line) = reader.next_line().await? {
@@ -471,7 +470,6 @@ async fn wait_for_netget_startup_with_capture(
                 // Simple heuristic: if we have startup messages and see confirmation messages,
                 // or if the TUI prompt appears, we're probably done
                 if line.contains("netget>") || line.contains("Ready") || !server_confirmations.is_empty() {
-                    startup_complete = true;
                     // Give a short time to capture any remaining startup messages
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     break;

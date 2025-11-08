@@ -22,7 +22,7 @@ For any other path, return 404 with body: "Not Found"
 Set Content-Type header appropriately (text/plain for /, application/json for /api/*)."#;
 
     // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
     println!("Server started: {} stack on port {}", server.stack, server.port);
 
     // Verify it's actually an HTTP/2 server
@@ -112,7 +112,7 @@ For POST /api/users, parse the JSON body and return 201 with a success message i
 Set Content-Type: application/json for all responses."#;
 
     // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize
@@ -175,7 +175,7 @@ For GET /data, return 200 with JSON: {"data": "test", "timestamp": "2025-01-01T0
 Set Content-Type: application/json."#;
 
     // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize

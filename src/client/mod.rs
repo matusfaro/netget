@@ -160,11 +160,11 @@ pub mod kafka;
 #[cfg(feature = "kafka")]
 pub use kafka::actions::KafkaClientProtocol;
 
-// kubernetes client
-#[cfg(feature = "kubernetes")]
-pub mod kubernetes;
-#[cfg(feature = "kubernetes")]
-pub use kubernetes::actions::KubernetesClientProtocol;
+// kubernetes client - disabled: k8s-openapi requires version features library crates cannot enable
+// #[cfg(feature = "kubernetes")]
+// pub mod kubernetes;
+// #[cfg(feature = "kubernetes")]
+// pub use kubernetes::actions::KubernetesClientProtocol;
 
 // ldap client
 #[cfg(feature = "ldap")]
