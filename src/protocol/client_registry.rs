@@ -45,6 +45,9 @@ impl ClientRegistry {
         #[cfg(feature = "bitcoin")]
         self.register(Arc::new(crate::client::bitcoin::BitcoinClientProtocol::new()));
 
+        #[cfg(feature = "bluetooth-ble")]
+        self.register(Arc::new(crate::client::bluetooth::BluetoothClientProtocol::new()));
+
         #[cfg(feature = "bootp")]
         self.register(Arc::new(crate::client::bootp::BootpClientProtocol::new()));
 
@@ -174,7 +177,7 @@ impl ClientRegistry {
         #[cfg(feature = "s3")]
         self.register(Arc::new(crate::client::s3::S3ClientProtocol::new()));
 
-        #[cfg(feature = "saml-idp")]
+        #[cfg(feature = "saml")]
         self.register(Arc::new(crate::client::saml::SamlClientProtocol::new()));
 
         #[cfg(feature = "sip")]
@@ -191,6 +194,9 @@ impl ClientRegistry {
 
         #[cfg(feature = "socks5")]
         self.register(Arc::new(crate::client::socks5::Socks5ClientProtocol::new()));
+
+        #[cfg(all(feature = "socket_file", unix))]
+        self.register(Arc::new(crate::client::socket_file::SocketFileClientProtocol::new()));
 
         #[cfg(feature = "sqs")]
         self.register(Arc::new(crate::client::sqs::SqsClientProtocol::new()));
@@ -227,6 +233,9 @@ impl ClientRegistry {
 
         #[cfg(feature = "udp")]
         self.register(Arc::new(crate::client::udp::UdpClientProtocol::new()));
+
+        #[cfg(feature = "usb")]
+        self.register(Arc::new(crate::client::usb::UsbClientProtocol::new()));
 
         #[cfg(feature = "vnc")]
         self.register(Arc::new(crate::client::vnc::VncClientProtocol::new()));

@@ -22,6 +22,12 @@ pub mod bitcoin;
 #[cfg(feature = "bitcoin")]
 pub use bitcoin::actions::BitcoinClientProtocol;
 
+// bluetooth-ble client
+#[cfg(feature = "bluetooth-ble")]
+pub mod bluetooth;
+#[cfg(feature = "bluetooth-ble")]
+pub use bluetooth::actions::BluetoothClientProtocol;
+
 // bootp client
 #[cfg(feature = "bootp")]
 pub mod bootp;
@@ -281,9 +287,9 @@ pub mod s3;
 pub use s3::actions::S3ClientProtocol;
 
 // saml client
-#[cfg(feature = "saml-idp")]
+#[cfg(feature = "saml")]
 pub mod saml;
-#[cfg(feature = "saml-idp")]
+#[cfg(feature = "saml")]
 pub use saml::actions::SamlClientProtocol;
 
 // sip client
@@ -315,6 +321,12 @@ pub use snmp::actions::SnmpClientProtocol;
 pub mod socks5;
 #[cfg(feature = "socks5")]
 pub use socks5::actions::Socks5ClientProtocol;
+
+// socket_file client
+#[cfg(all(feature = "socket_file", unix))]
+pub mod socket_file;
+#[cfg(all(feature = "socket_file", unix))]
+pub use socket_file::SocketFileClientProtocol;
 
 // sqs client
 #[cfg(feature = "sqs")]
@@ -387,6 +399,12 @@ pub use turn::actions::TurnClientProtocol;
 pub mod udp;
 #[cfg(feature = "udp")]
 pub use udp::actions::UdpClientProtocol;
+
+// usb client
+#[cfg(feature = "usb")]
+pub mod usb;
+#[cfg(feature = "usb")]
+pub use usb::actions::UsbClientProtocol;
 
 // vnc client
 #[cfg(feature = "vnc")]
