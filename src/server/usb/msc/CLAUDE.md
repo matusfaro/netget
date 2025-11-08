@@ -32,55 +32,63 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 4. **SCSI Layer**: SCSI transparent command set (subclass 0x06)
 5. **Disk Layer**: Virtual disk image file (raw or FAT32)
 
-## Current Status: **Experimental (Framework Only)**
+## Current Status: **Experimental (Full Implementation Complete)**
 
-### What Exists (Framework)
-- ✅ MSC descriptor builders (config, interface, endpoints)
-- ✅ BOT protocol structures (CBW, CSW)
-- ✅ SCSI command opcode constants
-- ✅ Protocol registration and discovery
-- ✅ Action/event definitions
-- ✅ Server trait implementation skeleton
-- ✅ TCP listener for USB/IP connections
+### What's Implemented
 
-### What's Missing (Implementation Required)
+#### Phase 1: USB/IP Device Handler ✅ COMPLETE
+- ✅ Custom `UsbInterfaceHandler` trait implementation for MSC (`handler.rs`)
+- ✅ Bulk OUT endpoint handler (receive CBW + data)
+- ✅ Bulk IN endpoint handler (send data + CSW)
+- ✅ BOT state machine (CBW → Data → CSW)
+- ✅ Class-specific control requests (Mass Storage Reset, Get Max LUN)
 
-**CRITICAL**: The usbip crate (v0.3) does **NOT** have built-in Mass Storage Class support. Full implementation requires:
+#### Phase 2: SCSI Command Implementation ✅ COMPLETE
+- ✅ **INQUIRY** (0x12): Return device information
+- ✅ **TEST_UNIT_READY** (0x00): Check device readiness
+- ✅ **READ_CAPACITY(10)** (0x25): Return total sectors and block size
+- ✅ **READ(10)** (0x28): Read sectors from disk image
+- ✅ **WRITE(10)** (0x2A): Write sectors to disk image
+- ✅ **REQUEST_SENSE** (0x03): Return sense data for errors
+- ✅ **MODE_SENSE(6)** (0x1A): Return device parameters
+- ✅ **PREVENT_ALLOW_MEDIUM_REMOVAL** (0x1E): Acknowledge media lock
+- ✅ **READ_FORMAT_CAPACITIES** (0x23): Return disk format info
+- ✅ SCSI sense data management (error reporting)
 
-#### Phase 1: USB/IP Device Handler (High Priority)
-- ❌ Custom `UsbInterfaceHandler` trait implementation for MSC
-- ❌ Bulk OUT endpoint handler (receive CBW + data)
-- ❌ Bulk IN endpoint handler (send data + CSW)
-- ❌ BOT state machine (CBW → Data → CSW)
-- ❌ Class-specific control requests (Mass Storage Reset, Get Max LUN)
+#### Phase 3: Disk Image Management ✅ COMPLETE
+- ✅ Disk image file creation and validation (`disk.rs`)
+- ✅ Sector read/write operations (512-byte blocks)
+- ✅ Memory-mapped I/O for performance (using memmap2)
+- ✅ Write-protect flag management
+- ✅ Zero-sector operations
+- ✅ Unit tests for disk I/O
 
-#### Phase 2: SCSI Command Implementation (High Priority)
-- ❌ **INQUIRY** (0x12): Return device information
-- ❌ **TEST_UNIT_READY** (0x00): Check device readiness
-- ❌ **READ_CAPACITY(10)** (0x25): Return total sectors and block size
-- ❌ **READ(10)** (0x28): Read sectors from disk image
-- ❌ **WRITE(10)** (0x2A): Write sectors to disk image
-- ❌ **REQUEST_SENSE** (0x03): Return sense data for errors
-- ❌ **MODE_SENSE(6)** (0x1A): Return device parameters
-- ❌ SCSI sense data management (error reporting)
+#### Phase 4: LLM Integration ✅ COMPLETE
+- ✅ USB/IP server spawning with device export
+- ✅ Event generation (usb_msc_attached, read, write)
+- ✅ Connection state tracking
+- ✅ Handler storage per connection
+- ⚠️ LLM actions (mount_disk, eject_disk, set_write_protect) - Framework ready, not yet implemented
 
-#### Phase 3: Disk Image Management (Medium Priority)
-- ❌ Disk image file creation and validation
-- ❌ Sector read/write operations (512-byte blocks)
-- ❌ Memory-mapped I/O for performance
-- ❌ Write-protect flag management
-- ❌ FAT32 filesystem support (optional)
-
-#### Phase 4: LLM Integration (Low Priority)
-- ❌ LLM action execution (mount_disk, eject_disk, set_write_protect)
-- ❌ Event generation (attached, read, write)
-- ❌ Connection state tracking
-
-#### Phase 5: Testing (Deferred)
-- ❌ E2E tests with real usbip client
+#### Phase 5: Testing ⚠️ NOT YET TESTED
+- ❌ E2E tests with real usbip client (requires manual testing)
 - ❌ Disk mounting verification
 - ❌ File read/write tests
 - ❌ Performance benchmarking
+
+### Known Limitations
+
+#### Not Yet Implemented
+- **LLM Actions**: The framework exists in `actions.rs` but `execute_action()` doesn't handle mount_disk, eject_disk, set_write_protect yet
+- **E2E Testing**: No automated E2E tests exist (see `tests/server/usb_msc/CLAUDE.md`)
+- **Dynamic Disk Switching**: Cannot swap disk images at runtime
+- **Multiple LUNs**: Only single LUN (logical unit) supported
+
+#### Implementation Notes
+- **Write Protection**: Defaults to `true` for safety, preventing accidental writes until explicitly disabled
+- **Disk Size**: Defaults to 10MB, currently not configurable via startup parameters
+- **SCSI Compliance**: Implements minimal SCSI-2 command set for basic storage operations
+- **Blocking in async**: Uses `tokio::runtime::Handle::current().block_on()` in UsbInterfaceHandler methods (required because trait is sync)
 
 ## Implementation Guide
 

@@ -85,7 +85,7 @@ usb-common = ["dep:usbip"]  # Common USB/IP functionality for USB device protoco
 usb-keyboard = ["usb-common"]  # USB HID Keyboard virtual device
 usb-mouse = ["usb-common"]  # USB HID Mouse virtual device
 usb-serial = ["usb-common"]  # USB CDC ACM Serial virtual device
-usb-msc = ["usb-common"]  # USB Mass Storage Class virtual device (flash drive/disk)
+usb-msc = ["usb-common", "memmap2"]  # USB Mass Storage Class virtual device (flash drive/disk)
 usb = ["usb-common"]  # Low-level USB device with full descriptor control
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
@@ -97,7 +97,6 @@ torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer d
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
-usb = ["dep:nusb"]  # USB device client for low-level USB device interaction
 all-protocols = [
     "tcp",
     "socket_file",
@@ -511,6 +510,9 @@ nusb = { version = "0.1", optional = true }
 
 # USB/IP protocol for virtual USB device creation
 usbip = { version = "0.3", optional = true }
+
+# Memory-mapped file I/O for USB MSC disk images
+memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 # For async tests
