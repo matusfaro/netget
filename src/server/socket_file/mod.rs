@@ -1,4 +1,8 @@
 //! Unix domain socket server implementation
+//!
+//! Platform: Unix/Linux only (uses Unix domain sockets)
+#![cfg(unix)]
+
 pub mod actions;
 
 use anyhow::{Context, Result};

@@ -1,4 +1,6 @@
 //! Unix domain socket file tests
-#![cfg(all(test, feature = "socket_file"))]
+//!
+//! Platform: Unix/Linux only
+#![cfg(all(test, feature = "socket_file", unix))]
 
 pub mod test;

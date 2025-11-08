@@ -4,7 +4,8 @@
 Unix domain socket server implementing raw socket file handling where the LLM has full control over the byte stream. This protocol enables inter-process communication (IPC) using filesystem socket files instead of TCP IP:port addresses.
 
 **Status**: Experimental (Core Protocol)
-**Platform**: Linux/Unix only (uses Unix domain sockets)
+**Platform**: Linux/Unix/macOS only (uses Unix domain sockets, not available on Windows)
+**Compilation**: Gated with `#[cfg(unix)]` - will not compile on non-Unix platforms
 
 ## Library Choices
 - **tokio::net::UnixListener** - Async Unix domain socket server from Tokio runtime
