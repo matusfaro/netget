@@ -965,7 +965,7 @@ async fn handle_key_event(
 
                 // Handle command
                 match command {
-                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv | UserCommand::ShowWebSearch => {
+                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv | UserCommand::ShowWebSearch | UserCommand::ShowEnvironment => {
                         // Handle status/info commands
                         handle_status_command(&command, app, state, event_handler, footer, &palette).await?;
                     }
