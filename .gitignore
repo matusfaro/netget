@@ -21,3 +21,4 @@ ollama.lock
 *.sln
 *.sw?
 target-etcd-build/
+.aider*
