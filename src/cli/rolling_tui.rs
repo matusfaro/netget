@@ -1684,6 +1684,21 @@ async fn handle_status_command(
             print_output_line("To change, use: /web on, /web ask, or /web off", footer, &palette)?;
             print_output_line("Or press Ctrl+W to cycle through modes", footer, &palette)?;
         }
+        UserCommand::ShowScriptingEnv => {
+            let mode = state.get_selected_scripting_mode().await;
+            print_output_line(&format!("Current scripting mode: {}", mode), footer, &palette)?;
+            print_output_line("", footer, &palette)?;
+            print_output_line("To change, use: /script <env>", footer, &palette)?;
+        }
+        UserCommand::ShowEnvironment => {
+            print_output_line("=== Environment Information ===", footer, &palette)?;
+            print_output_line(&format!("Platform: {}", std::env::consts::OS), footer, &palette)?;
+            print_output_line(&format!("Architecture: {}", std::env::consts::ARCH), footer, &palette)?;
+            if let Ok(cwd) = std::env::current_dir() {
+                print_output_line(&format!("Working directory: {}", cwd.display()), footer, &palette)?;
+            }
+            print_output_line(&format!("Model: {}", state.get_ollama_model().await), footer, &palette)?;
+        }
         _ => {}
     }
     Ok(())
