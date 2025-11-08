@@ -50,6 +50,8 @@ pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub struct UsbMouseProtocol {
     /// Map of active connections (for async actions)
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+    /// Map of USB/IP mouse handlers for each connection
+    handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
 }
 
 #[cfg(feature = "usb-mouse")]
@@ -62,7 +64,25 @@ impl UsbMouseProtocol {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
+            handlers: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Store the USB/IP mouse handler for a connection
+    pub async fn set_handler(
+        &self,
+        connection_id: ConnectionId,
+        handler: Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
+    ) {
+        self.handlers.lock().await.insert(connection_id, handler);
+    }
+
+    /// Get the USB/IP mouse handler for a connection
+    async fn get_handler(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Option<Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>> {
+        self.handlers.lock().await.get(&connection_id).cloned()
     }
 }
 
@@ -155,51 +175,128 @@ impl Server for UsbMouseProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        _connection_id: Option<ConnectionId>,
+        connection_id: Option<ConnectionId>,
         _app_state: &AppState,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
 
+        let connection_id = connection_id.context("USB mouse actions require connection_id")?;
+
+        // Get handler (need to use blocking approach since execute_action is sync)
+        let handler = {
+            let handlers = self.handlers.blocking_lock();
+            handlers
+                .get(&connection_id)
+                .cloned()
+                .context("No USB mouse handler found for connection")?
+        };
+
         match action_type {
             "move_relative" => {
                 let x = action["x"].as_i64().context("move_relative requires 'x' field")? as i8;
                 let y = action["y"].as_i64().context("move_relative requires 'y' field")? as i8;
-                // TODO: Implement relative mouse movement via USB/IP
-                Ok(ActionResult::NoAction)
+
+                // Queue mouse movement event
+                let mut handler_guard = handler.lock().unwrap();
+                if let Some(hid) = handler_guard
+                    .as_any()
+                    .downcast_mut::<usbip::hid::UsbHidMouseHandler>()
+                {
+                    let report = usbip::hid::UsbHidMouseReport::new_movement(x, y);
+                    hid.pending_mouse_events.push_back(report);
+                    tracing::info!(
+                        "Queued mouse move ({}, {}) for connection {}",
+                        x,
+                        y,
+                        connection_id
+                    );
+                    Ok(ActionResult::NoAction)
+                } else {
+                    Err(anyhow::anyhow!("Handler is not a USB HID mouse handler"))
+                }
             }
             "move_absolute" => {
-                let x = action["x"].as_i64().context("move_absolute requires 'x' field")?;
-                let y = action["y"].as_i64().context("move_absolute requires 'y' field")?;
-                let screen_width = action["screen_width"].as_i64().unwrap_or(1920);
-                let screen_height = action["screen_height"].as_i64().unwrap_or(1080);
-                // TODO: Implement absolute mouse movement via USB/IP
-                // Note: Need to convert absolute coords to relative movements
+                let _x = action["x"].as_i64().context("move_absolute requires 'x' field")?;
+                let _y = action["y"].as_i64().context("move_absolute requires 'y' field")?;
+                let _screen_width = action["screen_width"].as_i64().unwrap_or(1920);
+                let _screen_height = action["screen_height"].as_i64().unwrap_or(1080);
+                // TODO: Implement absolute positioning (requires tracking current position)
+                tracing::warn!("move_absolute not yet implemented for USB mouse");
                 Ok(ActionResult::NoAction)
             }
             "click" => {
                 let button = action["button"]
                     .as_str()
                     .context("click requires 'button' field")?;
-                // TODO: Implement mouse click via USB/IP
-                Ok(ActionResult::NoAction)
+
+                let button_mask = match button {
+                    "left" => crate::server::usb::descriptors::mouse_buttons::LEFT,
+                    "right" => crate::server::usb::descriptors::mouse_buttons::RIGHT,
+                    "middle" => crate::server::usb::descriptors::mouse_buttons::MIDDLE,
+                    _ => return Err(anyhow::anyhow!("Invalid button: {}", button)),
+                };
+
+                // Queue click sequence: press, release
+                let mut handler_guard = handler.lock().unwrap();
+                if let Some(hid) = handler_guard
+                    .as_any()
+                    .downcast_mut::<usbip::hid::UsbHidMouseHandler>()
+                {
+                    // Press button
+                    let press = usbip::hid::UsbHidMouseReport::new_click(button_mask);
+                    hid.pending_mouse_events.push_back(press);
+
+                    // Release button
+                    let release = usbip::hid::UsbHidMouseReport::new_click(0);
+                    hid.pending_mouse_events.push_back(release);
+
+                    tracing::info!("Queued {} click for connection {}", button, connection_id);
+                    Ok(ActionResult::NoAction)
+                } else {
+                    Err(anyhow::anyhow!("Handler is not a USB HID mouse handler"))
+                }
             }
             "scroll" => {
                 let direction = action["direction"]
                     .as_str()
                     .context("scroll requires 'direction' field")?;
                 let amount = action["amount"].as_i64().unwrap_or(1) as i8;
-                // TODO: Implement mouse scroll via USB/IP
-                Ok(ActionResult::NoAction)
+
+                let wheel = match direction {
+                    "up" => amount,
+                    "down" => -amount,
+                    _ => return Err(anyhow::anyhow!("Invalid scroll direction: {}", direction)),
+                };
+
+                // Queue scroll event
+                let mut handler_guard = handler.lock().unwrap();
+                if let Some(hid) = handler_guard
+                    .as_any()
+                    .downcast_mut::<usbip::hid::UsbHidMouseHandler>()
+                {
+                    let report = usbip::hid::UsbHidMouseReport::new_scroll(wheel);
+                    hid.pending_mouse_events.push_back(report);
+                    tracing::info!(
+                        "Queued scroll {} ({}) for connection {}",
+                        direction,
+                        wheel,
+                        connection_id
+                    );
+                    Ok(ActionResult::NoAction)
+                } else {
+                    Err(anyhow::anyhow!("Handler is not a USB HID mouse handler"))
+                }
             }
             "drag" => {
-                let start_x = action["start_x"].as_i64().context("drag requires 'start_x'")?;
-                let start_y = action["start_y"].as_i64().context("drag requires 'start_y'")?;
-                let end_x = action["end_x"].as_i64().context("drag requires 'end_x'")?;
-                let end_y = action["end_y"].as_i64().context("drag requires 'end_y'")?;
-                let duration_ms = action["duration_ms"].as_i64().unwrap_or(500);
-                // TODO: Implement mouse drag via USB/IP
+                let _start_x = action["start_x"].as_i64().context("drag requires 'start_x'")?;
+                let _start_y = action["start_y"].as_i64().context("drag requires 'start_y'")?;
+                let _end_x = action["end_x"].as_i64().context("drag requires 'end_x'")?;
+                let _end_y = action["end_y"].as_i64().context("drag requires 'end_y'")?;
+                let _duration_ms = action["duration_ms"].as_i64().unwrap_or(500);
+                // TODO: Implement drag (requires position tracking + smooth movement)
+                tracing::warn!("drag not yet implemented for USB mouse");
                 Ok(ActionResult::NoAction)
             }
             "wait_for_more" => Ok(ActionResult::WaitForMore),
