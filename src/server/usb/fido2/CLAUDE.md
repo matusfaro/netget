@@ -155,7 +155,120 @@ Modern FIDO2 protocol (CBOR-encoded):
 
 ## Library Choices
 
-### Option 1: Implement from Scratch
+### Available Rust Implementations
+
+#### 1. **softfido** (Rust, Complete Virtual FIDO2/U2F Implementation)
+
+- **GitHub**: https://github.com/ellerh/softfido
+- **Status**: Working implementation
+- **Architecture**: Virtual USB device via USB/IP + PKCS#11 backend (SoftHSM)
+
+**Features:**
+- Implements FIDO2/U2F authenticator over USB/IP
+- Delegates cryptography to SoftHSM (PKCS#11)
+- Can run on different machine than kernel module
+- Hobby project but functional
+
+**Pros:**
+- Already implements USB/IP for FIDO2 (perfect match!)
+- Written in Rust (can study and adapt code)
+- Modular design (crypto backend separate)
+- Proven to work with web browsers
+
+**Cons:**
+- Requires PKCS#11 setup (SoftHSM)
+- Hobby project (may lack polish)
+- License needs verification
+
+**Verdict:** ⭐⭐⭐⭐⭐ **BEST OPTION - Direct reference for our use case**
+
+#### 2. **rust-u2f** (danstiner, Software U2F Token)
+
+- **GitHub**: https://github.com/danstiner/rust-u2f
+- **Status**: U2F security token emulator
+- **Features**: Software-only U2F implementation
+
+**Pros:**
+- Pure Rust U2F implementation
+- Simpler than full FIDO2
+
+**Cons:**
+- U2F only (no FIDO2/CTAP2)
+- May not use USB/IP
+- Limited documentation
+
+**Verdict:** ⭐⭐⭐ Useful reference for U2F commands
+
+#### 3. **OpenSK** (Google, Production FIDO2)
+
+- **GitHub**: https://github.com/google/OpenSK
+- **Status**: FIDO Alliance certified
+- **Features**: Complete CTAP 2.0 implementation
+
+**Pros:**
+- Production-quality, FIDO-certified
+- Written in Rust
+- Comprehensive CTAP2 support
+- Post-quantum crypto research
+
+**Cons:**
+- Designed for embedded devices (Tock OS)
+- Complex codebase for embedded targets
+- Not designed for USB/IP virtualization
+
+**Verdict:** ⭐⭐⭐⭐ Excellent reference for CTAP2 protocol, but hard to adapt
+
+#### 4. **ctaphid** crate (CTAPHID Protocol)
+
+- **Crate**: https://crates.io/crates/ctaphid
+- **Features**: CTAPHID protocol implementation
+- **Supports**: All CTAPHID commands except cancel
+
+**Pros:**
+- Focused on CTAPHID transport layer
+- Can handle packet framing
+- Rust implementation
+
+**Cons:**
+- Only transport layer, not full authenticator
+- May need adaptation for our use case
+
+**Verdict:** ⭐⭐⭐ Useful for CTAPHID packet handling
+
+### C Library Bindings
+
+#### 5. **libfido2-sys** + **fido2-rs** (Yubico libfido2 Bindings)
+
+- **Crate**: https://crates.io/crates/libfido2-sys (FFI)
+- **Crate**: https://crates.io/crates/fido2-rs (safe wrapper)
+- **Library**: Yubico's official libfido2 C library
+
+**Features:**
+- Complete FIDO2 client implementation
+- Auto-builds or uses pkg-config
+- Cross-platform (Windows, Linux, macOS)
+
+**Pros:**
+- Production-quality C library
+- Official Yubico implementation
+- Safe Rust bindings available
+
+**Cons:**
+- **CLIENT-SIDE library** (for using tokens, not emulating them)
+- Not designed for authenticator implementation
+- Would need reverse engineering to understand wire protocol
+
+**Verdict:** ⭐ Not suitable - this is for clients, not authenticators
+
+### Mozilla's authenticator-rs (Client Library)
+
+- **GitHub**: https://github.com/mozilla/authenticator-rs
+- **Purpose**: Interact with hardware security keys
+- **Used by**: Firefox browser
+
+**Verdict:** ⭐ Not suitable - client-side only
+
+### Option 3: Adapt Virtual FIDO (Go → Rust Port)
 
 **Pros:**
 - Full control over implementation
@@ -201,40 +314,85 @@ Modern FIDO2 protocol (CBOR-encoded):
 - Would need full port to Rust
 - Beta quality, APIs may change
 
-### Recommended Approach
+### Recommended Approach (UPDATED)
 
-**Incremental Implementation:**
-1. Start with USB HID device + CTAPHID transport (Phases 1-2)
-2. Implement minimal U2F (CTAP1) for basic 2FA (Phase 3)
-3. Add cryptography using `ring` or `ed25519-dalek` crates (Phase 5)
-4. Add credential storage (Phase 6)
-5. Extend to FIDO2 (CTAP2) if needed (Phase 4)
+Based on the research findings, the **best approach is to use softfido as a reference** and adapt it to NetGet's architecture.
 
-## Required Crates
+**Strategy: Study and Adapt softfido**
 
-### Cryptography
+1. **Study softfido's architecture** (1-2 days)
+   - Understand its USB/IP integration
+   - Analyze CTAPHID implementation
+   - Review CTAP1/CTAP2 command handling
+   - Study PKCS#11 integration pattern
+
+2. **Replace PKCS#11 with direct crypto** (2-3 days)
+   - Use `ring` or `p256` crate instead of SoftHSM
+   - Implement credential storage directly
+   - Add signature counter persistence
+
+3. **Integrate with NetGet** (2-3 days)
+   - Use NetGet's USB/IP patterns (from keyboard/mouse/MSC)
+   - Add LLM integration for user presence
+   - Add protocol registration and actions
+   - Implement event generation
+
+4. **Test and refine** (1-2 days)
+   - Test with Chrome/Firefox
+   - Verify U2F and FIDO2 flows
+   - Fix compatibility issues
+
+**Total Effort with softfido reference**: 6-10 days (much better than 14-22 days from scratch!)
+
+**Alternative: Use ctaphid crate + OpenSK reference**
+
+If softfido's license is incompatible:
+1. Use `ctaphid` crate for transport layer
+2. Reference OpenSK for CTAP2 protocol logic
+3. Implement crypto with `ring`
+4. Estimated effort: 10-14 days
+
+## Required Crates (UPDATED)
+
+### Option A: Study softfido (Recommended)
+
+If adapting softfido:
+```toml
+# Softfido's approach (for reference):
+# - PKCS#11 for crypto (we'll replace this)
+# - USB/IP via custom implementation (we'll use usbip crate)
+
+# Our approach:
+ring = "0.17"              # Replace PKCS#11: ECDSA P-256, SHA-256, random
+serde_cbor = "0.11"        # CBOR for CTAP2
+```
+
+### Option B: Use Existing Crates
 
 ```toml
+# CTAPHID protocol implementation
+ctaphid = "0.2"            # CTAPHID packet framing and channel management
+
+# Cryptography
 ring = "0.17"              # ECDSA P-256, SHA-256, random
 # OR
 p256 = "0.13"              # ECDSA P-256
 ed25519-dalek = "2.0"      # EdDSA Ed25519 (optional)
 sha2 = "0.10"              # SHA-256
-```
 
-### CBOR Encoding (for CTAP2)
-
-```toml
+# CBOR encoding (for CTAP2)
 serde_cbor = "0.11"        # CBOR serialization
 # OR
 ciborium = "0.2"           # Modern CBOR implementation
 ```
 
-### HID Report Descriptor
+### Not Recommended (Client-Side Only)
 
 ```toml
-# No specific crate needed - manually construct descriptor bytes
-# Reference: FIDO Alliance CTAPHID specification
+# These are for USING security keys, not implementing them:
+# libfido2-sys = "0.1"    # FFI to libfido2 (client-side)
+# fido2-rs = "0.1"        # Safe wrapper (client-side)
+# authenticator = "*"     # Mozilla's client library
 ```
 
 ## HID Report Descriptor (FIDO)
@@ -527,21 +685,48 @@ serde_cbor = { version = "0.11", optional = true }
 - **ring crate (crypto)**: https://docs.rs/ring/
 - **serde_cbor crate**: https://docs.rs/serde_cbor/
 
-## Recommendation
+## Recommendation (UPDATED)
 
-**Implementation Priority**: **MEDIUM-LOW**
+**Implementation Priority**: **MEDIUM** (upgraded from MEDIUM-LOW)
 
-**Rationale:**
-- Very complex implementation (14-22 days)
-- Requires deep cryptography knowledge
-- Security-critical (credential management)
-- Existing solutions (hardware keys) work well
-- Limited LLM integration value (mostly approvals)
+**Rationale for Upgrade:**
+- **softfido exists as direct reference** (Rust + USB/IP + FIDO2)
+- Effort reduced from 14-22 days to **6-10 days** with reference
+- Can study working implementation before coding
+- Good showcase of LLM controlling security-critical operations
 
-**Better suited for**:
+**Updated Assessment:**
+
+**WITH softfido reference:**
+- ✅ Feasible in reasonable timeframe (6-10 days)
+- ✅ Direct code to study and adapt
+- ✅ USB/IP pattern already proven
+- ⚠️ Still requires crypto understanding
+- ⚠️ License verification needed
+
+**Implementation Recommendation:**
+
+1. **Phase 1: Verify softfido license** (Apache/MIT preferred)
+2. **Phase 2: Study softfido codebase** (1-2 days)
+   - Understand architecture
+   - Map to NetGet patterns
+   - Identify reusable components
+3. **Phase 3: Implement U2F first** (3-4 days)
+   - Simpler than FIDO2
+   - Sufficient for basic 2FA
+   - Validates approach
+4. **Phase 4: Add FIDO2 if needed** (2-4 days)
+   - WebAuthn support
+   - Passwordless authentication
+
+**Alternative if softfido license incompatible:**
+- Use `ctaphid` crate + OpenSK reference: 10-14 days
+- Still viable, just more effort
+
+**Best suited for:**
 - Security research and testing
 - FIDO2 protocol education
-- Custom authentication workflows
-- Situations where hardware keys unavailable
+- Demonstrating LLM security controls
+- Development environments without hardware keys
 
-**Consider implementing simpler USB protocols first** (keyboard, mouse, storage) before attempting FIDO2.
+**Prerequisite:** Implement simpler USB protocols first (✅ keyboard, ✅ mouse, ✅ storage already done!)
