@@ -70,6 +70,8 @@ pub enum UserCommand {
     ShowDocs {
         protocol: Option<String>,
     },
+    /// Show environment information (slash command: /env or /environment)
+    ShowEnvironment,
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -193,6 +195,11 @@ impl UserCommand {
                 Some(rest.to_string())
             };
             return UserCommand::ShowDocs { protocol };
+        }
+
+        // /env, /environment command - show environment information
+        if input_lower == "/env" || input_lower == "/environment" {
+            return UserCommand::ShowEnvironment;
         }
 
         // Unknown slash command - return error, don't send to LLM
