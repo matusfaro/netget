@@ -1,29 +1,49 @@
 ---
 
-# Script-Based Responses
+# Event Handler Configuration
 
-**Selected environment:** {{selected_mode}}
+**Current handler mode:** {{event_handler_mode}}
 
-## When to Use Scripts
+## Handler Modes
 
-**IMPORTANT:** Scripts should ONLY be used when:
-- The user explicitly requests scripting or programmatic behavior
-- Responses are **static and deterministic** (e.g., fixed file serving, simple routing with predefined rules)
-- **Complex authentication logic** with well-defined conditions (e.g., SSH auth with specific username/password combinations)
+The handler mode controls how you should configure event handlers:
+
+- **ANY** (default): You choose the most appropriate handler type (script, static, or llm) for each event based on the task requirements
+- **SCRIPT**: You must configure all events with script handlers (inline code)
+- **STATIC**: You must configure all events with static response handlers (predefined actions)
+- **LLM**: You must configure all events to be handled by LLM (dynamic processing)
+
+**Current mode is {{event_handler_mode}}** - configure event handlers accordingly when opening servers/clients.
+
+## Event Handlers System
+
+When opening servers or clients, you can configure how different events are handled by providing an `event_handlers` array. Each handler specifies:
+
+1. **event_pattern**: Event ID to match (e.g., "tcp_data_received") or "*" for all events
+2. **handler**: Configuration object with:
+   - **type**: "script", "static", or "llm"
+   - **Additional fields based on type:**
+     - Script: `language` (python/javascript/go/perl), `code` (inline script)
+     - Static: `actions` (array of action objects)
+     - LLM: no additional fields
+
+Handlers are matched in order - the first matching pattern wins.
+
+## Handler Types
+
+### Script Handlers
+
+Use scripts when responses are **static and deterministic**:
+- Fixed file serving, simple routing with predefined rules
+- Complex authentication logic with well-defined conditions
+- Repetitive tasks that don't require reasoning
 
 **DO NOT use scripts for:**
-- **Creative or dynamic responses** - Continue using LLM for natural language, context-aware, or adaptive responses
-- Situations requiring reasoning, interpretation, or decision-making beyond simple rules
-- When responses should vary based on context or user behavior
+- Creative or dynamic responses requiring natural language
+- Situations requiring reasoning, interpretation, or decision-making
+- When responses should vary based on context
 
-Scripts are for automation of static, repetitive tasks. Use LLM (your native mode) for everything else.
-
-## How Scripts Work
-
-### Input Format
-
-Scripts receive JSON via stdin:
-
+**Script Input (JSON via stdin):**
 ```json
 {
   "event_type_id": "ssh_auth",
@@ -33,84 +53,103 @@ Scripts receive JSON via stdin:
 }
 ```
 
-### Output Format
-
-**CRITICAL:** Scripts must output JSON with an `actions` array:
-
+**Script Output (CRITICAL - must output JSON with actions array):**
 ```json
 {"actions": [{"type": "action_name", "param": "value"}]}
 ```
 
-Use the **same action types** available to you as the LLM (e.g., `ssh_auth_decision`, `send_http_response`).
+Use the **same action types** available to you as the LLM. **DO NOT** write raw protocol code.
 
-**DO NOT** write raw protocol code (like `res.writeHead()` or socket operations).
-
-### Random Data in Scripts
-
-**IMPORTANT:** When scripts need random or mock data, use your language's built-in random functions:
-
-**Python:**
-```python
-import random, uuid
-random_id = str(uuid.uuid4())  # UUID
-random_num = random.randint(1, 100)  # Integer
-random_str = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16))  # String
+**Example script handler:**
+```json
+{
+  "event_pattern": "ssh_auth",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "code": "import json,sys\ndata=json.load(sys.stdin)\nallowed=data['event']['username']=='alice'\nprint(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':allowed}]}))"
+  }
+}
 ```
 
-**JavaScript:**
-```javascript
-const crypto = require('crypto');
-const randomId = crypto.randomUUID();  // UUID
-const randomNum = Math.floor(Math.random() * 100);  // Integer
-const randomStr = crypto.randomBytes(16).toString('hex');  // Hex string
+**Scripts constraints:**
+- Must complete within 5 seconds or terminated
+- Can return `{"fallback_to_llm": true}` to delegate complex cases back to LLM
+
+### Static Handlers
+
+Use static handlers for completely predefined responses:
+- Welcome messages
+- Fixed banner responses
+- Redirects to specific URLs
+
+**Example static handler:**
+```json
+{
+  "event_pattern": "*",
+  "handler": {
+    "type": "static",
+    "actions": [
+      {"type": "send_data", "data": "Welcome to the server!\n"}
+    ]
+  }
+}
 ```
 
-**Go:**
-```go
-import "crypto/rand"; import "math/rand"; import "github.com/google/uuid"
-id := uuid.New().String()  // UUID
-num := rand.Intn(100)  // Integer
-bytes := make([]byte, 16); rand.Read(bytes)  // Random bytes
+### LLM Handlers
+
+Use LLM handlers (default) for:
+- Natural language processing
+- Context-aware responses
+- Decision-making requiring reasoning
+- Creative or adaptive behavior
+
+**Example LLM handler:**
+```json
+{
+  "event_pattern": "http_request",
+  "handler": {
+    "type": "llm"
+  }
+}
 ```
 
-**Perl:**
-```perl
-use UUID::Tiny ':std'; use String::Random;
-my $id = create_uuid_as_string();  # UUID
-my $num = int(rand(100));  # Integer
-my $str = String::Random->new->randregex('[a-z0-9]{16}');  # String
+## Configuration Examples
+
+**Mixed handlers (ANY mode):**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "ssh_auth",
+    "handler": {"type": "script", "language": "python", "code": "..."}
+  },
+  {
+    "event_pattern": "ssh_banner",
+    "handler": {"type": "static", "actions": [{"type": "send_data", "data": "SSH-2.0-MyServer\n"}]}
+  },
+  {
+    "event_pattern": "*",
+    "handler": {"type": "llm"}
+  }
+]
 ```
 
-### Examples
-
-**Example 1 - SSH Authentication (Python):**
-```python
-import json, sys
-data = json.load(sys.stdin)
-username = data['event']['username']
-allowed = (username == 'alice')
-print(json.dumps({"actions": [{"type": "ssh_auth_decision", "allowed": allowed}]}))
+**All scripts (SCRIPT mode):**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "*",
+    "handler": {"type": "script", "language": "python", "code": "..."}
+  }
+]
 ```
 
-**Example 2 - HTTP Response (JavaScript):**
-```javascript
-const data = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
-const pathname = data.event.path;
-const response = pathname.endsWith('.html')
-  ? {"status": 200, "headers": {"Content-Type": "text/html"}, "body": "<h1>Hello</h1>"}
-  : {"status": 404, "body": "Not Found"};
-console.log(JSON.stringify({"actions": [{"type": "send_http_response", ...response}]}));
+**All static (STATIC mode):**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "*",
+    "handler": {"type": "static", "actions": [{"type": "send_data", "data": "Response\n"}]}
+  }
+]
 ```
-
-### Configuration
-
-To use scripts in `open_server`, include:
-- `script_runtime`: "{{selected_mode}}" (REQUIRED when script_inline is provided - choose the appropriate runtime)
-- `script_inline`: Your script code as a string (when provided, script_runtime MUST also be specified)
-- `script_handles`: Array of event types to handle (e.g., `["ssh_auth", "ssh_banner"]` or `["all"]`). Defaults to `["all"]`.
-
-### Constraints
-
-- Scripts must complete within **5 seconds** or they will be terminated
-- Scripts can return `{"fallback_to_llm": true}` to delegate complex cases back to you
-- Use `update_script` action to modify scripts on running servers
