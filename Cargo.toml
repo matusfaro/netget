@@ -26,6 +26,15 @@ bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT serve
 bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
 bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
 bluetooth-ble-beacon = ["bluetooth-ble"]  # BLE beacon (iBeacon, Eddystone)
+bluetooth-ble-remote = ["bluetooth-ble"]  # BLE media remote control
+bluetooth-ble-battery = ["bluetooth-ble"]  # BLE Battery Service
+bluetooth-ble-heart-rate = ["bluetooth-ble"]  # BLE Heart Rate Service
+bluetooth-ble-thermometer = ["bluetooth-ble"]  # BLE Health Thermometer
+bluetooth-ble-environmental = ["bluetooth-ble"]  # BLE Environmental Sensing
+bluetooth-ble-proximity = ["bluetooth-ble"]  # BLE Proximity/Find Me
+bluetooth-ble-gamepad = ["bluetooth-ble"]  # BLE HID gamepad
+bluetooth-ble-presenter = ["bluetooth-ble"]  # BLE presentation clicker
+bluetooth-ble-file-transfer = ["bluetooth-ble"]  # BLE file transfer
 whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
@@ -183,6 +192,15 @@ all-protocols = [
     "bluetooth-ble-keyboard",
     "bluetooth-ble-mouse",
     "bluetooth-ble-beacon",
+    "bluetooth-ble-remote",
+    "bluetooth-ble-battery",
+    "bluetooth-ble-heart-rate",
+    "bluetooth-ble-thermometer",
+    "bluetooth-ble-environmental",
+    "bluetooth-ble-proximity",
+    "bluetooth-ble-gamepad",
+    "bluetooth-ble-presenter",
+    "bluetooth-ble-file-transfer",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests

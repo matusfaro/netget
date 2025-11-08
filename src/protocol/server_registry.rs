@@ -374,6 +374,33 @@ impl ServerRegistry {
 
         #[cfg(feature = "bluetooth-ble-beacon")]
         self.register(Arc::new(crate::server::BluetoothBleBeaconProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-remote")]
+        self.register(Arc::new(crate::server::BluetoothBleRemoteProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-battery")]
+        self.register(Arc::new(crate::server::BluetoothBleBatteryProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-heart-rate")]
+        self.register(Arc::new(crate::server::BluetoothBleHeartRateProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-thermometer")]
+        self.register(Arc::new(crate::server::BluetoothBleThermometerProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-environmental")]
+        self.register(Arc::new(crate::server::BluetoothBleEnvironmentalProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-proximity")]
+        self.register(Arc::new(crate::server::BluetoothBleProximityProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-gamepad")]
+        self.register(Arc::new(crate::server::BluetoothBleGamepadProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-presenter")]
+        self.register(Arc::new(crate::server::BluetoothBlePresenterProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-file-transfer")]
+        self.register(Arc::new(crate::server::BluetoothBleFileTransferProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
