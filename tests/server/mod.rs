@@ -2,6 +2,8 @@
 
 #[cfg(feature = "bgp")]
 pub mod bgp;
+#[cfg(feature = "bluetooth-server")]
+pub mod bluetooth_server;
 #[cfg(feature = "isis")]
 pub mod isis;
 #[cfg(feature = "rip")]

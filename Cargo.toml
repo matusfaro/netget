@@ -22,6 +22,7 @@ dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = ["dep:rsntp"]  # NTP client support
 bluetooth-ble = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
+bluetooth-server = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
 whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
@@ -175,6 +176,7 @@ all-protocols = [
     "saml-idp",
     "saml-sp",
     "usb",
+    "bluetooth-server",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
@@ -496,6 +498,8 @@ k8s-openapi = { version = "0.24", optional = true, features = ["v1_30"] }
 nfs3_types = { version = "0.4", optional = true }
 # Bluetooth Low Energy (BLE) client - cross-platform (Windows, macOS, Linux)
 btleplug = { version = "0.11", optional = true }
+# Bluetooth Low Energy (BLE) server/peripheral - cross-platform (Windows, macOS, Linux)
+ble-peripheral-rust = { version = "0.2", optional = true }
 # USB client
 nusb = { version = "0.1", optional = true }
 

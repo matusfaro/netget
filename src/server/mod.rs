@@ -583,5 +583,12 @@ pub use saml_sp::SamlSpServer;
 #[cfg(feature = "saml-sp")]
 pub use saml_sp::actions::SamlSpProtocol;
 
+#[cfg(feature = "bluetooth-server")]
+pub mod bluetooth_server;
+#[cfg(feature = "bluetooth-server")]
+pub use bluetooth_server::BluetoothServer;
+#[cfg(feature = "bluetooth-server")]
+pub use bluetooth_server::actions::BluetoothServerProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
