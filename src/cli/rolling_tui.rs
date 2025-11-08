@@ -505,7 +505,7 @@ async fn execute_single_task(
     let protocol_actions = match &task.scope {
         TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
             if let Some(protocol_name) = state.get_protocol_name(*server_id).await {
-                if let Some(protocol) = crate::protocol::registry::registry().get(&protocol_name) {
+                if let Some(protocol) = crate::protocol::server_registry::registry().get(&protocol_name) {
                     protocol.get_sync_actions()
                 } else {
                     Vec::new()
@@ -597,7 +597,7 @@ async fn execute_single_task(
             state
                 .get_protocol_name(*server_id)
                 .await
-                .and_then(|name| crate::protocol::registry::registry().get(&name))
+                .and_then(|name| crate::protocol::server_registry::registry().get(&name))
         }
         TaskScope::Client(_client_id) => {
             // Client protocols are handled differently - they don't use the server protocol registry

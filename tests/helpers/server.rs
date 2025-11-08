@@ -247,7 +247,7 @@ pub fn extract_base_stack_from_prompt(prompt: &str) -> Option<String> {
         let trimmed = stack_value.trim();
         if !trimmed.is_empty() {
             // Use the protocol registry to parse the stack name
-            return netget::protocol::registry::registry().parse_from_str(trimmed);
+            return netget::protocol::server_registry::registry().parse_from_str(trimmed);
         }
     }
 

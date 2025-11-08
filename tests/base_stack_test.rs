@@ -1,4 +1,4 @@
-use netget::protocol::registry::registry;
+use netget::protocol::server_registry::registry;
 
 #[test]
 #[cfg(feature = "http")]

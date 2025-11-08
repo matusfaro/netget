@@ -1035,7 +1035,7 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
 /// Filters out protocols with ProtocolState::Disabled unless include_disabled is true
 /// Dynamically determined from the ProtocolRegistry based on compiled features
 fn all_base_stacks(include_disabled: bool) -> Vec<String> {
-    let registry = crate::protocol::registry::registry();
+    let registry = crate::protocol::server_registry::registry();
 
     // Get all registered protocols from the registry (only includes compiled features)
     let mut protocols: Vec<String> = registry
@@ -1067,7 +1067,7 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
     let mut doc = String::from("## Available Base Stacks\n\n");
 
     // Group protocols by their group_name
-    let registry = crate::protocol::registry::registry();
+    let registry = crate::protocol::server_registry::registry();
     let mut groups: std::collections::HashMap<
         &'static str,
         Vec<(String, std::sync::Arc<dyn crate::llm::actions::Server>)>,
@@ -1128,7 +1128,7 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
 /// * `Ok(String)` - Documentation for the protocol (server and/or client)
 /// * `Err(_)` - If protocol not found in either registry
 pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Result<String> {
-    let server_registry = crate::protocol::registry::registry();
+    let server_registry = crate::protocol::server_registry::registry();
     let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
 
     // Protocol names are stored in uppercase (e.g., "HTTP", "SSH", "TCP")

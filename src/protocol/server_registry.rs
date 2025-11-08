@@ -11,14 +11,14 @@ use std::sync::Arc;
 use tracing::error;
 
 /// Global protocol registry mapping protocol names to protocol implementations
-pub struct ProtocolRegistry {
+pub struct ServerRegistry {
     /// Maps protocol name (e.g., "TCP", "HTTP") to protocol implementation
     protocols: HashMap<String, Arc<dyn Server>>,
     /// Maps lowercase keywords to protocol name for fast parsing
     keyword_map: HashMap<String, String>,
 }
 
-impl ProtocolRegistry {
+impl ServerRegistry {
     /// Create a new protocol registry
     fn new() -> Self {
         let mut registry = Self {
@@ -574,11 +574,11 @@ impl ProtocolRegistry {
 }
 
 /// Global singleton registry instance
-static REGISTRY: once_cell::sync::Lazy<ProtocolRegistry> =
-    once_cell::sync::Lazy::new(ProtocolRegistry::new);
+static REGISTRY: once_cell::sync::Lazy<ServerRegistry> =
+    once_cell::sync::Lazy::new(ServerRegistry::new);
 
 /// Get the global protocol registry
-pub fn registry() -> &'static ProtocolRegistry {
+pub fn registry() -> &'static ServerRegistry {
     &REGISTRY
 }
 
@@ -588,8 +588,8 @@ mod tests {
 
     /// Helper function to build a registry without validation panic
     /// (for testing purposes only)
-    fn build_test_registry() -> ProtocolRegistry {
-        let mut registry = ProtocolRegistry {
+    fn build_test_registry() -> ServerRegistry {
+        let mut registry = ServerRegistry {
             protocols: HashMap::new(),
             keyword_map: HashMap::new(),
         };

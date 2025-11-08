@@ -73,7 +73,7 @@ pub fn list_all_protocols() -> String {
         colors::DIM, colors::RESET));
 
     // Get all protocols from registry and group them
-    let registry = crate::protocol::registry::registry();
+    let registry = crate::protocol::server_registry::registry();
     let all_protocols = registry.all_protocols();
 
     // Group protocols by their group_name with their state
@@ -125,7 +125,7 @@ pub fn list_all_protocols() -> String {
 
 /// Generate detailed documentation for a specific protocol
 pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
-    let registry = crate::protocol::registry::registry();
+    let registry = crate::protocol::server_registry::registry();
 
     // Try to parse the protocol name using registry
     let parsed_protocol_name = registry.parse_from_str(protocol_name)

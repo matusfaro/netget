@@ -114,7 +114,7 @@ pub async fn call_llm_with_actions(
                     server: crate::scripting::types::ServerContext {
                         id: server.id.as_u32(),
                         port: server.port,
-                        stack: crate::protocol::registry::registry()
+                        stack: crate::protocol::server_registry::registry()
                             .stack_name_by_protocol(&server.protocol_name)
                             .unwrap_or("UNKNOWN")
                             .to_string(),
@@ -402,7 +402,7 @@ pub async fn call_llm(
                     server: crate::scripting::types::ServerContext {
                         id: server.id.as_u32(),
                         port: server.port,
-                        stack: crate::protocol::registry::registry()
+                        stack: crate::protocol::server_registry::registry()
                             .stack_name_by_protocol(&server.protocol_name)
                             .unwrap_or("UNKNOWN")
                             .to_string(),
