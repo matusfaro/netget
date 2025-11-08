@@ -7,6 +7,12 @@
 pub mod actions;
 
 #[cfg(feature = "usb-msc")]
+mod disk;
+
+#[cfg(feature = "usb-msc")]
+mod handler;
+
+#[cfg(feature = "usb-msc")]
 use anyhow::{Context, Result};
 #[cfg(feature = "usb-msc")]
 use std::collections::HashMap;
@@ -201,41 +207,196 @@ impl UsbMscServer {
 
         // Initialize connection data
         let disk_path = disk_image.unwrap_or_else(|| PathBuf::from("/tmp/netget_msc_disk.img"));
+        let disk_size_mb = 10; // Default 10MB disk
+        let write_protect = true; // Start write-protected for safety
+
+        // Create or open disk image
+        let disk_image_obj = Arc::new(RwLock::new(
+            disk::DiskImage::open_or_create(&disk_path, disk_size_mb)
+                .context("Failed to create disk image")?,
+        ));
+
+        let total_sectors = disk_image_obj.read().await.total_sectors();
+        let bytes_per_sector = disk_image_obj.read().await.bytes_per_sector();
+
         connections.lock().await.insert(
             connection_id,
             ConnectionData {
                 state: ConnectionState::Idle,
                 memory: String::new(),
                 disk_path: disk_path.clone(),
-                write_protect: true,  // Start write-protected for safety
-                total_sectors: 2048,  // Default: 1MB disk (2048 * 512 bytes)
-                bytes_per_sector: 512,
+                write_protect,
+                total_sectors,
+                bytes_per_sector,
             },
         );
 
-        // TODO: Implement USB/IP MSC device
-        //
-        // This requires:
-        // 1. Creating a custom UsbInterfaceHandler that implements BOT protocol
-        // 2. Creating UsbDevice with MSC descriptors (build_msc_config_descriptor)
-        // 3. Handling bulk OUT endpoint (CBW parsing + SCSI command dispatch)
-        // 4. Handling bulk IN endpoint (data transfer + CSW)
-        // 5. Implementing SCSI command handlers
-        // 6. Managing virtual disk image file
-        //
-        // See src/server/usb/msc/CLAUDE.md for detailed implementation guide.
-
-        let _ = status_tx.send(format!(
-            "USB MSC device framework ready (SCSI implementation pending) - disk: {}",
-            disk_path.display()
-        ));
-
-        error!(
-            "USB MSC full implementation pending - requires custom UsbInterfaceHandler with BOT/SCSI support"
+        info!(
+            "USB MSC device: disk={}, size={}MB, sectors={}, write_protect={}",
+            disk_path.display(),
+            disk_size_mb,
+            total_sectors,
+            write_protect
         );
 
-        Err(anyhow::anyhow!(
-            "USB MSC protocol not yet fully implemented - requires BOT/SCSI handler (see CLAUDE.md)"
-        ))
+        // Create MSC handler with BOT protocol and SCSI support
+        let handler = Arc::new(std::sync::Mutex::new(
+            Box::new(handler::UsbMscHandler::new(
+                disk_image_obj.clone(),
+                write_protect,
+            )) as Box<dyn usbip::UsbInterfaceHandler + Send>,
+        ));
+
+        // Store handler in protocol for LLM action execution
+        protocol.set_handler(connection_id, handler.clone()).await;
+
+        // Create USB device with MSC interface
+        let device = usbip::UsbDevice::new(0) // Bus 0
+            .with_interface(
+                0x08, // Mass Storage Class
+                0x06, // SCSI Transparent Command Set
+                0x50, // Bulk-Only Transport
+                Some("NetGet Virtual Disk"),
+                vec![
+                    usbip::UsbEndpoint {
+                        address: 0x81,         // EP1 IN (Bulk)
+                        attributes: 0x02,      // Bulk transfer
+                        max_packet_size: 512,  // 512 bytes
+                        interval: 0,           // Not used for bulk
+                    },
+                    usbip::UsbEndpoint {
+                        address: 0x02,         // EP2 OUT (Bulk)
+                        attributes: 0x02,      // Bulk transfer
+                        max_packet_size: 512,  // 512 bytes
+                        interval: 0,           // Not used for bulk
+                    },
+                ],
+                handler.clone(),
+            );
+
+        // Get local address for USB/IP server
+        let usbip_addr = remote_addr; // Use same address as TCP connection
+
+        // Create and spawn USB/IP server
+        let server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
+        let server_clone = server.clone();
+        tokio::spawn(async move {
+            if let Err(e) = usbip::server(usbip_addr, server_clone).await {
+                error!("USB/IP server error: {}", e);
+            }
+        });
+
+        info!(
+            "USB MSC device exported via USB/IP on {} (connection {})",
+            usbip_addr, connection_id
+        );
+        let _ = status_tx.send(format!(
+            "USB MSC device ready: {} ({} MB, {} sectors)",
+            disk_path.display(),
+            disk_size_mb,
+            total_sectors
+        ));
+
+        // Call LLM to notify device attached
+        Self::call_llm_on_attach(
+            connection_id,
+            remote_addr,
+            llm_client,
+            app_state.clone(),
+            status_tx.clone(),
+            connections.clone(),
+            protocol.clone(),
+            server_id,
+        )
+        .await?;
+
+        // Keep connection alive (USB/IP server runs in background)
+        tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
+
+        Ok(())
+    }
+
+    /// Call LLM when device is attached
+    async fn call_llm_on_attach(
+        connection_id: ConnectionId,
+        remote_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        protocol: Arc<crate::server::usb::msc::UsbMscProtocol>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        info!(
+            "USB MSC device attached for connection {} from {}",
+            connection_id, remote_addr
+        );
+
+        // Create event for device attachment
+        let event = Event::new(
+            &USB_MSC_ATTACHED_EVENT,
+            serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "remote_addr": remote_addr.to_string(),
+            }),
+        );
+
+        // Get connection data to check state
+        let conn_data = {
+            let conns = connections.lock().await;
+            conns.get(&connection_id).cloned()
+        };
+
+        if let Some(mut conn_data) = conn_data {
+            // Check if already processing
+            if conn_data.state != ConnectionState::Idle {
+                debug!(
+                    "Connection {} not idle (state: {:?}), skipping LLM call",
+                    connection_id, conn_data.state
+                );
+                return Ok(());
+            }
+
+            // Mark as processing
+            conn_data.state = ConnectionState::Processing;
+            connections.lock().await.insert(connection_id, conn_data.clone());
+
+            // Call LLM
+            match call_llm(
+                &llm_client,
+                &app_state,
+                protocol.clone(),
+                Some(connection_id),
+                Some(&event),
+                &conn_data.memory,
+                &status_tx,
+                server_id,
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Update memory
+                    if let Some(new_memory) = result.new_memory {
+                        conn_data.memory = new_memory;
+                    }
+
+                    // Mark as idle
+                    conn_data.state = ConnectionState::Idle;
+                    connections.lock().await.insert(connection_id, conn_data);
+
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("LLM call failed for connection {}: {}", connection_id, e);
+                    // Mark as idle even on error
+                    conn_data.state = ConnectionState::Idle;
+                    connections.lock().await.insert(connection_id, conn_data);
+                    Err(e)
+                }
+            }
+        } else {
+            warn!("Connection {} not found", connection_id);
+            Ok(())
+        }
     }
 }
