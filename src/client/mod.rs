@@ -22,6 +22,12 @@ pub mod bitcoin;
 #[cfg(feature = "bitcoin")]
 pub use bitcoin::actions::BitcoinClientProtocol;
 
+// bluetooth-ble client
+#[cfg(feature = "bluetooth-ble")]
+pub mod bluetooth;
+#[cfg(feature = "bluetooth-ble")]
+pub use bluetooth::actions::BluetoothClientProtocol;
+
 // bootp client
 #[cfg(feature = "bootp")]
 pub mod bootp;
