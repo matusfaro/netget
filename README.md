@@ -118,8 +118,29 @@ ollama pull llama3.2:latest
 
 ## Building
 
+### System Dependencies
+
+Most protocols have no system dependencies. However, the `bluetooth-ble` feature requires `libdbus-1-dev`:
+
+**Ubuntu/Debian:**
 ```bash
-./cargo-isolated.sh build --release
+sudo apt-get install libdbus-1-dev pkg-config
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install dbus-devel pkgconf-pkg-config
+```
+
+To build without bluetooth-ble:
+```bash
+./cargo-isolated.sh build --release --no-default-features --features tcp,http,dns  # etc.
+```
+
+### Building All Protocols
+
+```bash
+./cargo-isolated.sh build --release --all-features  # Requires libdbus-1-dev for bluetooth-ble
 ```
 
 ## Testing
