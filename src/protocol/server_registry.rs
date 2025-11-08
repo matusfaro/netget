@@ -362,6 +362,9 @@ impl ServerRegistry {
 
         #[cfg(feature = "saml-sp")]
         self.register(Arc::new(crate::server::SamlSpProtocol::new()));
+
+        #[cfg(feature = "bluetooth-server")]
+        self.register(Arc::new(crate::server::BluetoothServerProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing
