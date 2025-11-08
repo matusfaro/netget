@@ -41,6 +41,7 @@ webdav = ["dav-server", "dep:reqwest_dav"]
 nfs = ["nfsserve", "dep:nfs3_client"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
 smb = ["smb-msg"]
+smb-client = ["smb", "pavao"]  # SMB client requires native libsmbclient library
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
@@ -316,6 +317,7 @@ cassandra-protocol = { version = "3.3", optional = true }
 
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
+pavao = { version = "0.2", optional = true }
 
 # STUN server (Session Traversal Utilities for NAT)
 webrtc-stun = { version = "0.1", optional = true }
