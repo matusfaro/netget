@@ -228,6 +228,9 @@ impl ClientRegistry {
         #[cfg(feature = "udp")]
         self.register(Arc::new(crate::client::udp::UdpClientProtocol::new()));
 
+        #[cfg(feature = "usb")]
+        self.register(Arc::new(crate::client::usb::UsbClientProtocol::new()));
+
         #[cfg(feature = "vnc")]
         self.register(Arc::new(crate::client::vnc::VncClientProtocol::new()));
 
