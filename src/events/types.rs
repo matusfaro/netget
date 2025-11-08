@@ -70,6 +70,8 @@ pub enum UserCommand {
     ShowDocs {
         protocol: Option<String>,
     },
+    /// Show protocol dependencies and exclusions (slash command: /dep or /deps or /dependencies)
+    ShowDependencies,
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -193,6 +195,11 @@ impl UserCommand {
                 Some(rest.to_string())
             };
             return UserCommand::ShowDocs { protocol };
+        }
+
+        // /dep, /deps, /dependencies command - show protocol dependencies and exclusions
+        if input_lower == "/dep" || input_lower == "/deps" || input_lower == "/dependencies" {
+            return UserCommand::ShowDependencies;
         }
 
         // Unknown slash command - return error, don't send to LLM
