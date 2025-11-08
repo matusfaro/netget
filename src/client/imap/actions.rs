@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -119,368 +120,362 @@ impl ImapClientProtocol {
     }
 }
 
-impl Client for ImapClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::imap::ImapClient;
-
-            ImapClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-                ctx.startup_params,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "select_mailbox".to_string(),
-                description: "Select a mailbox (e.g., INBOX, Sent, Drafts)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "mailbox".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Mailbox name (e.g., 'INBOX')".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "select_mailbox",
-                    "mailbox": "INBOX"
-                }),
-            },
-            ActionDefinition {
-                name: "search_messages".to_string(),
-                description: "Search for messages using IMAP search criteria".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "criteria".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Search criteria (e.g., 'UNSEEN', 'FROM sender@example.com', 'SUBJECT test')".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "search_messages",
-                    "criteria": "UNSEEN"
-                }),
-            },
-            ActionDefinition {
-                name: "fetch_message".to_string(),
-                description: "Fetch a message by sequence number or UID".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Message sequence number or UID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "parts".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "What to fetch (e.g., 'BODY[]', 'BODY[HEADER]', 'FLAGS')".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "fetch_message",
-                    "message_id": "1",
-                    "parts": "BODY[]"
-                }),
-            },
-            ActionDefinition {
-                name: "mark_as_read".to_string(),
-                description: "Mark a message as read (seen)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Message sequence number or UID".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "mark_as_read",
-                    "message_id": "1"
-                }),
-            },
-            ActionDefinition {
-                name: "mark_as_unread".to_string(),
-                description: "Mark a message as unread".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Message sequence number or UID".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "mark_as_unread",
-                    "message_id": "1"
-                }),
-            },
-            ActionDefinition {
-                name: "delete_message".to_string(),
-                description: "Delete a message (mark for deletion and expunge)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Message sequence number or UID".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "delete_message",
-                    "message_id": "1"
-                }),
-            },
-            ActionDefinition {
-                name: "list_mailboxes".to_string(),
-                description: "List all available mailboxes".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "list_mailboxes"
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the IMAP server".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "fetch_message".to_string(),
-                description: "Fetch a message in response to search results".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Message sequence number or UID".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "fetch_message",
-                    "message_id": "1"
-                }),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more events without taking action".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "select_mailbox" => {
-                let mailbox = action
-                    .get("mailbox")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'mailbox' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+// Implement Protocol trait (common functionality)
+impl Protocol for ImapClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
                     name: "select_mailbox".to_string(),
-                    data: json!({ "mailbox": mailbox }),
-                })
-            }
-            "search_messages" => {
-                let criteria = action
-                    .get("criteria")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'criteria' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
-                    name: "search_messages".to_string(),
-                    data: json!({ "criteria": criteria }),
-                })
-            }
-            "fetch_message" => {
-                let message_id = action
-                    .get("message_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'message_id' field")?
-                    .to_string();
-
-                let parts = action
-                    .get("parts")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("BODY[]")
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
-                    name: "fetch_message".to_string(),
-                    data: json!({
-                        "message_id": message_id,
-                        "parts": parts,
+                    description: "Select a mailbox (e.g., INBOX, Sent, Drafts)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "mailbox".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Mailbox name (e.g., 'INBOX')".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "select_mailbox",
+                        "mailbox": "INBOX"
                     }),
-                })
-            }
-            "mark_as_read" => {
-                let message_id = action
-                    .get("message_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'message_id' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+                },
+                ActionDefinition {
+                    name: "search_messages".to_string(),
+                    description: "Search for messages using IMAP search criteria".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "criteria".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Search criteria (e.g., 'UNSEEN', 'FROM sender@example.com', 'SUBJECT test')".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "search_messages",
+                        "criteria": "UNSEEN"
+                    }),
+                },
+                ActionDefinition {
+                    name: "fetch_message".to_string(),
+                    description: "Fetch a message by sequence number or UID".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "message_id".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Message sequence number or UID".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "parts".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "What to fetch (e.g., 'BODY[]', 'BODY[HEADER]', 'FLAGS')".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "fetch_message",
+                        "message_id": "1",
+                        "parts": "BODY[]"
+                    }),
+                },
+                ActionDefinition {
                     name: "mark_as_read".to_string(),
-                    data: json!({ "message_id": message_id }),
-                })
-            }
-            "mark_as_unread" => {
-                let message_id = action
-                    .get("message_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'message_id' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+                    description: "Mark a message as read (seen)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "message_id".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Message sequence number or UID".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "mark_as_read",
+                        "message_id": "1"
+                    }),
+                },
+                ActionDefinition {
                     name: "mark_as_unread".to_string(),
-                    data: json!({ "message_id": message_id }),
-                })
-            }
-            "delete_message" => {
-                let message_id = action
-                    .get("message_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'message_id' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+                    description: "Mark a message as unread".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "message_id".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Message sequence number or UID".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "mark_as_unread",
+                        "message_id": "1"
+                    }),
+                },
+                ActionDefinition {
                     name: "delete_message".to_string(),
-                    data: json!({ "message_id": message_id }),
-                })
-            }
-            "list_mailboxes" => {
-                Ok(ClientActionResult::Custom {
+                    description: "Delete a message (mark for deletion and expunge)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "message_id".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Message sequence number or UID".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "delete_message",
+                        "message_id": "1"
+                    }),
+                },
+                ActionDefinition {
                     name: "list_mailboxes".to_string(),
-                    data: json!({}),
-                })
-            }
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown IMAP client action: {}", action_type)),
+                    description: "List all available mailboxes".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "list_mailboxes"
+                    }),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from the IMAP server".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "IMAP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "imap_connected".to_string(),
-                description: "Triggered when IMAP client connects and authenticates".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "imap_mailbox_selected".to_string(),
-                description: "Triggered when a mailbox is selected".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "imap_search_results".to_string(),
-                description: "Triggered when search results are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "imap_message_fetched".to_string(),
-                description: "Triggered when a message is fetched".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>IMAP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["imap", "imap client", "email", "mail", "connect to imap"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("async-imap library with TLS support")
-            .llm_control("Full control over mailbox operations, search, and message management")
-            .e2e_testing("Docker IMAP container or public test servers")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "IMAP client for email retrieval and management"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to IMAP server at imap.example.com:993 and fetch unread messages from INBOX"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Email & Messaging"
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "username".to_string(),
-                type_hint: "string".to_string(),
-                description: "IMAP username for authentication".to_string(),
-                required: true,
-                example: json!("user@example.com"),
-            },
-            ParameterDefinition {
-                name: "password".to_string(),
-                type_hint: "string".to_string(),
-                description: "IMAP password for authentication".to_string(),
-                required: true,
-                example: json!("secret123"),
-            },
-            ParameterDefinition {
-                name: "use_tls".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether to use TLS (default: true for port 993)".to_string(),
-                required: false,
-                example: json!(false),
-            },
-        ]
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "fetch_message".to_string(),
+                    description: "Fetch a message in response to search results".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "message_id".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Message sequence number or UID".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "fetch_message",
+                        "message_id": "1"
+                    }),
+                },
+                ActionDefinition {
+                    name: "wait_for_more".to_string(),
+                    description: "Wait for more events without taking action".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "wait_for_more"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "IMAP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "imap_connected".to_string(),
+                    description: "Triggered when IMAP client connects and authenticates".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "imap_mailbox_selected".to_string(),
+                    description: "Triggered when a mailbox is selected".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "imap_search_results".to_string(),
+                    description: "Triggered when search results are received".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "imap_message_fetched".to_string(),
+                    description: "Triggered when a message is fetched".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>IMAP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["imap", "imap client", "email", "mail", "connect to imap"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("async-imap library with TLS support")
+                .llm_control("Full control over mailbox operations, search, and message management")
+                .e2e_testing("Docker IMAP container or public test servers")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "IMAP client for email retrieval and management"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to IMAP server at imap.example.com:993 and fetch unread messages from INBOX"
+        }
+        fn group_name(&self) -> &'static str {
+            "Email & Messaging"
+        }
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "username".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "IMAP username for authentication".to_string(),
+                    required: true,
+                    example: json!("user@example.com"),
+                },
+                ParameterDefinition {
+                    name: "password".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "IMAP password for authentication".to_string(),
+                    required: true,
+                    example: json!("secret123"),
+                },
+                ParameterDefinition {
+                    name: "use_tls".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Whether to use TLS (default: true for port 993)".to_string(),
+                    required: false,
+                    example: json!(false),
+                },
+            ]
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for ImapClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::imap::ImapClient;
+    
+                ImapClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                    ctx.startup_params,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "select_mailbox" => {
+                    let mailbox = action
+                        .get("mailbox")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'mailbox' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "select_mailbox".to_string(),
+                        data: json!({ "mailbox": mailbox }),
+                    })
+                }
+                "search_messages" => {
+                    let criteria = action
+                        .get("criteria")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'criteria' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "search_messages".to_string(),
+                        data: json!({ "criteria": criteria }),
+                    })
+                }
+                "fetch_message" => {
+                    let message_id = action
+                        .get("message_id")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'message_id' field")?
+                        .to_string();
+    
+                    let parts = action
+                        .get("parts")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("BODY[]")
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "fetch_message".to_string(),
+                        data: json!({
+                            "message_id": message_id,
+                            "parts": parts,
+                        }),
+                    })
+                }
+                "mark_as_read" => {
+                    let message_id = action
+                        .get("message_id")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'message_id' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "mark_as_read".to_string(),
+                        data: json!({ "message_id": message_id }),
+                    })
+                }
+                "mark_as_unread" => {
+                    let message_id = action
+                        .get("message_id")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'message_id' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "mark_as_unread".to_string(),
+                        data: json!({ "message_id": message_id }),
+                    })
+                }
+                "delete_message" => {
+                    let message_id = action
+                        .get("message_id")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'message_id' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "delete_message".to_string(),
+                        data: json!({ "message_id": message_id }),
+                    })
+                }
+                "list_mailboxes" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "list_mailboxes".to_string(),
+                        data: json!({}),
+                    })
+                }
+                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                _ => Err(anyhow::anyhow!("Unknown IMAP client action: {}", action_type)),
+            }
+        }
+}
+

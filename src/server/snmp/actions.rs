@@ -1,7 +1,7 @@
 //! SNMP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,93 +19,88 @@ impl SnmpProtocol {
     }
 }
 
-impl Server for SnmpProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::snmp::SnmpServer;
-            SnmpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // SNMP has async action for sending traps
-        vec![send_trap_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_snmp_response_action(),
-            send_snmp_error_action(),
-            ignore_request_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_trap" => self.execute_send_trap(action),
-            "send_snmp_response" => self.execute_send_snmp_response(action),
-            "send_snmp_error" => self.execute_send_snmp_error(action),
-            "ignore_request" => Ok(ActionResult::NoAction),
-            _ => Err(anyhow::anyhow!("Unknown SNMP action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for SnmpProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // SNMP has async action for sending traps
+            vec![send_trap_action()]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SNMP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_snmp_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>SNMP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["snmp"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Beta)
-            .implementation("rasn-snmp v0.18 for parsing + manual BER encoding")
-            .llm_control("OID responses (sysDescr, ifTable, custom MIBs)")
-            .e2e_testing("net-snmp tools (snmpget)")
-            .notes("SNMPv1/v2c only, manual BER encoding")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "SNMP agent for network monitoring"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_snmp_response_action(),
+                send_snmp_error_action(),
+                ignore_request_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "SNMP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_snmp_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>SNMP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["snmp"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Beta)
+                .implementation("rasn-snmp v0.18 for parsing + manual BER encoding")
+                .llm_control("OID responses (sysDescr, ifTable, custom MIBs)")
+                .e2e_testing("net-snmp tools (snmpget)")
+                .notes("SNMPv1/v2c only, manual BER encoding")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "SNMP agent for network monitoring"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "SNMP Port 8161 serve OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v0.1'"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SnmpProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::snmp::SnmpServer;
+                SnmpServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_trap" => self.execute_send_trap(action),
+                "send_snmp_response" => self.execute_send_snmp_response(action),
+                "send_snmp_error" => self.execute_send_snmp_error(action),
+                "ignore_request" => Ok(ActionResult::NoAction),
+                _ => Err(anyhow::anyhow!("Unknown SNMP action: {}", action_type)),
+            }
+        }
+}
+
 
 impl SnmpProtocol {
     /// Execute send_trap async action

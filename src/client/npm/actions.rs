@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -103,306 +104,300 @@ impl NpmClientProtocol {
     }
 }
 
-impl Client for NpmClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::npm::NpmClient;
-            NpmClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "registry_url".to_string(),
-                description: "NPM registry URL (default: https://registry.npmjs.org)".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("https://registry.npmjs.org"),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "get_package_info".to_string(),
-                description: "Get information about a specific package".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "package_name".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "NPM package name (e.g., 'express', '@types/node')".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "version".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Specific version or 'latest' (default: latest)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "get_package_info",
-                    "package_name": "express",
-                    "version": "latest"
-                }),
-            },
-            ActionDefinition {
-                name: "search_packages".to_string(),
-                description: "Search for packages by keyword".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "query".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Search query".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "limit".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Maximum number of results (default: 20)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "search_packages",
-                    "query": "http server",
-                    "limit": 10
-                }),
-            },
-            ActionDefinition {
-                name: "download_tarball".to_string(),
-                description: "Download package tarball to local file".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "package_name".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "NPM package name".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "version".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Package version (default: latest)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "output_path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Local file path to save tarball".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "download_tarball",
-                    "package_name": "lodash",
-                    "version": "4.17.21",
-                    "output_path": "/tmp/lodash.tgz"
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the NPM registry".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "get_package_info".to_string(),
-                description: "Get information about another package in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "package_name".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "NPM package name".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "version".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Specific version or 'latest'".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "get_package_info",
-                    "package_name": "express"
-                }),
-            },
-            ActionDefinition {
-                name: "search_packages".to_string(),
-                description: "Search for related packages in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "query".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Search query".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "search_packages",
-                    "query": "express middleware"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "get_package_info" => {
-                let package_name = action
-                    .get("package_name")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'package_name' field")?
-                    .to_string();
-
-                let version = action
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "latest".to_string());
-
-                Ok(ClientActionResult::Custom {
-                    name: "npm_get_package".to_string(),
-                    data: json!({
-                        "package_name": package_name,
-                        "version": version,
-                    }),
-                })
-            }
-            "search_packages" => {
-                let query = action
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'query' field")?
-                    .to_string();
-
-                let limit = action
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(20);
-
-                Ok(ClientActionResult::Custom {
-                    name: "npm_search".to_string(),
-                    data: json!({
-                        "query": query,
-                        "limit": limit,
-                    }),
-                })
-            }
-            "download_tarball" => {
-                let package_name = action
-                    .get("package_name")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'package_name' field")?
-                    .to_string();
-
-                let version = action
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "latest".to_string());
-
-                let output_path = action
-                    .get("output_path")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'output_path' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
-                    name: "npm_download_tarball".to_string(),
-                    data: json!({
-                        "package_name": package_name,
-                        "version": version,
-                        "output_path": output_path,
-                    }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown NPM client action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for NpmClientProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "registry_url".to_string(),
+                    description: "NPM registry URL (default: https://registry.npmjs.org)".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    example: json!("https://registry.npmjs.org"),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "NPM"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "npm_connected".to_string(),
-                description: "Triggered when NPM Registry client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "npm_package_info_received".to_string(),
-                description: "Triggered when package information is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "npm_search_results_received".to_string(),
-                description: "Triggered when search results are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>TLS>HTTP>NPM"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["npm", "npm client", "npm registry", "package manager", "nodejs"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("reqwest HTTP client for NPM Registry API")
-            .llm_control("Full control over package queries, searches, and downloads")
-            .e2e_testing("Public NPM registry (registry.npmjs.org)")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "NPM Registry client for package information and downloads"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to NPM registry and search for express packages"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Package Managers"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "get_package_info".to_string(),
+                    description: "Get information about a specific package".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "package_name".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "NPM package name (e.g., 'express', '@types/node')".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "version".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Specific version or 'latest' (default: latest)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "get_package_info",
+                        "package_name": "express",
+                        "version": "latest"
+                    }),
+                },
+                ActionDefinition {
+                    name: "search_packages".to_string(),
+                    description: "Search for packages by keyword".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "query".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Search query".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "limit".to_string(),
+                            type_hint: "number".to_string(),
+                            description: "Maximum number of results (default: 20)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "search_packages",
+                        "query": "http server",
+                        "limit": 10
+                    }),
+                },
+                ActionDefinition {
+                    name: "download_tarball".to_string(),
+                    description: "Download package tarball to local file".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "package_name".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "NPM package name".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "version".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Package version (default: latest)".to_string(),
+                            required: false,
+                        },
+                        Parameter {
+                            name: "output_path".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Local file path to save tarball".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "download_tarball",
+                        "package_name": "lodash",
+                        "version": "4.17.21",
+                        "output_path": "/tmp/lodash.tgz"
+                    }),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from the NPM registry".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "get_package_info".to_string(),
+                    description: "Get information about another package in response to received data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "package_name".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "NPM package name".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "version".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Specific version or 'latest'".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "get_package_info",
+                        "package_name": "express"
+                    }),
+                },
+                ActionDefinition {
+                    name: "search_packages".to_string(),
+                    description: "Search for related packages in response to received data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "query".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Search query".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "search_packages",
+                        "query": "express middleware"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "NPM"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "npm_connected".to_string(),
+                    description: "Triggered when NPM Registry client is initialized".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "npm_package_info_received".to_string(),
+                    description: "Triggered when package information is received".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "npm_search_results_received".to_string(),
+                    description: "Triggered when search results are received".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>TLS>HTTP>NPM"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["npm", "npm client", "npm registry", "package manager", "nodejs"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("reqwest HTTP client for NPM Registry API")
+                .llm_control("Full control over package queries, searches, and downloads")
+                .e2e_testing("Public NPM registry (registry.npmjs.org)")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "NPM Registry client for package information and downloads"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to NPM registry and search for express packages"
+        }
+        fn group_name(&self) -> &'static str {
+            "Package Managers"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for NpmClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::npm::NpmClient;
+                NpmClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "get_package_info" => {
+                    let package_name = action
+                        .get("package_name")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'package_name' field")?
+                        .to_string();
+    
+                    let version = action
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "latest".to_string());
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "npm_get_package".to_string(),
+                        data: json!({
+                            "package_name": package_name,
+                            "version": version,
+                        }),
+                    })
+                }
+                "search_packages" => {
+                    let query = action
+                        .get("query")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'query' field")?
+                        .to_string();
+    
+                    let limit = action
+                        .get("limit")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(20);
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "npm_search".to_string(),
+                        data: json!({
+                            "query": query,
+                            "limit": limit,
+                        }),
+                    })
+                }
+                "download_tarball" => {
+                    let package_name = action
+                        .get("package_name")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'package_name' field")?
+                        .to_string();
+    
+                    let version = action
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "latest".to_string());
+    
+                    let output_path = action
+                        .get("output_path")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'output_path' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "npm_download_tarball".to_string(),
+                        data: json!({
+                            "package_name": package_name,
+                            "version": version,
+                            "output_path": output_path,
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                _ => Err(anyhow::anyhow!("Unknown NPM client action: {}", action_type)),
+            }
+        }
+}
+

@@ -3,7 +3,7 @@
 //! Defines LLM-controllable actions for OpenVPN honeypot
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -45,101 +45,96 @@ impl OpenvpnProtocol {
     }
 }
 
-impl Server for OpenvpnProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::openvpn::OpenvpnServer;
-            use std::sync::Arc;
-            OpenvpnServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                Arc::new(ctx.llm_client),
-                ctx.state,
-                ctx.server_id,
-                ctx.status_tx,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            list_peers_action(),
-            remove_peer_action(),
-            get_server_info_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            authorize_peer_action(),
-            reject_peer_action(),
-            set_peer_limit_action(),
-            inspect_traffic_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "authorize_peer" => self.execute_authorize_peer(action),
-            "reject_peer" => self.execute_reject_peer(action),
-            "set_peer_limit" => self.execute_set_peer_limit(action),
-            "inspect_traffic" => self.execute_inspect_traffic(action),
-            "list_peers" => Ok(ActionResult::NoAction), // Async action
-            "remove_peer" => Ok(ActionResult::NoAction),  // Async action
-            "get_server_info" => Ok(ActionResult::NoAction),  // Async action
-            _ => Err(anyhow::anyhow!("Unknown OpenVPN action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for OpenvpnProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                list_peers_action(),
+                remove_peer_action(),
+                get_server_info_action(),
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "OpenVPN"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_openvpn_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP/UDP>OPENVPN"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["openvpn"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Stable)
-            .implementation("Full OpenVPN server with TUN interface, AES-256-GCM/ChaCha20-Poly1305 encryption")
-            .llm_control("Peer authorization, traffic inspection, connection limits")
-            .e2e_testing("OpenVPN client (full tunnel support)")
-            .notes("Production-ready VPN server with simplified TLS for MVP")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "OpenVPN VPN server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an OpenVPN VPN server on port 1194"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "VPN & Routing"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                authorize_peer_action(),
+                reject_peer_action(),
+                set_peer_limit_action(),
+                inspect_traffic_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "OpenVPN"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_openvpn_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP/UDP>OPENVPN"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["openvpn"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Stable)
+                .implementation("Full OpenVPN server with TUN interface, AES-256-GCM/ChaCha20-Poly1305 encryption")
+                .llm_control("Peer authorization, traffic inspection, connection limits")
+                .e2e_testing("OpenVPN client (full tunnel support)")
+                .notes("Production-ready VPN server with simplified TLS for MVP")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "OpenVPN VPN server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an OpenVPN VPN server on port 1194"
+        }
+        fn group_name(&self) -> &'static str {
+            "VPN & Routing"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for OpenvpnProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::openvpn::OpenvpnServer;
+                use std::sync::Arc;
+                OpenvpnServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    Arc::new(ctx.llm_client),
+                    ctx.state,
+                    ctx.server_id,
+                    ctx.status_tx,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "authorize_peer" => self.execute_authorize_peer(action),
+                "reject_peer" => self.execute_reject_peer(action),
+                "set_peer_limit" => self.execute_set_peer_limit(action),
+                "inspect_traffic" => self.execute_inspect_traffic(action),
+                "list_peers" => Ok(ActionResult::NoAction), // Async action
+                "remove_peer" => Ok(ActionResult::NoAction),  // Async action
+                "get_server_info" => Ok(ActionResult::NoAction),  // Async action
+                _ => Err(anyhow::anyhow!("Unknown OpenVPN action: {}", action_type)),
+            }
+        }
+}
+
 
 impl OpenvpnProtocol {
     /// Execute authorize_peer action - allow peer to connect and establish tunnel

@@ -1,7 +1,7 @@
 //! PyPI protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,85 +20,80 @@ impl PypiProtocol {
     }
 }
 
-impl Server for PypiProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::pypi::PypiServer;
-            PypiServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // PyPI has no async actions - it's purely request-response like HTTP
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![send_pypi_response_action()]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_pypi_response" => self.execute_send_pypi_response(action),
-            _ => Err(anyhow::anyhow!("Unknown PyPI action: {action_type}")),
+// Implement Protocol trait (common functionality)
+impl Protocol for PypiProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // PyPI has no async actions - it's purely request-response like HTTP
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "PyPI"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_pypi_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>PyPI"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["pypi", "python repository", "python package index", "pip server", "via pypi"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("PEP 503 Simple Repository API on hyper HTTP server")
-            .llm_control("Package availability, version lists, and file serving")
-            .e2e_testing("pip install command - target < 10 LLM calls")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Python Package Index (PyPI) repository server implementing PEP 503"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Act as a PyPI server on port 8080. Serve a package called 'hello-world' with version 1.0.0 containing a simple wheel file with setup metadata."
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Application"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![send_pypi_response_action()]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "PyPI"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_pypi_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>PyPI"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["pypi", "python repository", "python package index", "pip server", "via pypi"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("PEP 503 Simple Repository API on hyper HTTP server")
+                .llm_control("Package availability, version lists, and file serving")
+                .e2e_testing("pip install command - target < 10 LLM calls")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Python Package Index (PyPI) repository server implementing PEP 503"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Act as a PyPI server on port 8080. Serve a package called 'hello-world' with version 1.0.0 containing a simple wheel file with setup metadata."
+        }
+        fn group_name(&self) -> &'static str {
+            "Application"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for PypiProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::pypi::PypiServer;
+                PypiServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_pypi_response" => self.execute_send_pypi_response(action),
+                _ => Err(anyhow::anyhow!("Unknown PyPI action: {action_type}")),
+            }
+        }
+}
+
 
 impl PypiProtocol {
     /// Execute send_pypi_response sync action
