@@ -12,3 +12,5 @@ pub mod telnet;
 pub mod wireguard;
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
+#[cfg(feature = "saml")]
+pub mod saml;
