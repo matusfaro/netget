@@ -1,7 +1,7 @@
 //! BitTorrent Peer Wire Protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -18,103 +18,98 @@ impl TorrentPeerProtocol {
     }
 }
 
-impl Server for TorrentPeerProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::torrent_peer::TorrentPeerServer;
-            TorrentPeerServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            SEND_HANDSHAKE_ACTION.clone(),
-            SEND_CHOKE_ACTION.clone(),
-            SEND_UNCHOKE_ACTION.clone(),
-            SEND_BITFIELD_ACTION.clone(),
-            SEND_HAVE_ACTION.clone(),
-            SEND_PIECE_ACTION.clone(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action.get("type").and_then(|v| v.as_str()).context("Missing 'type' field")?;
-
-        match action_type {
-            "send_handshake" => self.execute_send_handshake(action),
-            "send_choke" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 0])),
-            "send_unchoke" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 1])),
-            "send_interested" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 2])),
-            "send_not_interested" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 3])),
-            "send_have" => self.execute_send_have(action),
-            "send_bitfield" => self.execute_send_bitfield(action),
-            "send_piece" => self.execute_send_piece(action),
-            "send_keepalive" => Ok(ActionResult::Output(vec![0, 0, 0, 0])),
-            _ => Err(anyhow::anyhow!("Unknown Peer action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for TorrentPeerProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Torrent-Peer"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            PEER_HANDSHAKE_EVENT.clone(),
-            PEER_CHOKE_MESSAGE_EVENT.clone(),
-            PEER_REQUEST_MESSAGE_EVENT.clone(),
-            PEER_BITFIELD_MESSAGE_EVENT.clone(),
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>BitTorrent-Peer"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["torrent-peer", "peer", "seeder"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("TCP peer wire protocol with binary encoding")
-            .llm_control("Piece transfer, choke/unchoke, bitfield")
-            .e2e_testing("Real BitTorrent clients")
-            .notes("Binary protocol, peer-to-peer data transfer")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "BitTorrent Peer Wire Protocol for peer-to-peer file sharing"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "start a bittorrent peer on port 51413"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "P2P"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                SEND_HANDSHAKE_ACTION.clone(),
+                SEND_CHOKE_ACTION.clone(),
+                SEND_UNCHOKE_ACTION.clone(),
+                SEND_BITFIELD_ACTION.clone(),
+                SEND_HAVE_ACTION.clone(),
+                SEND_PIECE_ACTION.clone(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Torrent-Peer"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                PEER_HANDSHAKE_EVENT.clone(),
+                PEER_CHOKE_MESSAGE_EVENT.clone(),
+                PEER_REQUEST_MESSAGE_EVENT.clone(),
+                PEER_BITFIELD_MESSAGE_EVENT.clone(),
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>BitTorrent-Peer"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["torrent-peer", "peer", "seeder"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .privilege_requirement(PrivilegeRequirement::None)
+                .implementation("TCP peer wire protocol with binary encoding")
+                .llm_control("Piece transfer, choke/unchoke, bitfield")
+                .e2e_testing("Real BitTorrent clients")
+                .notes("Binary protocol, peer-to-peer data transfer")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "BitTorrent Peer Wire Protocol for peer-to-peer file sharing"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "start a bittorrent peer on port 51413"
+        }
+        fn group_name(&self) -> &'static str {
+            "P2P"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for TorrentPeerProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::torrent_peer::TorrentPeerServer;
+                TorrentPeerServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action.get("type").and_then(|v| v.as_str()).context("Missing 'type' field")?;
+    
+            match action_type {
+                "send_handshake" => self.execute_send_handshake(action),
+                "send_choke" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 0])),
+                "send_unchoke" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 1])),
+                "send_interested" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 2])),
+                "send_not_interested" => Ok(ActionResult::Output(vec![0, 0, 0, 1, 3])),
+                "send_have" => self.execute_send_have(action),
+                "send_bitfield" => self.execute_send_bitfield(action),
+                "send_piece" => self.execute_send_piece(action),
+                "send_keepalive" => Ok(ActionResult::Output(vec![0, 0, 0, 0])),
+                _ => Err(anyhow::anyhow!("Unknown Peer action: {}", action_type)),
+            }
+        }
+}
+
 
 impl TorrentPeerProtocol {
     fn execute_send_handshake(&self, action: serde_json::Value) -> Result<ActionResult> {

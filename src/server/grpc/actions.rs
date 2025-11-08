@@ -1,7 +1,7 @@
 //! gRPC protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -105,117 +105,111 @@ impl GrpcProtocol {
     }
 }
 
-impl Server for GrpcProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::grpc::GrpcServer;
-            GrpcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                ctx.startup_params,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        use crate::llm::actions::ParameterDefinition;
-        vec![
-            ParameterDefinition {
-                name: "proto_schema".to_string(),
-                type_hint: "string".to_string(),
-                description: "Protobuf schema definition. IMPORTANT: For LLM responses, use inline .proto text (proto3 syntax). LLMs should NOT use base64-encoded FileDescriptorSet (truncation issues). Alternatively, provide path to .proto file on disk.".to_string(),
-                required: true,
-                example: json!("syntax = \"proto3\"; package test; service UserService { rpc GetUser(UserId) returns (User); } message UserId { int32 id = 1; } message User { int32 id = 1; string name = 2; string email = 3; }"),
-            },
-            ParameterDefinition {
-                name: "enable_reflection".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Enable gRPC server reflection (allows clients to discover schema dynamically)".to_string(),
-                required: false,
-                example: json!(true),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            reload_schema_action(),
-            list_services_action(),
-            describe_method_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            grpc_unary_response_action(),
-            grpc_error_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "grpc_unary_response" => self.execute_grpc_unary_response(action),
-            "grpc_error" => self.execute_grpc_error(action),
-            "reload_schema" => self.execute_reload_schema(action),
-            "list_services" => self.execute_list_services(action),
-            "describe_method" => self.execute_describe_method(action),
-            _ => Err(anyhow::anyhow!("Unknown gRPC action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for GrpcProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            use crate::llm::actions::ParameterDefinition;
+            vec![
+                ParameterDefinition {
+                    name: "proto_schema".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Protobuf schema definition. IMPORTANT: For LLM responses, use inline .proto text (proto3 syntax). LLMs should NOT use base64-encoded FileDescriptorSet (truncation issues). Alternatively, provide path to .proto file on disk.".to_string(),
+                    required: true,
+                    example: json!("syntax = \"proto3\"; package test; service UserService { rpc GetUser(UserId) returns (User); } message UserId { int32 id = 1; } message User { int32 id = 1; string name = 2; string email = 3; }"),
+                },
+                ParameterDefinition {
+                    name: "enable_reflection".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Enable gRPC server reflection (allows clients to discover schema dynamically)".to_string(),
+                    required: false,
+                    example: json!(true),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "gRPC"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_grpc_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP2>GRPC"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["grpc", "grpcserver", "protobuf"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("prost-reflect dynamic schema, tonic, hyper HTTP/2")
-            .llm_control("All RPC request/response handling, dynamic schema loading")
-            .e2e_testing("grpcurl / gRPC clients")
-            .notes("Unary RPCs only, no streaming, dynamic protobuf via prost-reflect")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "gRPC server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "AI & API"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                reload_schema_action(),
+                list_services_action(),
+                describe_method_action(),
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                grpc_unary_response_action(),
+                grpc_error_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "gRPC"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_grpc_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP2>GRPC"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["grpc", "grpcserver", "protobuf"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("prost-reflect dynamic schema, tonic, hyper HTTP/2")
+                .llm_control("All RPC request/response handling, dynamic schema loading")
+                .e2e_testing("grpcurl / gRPC clients")
+                .notes("Unary RPCs only, no streaming, dynamic protobuf via prost-reflect")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "gRPC server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
+        }
+        fn group_name(&self) -> &'static str {
+            "AI & API"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for GrpcProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::grpc::GrpcServer;
+                GrpcServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                    ctx.startup_params,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "grpc_unary_response" => self.execute_grpc_unary_response(action),
+                "grpc_error" => self.execute_grpc_error(action),
+                "reload_schema" => self.execute_reload_schema(action),
+                "list_services" => self.execute_list_services(action),
+                "describe_method" => self.execute_describe_method(action),
+                _ => Err(anyhow::anyhow!("Unknown gRPC action: {}", action_type)),
+            }
+        }
+}
+
 
 // ============================================================================
 // Action Definitions

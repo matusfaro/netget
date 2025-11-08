@@ -1,7 +1,7 @@
 //! XMPP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -80,120 +80,114 @@ impl XmppProtocol {
     }
 }
 
-impl Server for XmppProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::xmpp::XmppServer;
-            XmppServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "domain".to_string(),
-                type_hint: "string".to_string(),
-                description: "XMPP server domain name (e.g., 'localhost', 'example.com')".to_string(),
-                required: false,
-                example: serde_json::json!("localhost"),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // XMPP could have async actions like broadcast_message in the future
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_stream_header_action(),
-            send_stream_features_action(),
-            send_message_action(),
-            send_presence_action(),
-            send_iq_result_action(),
-            send_iq_error_action(),
-            send_auth_success_action(),
-            send_auth_failure_action(),
-            send_raw_xml_action(),
-            wait_for_more_action(),
-            close_stream_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_stream_header" => self.execute_send_stream_header(action),
-            "send_stream_features" => self.execute_send_stream_features(action),
-            "send_message" => self.execute_send_message(action),
-            "send_presence" => self.execute_send_presence(action),
-            "send_iq_result" => self.execute_send_iq_result(action),
-            "send_iq_error" => self.execute_send_iq_error(action),
-            "send_auth_success" => self.execute_send_auth_success(action),
-            "send_auth_failure" => self.execute_send_auth_failure(action),
-            "send_raw_xml" => self.execute_send_raw_xml(action),
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_stream" => self.execute_close_stream(action),
-            _ => Err(anyhow::anyhow!("Unknown XMPP action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for XmppProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "domain".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "XMPP server domain name (e.g., 'localhost', 'example.com')".to_string(),
+                    required: false,
+                    example: serde_json::json!("localhost"),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "XMPP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_xmpp_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>XMPP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["xmpp", "jabber", "messaging"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual XML stream parsing")
-            .llm_control("All XMPP stanzas (message, presence, iq)")
-            .e2e_testing("Manual XMPP client")
-            .notes("No roster management, simplified authentication")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "XMPP instant messaging server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an XMPP server for instant messaging"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Application"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // XMPP could have async actions like broadcast_message in the future
+            Vec::new()
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_stream_header_action(),
+                send_stream_features_action(),
+                send_message_action(),
+                send_presence_action(),
+                send_iq_result_action(),
+                send_iq_error_action(),
+                send_auth_success_action(),
+                send_auth_failure_action(),
+                send_raw_xml_action(),
+                wait_for_more_action(),
+                close_stream_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "XMPP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_xmpp_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>XMPP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["xmpp", "jabber", "messaging"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual XML stream parsing")
+                .llm_control("All XMPP stanzas (message, presence, iq)")
+                .e2e_testing("Manual XMPP client")
+                .notes("No roster management, simplified authentication")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "XMPP instant messaging server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an XMPP server for instant messaging"
+        }
+        fn group_name(&self) -> &'static str {
+            "Application"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for XmppProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::xmpp::XmppServer;
+                XmppServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_stream_header" => self.execute_send_stream_header(action),
+                "send_stream_features" => self.execute_send_stream_features(action),
+                "send_message" => self.execute_send_message(action),
+                "send_presence" => self.execute_send_presence(action),
+                "send_iq_result" => self.execute_send_iq_result(action),
+                "send_iq_error" => self.execute_send_iq_error(action),
+                "send_auth_success" => self.execute_send_auth_success(action),
+                "send_auth_failure" => self.execute_send_auth_failure(action),
+                "send_raw_xml" => self.execute_send_raw_xml(action),
+                "wait_for_more" => Ok(ActionResult::WaitForMore),
+                "close_stream" => self.execute_close_stream(action),
+                _ => Err(anyhow::anyhow!("Unknown XMPP action: {}", action_type)),
+            }
+        }
+}
+
 
 // Action implementation methods
 impl XmppProtocol {

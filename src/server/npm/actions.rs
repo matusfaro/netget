@@ -1,7 +1,7 @@
 //! NPM protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -37,95 +37,90 @@ impl NpmProtocol {
     }
 }
 
-impl Server for NpmProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::npm::NpmServer;
-            NpmServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            package_metadata_action(),
-            package_tarball_action(),
-            package_list_action(),
-            package_search_action(),
-            npm_error_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "npm_package_metadata" => self.execute_package_metadata(action),
-            "npm_package_tarball" => self.execute_package_tarball(action),
-            "npm_package_list" => self.execute_package_list(action),
-            "npm_package_search" => self.execute_package_search(action),
-            "npm_error" => self.execute_npm_error(action),
-            _ => Err(anyhow::anyhow!("Unknown NPM action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for NpmProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "NPM"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_npm_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>NPM"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["npm"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("hyper HTTP server with NPM registry endpoints")
-            .llm_control("LLM controls package metadata, tarballs, listings, and search results")
-            .e2e_testing("Real npm CLI client")
-            .notes("Implements NPM registry protocol: package metadata (GET /{package}), tarballs (GET /{package}/-/{tarball}), listing (GET /-/all), and search (GET /-/v1/search)")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "NPM registry server with LLM-controlled package responses"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an NPM registry on port 4873 that serves express package"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Package Management"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                package_metadata_action(),
+                package_tarball_action(),
+                package_list_action(),
+                package_search_action(),
+                npm_error_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "NPM"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_npm_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>NPM"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["npm"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("hyper HTTP server with NPM registry endpoints")
+                .llm_control("LLM controls package metadata, tarballs, listings, and search results")
+                .e2e_testing("Real npm CLI client")
+                .notes("Implements NPM registry protocol: package metadata (GET /{package}), tarballs (GET /{package}/-/{tarball}), listing (GET /-/all), and search (GET /-/v1/search)")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "NPM registry server with LLM-controlled package responses"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an NPM registry on port 4873 that serves express package"
+        }
+        fn group_name(&self) -> &'static str {
+            "Package Management"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for NpmProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::npm::NpmServer;
+                NpmServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "npm_package_metadata" => self.execute_package_metadata(action),
+                "npm_package_tarball" => self.execute_package_tarball(action),
+                "npm_package_list" => self.execute_package_list(action),
+                "npm_package_search" => self.execute_package_search(action),
+                "npm_error" => self.execute_npm_error(action),
+                _ => Err(anyhow::anyhow!("Unknown NPM action: {}", action_type)),
+            }
+        }
+}
+
 
 impl NpmProtocol {
     fn execute_package_metadata(&self, action: serde_json::Value) -> Result<ActionResult> {

@@ -1,7 +1,7 @@
 //! SMB protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -25,93 +25,89 @@ impl SmbProtocol {
     }
 }
 
-impl Server for SmbProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::smb::SmbServer;
-            SmbServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![disconnect_client_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            smb_auth_success_action(),
-            smb_auth_deny_action(),
-            smb_list_directory_action(),
-            smb_read_file_action(),
-            smb_write_file_action(),
-            smb_get_file_info_action(),
-            smb_create_file_action(),
-            smb_delete_file_action(),
-            smb_create_directory_action(),
-            smb_delete_directory_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        // Return Custom result with the action data for SMB server to handle
-        Ok(ActionResult::Custom {
-            name: action_type.to_string(),
-            data: action,
-        })
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SMB"
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>SMB"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["smb", "cifs"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual SMB2 protocol (0x0210 dialect)")
-            .llm_control("Filesystem operations, authentication, directory listings")
-            .e2e_testing("smbclient / Windows Explorer")
-            .notes("SMB 2.1 only, guest auth only, no signing/encryption")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "SMB/CIFS file server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an SMB/CIFS file server on port 8445"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Web & File"
-    }
+// Implement Protocol trait (common functionality)
+impl Protocol for SmbProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![disconnect_client_action()]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                smb_auth_success_action(),
+                smb_auth_deny_action(),
+                smb_list_directory_action(),
+                smb_read_file_action(),
+                smb_write_file_action(),
+                smb_get_file_info_action(),
+                smb_create_file_action(),
+                smb_delete_file_action(),
+                smb_create_directory_action(),
+                smb_delete_directory_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "SMB"
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>SMB"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["smb", "cifs"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual SMB2 protocol (0x0210 dialect)")
+                .llm_control("Filesystem operations, authentication, directory listings")
+                .e2e_testing("smbclient / Windows Explorer")
+                .notes("SMB 2.1 only, guest auth only, no signing/encryption")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "SMB/CIFS file server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an SMB/CIFS file server on port 8445"
+        }
+        fn group_name(&self) -> &'static str {
+            "Web & File"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SmbProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::smb::SmbServer;
+                SmbServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            // Return Custom result with the action data for SMB server to handle
+            Ok(ActionResult::Custom {
+                name: action_type.to_string(),
+                data: action,
+            })
+        }
+}
+
 
 // Event type for SMB operations
 pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
