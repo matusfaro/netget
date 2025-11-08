@@ -3,7 +3,7 @@
 //! Defines LLM-controllable actions for WireGuard VPN server
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -39,26 +39,8 @@ impl WireguardProtocol {
     }
 }
 
-impl Server for WireguardProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::wireguard::WireguardServer;
-            use std::sync::Arc;
-            WireguardServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                Arc::new(ctx.llm_client),
-                ctx.state,
-                ctx.server_id,
-                ctx.status_tx,
-            ).await
-        })
-    }
-
+// Implement Protocol trait (base trait for all protocols)
+impl Protocol for WireguardProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             list_peers_action(),
@@ -74,24 +56,6 @@ impl Server for WireguardProtocol {
             set_peer_traffic_limit_action(),
             disconnect_peer_action(),
         ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "authorize_peer" => self.execute_authorize_peer(action),
-            "reject_peer" => self.execute_reject_peer(action),
-            "set_peer_traffic_limit" => self.execute_set_peer_traffic_limit(action),
-            "disconnect_peer" => self.execute_disconnect_peer(action),
-            "list_peers" => Ok(ActionResult::NoAction), // Handled by async action executor
-            "remove_peer" => Ok(ActionResult::NoAction), // Handled by async action executor
-            "get_server_info" => Ok(ActionResult::NoAction), // Handled by async action executor
-            _ => Err(anyhow::anyhow!("Unknown WireGuard action: {}", action_type)),
-        }
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -133,6 +97,46 @@ impl Server for WireguardProtocol {
 
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
+    }
+}
+
+// Implement Server trait (server-specific functionality)
+impl Server for WireguardProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::wireguard::WireguardServer;
+            use std::sync::Arc;
+            WireguardServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                Arc::new(ctx.llm_client),
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            ).await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "authorize_peer" => self.execute_authorize_peer(action),
+            "reject_peer" => self.execute_reject_peer(action),
+            "set_peer_traffic_limit" => self.execute_set_peer_traffic_limit(action),
+            "disconnect_peer" => self.execute_disconnect_peer(action),
+            "list_peers" => Ok(ActionResult::NoAction), // Handled by async action executor
+            "remove_peer" => Ok(ActionResult::NoAction), // Handled by async action executor
+            "get_server_info" => Ok(ActionResult::NoAction), // Handled by async action executor
+            _ => Err(anyhow::anyhow!("Unknown WireGuard action: {}", action_type)),
+        }
     }
 }
 
