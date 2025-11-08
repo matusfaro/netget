@@ -79,11 +79,11 @@ vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implemen
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
-# kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol - disabled due to k8s-openapi version feature requirement
+kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol
 git = ["dep:git2"]  # Git client support
 mercurial = ["urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol", "dep:rdkafka"]  # Apache Kafka broker and client
-http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol (HTTP over QUIC - UDP-based, encrypted, multiplexed)
+http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]  # HTTP/3 protocol
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
@@ -122,7 +122,7 @@ all-protocols = [
     "redis",
     "proxy",
     "webdav",
-    # "nfs",  # Temporarily disabled - NFS3 client type incompatibility
+    "nfs",
     "cassandra",
     "smb",
     "stun",
