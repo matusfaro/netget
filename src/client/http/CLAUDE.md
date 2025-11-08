@@ -8,8 +8,10 @@ The HTTP client implementation provides LLM-controlled HTTP/HTTPS requests. The 
 
 ### Library Choice
 - **reqwest** - Modern async HTTP client for Rust
-- Supports HTTP/1.1, HTTP/2, and HTTPS (TLS)
+- Supports HTTP/1.1, HTTP/2, and HTTPS (TLS via rustls)
+- Automatic protocol negotiation via ALPN during TLS handshake
 - Timeout handling, redirects, compression
+- Note: HTTP/3 support is available but experimental in reqwest, not enabled yet
 
 ### Architecture
 
@@ -125,7 +127,8 @@ status_tx.send("[CLIENT] HTTP request sent");                          // → TU
 - GET, POST, PUT, DELETE, PATCH, HEAD
 
 ### Supported Features
-- ✅ HTTPS (TLS)
+- ✅ HTTPS (TLS via rustls)
+- ✅ HTTP/1.1 and HTTP/2 (automatic protocol negotiation via ALPN)
 - ✅ Custom headers
 - ✅ Request body (JSON, text, etc.)
 - ✅ Response parsing (status, headers, body)
