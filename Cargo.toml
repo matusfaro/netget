@@ -21,7 +21,24 @@ doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-ht
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = ["dep:rsntp"]  # NTP client support
-bluetooth-ble = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
+bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
+bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
+bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
+bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
+bluetooth-ble-beacon = ["bluetooth-ble"]  # BLE beacon (iBeacon, Eddystone)
+bluetooth-ble-remote = ["bluetooth-ble"]  # BLE media remote control
+bluetooth-ble-battery = ["bluetooth-ble"]  # BLE Battery Service
+bluetooth-ble-heart-rate = ["bluetooth-ble"]  # BLE Heart Rate Service
+bluetooth-ble-thermometer = ["bluetooth-ble"]  # BLE Health Thermometer
+bluetooth-ble-environmental = ["bluetooth-ble"]  # BLE Environmental Sensing
+bluetooth-ble-proximity = ["bluetooth-ble"]  # BLE Proximity/Find Me
+bluetooth-ble-gamepad = ["bluetooth-ble"]  # BLE HID gamepad
+bluetooth-ble-presenter = ["bluetooth-ble"]  # BLE presentation clicker
+bluetooth-ble-file-transfer = ["bluetooth-ble"]  # BLE file transfer
+bluetooth-ble-data-stream = ["bluetooth-ble"]  # BLE real-time data streaming
+bluetooth-ble-cycling = ["bluetooth-ble"]  # BLE Cycling Speed and Cadence
+bluetooth-ble-running = ["bluetooth-ble"]  # BLE Running Speed and Cadence
+bluetooth-ble-weight-scale = ["bluetooth-ble"]  # BLE Weight Scale
 whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
@@ -110,7 +127,7 @@ all-protocols = [
     "dhcp",
     "bootp",
     "ntp",
-    "bluetooth-ble",
+    "bluetooth-ble-client",
     "whois",
     "snmp",
     "igmp",
@@ -175,6 +192,23 @@ all-protocols = [
     "saml-idp",
     "saml-sp",
     "usb",
+    "bluetooth-ble",
+    "bluetooth-ble-keyboard",
+    "bluetooth-ble-mouse",
+    "bluetooth-ble-beacon",
+    "bluetooth-ble-remote",
+    "bluetooth-ble-battery",
+    "bluetooth-ble-heart-rate",
+    "bluetooth-ble-thermometer",
+    "bluetooth-ble-environmental",
+    "bluetooth-ble-proximity",
+    "bluetooth-ble-gamepad",
+    "bluetooth-ble-presenter",
+    "bluetooth-ble-file-transfer",
+    "bluetooth-ble-data-stream",
+    "bluetooth-ble-cycling",
+    "bluetooth-ble-running",
+    "bluetooth-ble-weight-scale",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
@@ -497,6 +531,8 @@ k8s-openapi = { version = "0.24", optional = true, features = ["v1_30"] }
 nfs3_types = { version = "0.4", optional = true }
 # Bluetooth Low Energy (BLE) client - cross-platform (Windows, macOS, Linux)
 btleplug = { version = "0.11", optional = true }
+# Bluetooth Low Energy (BLE) server/peripheral - cross-platform (Windows, macOS, Linux)
+ble-peripheral-rust = { version = "0.2", optional = true }
 # USB client
 nusb = { version = "0.1", optional = true }
 

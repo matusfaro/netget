@@ -45,7 +45,7 @@ impl ClientRegistry {
         #[cfg(feature = "bitcoin")]
         self.register(Arc::new(crate::client::bitcoin::BitcoinClientProtocol::new()));
 
-        #[cfg(feature = "bluetooth-ble")]
+        #[cfg(feature = "bluetooth-ble-client")]
         self.register(Arc::new(crate::client::bluetooth::BluetoothClientProtocol::new()));
 
         #[cfg(feature = "bootp")]
