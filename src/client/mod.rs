@@ -293,10 +293,10 @@ pub mod sip;
 pub use sip::actions::SipClientProtocol;
 
 // smb client
-#[cfg(feature = "smb")]
+#[cfg(feature = "smb-client")]
 pub mod smb;
-#[cfg(feature = "smb")]
-pub use smb::actions::SmbClientProtocol;
+#[cfg(feature = "smb-client")]
+pub use smb::SmbClientProtocol;
 
 // smtp client
 #[cfg(feature = "smtp")]

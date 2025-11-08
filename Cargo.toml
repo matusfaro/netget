@@ -41,6 +41,7 @@ webdav = ["dav-server", "dep:reqwest_dav"]
 nfs = ["nfsserve", "dep:nfs3_client", "async-trait"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
 smb = ["smb-msg"]
+smb-client = ["smb", "pavao"]  # SMB client requires native libsmbclient library
 stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
@@ -57,7 +58,7 @@ s3 = ["aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:rust-s3"]
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS queue
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = ["async-openai"]  # OpenAI API client
-oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
+oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
@@ -316,6 +317,7 @@ cassandra-protocol = { version = "3.3", optional = true }
 
 # SMB server (message parsing)
 smb-msg = { version = "0.10", optional = true }
+pavao = { version = "0.2", optional = true }
 
 # STUN server (Session Traversal Utilities for NAT)
 webrtc-stun = { version = "0.1", optional = true }
@@ -429,6 +431,8 @@ aws-sdk-dynamodb = { version = "1.52", optional = true }
 
 # OpenAI API client
 async-openai = { version = "0.26", optional = true }
+# OAuth2 client
+oauth2 = { version = "4.4", optional = true }
 
 # Client protocol dependencies
 # FTP client
