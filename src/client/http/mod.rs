@@ -34,9 +34,11 @@ impl HttpClient {
 
         info!("HTTP client {} initialized for {}", client_id, remote_addr);
 
-        // Build reqwest client
+        // Build reqwest client with HTTPS and HTTP/2 support
+        // Protocol versions are automatically negotiated via ALPN during TLS handshake
         let _http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .use_rustls_tls()  // Use rustls for HTTPS (HTTP/1.1 and HTTP/2)
             .build()
             .context("Failed to build HTTP client")?;
 
@@ -102,9 +104,10 @@ impl HttpClient {
 
         info!("HTTP client {} making request: {} {}", client_id, method, url);
 
-        // Build request
+        // Build request with HTTPS and HTTP/2 support
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .use_rustls_tls()  // Use rustls for HTTPS (HTTP/1.1 and HTTP/2)
             .build()?;
 
         let mut request = match method.to_uppercase().as_str() {
