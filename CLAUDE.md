@@ -97,6 +97,66 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 - Modifying shared code: `--no-default-features --features tcp,http,dns` (representative subset)
 - Full validation: `--all-features` (use sparingly)
 
+### Efficient Build & Test Iteration (CRITICAL)
+
+**Building and testing takes a long time** (10s-2min depending on features). **NEVER rebuild/retest after each individual fix.** Instead:
+
+1. **Pipe output to file** for analysis:
+```bash
+# Build and save output (uses PID for uniqueness)
+./cargo-isolated.sh build --no-default-features --features tcp 2>&1 | tee /tmp/netget-build-$$.log
+
+# Test and save output (uses PID for uniqueness)
+./cargo-isolated.sh test --no-default-features --features tcp 2>&1 | tee /tmp/netget-test-$$.log
+```
+
+2. **Use grep to extract issues** from saved output:
+```bash
+# Find all compilation errors
+grep "error\[E" /tmp/netget-build-$$.log
+
+# Find specific error types
+grep "error\[E0425\]" /tmp/netget-build-$$.log  # Unresolved names
+grep "error\[E0599\]" /tmp/netget-build-$$.log  # Method not found
+
+# Find test failures
+grep "FAILED" /tmp/netget-test-$$.log
+grep "assertion" /tmp/netget-test-$$.log
+```
+
+3. **Fix ALL issues before rebuilding**:
+   - Read through all errors/failures in the log file
+   - Identify ALL problems (compilation errors, test failures, warnings)
+   - Fix everything in a single batch
+   - Only rebuild/retest once after all fixes are applied
+
+**Anti-pattern** (wasteful):
+```bash
+# DON'T do this - rebuilds after every single fix
+./cargo-isolated.sh build  # Error 1 found
+# Fix error 1
+./cargo-isolated.sh build  # Error 2 found
+# Fix error 2
+./cargo-isolated.sh build  # Error 3 found
+# ... (wastes hours)
+```
+
+**Correct approach**:
+```bash
+# Build once, save output
+./cargo-isolated.sh build 2>&1 | tee /tmp/netget-build-$$.log
+
+# Analyze ALL errors
+grep "error\[E" /tmp/netget-build-$$.log  # Shows all 15 errors
+
+# Fix all 15 errors in code
+
+# Rebuild once
+./cargo-isolated.sh build
+```
+
+**Time savings**: Fixing 10 errors one-by-one = 10-20 minutes. Fixing all at once = 30 seconds + one build.
+
 ## Logging (CRITICAL)
 
 **Dual logging**: ALL logs to tracing macros (`debug!`, `trace!`, etc.) → `netget.log` AND `status_tx.send()` → TUI. **Levels**: ERROR (critical), WARN (non-fatal), INFO (lifecycle), DEBUG (summaries), TRACE (payloads).
