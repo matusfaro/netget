@@ -63,9 +63,15 @@ pub static K8S_CLIENT_RESOURCE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 /// Kubernetes client protocol action handler
 pub struct KubernetesClientProtocol;
 
+impl Default for KubernetesClientProtocol {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl KubernetesClientProtocol {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
