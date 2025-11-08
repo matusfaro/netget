@@ -4,7 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
-use crate::protocol::{EventType, ParameterInfo, ParameterType};
+use crate::protocol::EventType;
 use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -17,11 +17,12 @@ pub static SSH_AGENT_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::ne
         "ssh_agent_connection_opened",
         "SSH Agent connection opened (client connected to agent socket)",
     )
-    .with_parameters(vec![ParameterInfo::new(
-        "connection_id",
-        ParameterType::String,
-        "Unique connection identifier",
-    )])
+    .with_parameter(Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Unique connection identifier".to_string(),
+        required: true,
+    })
 });
 
 pub static SSH_AGENT_REQUEST_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -29,11 +30,12 @@ pub static SSH_AGENT_REQUEST_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::n
         "ssh_agent_request_identities",
         "Client requested list of available SSH keys",
     )
-    .with_parameters(vec![ParameterInfo::new(
-        "connection_id",
-        ParameterType::String,
-        "Connection that requested identities",
-    )])
+    .with_parameter(Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection that requested identities".to_string(),
+        required: true,
+    })
 });
 
 pub static SSH_AGENT_SIGN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -42,18 +44,30 @@ pub static SSH_AGENT_SIGN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         "Client requested to sign data with a key",
     )
     .with_parameters(vec![
-        ParameterInfo::new("connection_id", ParameterType::String, "Connection identifier"),
-        ParameterInfo::new(
-            "public_key_blob_hex",
-            ParameterType::String,
-            "Hex-encoded public key blob",
-        ),
-        ParameterInfo::new(
-            "data_hex",
-            ParameterType::String,
-            "Hex-encoded data to sign",
-        ),
-        ParameterInfo::new("flags", ParameterType::Integer, "Signature flags"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection identifier".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "public_key_blob_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded public key blob".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded data to sign".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "flags".to_string(),
+            type_hint: "integer".to_string(),
+            description: "Signature flags".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -63,19 +77,36 @@ pub static SSH_AGENT_ADD_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         "Client requested to add a key to the agent",
     )
     .with_parameters(vec![
-        ParameterInfo::new("connection_id", ParameterType::String, "Connection identifier"),
-        ParameterInfo::new("key_type", ParameterType::String, "SSH key type (e.g., ssh-ed25519)"),
-        ParameterInfo::new(
-            "public_key_blob_hex",
-            ParameterType::String,
-            "Hex-encoded public key blob",
-        ),
-        ParameterInfo::new("comment", ParameterType::String, "Key comment/description"),
-        ParameterInfo::new(
-            "constrained",
-            ParameterType::Boolean,
-            "Whether key has constraints",
-        ),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection identifier".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "key_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "SSH key type (e.g., ssh-ed25519)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "public_key_blob_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded public key blob".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "comment".to_string(),
+            type_hint: "string".to_string(),
+            description: "Key comment/description".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "constrained".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether key has constraints".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -85,12 +116,18 @@ pub static SSH_AGENT_REMOVE_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(
         "Client requested to remove a key from the agent",
     )
     .with_parameters(vec![
-        ParameterInfo::new("connection_id", ParameterType::String, "Connection identifier"),
-        ParameterInfo::new(
-            "public_key_blob_hex",
-            ParameterType::String,
-            "Hex-encoded public key blob to remove",
-        ),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection identifier".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "public_key_blob_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded public key blob to remove".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -99,11 +136,12 @@ pub static SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock
         "ssh_agent_remove_all_identities",
         "Client requested to remove all keys from the agent",
     )
-    .with_parameters(vec![ParameterInfo::new(
-        "connection_id",
-        ParameterType::String,
-        "Connection identifier",
-    )])
+    .with_parameter(Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection identifier".to_string(),
+        required: true,
+    })
 });
 
 pub static SSH_AGENT_LOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -111,11 +149,12 @@ pub static SSH_AGENT_LOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "ssh_agent_lock",
         "Client requested to lock the agent with a passphrase",
     )
-    .with_parameters(vec![ParameterInfo::new(
-        "connection_id",
-        ParameterType::String,
-        "Connection identifier",
-    )])
+    .with_parameter(Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection identifier".to_string(),
+        required: true,
+    })
 });
 
 pub static SSH_AGENT_UNLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -123,11 +162,12 @@ pub static SSH_AGENT_UNLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "ssh_agent_unlock",
         "Client requested to unlock the agent with a passphrase",
     )
-    .with_parameters(vec![ParameterInfo::new(
-        "connection_id",
-        ParameterType::String,
-        "Connection identifier",
-    )])
+    .with_parameter(Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection identifier".to_string(),
+        required: true,
+    })
 });
 
 /// SSH Agent server protocol implementation
@@ -310,7 +350,6 @@ impl Server for SshAgentProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        _ctx: &crate::llm::actions::protocol_trait::ServerActionContext,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
@@ -351,16 +390,15 @@ impl Server for SshAgentProtocol {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("Missing 'instruction' field"))?
                     .to_string();
-                Ok(ActionResult::ModifyInstruction(instruction))
+                // ModifyInstruction is handled as a Custom action
+                Ok(ActionResult::Custom {
+                    name: "modify_instruction".to_string(),
+                    data: json!({ "instruction": instruction }),
+                })
             }
             "close_connection" => {
-                let connection_id = action["connection_id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'connection_id' field"))?;
-                let conn_id: crate::server::connection::ConnectionId = connection_id
-                    .parse()
-                    .map_err(|_| anyhow::anyhow!("Invalid connection_id"))?;
-                Ok(ActionResult::CloseConnection(conn_id))
+                // CloseConnection is a unit variant
+                Ok(ActionResult::CloseConnection)
             }
             _ => anyhow::bail!("Unknown action type: {}", action_type),
         }

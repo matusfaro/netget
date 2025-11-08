@@ -1,7 +1,10 @@
 //! SSH Agent client protocol actions
 
-use crate::llm::actions::client_trait::{Client, ClientActionResult, ConnectContext};
-use crate::protocol::{EventType, ParameterInfo, ParameterType};
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, protocol_trait::Protocol};
+use crate::protocol::{EventType, ConnectContext};
+use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::future::Future;
@@ -15,11 +18,12 @@ pub static SSH_AGENT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new
         "ssh_agent_client_connected",
         "SSH Agent client connected to agent socket",
     )
-    .with_parameters(vec![ParameterInfo::new(
-        "socket_path",
-        ParameterType::String,
-        "Path to agent socket",
-    )])
+    .with_parameter(Parameter {
+        name: "socket_path".to_string(),
+        type_hint: "string".to_string(),
+        description: "Path to agent socket".to_string(),
+        required: true,
+    })
 });
 
 pub static SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -28,12 +32,18 @@ pub static SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyL
         "SSH Agent client received response from agent",
     )
     .with_parameters(vec![
-        ParameterInfo::new(
-            "response_type",
-            ParameterType::String,
-            "Type of response (identities, signature, success, failure)",
-        ),
-        ParameterInfo::new("response_data", ParameterType::Object, "Response data"),
+        Parameter {
+            name: "response_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Type of response (identities, signature, success, failure)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "response_data".to_string(),
+            type_hint: "object".to_string(),
+            description: "Response data".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -46,6 +56,173 @@ impl SshAgentClientProtocol {
     }
 }
 
+// Implement Protocol trait (common functionality)
+impl Protocol for SshAgentClientProtocol {
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "socket_path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path to SSH Agent Unix socket (default: $SSH_AUTH_SOCK or /tmp/ssh-agent.sock)".to_string(),
+            required: false,
+            example: json!("/tmp/ssh-agent.sock"),
+        }]
+    }
+
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "modify_instruction".to_string(),
+                description: "Modify the LLM instruction for SSH Agent client".to_string(),
+                parameters: vec![Parameter {
+                    name: "instruction".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "New LLM instruction".to_string(),
+                    required: true,
+                }],
+                example: json!({"type": "modify_instruction", "instruction": "..."}),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from SSH Agent".to_string(),
+                parameters: vec![],
+                example: json!({"type": "disconnect"}),
+            },
+        ]
+    }
+
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "request_identities".to_string(),
+                description: "Request list of identities from agent".to_string(),
+                parameters: vec![],
+                example: json!({"type": "request_identities"}),
+            },
+            ActionDefinition {
+                name: "sign_request".to_string(),
+                description: "Request to sign data with a key".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "public_key_blob_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hex-encoded public key blob to sign with".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "data_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hex-encoded data to sign".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "flags".to_string(),
+                        type_hint: "integer".to_string(),
+                        description: "Signature flags".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({"type": "sign_request", "public_key_blob_hex": "...", "data_hex": "...", "flags": 0}),
+            },
+            ActionDefinition {
+                name: "add_identity".to_string(),
+                description: "Add an identity to the agent".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "key_type".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "SSH key type".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "public_key_blob_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hex-encoded public key blob".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "private_key_blob_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hex-encoded private key blob".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "comment".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Key comment".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({"type": "add_identity", "key_type": "ssh-ed25519", "public_key_blob_hex": "...", "private_key_blob_hex": "...", "comment": "my-key"}),
+            },
+            ActionDefinition {
+                name: "remove_identity".to_string(),
+                description: "Remove an identity from the agent".to_string(),
+                parameters: vec![Parameter {
+                    name: "public_key_blob_hex".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Hex-encoded public key blob to remove".to_string(),
+                    required: true,
+                }],
+                example: json!({"type": "remove_identity", "public_key_blob_hex": "..."}),
+            },
+            ActionDefinition {
+                name: "remove_all_identities".to_string(),
+                description: "Remove all identities from the agent".to_string(),
+                parameters: vec![],
+                example: json!({"type": "remove_all_identities"}),
+            },
+            ActionDefinition {
+                name: "wait_for_more".to_string(),
+                description: "Wait for more data".to_string(),
+                parameters: vec![],
+                example: json!({"type": "wait_for_more"}),
+            },
+        ]
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "SSH Agent"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            (*SSH_AGENT_CLIENT_CONNECTED_EVENT).clone(),
+            (*SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT).clone(),
+        ]
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "UNIX Socket > SSH Agent"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ssh-agent", "agent", "key-agent", "ssh keys"]
+    }
+
+    fn metadata(&self) -> ProtocolMetadataV2 {
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("SSH Agent client using custom protocol implementation")
+            .llm_control("Full control over agent operations and key management")
+            .e2e_testing("OpenSSH agent, NetGet SSH Agent server")
+            .notes("Connects to existing SSH agents via Unix sockets")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "SSH Agent client for connecting to and managing SSH keys via agents"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to SSH Agent at $SSH_AUTH_SOCK; list all identities; use first key to sign 'Hello World'"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Security"
+    }
+}
+
+// Implement Client trait (client-specific functionality)
 impl Client for SshAgentClientProtocol {
     fn connect(
         &self,
@@ -55,7 +232,7 @@ impl Client for SshAgentClientProtocol {
             crate::client::ssh_agent::SshAgentClient::connect_with_llm_actions(
                 ctx.remote_addr,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.client_id,
             )
@@ -63,81 +240,10 @@ impl Client for SshAgentClientProtocol {
         })
     }
 
-    fn get_async_actions(&self) -> Vec<Value> {
-        vec![
-            json!({
-                "type": "modify_instruction",
-                "instruction": {
-                    "type": "string",
-                    "description": "New LLM instruction for SSH Agent client"
-                }
-            }),
-            json!({
-                "type": "disconnect",
-                "description": "Disconnect from SSH Agent"
-            }),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<Value> {
-        vec![
-            json!({
-                "type": "request_identities",
-                "description": "Request list of identities from agent (SSH_AGENTC_REQUEST_IDENTITIES)"
-            }),
-            json!({
-                "type": "sign_request",
-                "public_key_blob_hex": {
-                    "type": "string",
-                    "description": "Hex-encoded public key blob to sign with"
-                },
-                "data_hex": {
-                    "type": "string",
-                    "description": "Hex-encoded data to sign"
-                },
-                "flags": {
-                    "type": "integer",
-                    "description": "Signature flags (0 for default, 4 for RSA-SHA256)"
-                }
-            }),
-            json!({
-                "type": "add_identity",
-                "key_type": {
-                    "type": "string",
-                    "description": "SSH key type (e.g., ssh-ed25519, ssh-rsa)"
-                },
-                "public_key_blob_hex": {
-                    "type": "string",
-                    "description": "Hex-encoded public key blob"
-                },
-                "private_key_blob_hex": {
-                    "type": "string",
-                    "description": "Hex-encoded private key blob"
-                },
-                "comment": {
-                    "type": "string",
-                    "description": "Key comment/description"
-                }
-            }),
-            json!({
-                "type": "remove_identity",
-                "public_key_blob_hex": {
-                    "type": "string",
-                    "description": "Hex-encoded public key blob to remove"
-                }
-            }),
-            json!({
-                "type": "remove_all_identities",
-                "description": "Remove all identities from agent"
-            }),
-            json!({
-                "type": "wait_for_more",
-                "description": "Wait for more data"
-            }),
-        ]
-    }
-
-    fn execute_action(&self, action: Value) -> Result<ClientActionResult> {
+    fn execute_action(
+        &self,
+        action: Value,
+    ) -> Result<ClientActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Missing 'type' field in action")?;
@@ -203,37 +309,7 @@ impl Client for SshAgentClientProtocol {
             }),
             "disconnect" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            "modify_instruction" => {
-                let instruction = action["instruction"]
-                    .as_str()
-                    .context("Missing 'instruction' field")?
-                    .to_string();
-                Ok(ClientActionResult::ModifyInstruction(instruction))
-            }
             _ => anyhow::bail!("Unknown action type: {}", action_type),
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SSH Agent"
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "Application"
-    }
-
-    fn get_event_types(&self) -> Vec<&'static EventType> {
-        vec![
-            &SSH_AGENT_CLIENT_CONNECTED_EVENT,
-            &SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT,
-        ]
-    }
-
-    fn get_startup_params(&self) -> Vec<crate::llm::actions::StartupParam> {
-        vec![crate::llm::actions::StartupParam {
-            name: "socket_path".to_string(),
-            description: "Path to SSH Agent Unix socket (default: $SSH_AUTH_SOCK or /tmp/ssh-agent.sock)".to_string(),
-            required: false,
-        }]
     }
 }
