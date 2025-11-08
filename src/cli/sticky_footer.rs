@@ -1068,6 +1068,27 @@ impl StickyFooter {
     }
 
     /// Render status bar
+    /// Get dependency status for the status bar
+    /// Returns (status_text, color) - empty string if all protocols are available
+    fn get_dependency_status(&self) -> (String, crossterm::style::Color) {
+        use crate::protocol::{registry, CLIENT_REGISTRY};
+
+        // Check how many protocols are excluded
+        let server_excluded = registry().get_excluded_protocols(&self.system_capabilities);
+        let client_excluded = CLIENT_REGISTRY.get_excluded_protocols(&self.system_capabilities);
+
+        let total_excluded = server_excluded.len() + client_excluded.len();
+
+        if total_excluded == 0 {
+            ("".to_string(), self.palette.success)
+        } else {
+            (
+                format!("{} excluded (/env)", total_excluded),
+                self.palette.ask
+            )
+        }
+    }
+
     fn render_status_bar(&self, stdout: &mut impl Write, line: u16) -> Result<u16> {
         let (web_status, web_color) = match self.connection_info.web_search_mode {
             WebSearchMode::On => ("ON", self.palette.success),
@@ -1123,27 +1144,16 @@ impl StickyFooter {
             ResetColor,
         )?;
 
-        // Add privilege warnings if capabilities are unavailable
-        if !self.system_capabilities.can_bind_privileged_ports {
+        // Add dependency status indicator
+        let (dep_status, dep_color) = self.get_dependency_status();
+        if !dep_status.is_empty() {
             execute!(
                 stdout,
                 SetForegroundColor(self.palette.dimmed),
                 Print(" |"),
                 ResetColor,
-                SetForegroundColor(self.palette.ask),
-                Print(" Ports<1024 denied"),
-                ResetColor,
-            )?;
-        }
-
-        if !self.system_capabilities.has_raw_socket_access {
-            execute!(
-                stdout,
-                SetForegroundColor(self.palette.dimmed),
-                Print(" |"),
-                ResetColor,
-                SetForegroundColor(self.palette.ask),
-                Print(" PCAP denied"),
+                SetForegroundColor(dep_color),
+                Print(format!(" {}", dep_status)),
                 ResetColor,
             )?;
         }

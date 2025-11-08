@@ -371,6 +371,63 @@ impl ClientRegistry {
     pub fn get_all(&self) -> Vec<Arc<dyn Client>> {
         self.protocols.values().cloned().collect()
     }
+
+    /// Get protocols that are excluded due to missing dependencies
+    ///
+    /// Returns a map of protocol name -> list of missing dependencies
+    pub fn get_excluded_protocols(
+        &self,
+        caps: &crate::privilege::SystemCapabilities,
+    ) -> std::collections::HashMap<String, Vec<super::dependencies::ProtocolDependency>> {
+        let mut excluded = std::collections::HashMap::new();
+
+        for (protocol_name, protocol) in &self.protocols {
+            let dependencies = protocol.get_dependencies();
+            let mut missing = Vec::new();
+
+            for dep in dependencies {
+                if !dep.is_available(caps) {
+                    missing.push(dep);
+                }
+            }
+
+            if !missing.is_empty() {
+                excluded.insert(protocol_name.clone(), missing);
+            }
+        }
+
+        excluded
+    }
+
+    /// Get protocols that are available (have all dependencies met)
+    ///
+    /// Returns a list of protocol names that can be used
+    pub fn get_available_protocols(
+        &self,
+        caps: &crate::privilege::SystemCapabilities,
+    ) -> Vec<String> {
+        let excluded = self.get_excluded_protocols(caps);
+
+        self.protocols
+            .keys()
+            .filter(|name| !excluded.contains_key(*name))
+            .cloned()
+            .collect()
+    }
+
+    /// Check if a specific protocol is available (has all dependencies met)
+    pub fn is_protocol_available(
+        &self,
+        protocol_name: &str,
+        caps: &crate::privilege::SystemCapabilities,
+    ) -> bool {
+        if let Some(protocol) = self.get(protocol_name) {
+            let dependencies = protocol.get_dependencies();
+            dependencies.iter().all(|dep| dep.is_available(caps))
+        } else {
+            false
+        }
+    }
 }
 
 /// Global client protocol registry instance
