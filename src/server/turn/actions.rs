@@ -1,7 +1,7 @@
 //! TURN protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -18,100 +18,95 @@ impl TurnProtocol {
     }
 }
 
-impl Server for TurnProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::turn::TurnServer;
-            TurnServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            allocate_relay_address_action(),
-            revoke_allocation_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_turn_allocate_response_action(),
-            send_turn_refresh_response_action(),
-            send_turn_create_permission_response_action(),
-            relay_data_to_peer_action(),
-            send_turn_error_response_action(),
-            ignore_request_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_turn_allocate_response" => self.execute_send_allocate_response(action),
-            "send_turn_refresh_response" => self.execute_send_refresh_response(action),
-            "send_turn_create_permission_response" => self.execute_send_permission_response(action),
-            "relay_data_to_peer" => self.execute_relay_data(action),
-            "send_turn_error_response" => self.execute_send_error_response(action),
-            "ignore_request" => Ok(ActionResult::NoAction),
-            _ => Err(anyhow::anyhow!("Unknown TURN action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for TurnProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                allocate_relay_address_action(),
+                revoke_allocation_action(),
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "TURN"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_turn_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>TURN"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["turn"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual TURN protocol (RFC 8656)")
-            .llm_control("Allocations, permissions, relay decisions")
-            .e2e_testing("turnutils_uclient / WebRTC")
-            .notes("Allocation tracking works, data relay pending")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "TURN relay server for NAT traversal"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a TURN relay server on port 3478 with 10 minute allocations"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Proxy & Network"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_turn_allocate_response_action(),
+                send_turn_refresh_response_action(),
+                send_turn_create_permission_response_action(),
+                relay_data_to_peer_action(),
+                send_turn_error_response_action(),
+                ignore_request_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "TURN"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_turn_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>TURN"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["turn"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual TURN protocol (RFC 8656)")
+                .llm_control("Allocations, permissions, relay decisions")
+                .e2e_testing("turnutils_uclient / WebRTC")
+                .notes("Allocation tracking works, data relay pending")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "TURN relay server for NAT traversal"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a TURN relay server on port 3478 with 10 minute allocations"
+        }
+        fn group_name(&self) -> &'static str {
+            "Proxy & Network"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for TurnProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::turn::TurnServer;
+                TurnServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_turn_allocate_response" => self.execute_send_allocate_response(action),
+                "send_turn_refresh_response" => self.execute_send_refresh_response(action),
+                "send_turn_create_permission_response" => self.execute_send_permission_response(action),
+                "relay_data_to_peer" => self.execute_relay_data(action),
+                "send_turn_error_response" => self.execute_send_error_response(action),
+                "ignore_request" => Ok(ActionResult::NoAction),
+                _ => Err(anyhow::anyhow!("Unknown TURN action: {}", action_type)),
+            }
+        }
+}
+
 
 impl TurnProtocol {
     /// Execute TURN allocate response

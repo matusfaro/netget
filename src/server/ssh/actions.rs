@@ -1,7 +1,7 @@
 //! SSH protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -82,115 +82,109 @@ impl SshProtocol {
     }
 }
 
-impl Server for SshProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::ssh::SshServer;
-            let send_first = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
-                .unwrap_or(false);
-
-            SshServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                send_first,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "send_first".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
-                required: false,
-                example: serde_json::json!(false),
-            },
-        ]
-    }
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![close_ssh_connection_action(), list_ssh_connections_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_ssh_data_action(),
-            wait_for_more_action(),
-            close_this_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_ssh_data" => self.execute_send_ssh_data(action),
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "close_ssh_connection" => self.execute_close_ssh_connection(action),
-            "list_ssh_connections" => self.execute_list_ssh_connections(action),
-            "ssh_auth_decision" => self.execute_ssh_auth_decision(action),
-            "ssh_send_banner" => self.execute_ssh_send_banner(action),
-            "ssh_shell_response" => self.execute_ssh_shell_response(action),
-            _ => Err(anyhow::anyhow!("Unknown SSH action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for SshProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "send_first".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                    required: false,
+                    example: serde_json::json!(false),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SSH"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_ssh_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>SSH"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["ssh"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Beta)
-            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(22))
-            .implementation("russh v0.40 with SFTP support")
-            .llm_control("Authentication decisions + shell responses + SFTP operations")
-            .e2e_testing("ssh2 crate (libssh2 bindings)")
-            .notes("Supports scripting for auth (0 LLM calls after setup)")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Secure shell server for remote access"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Pretent to be a shell via SSH on port 2222"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![close_ssh_connection_action(), list_ssh_connections_action()]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_ssh_data_action(),
+                wait_for_more_action(),
+                close_this_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "SSH"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_ssh_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>SSH"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["ssh"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Beta)
+                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(22))
+                .implementation("russh v0.40 with SFTP support")
+                .llm_control("Authentication decisions + shell responses + SFTP operations")
+                .e2e_testing("ssh2 crate (libssh2 bindings)")
+                .notes("Supports scripting for auth (0 LLM calls after setup)")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Secure shell server for remote access"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Pretent to be a shell via SSH on port 2222"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SshProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::ssh::SshServer;
+                let send_first = ctx.startup_params
+                    .as_ref()
+                    .and_then(|p| p.get_optional_bool("send_first"))
+                    .unwrap_or(false);
+    
+                SshServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    send_first,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_ssh_data" => self.execute_send_ssh_data(action),
+                "wait_for_more" => Ok(ActionResult::WaitForMore),
+                "close_this_connection" => Ok(ActionResult::CloseConnection),
+                "close_ssh_connection" => self.execute_close_ssh_connection(action),
+                "list_ssh_connections" => self.execute_list_ssh_connections(action),
+                "ssh_auth_decision" => self.execute_ssh_auth_decision(action),
+                "ssh_send_banner" => self.execute_ssh_send_banner(action),
+                "ssh_shell_response" => self.execute_ssh_shell_response(action),
+                _ => Err(anyhow::anyhow!("Unknown SSH action: {}", action_type)),
+            }
+        }
+}
+
 
 impl SshProtocol {
     fn execute_send_ssh_data(&self, action: serde_json::Value) -> Result<ActionResult> {

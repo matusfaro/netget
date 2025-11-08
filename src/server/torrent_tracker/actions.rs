@@ -1,7 +1,7 @@
 //! BitTorrent Tracker protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -18,95 +18,90 @@ impl TorrentTrackerProtocol {
     }
 }
 
-impl Server for TorrentTrackerProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::torrent_tracker::TorrentTrackerServer;
-            TorrentTrackerServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            SEND_ANNOUNCE_RESPONSE_ACTION.clone(),
-            SEND_SCRAPE_RESPONSE_ACTION.clone(),
-            SEND_ERROR_RESPONSE_ACTION.clone(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_announce_response" => self.execute_send_announce_response(action),
-            "send_scrape_response" => self.execute_send_scrape_response(action),
-            "send_error_response" => self.execute_send_error_response(action),
-            _ => Err(anyhow::anyhow!("Unknown BitTorrent Tracker action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for TorrentTrackerProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Torrent-Tracker"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            TRACKER_ANNOUNCE_REQUEST_EVENT.clone(),
-            TRACKER_SCRAPE_REQUEST_EVENT.clone(),
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>BitTorrent-Tracker"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["torrent-tracker", "tracker", "bittorrent-tracker"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("HTTP server with bencode response encoding (serde_bencode)")
-            .llm_control("Peer list generation, announce/scrape responses")
-            .e2e_testing("Real BitTorrent clients (transmission, aria2)")
-            .notes("Bencode<->JSON conversion, compact peer format")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "BitTorrent Tracker server for coordinating peers (announce/scrape)"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "start a bittorrent tracker on port 6969"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "P2P"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                SEND_ANNOUNCE_RESPONSE_ACTION.clone(),
+                SEND_SCRAPE_RESPONSE_ACTION.clone(),
+                SEND_ERROR_RESPONSE_ACTION.clone(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Torrent-Tracker"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                TRACKER_ANNOUNCE_REQUEST_EVENT.clone(),
+                TRACKER_SCRAPE_REQUEST_EVENT.clone(),
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>BitTorrent-Tracker"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["torrent-tracker", "tracker", "bittorrent-tracker"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .privilege_requirement(PrivilegeRequirement::None)
+                .implementation("HTTP server with bencode response encoding (serde_bencode)")
+                .llm_control("Peer list generation, announce/scrape responses")
+                .e2e_testing("Real BitTorrent clients (transmission, aria2)")
+                .notes("Bencode<->JSON conversion, compact peer format")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "BitTorrent Tracker server for coordinating peers (announce/scrape)"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "start a bittorrent tracker on port 6969"
+        }
+        fn group_name(&self) -> &'static str {
+            "P2P"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for TorrentTrackerProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::torrent_tracker::TorrentTrackerServer;
+                TorrentTrackerServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_announce_response" => self.execute_send_announce_response(action),
+                "send_scrape_response" => self.execute_send_scrape_response(action),
+                "send_error_response" => self.execute_send_error_response(action),
+                _ => Err(anyhow::anyhow!("Unknown BitTorrent Tracker action: {}", action_type)),
+            }
+        }
+}
+
 
 impl TorrentTrackerProtocol {
     fn execute_send_announce_response(&self, action: serde_json::Value) -> Result<ActionResult> {

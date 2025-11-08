@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -70,179 +71,174 @@ impl BootpClientProtocol {
     }
 }
 
-impl Client for BootpClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::bootp::BootpClient;
-            BootpClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_bootp_request".to_string(),
-                description: "Send a BOOTP request to discover boot server and IP address".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "client_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Client MAC address (format: 00:11:22:33:44:55)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "broadcast".to_string(),
-                        type_hint: "boolean".to_string(),
-                        description: "Use broadcast (true) or unicast (false)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_bootp_request",
-                    "client_mac": "00:11:22:33:44:55",
-                    "broadcast": true
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Close the BOOTP client".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_bootp_request".to_string(),
-                description: "Send another BOOTP request in response to a reply".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "client_mac".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Client MAC address (format: 00:11:22:33:44:55)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "broadcast".to_string(),
-                        type_hint: "boolean".to_string(),
-                        description: "Use broadcast (true) or unicast (false)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_bootp_request",
-                    "client_mac": "00:11:22:33:44:55",
-                    "broadcast": true
-                }),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more BOOTP replies before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_bootp_request" => {
-                let client_mac = action
-                    .get("client_mac")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'client_mac' field")?;
-
-                let broadcast = action
-                    .get("broadcast")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-
-                Ok(ClientActionResult::Custom {
+// Implement Protocol trait (common functionality)
+impl Protocol for BootpClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
                     name: "send_bootp_request".to_string(),
-                    data: json!({
-                        "client_mac": client_mac,
-                        "broadcast": broadcast,
+                    description: "Send a BOOTP request to discover boot server and IP address".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "client_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Client MAC address (format: 00:11:22:33:44:55)".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "broadcast".to_string(),
+                            type_hint: "boolean".to_string(),
+                            description: "Use broadcast (true) or unicast (false)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_bootp_request",
+                        "client_mac": "00:11:22:33:44:55",
+                        "broadcast": true
                     }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown BOOTP client action: {}", action_type)),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Close the BOOTP client".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "BOOTP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "bootp_connected".to_string(),
-                description: "Triggered when BOOTP client is ready".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bootp_reply_received".to_string(),
-                description: "Triggered when BOOTP reply is received from server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>BOOTP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["bootp", "bootp client", "bootstrap protocol"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("dhcproto crate for BOOTP packet encoding/decoding")
-            .llm_control("Full control over BOOTP requests and reply interpretation")
-            .e2e_testing("dnsmasq or isc-dhcp-server for BOOTP testing")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "BOOTP client for diskless workstation boot discovery (PXE boot, TFTP server location)"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to BOOTP server at 192.168.1.1:67 and request boot information for MAC 00:11:22:33:44:55"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Network Services"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "send_bootp_request".to_string(),
+                    description: "Send another BOOTP request in response to a reply".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "client_mac".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Client MAC address (format: 00:11:22:33:44:55)".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "broadcast".to_string(),
+                            type_hint: "boolean".to_string(),
+                            description: "Use broadcast (true) or unicast (false)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_bootp_request",
+                        "client_mac": "00:11:22:33:44:55",
+                        "broadcast": true
+                    }),
+                },
+                ActionDefinition {
+                    name: "wait_for_more".to_string(),
+                    description: "Wait for more BOOTP replies before responding".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "wait_for_more"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "BOOTP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "bootp_connected".to_string(),
+                    description: "Triggered when BOOTP client is ready".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "bootp_reply_received".to_string(),
+                    description: "Triggered when BOOTP reply is received from server".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>BOOTP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["bootp", "bootp client", "bootstrap protocol"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("dhcproto crate for BOOTP packet encoding/decoding")
+                .llm_control("Full control over BOOTP requests and reply interpretation")
+                .e2e_testing("dnsmasq or isc-dhcp-server for BOOTP testing")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "BOOTP client for diskless workstation boot discovery (PXE boot, TFTP server location)"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to BOOTP server at 192.168.1.1:67 and request boot information for MAC 00:11:22:33:44:55"
+        }
+        fn group_name(&self) -> &'static str {
+            "Network Services"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for BootpClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::bootp::BootpClient;
+                BootpClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_bootp_request" => {
+                    let client_mac = action
+                        .get("client_mac")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'client_mac' field")?;
+    
+                    let broadcast = action
+                        .get("broadcast")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "send_bootp_request".to_string(),
+                        data: json!({
+                            "client_mac": client_mac,
+                            "broadcast": broadcast,
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+                _ => Err(anyhow::anyhow!("Unknown BOOTP client action: {}", action_type)),
+            }
+        }
+}
+

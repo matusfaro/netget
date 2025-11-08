@@ -1,7 +1,7 @@
 //! JSON-RPC protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,108 +19,102 @@ impl JsonRpcProtocol {
     }
 }
 
-impl Server for JsonRpcProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::jsonrpc::JsonRpcServer;
-            let send_first = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
-                .unwrap_or(false);
-
-            JsonRpcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                send_first,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "send_first".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether the server should send the first message after connection (not typically needed for JSON-RPC over HTTP)".to_string(),
-                required: false,
-                example: json!(false),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_rpc_methods_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            jsonrpc_success_action(),
-            jsonrpc_error_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "jsonrpc_success" => self.execute_jsonrpc_success(action),
-            "jsonrpc_error" => self.execute_jsonrpc_error(action),
-            "list_rpc_methods" => self.execute_list_rpc_methods(action),
-            _ => Err(anyhow::anyhow!("Unknown JSON-RPC action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for JsonRpcProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "send_first".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Whether the server should send the first message after connection (not typically needed for JSON-RPC over HTTP)".to_string(),
+                    required: false,
+                    example: json!(false),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "JSON-RPC"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_jsonrpc_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>JSONRPC"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["jsonrpc", "json-rpc", "json rpc", "rpc"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual JSON-RPC 2.0")
-            .llm_control("Method responses")
-            .e2e_testing("JSON-RPC client libs")
-            .notes("RPC over JSON")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "JSON-RPC 2.0 server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a JSON-RPC 2.0 server on port 8000"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "AI & API"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![list_rpc_methods_action()]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                jsonrpc_success_action(),
+                jsonrpc_error_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "JSON-RPC"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_jsonrpc_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>JSONRPC"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["jsonrpc", "json-rpc", "json rpc", "rpc"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual JSON-RPC 2.0")
+                .llm_control("Method responses")
+                .e2e_testing("JSON-RPC client libs")
+                .notes("RPC over JSON")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "JSON-RPC 2.0 server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a JSON-RPC 2.0 server on port 8000"
+        }
+        fn group_name(&self) -> &'static str {
+            "AI & API"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for JsonRpcProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::jsonrpc::JsonRpcServer;
+                let send_first = ctx.startup_params
+                    .as_ref()
+                    .and_then(|p| p.get_optional_bool("send_first"))
+                    .unwrap_or(false);
+    
+                JsonRpcServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    send_first,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "jsonrpc_success" => self.execute_jsonrpc_success(action),
+                "jsonrpc_error" => self.execute_jsonrpc_error(action),
+                "list_rpc_methods" => self.execute_list_rpc_methods(action),
+                _ => Err(anyhow::anyhow!("Unknown JSON-RPC action: {}", action_type)),
+            }
+        }
+}
+
 
 impl JsonRpcProtocol {
     fn execute_jsonrpc_success(&self, action: serde_json::Value) -> Result<ActionResult> {
