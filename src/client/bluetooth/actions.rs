@@ -331,7 +331,7 @@ impl Protocol for BluetoothClientProtocol {
     }
 
     fn protocol_name(&self) -> &'static str {
-        "Bluetooth"
+        "Bluetooth (BLE)"
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
@@ -395,7 +395,7 @@ impl Protocol for BluetoothClientProtocol {
     }
 
     fn description(&self) -> &'static str {
-        "Bluetooth Low Energy (BLE) client for connecting to BLE devices"
+        "Bluetooth Low Energy (BLE) client for connecting to BLE devices (Classic Bluetooth not supported)"
     }
 
     fn example_prompt(&self) -> &'static str {

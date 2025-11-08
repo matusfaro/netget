@@ -1,14 +1,14 @@
 //! Bluetooth Low Energy (BLE) client E2E tests
 //!
 //! NOTE: These tests require real BLE hardware and are ignored by default.
-//! Run manually with: cargo test --features bluetooth --test bluetooth::e2e_test -- --include-ignored
+//! Run manually with: cargo test --features bluetooth-ble --test bluetooth::e2e_test -- --include-ignored
 //!
 //! Test device requirements:
 //! - Bluetooth 4.0+ adapter (built-in or USB dongle)
 //! - BLE peripheral device with known services (e.g., Nordic nRF52 dev kit, ESP32, or fitness tracker)
 //! - Ollama running locally
 
-#![cfg(all(test, feature = "bluetooth"))]
+#![cfg(all(test, feature = "bluetooth-ble"))]
 
 use std::time::Duration;
 use tokio::time::sleep;
