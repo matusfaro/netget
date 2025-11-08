@@ -7,12 +7,12 @@ pub mod client_registry;
 pub mod connect_context;
 pub mod event_type;
 pub mod metadata;
-pub mod registry;
+pub mod server_registry;
 pub mod spawn_context;
 
 pub use client_registry::CLIENT_REGISTRY;
 pub use connect_context::ConnectContext;
 pub use metadata::{ProtocolMetadata, ProtocolMetadataV2, DevelopmentState};
 pub use event_type::{Event, EventType};
-pub use registry::registry;
+pub use server_registry::registry;
 pub use spawn_context::{SpawnContext, StartupParams};

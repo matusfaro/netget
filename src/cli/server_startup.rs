@@ -55,7 +55,7 @@ pub async fn start_server_by_id(
     use crate::state::server::ServerStatus;
 
     // Get protocol implementation from registry
-    let protocol = crate::protocol::registry::registry()
+    let protocol = crate::protocol::server_registry::registry()
         .get(&protocol_name)
         .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol_name))?;
 

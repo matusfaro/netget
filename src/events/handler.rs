@@ -374,7 +374,7 @@ impl EventHandler {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
                 // Parse protocol name using registry
-                let protocol_name = crate::protocol::registry::registry()
+                let protocol_name = crate::protocol::server_registry::registry()
                     .parse_from_str(&base_stack)
                     .unwrap_or_else(|| "TCP".to_string());
 

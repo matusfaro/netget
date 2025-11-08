@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
-use netget::protocol::registry;
+use netget::protocol::server_registry;
 
 use super::common::*;
 
@@ -293,7 +293,7 @@ fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
             if start_paren < end_paren {
                 let stack_str = &line[start_paren + 1..end_paren];
                 // Parse using the protocol registry
-                if let Some(parsed_protocol) = registry::registry().parse_from_str(stack_str) {
+                if let Some(parsed_protocol) = server_registry::registry().parse_from_str(stack_str) {
                     stack = parsed_protocol;
                 }
             }

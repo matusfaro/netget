@@ -9,14 +9,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Global client protocol registry mapping protocol names to client implementations
-pub struct ClientProtocolRegistry {
+pub struct ClientRegistry {
     /// Maps protocol name (e.g., "TCP", "HTTP") to client implementation
     protocols: HashMap<String, Arc<dyn Client>>,
     /// Maps lowercase keywords to protocol name for fast parsing
     keyword_map: HashMap<String, String>,
 }
 
-impl ClientProtocolRegistry {
+impl ClientRegistry {
     /// Create a new client protocol registry
     fn new() -> Self {
         let mut registry = Self {
@@ -378,4 +378,4 @@ impl ClientProtocolRegistry {
 /// This registry is initialized once at startup with all available client protocols
 /// based on compiled features. Use `CLIENT_REGISTRY.get(protocol_name)` to retrieve
 /// a client protocol implementation.
-pub static CLIENT_REGISTRY: std::sync::LazyLock<ClientProtocolRegistry> = std::sync::LazyLock::new(ClientProtocolRegistry::new);
+pub static CLIENT_REGISTRY: std::sync::LazyLock<ClientRegistry> = std::sync::LazyLock::new(ClientRegistry::new);
