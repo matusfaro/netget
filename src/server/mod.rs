@@ -611,5 +611,68 @@ pub use bluetooth_ble_beacon::BluetoothBleBeacon;
 #[cfg(feature = "bluetooth-ble-beacon")]
 pub use bluetooth_ble_beacon::actions::BluetoothBleBeaconProtocol;
 
+#[cfg(feature = "bluetooth-ble-remote")]
+pub mod bluetooth_ble_remote;
+#[cfg(feature = "bluetooth-ble-remote")]
+pub use bluetooth_ble_remote::BluetoothBleRemote;
+#[cfg(feature = "bluetooth-ble-remote")]
+pub use bluetooth_ble_remote::actions::BluetoothBleRemoteProtocol;
+
+#[cfg(feature = "bluetooth-ble-battery")]
+pub mod bluetooth_ble_battery;
+#[cfg(feature = "bluetooth-ble-battery")]
+pub use bluetooth_ble_battery::BluetoothBleBattery;
+#[cfg(feature = "bluetooth-ble-battery")]
+pub use bluetooth_ble_battery::actions::BluetoothBleBatteryProtocol;
+
+#[cfg(feature = "bluetooth-ble-heart-rate")]
+pub mod bluetooth_ble_heart_rate;
+#[cfg(feature = "bluetooth-ble-heart-rate")]
+pub use bluetooth_ble_heart_rate::BluetoothBleHeartRate;
+#[cfg(feature = "bluetooth-ble-heart-rate")]
+pub use bluetooth_ble_heart_rate::actions::BluetoothBleHeartRateProtocol;
+
+#[cfg(feature = "bluetooth-ble-thermometer")]
+pub mod bluetooth_ble_thermometer;
+#[cfg(feature = "bluetooth-ble-thermometer")]
+pub use bluetooth_ble_thermometer::BluetoothBleThermometer;
+#[cfg(feature = "bluetooth-ble-thermometer")]
+pub use bluetooth_ble_thermometer::actions::BluetoothBleThermometerProtocol;
+
+#[cfg(feature = "bluetooth-ble-environmental")]
+pub mod bluetooth_ble_environmental;
+#[cfg(feature = "bluetooth-ble-environmental")]
+pub use bluetooth_ble_environmental::BluetoothBleEnvironmental;
+#[cfg(feature = "bluetooth-ble-environmental")]
+pub use bluetooth_ble_environmental::actions::BluetoothBleEnvironmentalProtocol;
+
+#[cfg(feature = "bluetooth-ble-proximity")]
+pub mod bluetooth_ble_proximity;
+#[cfg(feature = "bluetooth-ble-proximity")]
+pub use bluetooth_ble_proximity::BluetoothBleProximity;
+#[cfg(feature = "bluetooth-ble-proximity")]
+pub use bluetooth_ble_proximity::actions::BluetoothBleProximityProtocol;
+
+#[cfg(feature = "bluetooth-ble-gamepad")]
+pub mod bluetooth_ble_gamepad;
+#[cfg(feature = "bluetooth-ble-gamepad")]
+pub use bluetooth_ble_gamepad::BluetoothBleGamepad;
+#[cfg(feature = "bluetooth-ble-gamepad")]
+pub use bluetooth_ble_gamepad::actions::BluetoothBleGamepadProtocol;
+
+#[cfg(feature = "bluetooth-ble-presenter")]
+pub mod bluetooth_ble_presenter;
+#[cfg(feature = "bluetooth-ble-presenter")]
+pub use bluetooth_ble_presenter::BluetoothBlePresenter;
+#[cfg(feature = "bluetooth-ble-presenter")]
+pub use bluetooth_ble_presenter::actions::BluetoothBlePresenterProtocol;
+
+#[cfg(feature = "bluetooth-ble-file-transfer")]
+pub mod bluetooth_ble_file_transfer;
+#[cfg(feature = "bluetooth-ble-file-transfer")]
+pub use bluetooth_ble_file_transfer::BluetoothBleFileTransfer;
+#[cfg(feature = "bluetooth-ble-file-transfer")]
+pub use bluetooth_ble_file_transfer::actions::BluetoothBleFileTransferProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
