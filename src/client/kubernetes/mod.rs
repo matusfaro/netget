@@ -265,7 +265,7 @@ impl KubernetesClient {
 
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
         let pod = pods.get(name).await
-            .context(format!("Failed to get pod {}", name))?;
+            .with_context(|| format!("Failed to get pod {}", name))?;
 
         // Extract relevant info
         let status = pod.status.as_ref()
@@ -296,7 +296,7 @@ impl KubernetesClient {
         };
 
         let logs = pods.logs(name, &log_params).await
-            .context(format!("Failed to get logs for pod {}", name))?;
+            .with_context(|| format!("Failed to get logs for pod {}", name))?;
 
         Ok(serde_json::json!({
             "pod": name,
@@ -344,7 +344,7 @@ impl KubernetesClient {
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
         pods.delete(name, &kube::api::DeleteParams::default()).await
-            .context(format!("Failed to delete pod {}", name))?;
+            .with_context(|| format!("Failed to delete pod {}", name))?;
 
         Ok(serde_json::json!({
             "deleted": true,
