@@ -576,5 +576,13 @@ pub use saml_sp::SamlSpServer;
 #[cfg(feature = "saml-sp")]
 pub use saml_sp::actions::SamlSpProtocol;
 
+#[cfg(feature = "usb-common")]
+pub mod usb;
+
+#[cfg(feature = "usb-keyboard")]
+pub use usb::keyboard::UsbKeyboardServer;
+#[cfg(feature = "usb-keyboard")]
+pub use usb::UsbKeyboardProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
