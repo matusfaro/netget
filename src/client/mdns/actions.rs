@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -103,178 +104,173 @@ impl MdnsClientProtocol {
     }
 }
 
-impl Client for MdnsClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::mdns::MdnsClient;
-            MdnsClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "browse_service".to_string(),
-                description: "Browse for mDNS services of a specific type on the local network".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "service_type".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Service type to browse for (e.g., '_http._tcp.local', '_ssh._tcp.local', '_printer._tcp.local')".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "browse_service",
-                    "service_type": "_http._tcp.local"
-                }),
-            },
-            ActionDefinition {
-                name: "resolve_hostname".to_string(),
-                description: "Resolve a .local hostname to IP addresses using mDNS".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "hostname".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Hostname to resolve (e.g., 'myserver.local')".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "resolve_hostname",
-                    "hostname": "myserver.local"
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Stop mDNS service discovery and disconnect".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more service discovery events before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "browse_service" => {
-                let service_type = action
-                    .get("service_type")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'service_type' field")?;
-
-                Ok(ClientActionResult::Custom {
+// Implement Protocol trait (common functionality)
+impl Protocol for MdnsClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
                     name: "browse_service".to_string(),
-                    data: json!({
-                        "service_type": service_type
+                    description: "Browse for mDNS services of a specific type on the local network".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "service_type".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Service type to browse for (e.g., '_http._tcp.local', '_ssh._tcp.local', '_printer._tcp.local')".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "browse_service",
+                        "service_type": "_http._tcp.local"
                     }),
-                })
-            }
-            "resolve_hostname" => {
-                let hostname = action
-                    .get("hostname")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'hostname' field")?;
-
-                Ok(ClientActionResult::Custom {
+                },
+                ActionDefinition {
                     name: "resolve_hostname".to_string(),
-                    data: json!({
-                        "hostname": hostname
+                    description: "Resolve a .local hostname to IP addresses using mDNS".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "hostname".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Hostname to resolve (e.g., 'myserver.local')".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "resolve_hostname",
+                        "hostname": "myserver.local"
                     }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown mDNS client action: {}", action_type)),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Stop mDNS service discovery and disconnect".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "mDNS"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "mdns_connected".to_string(),
-                description: "Triggered when mDNS client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "mdns_service_found".to_string(),
-                description: "Triggered when an mDNS service is discovered".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "mdns_service_resolved".to_string(),
-                description: "Triggered when an mDNS service is fully resolved with IP and port".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>mDNS"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["mdns", "multicast dns", "service discovery", "zeroconf", "bonjour", ".local"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("mdns-sd crate for RFC 6762 and RFC 6763 compliance")
-            .llm_control("Browse services, resolve hostnames, analyze service properties")
-            .e2e_testing("Built-in macOS/Linux mDNS responders for testing")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "mDNS client for discovering services on the local network"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Browse for HTTP services on the local network using mDNS"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "DNS"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "wait_for_more".to_string(),
+                    description: "Wait for more service discovery events before responding".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "wait_for_more"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "mDNS"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "mdns_connected".to_string(),
+                    description: "Triggered when mDNS client is initialized".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "mdns_service_found".to_string(),
+                    description: "Triggered when an mDNS service is discovered".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "mdns_service_resolved".to_string(),
+                    description: "Triggered when an mDNS service is fully resolved with IP and port".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>mDNS"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["mdns", "multicast dns", "service discovery", "zeroconf", "bonjour", ".local"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("mdns-sd crate for RFC 6762 and RFC 6763 compliance")
+                .llm_control("Browse services, resolve hostnames, analyze service properties")
+                .e2e_testing("Built-in macOS/Linux mDNS responders for testing")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "mDNS client for discovering services on the local network"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Browse for HTTP services on the local network using mDNS"
+        }
+        fn group_name(&self) -> &'static str {
+            "DNS"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for MdnsClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::mdns::MdnsClient;
+                MdnsClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "browse_service" => {
+                    let service_type = action
+                        .get("service_type")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'service_type' field")?;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "browse_service".to_string(),
+                        data: json!({
+                            "service_type": service_type
+                        }),
+                    })
+                }
+                "resolve_hostname" => {
+                    let hostname = action
+                        .get("hostname")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'hostname' field")?;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "resolve_hostname".to_string(),
+                        data: json!({
+                            "hostname": hostname
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+                _ => Err(anyhow::anyhow!("Unknown mDNS client action: {}", action_type)),
+            }
+        }
+}
+

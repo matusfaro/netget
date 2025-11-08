@@ -1,7 +1,7 @@
 //! SAML Service Provider (SP) protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,98 +19,93 @@ impl SamlSpProtocol {
     }
 }
 
-impl Server for SamlSpProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::saml_sp::SamlSpServer;
-            SamlSpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_authn_request_action(),
-            process_assertion_action(),
-            send_metadata_action(),
-            send_error_response_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_authn_request" => self.execute_send_authn_request(action),
-            "process_assertion" => self.execute_process_assertion(action),
-            "send_metadata" => self.execute_send_metadata(action),
-            "send_error_response" => self.execute_send_error_response(action),
-            _ => Err(anyhow::anyhow!("Unknown SAML SP action: {action_type}")),
+// Implement Protocol trait (common functionality)
+impl Protocol for SamlSpProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SamlSp"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_saml_sp_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>SAML-SP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec![
-            "saml sp",
-            "saml service provider",
-            "service provider",
-            "sp",
-            "saml-sp",
-        ]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("SAML 2.0 Service Provider with LLM-controlled authorization")
-            .llm_control("Authorization decisions, assertion validation, session management")
-            .e2e_testing("SAML IDP test server")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "SAML 2.0 Service Provider that validates SAML assertions and manages application sessions"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a SAML Service Provider on port 8081. Accept assertions from IDP and grant access to authenticated users"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Authentication"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_authn_request_action(),
+                process_assertion_action(),
+                send_metadata_action(),
+                send_error_response_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "SamlSp"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_saml_sp_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>SAML-SP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec![
+                "saml sp",
+                "saml service provider",
+                "service provider",
+                "sp",
+                "saml-sp",
+            ]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("SAML 2.0 Service Provider with LLM-controlled authorization")
+                .llm_control("Authorization decisions, assertion validation, session management")
+                .e2e_testing("SAML IDP test server")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "SAML 2.0 Service Provider that validates SAML assertions and manages application sessions"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a SAML Service Provider on port 8081. Accept assertions from IDP and grant access to authenticated users"
+        }
+        fn group_name(&self) -> &'static str {
+            "Authentication"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SamlSpProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::saml_sp::SamlSpServer;
+                SamlSpServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_authn_request" => self.execute_send_authn_request(action),
+                "process_assertion" => self.execute_process_assertion(action),
+                "send_metadata" => self.execute_send_metadata(action),
+                "send_error_response" => self.execute_send_error_response(action),
+                _ => Err(anyhow::anyhow!("Unknown SAML SP action: {action_type}")),
+            }
+        }
+}
+
 
 impl SamlSpProtocol {
     /// Execute send_authn_request sync action

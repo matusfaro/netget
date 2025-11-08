@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -123,287 +124,282 @@ impl TurnClientProtocol {
     }
 }
 
-impl Client for TurnClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::turn::TurnClient;
-            TurnClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "allocate_turn_relay".to_string(),
-                description: "Request a relay address allocation from TURN server".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "lifetime_seconds".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Requested lifetime in seconds (default: 600)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "allocate_turn_relay",
-                    "lifetime_seconds": 600
-                }),
-            },
-            ActionDefinition {
-                name: "create_permission".to_string(),
-                description: "Create permission for a peer address to send/receive data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "peer_address".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Peer IP:port to grant permission (e.g., '192.168.1.100:5000')".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "create_permission",
-                    "peer_address": "192.168.1.100:5000"
-                }),
-            },
-            ActionDefinition {
-                name: "send_turn_data".to_string(),
-                description: "Send data to peer via TURN relay".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "peer_address".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Peer IP:port to send data to".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "data_hex".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Data to send (as hex string)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_turn_data",
-                    "peer_address": "192.168.1.100:5000",
-                    "data_hex": "48656c6c6f"
-                }),
-            },
-            ActionDefinition {
-                name: "refresh_allocation".to_string(),
-                description: "Refresh TURN allocation to extend lifetime".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "lifetime_seconds".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "New lifetime in seconds (0 to delete allocation)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "refresh_allocation",
-                    "lifetime_seconds": 600
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from TURN server".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_turn_data".to_string(),
-                description: "Send data to peer via TURN relay in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "peer_address".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Peer IP:port to send data to".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "data_hex".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Data to send (as hex string)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_turn_data",
-                    "peer_address": "192.168.1.100:5000",
-                    "data_hex": "48656c6c6f"
-                }),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more data before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "allocate_turn_relay" => {
-                let lifetime = action
-                    .get("lifetime_seconds")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(600);
-
-                Ok(ClientActionResult::Custom {
-                    name: "allocate".to_string(),
-                    data: json!({
-                        "lifetime_seconds": lifetime
+// Implement Protocol trait (common functionality)
+impl Protocol for TurnClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "allocate_turn_relay".to_string(),
+                    description: "Request a relay address allocation from TURN server".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "lifetime_seconds".to_string(),
+                            type_hint: "number".to_string(),
+                            description: "Requested lifetime in seconds (default: 600)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "allocate_turn_relay",
+                        "lifetime_seconds": 600
                     }),
-                })
-            }
-            "create_permission" => {
-                let peer_address = action
-                    .get("peer_address")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'peer_address' field")?;
-
-                Ok(ClientActionResult::Custom {
+                },
+                ActionDefinition {
                     name: "create_permission".to_string(),
-                    data: json!({
-                        "peer_address": peer_address
+                    description: "Create permission for a peer address to send/receive data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "peer_address".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Peer IP:port to grant permission (e.g., '192.168.1.100:5000')".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "create_permission",
+                        "peer_address": "192.168.1.100:5000"
                     }),
-                })
-            }
-            "send_turn_data" => {
-                let peer_address = action
-                    .get("peer_address")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'peer_address' field")?;
-
-                let data_hex = action
-                    .get("data_hex")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'data_hex' field")?;
-
-                let data = hex::decode(data_hex)
-                    .context("Invalid hex data")?;
-
-                Ok(ClientActionResult::Custom {
-                    name: "send_indication".to_string(),
-                    data: json!({
-                        "peer_address": peer_address,
-                        "data": data
+                },
+                ActionDefinition {
+                    name: "send_turn_data".to_string(),
+                    description: "Send data to peer via TURN relay".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "peer_address".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Peer IP:port to send data to".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "data_hex".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Data to send (as hex string)".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_turn_data",
+                        "peer_address": "192.168.1.100:5000",
+                        "data_hex": "48656c6c6f"
                     }),
-                })
-            }
-            "refresh_allocation" => {
-                let lifetime = action
-                    .get("lifetime_seconds")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(600);
-
-                Ok(ClientActionResult::Custom {
-                    name: "refresh".to_string(),
-                    data: json!({
-                        "lifetime_seconds": lifetime
+                },
+                ActionDefinition {
+                    name: "refresh_allocation".to_string(),
+                    description: "Refresh TURN allocation to extend lifetime".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "lifetime_seconds".to_string(),
+                            type_hint: "number".to_string(),
+                            description: "New lifetime in seconds (0 to delete allocation)".to_string(),
+                            required: false,
+                        },
+                    ],
+                    example: json!({
+                        "type": "refresh_allocation",
+                        "lifetime_seconds": 600
                     }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown TURN client action: {}", action_type)),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from TURN server".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "TURN"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "turn_connected".to_string(),
-                description: "Triggered when TURN client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_allocated".to_string(),
-                description: "Triggered when relay address is allocated".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_data_received".to_string(),
-                description: "Triggered when data is received from peer via relay".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_permission_created".to_string(),
-                description: "Triggered when permission is created for a peer".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_refreshed".to_string(),
-                description: "Triggered when allocation is refreshed".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>STUN/TURN"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["turn", "turn client", "relay", "nat traversal", "webrtc"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("webrtc-turn library for TURN/STUN protocol")
-            .llm_control("Full control over allocations, permissions, and relay data")
-            .e2e_testing("NetGet TURN server as test server")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "TURN client for NAT traversal relay"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to TURN server at localhost:3478 and allocate a relay address"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Network Infrastructure"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "send_turn_data".to_string(),
+                    description: "Send data to peer via TURN relay in response to received data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "peer_address".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Peer IP:port to send data to".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "data_hex".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Data to send (as hex string)".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "send_turn_data",
+                        "peer_address": "192.168.1.100:5000",
+                        "data_hex": "48656c6c6f"
+                    }),
+                },
+                ActionDefinition {
+                    name: "wait_for_more".to_string(),
+                    description: "Wait for more data before responding".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "wait_for_more"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "TURN"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "turn_connected".to_string(),
+                    description: "Triggered when TURN client connects to server".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "turn_allocated".to_string(),
+                    description: "Triggered when relay address is allocated".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "turn_data_received".to_string(),
+                    description: "Triggered when data is received from peer via relay".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "turn_permission_created".to_string(),
+                    description: "Triggered when permission is created for a peer".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "turn_refreshed".to_string(),
+                    description: "Triggered when allocation is refreshed".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>STUN/TURN"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["turn", "turn client", "relay", "nat traversal", "webrtc"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("webrtc-turn library for TURN/STUN protocol")
+                .llm_control("Full control over allocations, permissions, and relay data")
+                .e2e_testing("NetGet TURN server as test server")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "TURN client for NAT traversal relay"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to TURN server at localhost:3478 and allocate a relay address"
+        }
+        fn group_name(&self) -> &'static str {
+            "Network Infrastructure"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for TurnClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::turn::TurnClient;
+                TurnClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "allocate_turn_relay" => {
+                    let lifetime = action
+                        .get("lifetime_seconds")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(600);
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "allocate".to_string(),
+                        data: json!({
+                            "lifetime_seconds": lifetime
+                        }),
+                    })
+                }
+                "create_permission" => {
+                    let peer_address = action
+                        .get("peer_address")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'peer_address' field")?;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "create_permission".to_string(),
+                        data: json!({
+                            "peer_address": peer_address
+                        }),
+                    })
+                }
+                "send_turn_data" => {
+                    let peer_address = action
+                        .get("peer_address")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'peer_address' field")?;
+    
+                    let data_hex = action
+                        .get("data_hex")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'data_hex' field")?;
+    
+                    let data = hex::decode(data_hex)
+                        .context("Invalid hex data")?;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "send_indication".to_string(),
+                        data: json!({
+                            "peer_address": peer_address,
+                            "data": data
+                        }),
+                    })
+                }
+                "refresh_allocation" => {
+                    let lifetime = action
+                        .get("lifetime_seconds")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(600);
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "refresh".to_string(),
+                        data: json!({
+                            "lifetime_seconds": lifetime
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+                _ => Err(anyhow::anyhow!("Unknown TURN client action: {}", action_type)),
+            }
+        }
+}
+

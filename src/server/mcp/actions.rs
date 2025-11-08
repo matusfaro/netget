@@ -3,7 +3,7 @@
 //! Defines LLM actions for controlling MCP server responses.
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,105 +20,100 @@ impl McpProtocol {
     }
 }
 
-impl Server for McpProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::mcp::McpServer;
-            McpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new() // MCP is HTTP-based, no async actions needed
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            mcp_initialize_response_action(),
-            mcp_resources_list_response_action(),
-            mcp_resources_read_response_action(),
-            mcp_resources_subscribe_response_action(),
-            mcp_tools_list_response_action(),
-            mcp_tools_call_response_action(),
-            mcp_prompts_list_response_action(),
-            mcp_prompts_get_response_action(),
-            mcp_completion_response_action(),
-            mcp_error_response_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "mcp_initialize_response" => self.execute_mcp_initialize_response(action),
-            "mcp_resources_list_response" => self.execute_mcp_resources_list_response(action),
-            "mcp_resources_read_response" => self.execute_mcp_resources_read_response(action),
-            "mcp_resources_subscribe_response" => self.execute_mcp_resources_subscribe_response(action),
-            "mcp_tools_list_response" => self.execute_mcp_tools_list_response(action),
-            "mcp_tools_call_response" => self.execute_mcp_tools_call_response(action),
-            "mcp_prompts_list_response" => self.execute_mcp_prompts_list_response(action),
-            "mcp_prompts_get_response" => self.execute_mcp_prompts_get_response(action),
-            "mcp_completion_response" => self.execute_mcp_completion_response(action),
-            "mcp_error_response" => self.execute_mcp_error_response(action),
-            _ => Err(anyhow::anyhow!("Unknown MCP action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for McpProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new() // MCP is HTTP-based, no async actions needed
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "MCP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_mcp_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>MCP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["mcp", "model-context-protocol", "model context protocol"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("axum HTTP, custom JSON-RPC 2.0, session management")
-            .llm_control("All capabilities: resources, tools, prompts")
-            .e2e_testing("MCP clients / TypeScript SDK")
-            .notes("HTTP POST only, no WebSocket/SSE, in-memory sessions")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Model Context Protocol server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an MCP (Model Context Protocol) server on port 8000"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "AI & API"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                mcp_initialize_response_action(),
+                mcp_resources_list_response_action(),
+                mcp_resources_read_response_action(),
+                mcp_resources_subscribe_response_action(),
+                mcp_tools_list_response_action(),
+                mcp_tools_call_response_action(),
+                mcp_prompts_list_response_action(),
+                mcp_prompts_get_response_action(),
+                mcp_completion_response_action(),
+                mcp_error_response_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "MCP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_mcp_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>MCP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["mcp", "model-context-protocol", "model context protocol"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("axum HTTP, custom JSON-RPC 2.0, session management")
+                .llm_control("All capabilities: resources, tools, prompts")
+                .e2e_testing("MCP clients / TypeScript SDK")
+                .notes("HTTP POST only, no WebSocket/SSE, in-memory sessions")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Model Context Protocol server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an MCP (Model Context Protocol) server on port 8000"
+        }
+        fn group_name(&self) -> &'static str {
+            "AI & API"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for McpProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::mcp::McpServer;
+                McpServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "mcp_initialize_response" => self.execute_mcp_initialize_response(action),
+                "mcp_resources_list_response" => self.execute_mcp_resources_list_response(action),
+                "mcp_resources_read_response" => self.execute_mcp_resources_read_response(action),
+                "mcp_resources_subscribe_response" => self.execute_mcp_resources_subscribe_response(action),
+                "mcp_tools_list_response" => self.execute_mcp_tools_list_response(action),
+                "mcp_tools_call_response" => self.execute_mcp_tools_call_response(action),
+                "mcp_prompts_list_response" => self.execute_mcp_prompts_list_response(action),
+                "mcp_prompts_get_response" => self.execute_mcp_prompts_get_response(action),
+                "mcp_completion_response" => self.execute_mcp_completion_response(action),
+                "mcp_error_response" => self.execute_mcp_error_response(action),
+                _ => Err(anyhow::anyhow!("Unknown MCP action: {}", action_type)),
+            }
+        }
+}
+
 
 impl McpProtocol {
     fn execute_mcp_initialize_response(&self, action: serde_json::Value) -> Result<ActionResult> {

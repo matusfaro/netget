@@ -1,7 +1,7 @@
 //! DNS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -23,102 +23,97 @@ impl DnsProtocol {
     }
 }
 
-impl Server for DnsProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::dns::DnsServer;
-            DnsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new() // DNS has no async actions
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_dns_a_response_action(),
-            send_dns_aaaa_response_action(),
-            send_dns_cname_response_action(),
-            send_dns_mx_response_action(),
-            send_dns_txt_response_action(),
-            send_dns_nxdomain_action(),
-            send_dns_response_action(),
-            ignore_query_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_dns_a_response" => self.execute_send_dns_a_response(action),
-            "send_dns_aaaa_response" => self.execute_send_dns_aaaa_response(action),
-            "send_dns_cname_response" => self.execute_send_dns_cname_response(action),
-            "send_dns_mx_response" => self.execute_send_dns_mx_response(action),
-            "send_dns_txt_response" => self.execute_send_dns_txt_response(action),
-            "send_dns_nxdomain" => self.execute_send_dns_nxdomain(action),
-            "send_dns_response" => self.execute_send_dns_response(action),
-            "ignore_query" => Ok(ActionResult::NoAction),
-            _ => Err(anyhow::anyhow!("Unknown DNS action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for DnsProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new() // DNS has no async actions
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "DNS"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_dns_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>DNS"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["dns"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Beta)
-            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(53))
-            .implementation("hickory-proto for parsing and construction")
-            .llm_control("Response records (A, AAAA, MX, TXT, CNAME, NXDOMAIN)")
-            .e2e_testing("hickory-client AsyncClient - 5 LLM calls")
-            .notes("Excellent scripting candidate")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Domain name resolution server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "DNS server on port 53 and resolve everything to 93.184.216.34"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_dns_a_response_action(),
+                send_dns_aaaa_response_action(),
+                send_dns_cname_response_action(),
+                send_dns_mx_response_action(),
+                send_dns_txt_response_action(),
+                send_dns_nxdomain_action(),
+                send_dns_response_action(),
+                ignore_query_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "DNS"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_dns_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>DNS"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["dns"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Beta)
+                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(53))
+                .implementation("hickory-proto for parsing and construction")
+                .llm_control("Response records (A, AAAA, MX, TXT, CNAME, NXDOMAIN)")
+                .e2e_testing("hickory-client AsyncClient - 5 LLM calls")
+                .notes("Excellent scripting candidate")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Domain name resolution server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "DNS server on port 53 and resolve everything to 93.184.216.34"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for DnsProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::dns::DnsServer;
+                DnsServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_dns_a_response" => self.execute_send_dns_a_response(action),
+                "send_dns_aaaa_response" => self.execute_send_dns_aaaa_response(action),
+                "send_dns_cname_response" => self.execute_send_dns_cname_response(action),
+                "send_dns_mx_response" => self.execute_send_dns_mx_response(action),
+                "send_dns_txt_response" => self.execute_send_dns_txt_response(action),
+                "send_dns_nxdomain" => self.execute_send_dns_nxdomain(action),
+                "send_dns_response" => self.execute_send_dns_response(action),
+                "ignore_query" => Ok(ActionResult::NoAction),
+                _ => Err(anyhow::anyhow!("Unknown DNS action: {}", action_type)),
+            }
+        }
+}
+
 
 impl DnsProtocol {
     fn execute_send_dns_a_response(&self, action: serde_json::Value) -> Result<ActionResult> {

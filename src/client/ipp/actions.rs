@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -63,251 +64,245 @@ impl IppClientProtocol {
     }
 }
 
-impl Client for IppClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::ipp::IppClient;
-            IppClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "printer_path".to_string(),
-                description: "Path to the printer on the server (e.g., /printers/test-printer)".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("/printers/test-printer"),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "get_printer_attributes".to_string(),
-                description: "Query printer capabilities and status".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "get_printer_attributes"
-                }),
-            },
-            ActionDefinition {
-                name: "print_job".to_string(),
-                description: "Submit a print job to the printer".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "job_name".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Name/title for the print job".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "document_format".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "MIME type of the document (e.g., application/pdf, text/plain)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "document_data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Document content (text or base64 for binary)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "print_job",
-                    "job_name": "Test Document",
-                    "document_format": "text/plain",
-                    "document_data": "Hello, Printer!\n"
-                }),
-            },
-            ActionDefinition {
-                name: "get_job_attributes".to_string(),
-                description: "Query status and details of a specific print job".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "job_id".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Job ID returned from print_job operation".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "get_job_attributes",
-                    "job_id": 123
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the IPP printer".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "get_printer_attributes".to_string(),
-                description: "Query printer capabilities in response to previous operation".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "get_printer_attributes"
-                }),
-            },
-            ActionDefinition {
-                name: "get_job_attributes".to_string(),
-                description: "Query job status after submitting a print job".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "job_id".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Job ID to query".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "get_job_attributes",
-                    "job_id": 123
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "get_printer_attributes" => {
-                Ok(ClientActionResult::Custom {
-                    name: "ipp_get_printer_attributes".to_string(),
-                    data: json!({}),
-                })
-            }
-            "print_job" => {
-                let job_name = action
-                    .get("job_name")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'job_name' field")?
-                    .to_string();
-
-                let document_format = action
-                    .get("document_format")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                let document_data = action
-                    .get("document_data")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'document_data' field")?;
-
-                // Convert document data to bytes
-                // If it looks like base64, decode it; otherwise use as UTF-8
-                let data_bytes = if document_data.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') && document_data.len() % 4 == 0 {
-                    // Try base64 decode using the new engine API
-                    use base64::{Engine as _, engine::general_purpose};
-                    general_purpose::STANDARD.decode(document_data).unwrap_or_else(|_| document_data.as_bytes().to_vec())
-                } else {
-                    // Use as UTF-8
-                    document_data.as_bytes().to_vec()
-                };
-
-                Ok(ClientActionResult::Custom {
-                    name: "ipp_print_job".to_string(),
-                    data: json!({
-                        "job_name": job_name,
-                        "document_format": document_format,
-                        "document_data": data_bytes,
-                    }),
-                })
-            }
-            "get_job_attributes" => {
-                let job_id = action
-                    .get("job_id")
-                    .and_then(|v| v.as_i64())
-                    .context("Missing or invalid 'job_id' field")? as i32;
-
-                Ok(ClientActionResult::Custom {
-                    name: "ipp_get_job_attributes".to_string(),
-                    data: json!({
-                        "job_id": job_id,
-                    }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown IPP client action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for IppClientProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "printer_path".to_string(),
+                    description: "Path to the printer on the server (e.g., /printers/test-printer)".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    example: json!("/printers/test-printer"),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "IPP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "ipp_connected".to_string(),
-                description: "Triggered when IPP client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "ipp_response_received".to_string(),
-                description: "Triggered when IPP client receives a response from the printer".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>IPP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["ipp", "ipp client", "internet printing protocol", "print", "printer"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("ipp crate 5.3 with AsyncIppClient")
-            .llm_control("Full control over print operations: get-printer-attributes, print-job, get-job-attributes")
-            .e2e_testing("CUPS test server or local IPP printer")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "IPP client for printing and querying print jobs"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to ipp://localhost:631/printers/test-printer and query its capabilities"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "File & Print"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "get_printer_attributes".to_string(),
+                    description: "Query printer capabilities and status".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "get_printer_attributes"
+                    }),
+                },
+                ActionDefinition {
+                    name: "print_job".to_string(),
+                    description: "Submit a print job to the printer".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "job_name".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Name/title for the print job".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "document_format".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "MIME type of the document (e.g., application/pdf, text/plain)".to_string(),
+                            required: false,
+                        },
+                        Parameter {
+                            name: "document_data".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Document content (text or base64 for binary)".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "print_job",
+                        "job_name": "Test Document",
+                        "document_format": "text/plain",
+                        "document_data": "Hello, Printer!\n"
+                    }),
+                },
+                ActionDefinition {
+                    name: "get_job_attributes".to_string(),
+                    description: "Query status and details of a specific print job".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "job_id".to_string(),
+                            type_hint: "number".to_string(),
+                            description: "Job ID returned from print_job operation".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "get_job_attributes",
+                        "job_id": 123
+                    }),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from the IPP printer".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "get_printer_attributes".to_string(),
+                    description: "Query printer capabilities in response to previous operation".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "get_printer_attributes"
+                    }),
+                },
+                ActionDefinition {
+                    name: "get_job_attributes".to_string(),
+                    description: "Query job status after submitting a print job".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "job_id".to_string(),
+                            type_hint: "number".to_string(),
+                            description: "Job ID to query".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "get_job_attributes",
+                        "job_id": 123
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "IPP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "ipp_connected".to_string(),
+                    description: "Triggered when IPP client is initialized".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "ipp_response_received".to_string(),
+                    description: "Triggered when IPP client receives a response from the printer".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>IPP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["ipp", "ipp client", "internet printing protocol", "print", "printer"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("ipp crate 5.3 with AsyncIppClient")
+                .llm_control("Full control over print operations: get-printer-attributes, print-job, get-job-attributes")
+                .e2e_testing("CUPS test server or local IPP printer")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "IPP client for printing and querying print jobs"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to ipp://localhost:631/printers/test-printer and query its capabilities"
+        }
+        fn group_name(&self) -> &'static str {
+            "File & Print"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for IppClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::ipp::IppClient;
+                IppClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "get_printer_attributes" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "ipp_get_printer_attributes".to_string(),
+                        data: json!({}),
+                    })
+                }
+                "print_job" => {
+                    let job_name = action
+                        .get("job_name")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'job_name' field")?
+                        .to_string();
+    
+                    let document_format = action
+                        .get("document_format")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+    
+                    let document_data = action
+                        .get("document_data")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'document_data' field")?;
+    
+                    // Convert document data to bytes
+                    // If it looks like base64, decode it; otherwise use as UTF-8
+                    let data_bytes = if document_data.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') && document_data.len() % 4 == 0 {
+                        // Try base64 decode using the new engine API
+                        use base64::{Engine as _, engine::general_purpose};
+                        general_purpose::STANDARD.decode(document_data).unwrap_or_else(|_| document_data.as_bytes().to_vec())
+                    } else {
+                        // Use as UTF-8
+                        document_data.as_bytes().to_vec()
+                    };
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "ipp_print_job".to_string(),
+                        data: json!({
+                            "job_name": job_name,
+                            "document_format": document_format,
+                            "document_data": data_bytes,
+                        }),
+                    })
+                }
+                "get_job_attributes" => {
+                    let job_id = action
+                        .get("job_id")
+                        .and_then(|v| v.as_i64())
+                        .context("Missing or invalid 'job_id' field")? as i32;
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "ipp_get_job_attributes".to_string(),
+                        data: json!({
+                            "job_id": job_id,
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                _ => Err(anyhow::anyhow!("Unknown IPP client action: {}", action_type)),
+            }
+        }
+}
+
