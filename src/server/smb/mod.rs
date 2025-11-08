@@ -272,6 +272,7 @@ impl SmbServer {
 
     /// Handle SMB2 command
     #[cfg(feature = "smb")]
+    #[allow(clippy::too_many_arguments)]
     async fn handle_smb2_command(
         command: u16,
         _header: &[u8],
@@ -1236,9 +1237,8 @@ impl SmbServer {
 
         // Try to find ASCII username (basic heuristic)
         let mut username_bytes = Vec::new();
-        for i in 24..body.len().min(200) {
-            let b = body[i];
-            if b >= 32 && b <= 126 {
+        for &b in body.iter().take(body.len().min(200)).skip(24) {
+            if (32..=126).contains(&b) {
                 username_bytes.push(b);
             } else if !username_bytes.is_empty() {
                 break;
