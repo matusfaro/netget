@@ -41,6 +41,9 @@ impl ServerRegistry {
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::server::TcpProtocol::new()));
 
+        #[cfg(feature = "socket_file")]
+        self.register(Arc::new(crate::server::SocketFileProtocol::new()));
+
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::server::HttpProtocol::new()));
 

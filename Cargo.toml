@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = ["all-protocols"]
 tcp = ["async-trait"]
+socket_file = []  # Unix domain socket for IPC, no extra deps
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 pypi = []  # PyPI (Python Package Index) uses HTTP, no extra deps (PEP 503 Simple Repository API)
@@ -91,6 +92,7 @@ torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-p
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
 all-protocols = [
     "tcp",
+    "socket_file",
     "http",
     "http2",
     "http3",
