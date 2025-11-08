@@ -35,6 +35,10 @@ bluetooth-ble-proximity = ["bluetooth-ble"]  # BLE Proximity/Find Me
 bluetooth-ble-gamepad = ["bluetooth-ble"]  # BLE HID gamepad
 bluetooth-ble-presenter = ["bluetooth-ble"]  # BLE presentation clicker
 bluetooth-ble-file-transfer = ["bluetooth-ble"]  # BLE file transfer
+bluetooth-ble-data-stream = ["bluetooth-ble"]  # BLE real-time data streaming
+bluetooth-ble-cycling = ["bluetooth-ble"]  # BLE Cycling Speed and Cadence
+bluetooth-ble-running = ["bluetooth-ble"]  # BLE Running Speed and Cadence
+bluetooth-ble-weight-scale = ["bluetooth-ble"]  # BLE Weight Scale
 whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
@@ -201,6 +205,10 @@ all-protocols = [
     "bluetooth-ble-gamepad",
     "bluetooth-ble-presenter",
     "bluetooth-ble-file-transfer",
+    "bluetooth-ble-data-stream",
+    "bluetooth-ble-cycling",
+    "bluetooth-ble-running",
+    "bluetooth-ble-weight-scale",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
