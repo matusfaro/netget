@@ -57,7 +57,7 @@ s3 = ["aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:rust-s3"]
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS queue
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = ["async-openai"]  # OpenAI API client
-oauth2 = []  # OAuth2 authorization server uses only HTTP, no extra deps
+oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
@@ -429,6 +429,8 @@ aws-sdk-dynamodb = { version = "1.52", optional = true }
 
 # OpenAI API client
 async-openai = { version = "0.26", optional = true }
+# OAuth2 client
+oauth2 = { version = "4.4", optional = true }
 
 # Client protocol dependencies
 # FTP client
@@ -475,9 +477,9 @@ git2 = { version = "0.19", optional = true }
 rumqttc = { version = "0.24", optional = true }
 # Kafka client
 rdkafka = { version = "0.36", optional = true }
-# Kubernetes client with v1.31 API support
+# Kubernetes client with v1.30 API support
 kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] }
-k8s-openapi = { version = "0.22", optional = true, features = ["v1_31"] }
+k8s-openapi = { version = "0.22", optional = true, features = ["v1_30"] }
 
 [dev-dependencies]
 # For async tests
