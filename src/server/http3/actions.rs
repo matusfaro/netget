@@ -25,6 +25,12 @@ pub struct Http3Protocol {
     streams: Arc<Mutex<HashMap<ConnectionId, StreamData>>>,
 }
 
+impl Default for Http3Protocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Http3Protocol {
     pub fn new() -> Self {
         Self {
@@ -337,9 +343,9 @@ fn close_this_stream_action() -> ActionDefinition {
 // HTTP3 Action Constants
 // ============================================================================
 
-pub static SEND_HTTP3_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_http3_data_action());
-pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
-pub static CLOSE_THIS_STREAM_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_this_stream_action());
+pub static SEND_HTTP3_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(send_http3_data_action);
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(wait_for_more_action);
+pub static CLOSE_THIS_STREAM_ACTION: LazyLock<ActionDefinition> = LazyLock::new(close_this_stream_action);
 
 // ============================================================================
 // HTTP3 Event Type Constants
