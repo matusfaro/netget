@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -63,26 +64,7 @@ impl NfsClientProtocol {
     }
 }
 
-impl Client for NfsClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::nfs::NfsClient;
-            NfsClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
+impl Protocol for NfsClientProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
@@ -295,27 +277,6 @@ impl Client for NfsClientProtocol {
         ]
     }
 
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "nfs_lookup" | "nfs_read_file" | "nfs_write_file" | "nfs_list_dir" |
-            "nfs_get_attr" | "nfs_create_file" | "nfs_mkdir" | "nfs_remove" | "nfs_rmdir" => {
-                // These operations are handled asynchronously in the main loop
-                Ok(ClientActionResult::Custom {
-                    name: action_type.to_string(),
-                    data: action,
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown NFS client action: {}", action_type)),
-        }
-    }
-
     fn protocol_name(&self) -> &'static str {
         "NFS"
     }
@@ -366,5 +327,47 @@ impl Client for NfsClientProtocol {
 
     fn group_name(&self) -> &'static str {
         "File Sharing"
+    }
+}
+
+impl Client for NfsClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::nfs::NfsClient;
+            NfsClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "nfs_lookup" | "nfs_read_file" | "nfs_write_file" | "nfs_list_dir" |
+            "nfs_get_attr" | "nfs_create_file" | "nfs_mkdir" | "nfs_remove" | "nfs_rmdir" => {
+                // These operations are handled asynchronously in the main loop
+                Ok(ClientActionResult::Custom {
+                    name: action_type.to_string(),
+                    data: action,
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!("Unknown NFS client action: {}", action_type)),
+        }
     }
 }
