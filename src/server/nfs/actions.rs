@@ -1,7 +1,7 @@
 //! NFS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Server, Protocol},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,25 +19,7 @@ impl NfsProtocol {
     }
 }
 
-impl Server for NfsProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::nfs::NfsServer;
-            NfsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
+impl Protocol for NfsProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![mount_filesystem_action(), unmount_filesystem_action()]
     }
@@ -56,29 +38,6 @@ impl Server for NfsProtocol {
             nfs_rename_response_action(),
             nfs_setattr_response_action(),
         ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "mount_filesystem" => self.execute_mount_filesystem(action),
-            "unmount_filesystem" => self.execute_unmount_filesystem(action),
-            "nfs_lookup_response" => self.execute_nfs_lookup_response(action),
-            "nfs_read_response" => self.execute_nfs_read_response(action),
-            "nfs_write_response" => self.execute_nfs_write_response(action),
-            "nfs_getattr_response" => self.execute_nfs_getattr_response(action),
-            "nfs_create_response" => self.execute_nfs_create_response(action),
-            "nfs_remove_response" => self.execute_nfs_remove_response(action),
-            "nfs_mkdir_response" => self.execute_nfs_mkdir_response(action),
-            "nfs_readdir_response" => self.execute_nfs_readdir_response(action),
-            "nfs_rename_response" => self.execute_nfs_rename_response(action),
-            "nfs_setattr_response" => self.execute_nfs_setattr_response(action),
-            _ => Err(anyhow::anyhow!("Unknown NFS action: {}", action_type)),
-        }
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -119,6 +78,49 @@ impl Server for NfsProtocol {
 
     fn group_name(&self) -> &'static str {
         "Web & File"
+    }
+}
+
+impl Server for NfsProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::nfs::NfsServer;
+            NfsServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "mount_filesystem" => self.execute_mount_filesystem(action),
+            "unmount_filesystem" => self.execute_unmount_filesystem(action),
+            "nfs_lookup_response" => self.execute_nfs_lookup_response(action),
+            "nfs_read_response" => self.execute_nfs_read_response(action),
+            "nfs_write_response" => self.execute_nfs_write_response(action),
+            "nfs_getattr_response" => self.execute_nfs_getattr_response(action),
+            "nfs_create_response" => self.execute_nfs_create_response(action),
+            "nfs_remove_response" => self.execute_nfs_remove_response(action),
+            "nfs_mkdir_response" => self.execute_nfs_mkdir_response(action),
+            "nfs_readdir_response" => self.execute_nfs_readdir_response(action),
+            "nfs_rename_response" => self.execute_nfs_rename_response(action),
+            "nfs_setattr_response" => self.execute_nfs_setattr_response(action),
+            _ => Err(anyhow::anyhow!("Unknown NFS action: {}", action_type)),
+        }
     }
 }
 

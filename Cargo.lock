@@ -6934,6 +6934,7 @@ dependencies = [
  "nectar",
  "netgauze-bgp-pkt",
  "nfs3_client",
+ "nfs3_types",
  "nfsserve",
  "nix 0.29.0",
  "oauth2",

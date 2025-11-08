@@ -38,7 +38,7 @@ redis = ["dep:redis-protocol", "dep:redis"]
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
 webdav = ["dav-server", "dep:reqwest_dav"]
-nfs = ["nfsserve", "dep:nfs3_client", "async-trait"]
+nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types", "async-trait"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
 smb = ["smb-msg"]
 smb-client = ["smb", "pavao"]  # SMB client requires native libsmbclient library
@@ -482,6 +482,8 @@ rdkafka = { version = "0.36", optional = true }
 # Kubernetes client with v1.30 API support (latest in k8s-openapi 0.22)
 kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] }
 k8s-openapi = { version = "0.22", optional = true, features = ["v1_30"] }
+# NFS types for NFSv3 protocol
+nfs3_types = { version = "0.4", optional = true }
 
 [dev-dependencies]
 # For async tests
