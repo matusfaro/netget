@@ -192,7 +192,7 @@ impl ClientRegistry {
         #[cfg(feature = "socks5")]
         self.register(Arc::new(crate::client::socks5::Socks5ClientProtocol::new()));
 
-        #[cfg(feature = "socket_file")]
+        #[cfg(all(feature = "socket_file", unix))]
         self.register(Arc::new(crate::client::socket_file::SocketFileClientProtocol::new()));
 
         #[cfg(feature = "sqs")]
