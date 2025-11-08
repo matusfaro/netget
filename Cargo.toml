@@ -51,6 +51,7 @@ imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses ima
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
+socket_file = []  # Unix domain socket client (no extra deps, uses tokio::net::UnixStream)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client
 dynamodb = ["aws-config", "aws-sdk-dynamodb"]  # DynamoDB client (alternate name)
@@ -135,6 +136,7 @@ all-protocols = [
     "nntp",
     "mqtt",
     "socks5",
+    "socket_file",
     "elasticsearch",
     "dynamo",
     "s3",
