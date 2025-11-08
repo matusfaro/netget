@@ -162,6 +162,10 @@ impl EventHandler {
                 self.handle_show_docs(protocol, ui).await?;
                 Ok(false)
             }
+            UserCommand::ShowEnvironment => {
+                self.handle_show_environment(ui).await?;
+                Ok(false)
+            }
         }
     }
 
@@ -1235,6 +1239,104 @@ impl EventHandler {
             for line in docs_text.lines() {
                 ui.add_llm_message(line.to_string());
             }
+        }
+
+        Ok(())
+    }
+
+    /// Handle show environment command - display environment information
+    async fn handle_show_environment(&mut self, ui: &mut App) -> Result<()> {
+        use crate::protocol::{registry, CLIENT_REGISTRY};
+
+        ui.add_llm_message("".to_string());
+        ui.add_llm_message("=== NetGet Environment ===".to_string());
+        ui.add_llm_message("".to_string());
+
+        // System information
+        ui.add_llm_message("System Information:".to_string());
+        ui.add_llm_message(format!("  OS: {}", std::env::consts::OS));
+        ui.add_llm_message(format!("  Architecture: {}", std::env::consts::ARCH));
+        ui.add_llm_message(format!("  Rust Version: {}", env!("CARGO_PKG_RUST_VERSION", "unknown")));
+        ui.add_llm_message(format!("  NetGet Version: {}", env!("CARGO_PKG_VERSION")));
+        ui.add_llm_message("".to_string());
+
+        // LLM configuration
+        let model = self.state.get_ollama_model().await;
+        let web_search_mode = self.state.get_web_search_mode().await;
+        let scripting_mode = self.state.get_scripting_mode().await;
+
+        ui.add_llm_message("LLM Configuration:".to_string());
+        ui.add_llm_message(format!("  Ollama Model: {}", model));
+        ui.add_llm_message(format!("  Web Search: {}", web_search_mode.as_str()));
+        ui.add_llm_message(format!("  Scripting: {}", scripting_mode.as_str()));
+        ui.add_llm_message("".to_string());
+
+        // Get system capabilities
+        let caps = self.state.get_system_capabilities().await;
+
+        // Check server protocols
+        let server_excluded = registry().get_excluded_protocols(&caps);
+        let server_available = registry().get_available_protocols(&caps);
+
+        // Check client protocols
+        let client_excluded = CLIENT_REGISTRY.get_excluded_protocols(&caps);
+        let client_available = CLIENT_REGISTRY.get_available_protocols(&caps);
+
+        // System capabilities summary
+        ui.add_llm_message("System Capabilities:".to_string());
+        ui.add_llm_message(format!("  Root Access: {}", if caps.is_root { "Yes" } else { "No" }));
+        ui.add_llm_message(format!("  Privileged Ports (<1024): {}", if caps.can_bind_privileged_ports { "Yes" } else { "No" }));
+        ui.add_llm_message(format!("  Raw Socket Access (pcap): {}", if caps.has_raw_socket_access { "Yes" } else { "No" }));
+        ui.add_llm_message("".to_string());
+
+        // Summary
+        let total_server_protocols = server_available.len() + server_excluded.len();
+        let total_client_protocols = client_available.len() + client_excluded.len();
+
+        ui.add_llm_message(format!("Server Protocols: {} available, {} excluded (total {})",
+            server_available.len(), server_excluded.len(), total_server_protocols));
+        ui.add_llm_message(format!("Client Protocols: {} available, {} excluded (total {})",
+            client_available.len(), client_excluded.len(), total_client_protocols));
+        ui.add_llm_message("".to_string());
+
+        // Show excluded protocols if any
+        if !server_excluded.is_empty() {
+            ui.add_llm_message("Excluded Server Protocols:".to_string());
+            let mut excluded_names: Vec<_> = server_excluded.keys().cloned().collect();
+            excluded_names.sort();
+
+            for protocol_name in excluded_names {
+                if let Some(missing_deps) = server_excluded.get(&protocol_name) {
+                    ui.add_llm_message(format!("  {}", protocol_name));
+                    for dep in missing_deps {
+                        ui.add_llm_message(format!("    ✗ {}: {}", dep.name(), dep.description()));
+                        ui.add_llm_message(format!("      → {}", dep.installation_hint()));
+                    }
+                }
+            }
+            ui.add_llm_message("".to_string());
+        }
+
+        if !client_excluded.is_empty() {
+            ui.add_llm_message("Excluded Client Protocols:".to_string());
+            let mut excluded_names: Vec<_> = client_excluded.keys().cloned().collect();
+            excluded_names.sort();
+
+            for protocol_name in excluded_names {
+                if let Some(missing_deps) = client_excluded.get(&protocol_name) {
+                    ui.add_llm_message(format!("  {}", protocol_name));
+                    for dep in missing_deps {
+                        ui.add_llm_message(format!("    ✗ {}: {}", dep.name(), dep.description()));
+                        ui.add_llm_message(format!("      → {}", dep.installation_hint()));
+                    }
+                }
+            }
+            ui.add_llm_message("".to_string());
+        }
+
+        if server_excluded.is_empty() && client_excluded.is_empty() {
+            ui.add_llm_message("✓ All protocols are available!".to_string());
+            ui.add_llm_message("".to_string());
         }
 
         Ok(())

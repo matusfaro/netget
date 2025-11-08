@@ -6936,11 +6936,13 @@ dependencies = [
  "nfs3_client",
  "nfsserve",
  "nix 0.29.0",
+ "oauth2",
  "ollama-rs",
  "once_cell",
  "openapi-rs",
  "openidconnect",
  "opensrv-mysql",
+ "pavao",
  "pcap",
  "pgwire",
  "pnet",
@@ -7850,6 +7852,30 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "pavao"
+version = "0.2.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c62e3a544910e4a9bbb56218bad91593b79a27c676e54a36097200d10d2d6e"
+dependencies = [
+ "cfg_aliases",
+ "lazy_static",
+ "libc",
+ "log",
+ "pavao-sys",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "pavao-sys"
+version = "0.2.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3e72a8efe4193b073995a99981a288cfef121027d12c420c647c2f19d4103d4"
+dependencies = [
+ "libc",
+ "pkg-config",
+]
 
 [[package]]
 name = "pbkdf2"
