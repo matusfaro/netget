@@ -87,7 +87,7 @@ usb-mouse = ["usb-common"]  # USB HID Mouse virtual device
 usb-serial = ["usb-common"]  # USB CDC ACM Serial virtual device
 usb-msc = ["usb-common", "memmap2"]  # USB Mass Storage Class virtual device (flash drive/disk)
 usb-fido2 = ["usb-common", "ring", "serde_cbor"]  # USB FIDO2/U2F Security Key virtual device
-usb-smartcard = ["usb-common", "rsa", "sha2"]  # USB Smart Card (CCID) virtual device via vsmartcard (with RSA crypto support)
+usb-smartcard = ["usb-common", "dep:rsa", "dep:sha2"]  # USB Smart Card (CCID) virtual device via vsmartcard (with RSA crypto support)
 usb = ["usb-common"]  # Low-level USB device with full descriptor control
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
@@ -524,7 +524,7 @@ serde_cbor = { version = "0.11", optional = true }  # CBOR encoding for CTAP2
 
 # USB Smart Card dependencies
 rsa = { version = "0.9", optional = true, features = ["sha2"] }  # RSA cryptography for smart cards
-sha2 = { version = "0.10", optional = true }  # SHA-2 hashing for smart card signatures
+# sha2 already defined above for wireguard/tor
 
 [dev-dependencies]
 # For async tests
