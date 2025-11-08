@@ -43,7 +43,7 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
     // Note: statement_timeout=0 disables query timeout on the server side
     let connection_string = format!("host=127.0.0.1 port={} user=postgres dbname=test connect_timeout=60 options='-c statement_timeout=0'", server.port);
 
-    let (client, connection) = match tokio::time::timeout(
+    let (client, _connection) = match tokio::time::timeout(
         Duration::from_secs(60),
         tokio_postgres::connect(&connection_string, NoTls)
     ).await {
