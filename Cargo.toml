@@ -188,7 +188,7 @@ textwrap = "0.16"
 termbg = "0.5"  # Terminal background detection for adaptive theming
 
 # HTTP client for Ollama
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "http2"] }
 
 # Ollama Rust client
 ollama-rs = "0.3"
