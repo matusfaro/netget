@@ -484,7 +484,7 @@ rumqttc = { version = "0.24", optional = true }
 rdkafka = { version = "0.36", optional = true }
 # Kubernetes client with v1.30 API support
 kube = { version = "0.99", optional = true, features = ["client", "rustls-tls"] }
-k8s-openapi = { version = "0.22", optional = true, features = ["v1_30"] }
+k8s-openapi = { version = "0.24", optional = true, features = ["v1_30"] }
 
 [dev-dependencies]
 # For async tests
