@@ -13,6 +13,12 @@ use std::sync::LazyLock;
 /// SMB protocol action handler
 pub struct SmbProtocol;
 
+impl Default for SmbProtocol {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl SmbProtocol {
     pub fn new() -> Self {
         Self
