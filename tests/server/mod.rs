@@ -28,6 +28,14 @@ pub mod bluetooth_ble_gamepad;
 pub mod bluetooth_ble_presenter;
 #[cfg(feature = "bluetooth-ble-file-transfer")]
 pub mod bluetooth_ble_file_transfer;
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub mod bluetooth_ble_data_stream;
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub mod bluetooth_ble_cycling;
+#[cfg(feature = "bluetooth-ble-running")]
+pub mod bluetooth_ble_running;
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub mod bluetooth_ble_weight_scale;
 #[cfg(feature = "isis")]
 pub mod isis;
 #[cfg(feature = "rip")]

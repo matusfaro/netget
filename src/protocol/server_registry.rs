@@ -401,6 +401,18 @@ impl ServerRegistry {
 
         #[cfg(feature = "bluetooth-ble-file-transfer")]
         self.register(Arc::new(crate::server::BluetoothBleFileTransferProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-data-stream")]
+        self.register(Arc::new(crate::server::BluetoothBleDataStreamProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-cycling")]
+        self.register(Arc::new(crate::server::BluetoothBleCyclingProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-running")]
+        self.register(Arc::new(crate::server::BluetoothBleRunningProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-weight-scale")]
+        self.register(Arc::new(crate::server::BluetoothBleWeightScaleProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

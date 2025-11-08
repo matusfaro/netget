@@ -674,5 +674,33 @@ pub use bluetooth_ble_file_transfer::BluetoothBleFileTransfer;
 #[cfg(feature = "bluetooth-ble-file-transfer")]
 pub use bluetooth_ble_file_transfer::actions::BluetoothBleFileTransferProtocol;
 
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub mod bluetooth_ble_data_stream;
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub use bluetooth_ble_data_stream::BluetoothBleDataStream;
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub use bluetooth_ble_data_stream::actions::BluetoothBleDataStreamProtocol;
+
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub mod bluetooth_ble_cycling;
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub use bluetooth_ble_cycling::BluetoothBleCycling;
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub use bluetooth_ble_cycling::actions::BluetoothBleCyclingProtocol;
+
+#[cfg(feature = "bluetooth-ble-running")]
+pub mod bluetooth_ble_running;
+#[cfg(feature = "bluetooth-ble-running")]
+pub use bluetooth_ble_running::BluetoothBleRunning;
+#[cfg(feature = "bluetooth-ble-running")]
+pub use bluetooth_ble_running::actions::BluetoothBleRunningProtocol;
+
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub mod bluetooth_ble_weight_scale;
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub use bluetooth_ble_weight_scale::BluetoothBleWeightScale;
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub use bluetooth_ble_weight_scale::actions::BluetoothBleWeightScaleProtocol;
+
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
