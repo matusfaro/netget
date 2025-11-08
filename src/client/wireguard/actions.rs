@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -63,48 +64,8 @@ impl WireguardClientProtocol {
     }
 }
 
-impl Client for WireguardClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<SocketAddr>> + Send>> {
-        Box::pin(async move {
-            use crate::client::wireguard::WireguardClient;
-
-            // Parse startup params - should be in JSON format in startup_params
-            let params = if let Some(startup_params) = &ctx.startup_params {
-                // Get required parameters using StartupParams accessors
-                crate::client::wireguard::WireguardClientParams {
-                    server_public_key: startup_params.get_string("server_public_key"),
-                    server_endpoint: startup_params.get_string("server_endpoint"),
-                    client_address: startup_params.get_string("client_address"),
-                    allowed_ips: startup_params
-                        .get_optional_array("allowed_ips")
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_else(|| vec!["0.0.0.0/0".to_string()]),
-                    keepalive: startup_params.get_optional_u64("keepalive").map(|k| k as u16),
-                    private_key: startup_params.get_optional_string("private_key"),
-                }
-            } else {
-                return Err(anyhow::anyhow!("Missing startup parameters for WireGuard client"));
-            };
-
-            WireguardClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-                params,
-            )
-            .await
-        })
-    }
-
+// Implement Protocol trait (base trait for all protocols)
+impl Protocol for WireguardClientProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
@@ -137,26 +98,6 @@ impl Client for WireguardClientProtocol {
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         // WireGuard doesn't have sync actions (no immediate response to network events)
         vec![]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "get_connection_status" => Ok(ClientActionResult::Custom {
-                name: "wireguard_get_status".to_string(),
-                data: json!({}),
-            }),
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "get_client_info" => Ok(ClientActionResult::Custom {
-                name: "wireguard_get_info".to_string(),
-                data: json!({}),
-            }),
-            _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
-        }
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
@@ -201,5 +142,69 @@ impl Client for WireguardClientProtocol {
 
     fn group_name(&self) -> &'static str {
         "VPN"
+    }
+}
+
+// Implement Client trait (client-specific functionality)
+impl Client for WireguardClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<SocketAddr>> + Send>> {
+        Box::pin(async move {
+            use crate::client::wireguard::WireguardClient;
+
+            // Parse startup params - should be in JSON format in startup_params
+            let params = if let Some(startup_params) = &ctx.startup_params {
+                // Get required parameters using StartupParams accessors
+                crate::client::wireguard::WireguardClientParams {
+                    server_public_key: startup_params.get_string("server_public_key"),
+                    server_endpoint: startup_params.get_string("server_endpoint"),
+                    client_address: startup_params.get_string("client_address"),
+                    allowed_ips: startup_params
+                        .get_optional_array("allowed_ips")
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_else(|| vec!["0.0.0.0/0".to_string()]),
+                    keepalive: startup_params.get_optional_u64("keepalive").map(|k| k as u16),
+                    private_key: startup_params.get_optional_string("private_key"),
+                }
+            } else {
+                return Err(anyhow::anyhow!("Missing startup parameters for WireGuard client"));
+            };
+
+            WireguardClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+                params,
+            )
+            .await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "get_connection_status" => Ok(ClientActionResult::Custom {
+                name: "wireguard_get_status".to_string(),
+                data: json!({}),
+            }),
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "get_client_info" => Ok(ClientActionResult::Custom {
+                name: "wireguard_get_info".to_string(),
+                data: json!({}),
+            }),
+            _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
+        }
     }
 }
