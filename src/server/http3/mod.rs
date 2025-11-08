@@ -86,123 +86,115 @@ impl Http3Server {
 
         // Spawn accept loop
         tokio::spawn(async move {
-            loop {
-                match endpoint.accept().await {
-                    Some(connecting) => {
-                        let connection_id = ConnectionId::new();
-                        let llm_client_clone = llm_client.clone();
-                        let app_state_clone = app_state.clone();
-                        let status_tx_clone = status_tx.clone();
-                        let protocol_clone = protocol.clone();
+            while let Some(connecting) = endpoint.accept().await {
+                let connection_id = ConnectionId::new();
+                let llm_client_clone = llm_client.clone();
+                let app_state_clone = app_state.clone();
+                let status_tx_clone = status_tx.clone();
+                let protocol_clone = protocol.clone();
 
-                        tokio::spawn(async move {
-                            match connecting.await {
-                                Ok(connection) => {
-                                    let remote_addr = connection.remote_address();
-                                    info!("Accepted HTTP3 connection {} from {}", connection_id, remote_addr);
-                                    let _ = status_tx_clone.send(format!("✓ HTTP3 connection {} from {}", connection_id, remote_addr));
+                tokio::spawn(async move {
+                    match connecting.await {
+                        Ok(connection) => {
+                            let remote_addr = connection.remote_address();
+                            info!("Accepted HTTP3 connection {} from {}", connection_id, remote_addr);
+                            let _ = status_tx_clone.send(format!("✓ HTTP3 connection {} from {}", connection_id, remote_addr));
 
-                                    // Add connection to ServerInstance
-                                    use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-                                    let now = std::time::Instant::now();
-                                    let conn_state = ServerConnectionState {
-                                        id: connection_id,
-                                        remote_addr,
-                                        local_addr,
-                                        bytes_sent: 0,
-                                        bytes_received: 0,
-                                        packets_sent: 0,
-                                        packets_received: 0,
-                                        last_activity: now,
-                                        status: ConnectionStatus::Active,
-                                        status_changed_at: now,
-                                        protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
-                                            "stream_count": 0
-                                        })),
-                                    };
-                                    app_state_clone.add_connection_to_server(server_id, conn_state).await;
-                                    let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+                            // Add connection to ServerInstance
+                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                            let now = std::time::Instant::now();
+                            let conn_state = ServerConnectionState {
+                                id: connection_id,
+                                remote_addr,
+                                local_addr,
+                                bytes_sent: 0,
+                                bytes_received: 0,
+                                packets_sent: 0,
+                                packets_received: 0,
+                                last_activity: now,
+                                status: ConnectionStatus::Active,
+                                status_changed_at: now,
+                                protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
+                                    "stream_count": 0
+                                })),
+                            };
+                            app_state_clone.add_connection_to_server(server_id, conn_state).await;
+                            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
 
-                                    // Notify LLM of new connection
-                                    let event = Event::new(&HTTP3_CONNECTION_OPENED_EVENT, serde_json::json!({}));
-                                    match call_llm(
-                                        &llm_client_clone,
-                                        &app_state_clone,
-                                        server_id,
-                                        Some(connection_id),
-                                        &event,
-                                        protocol_clone.as_ref(),
-                                    ).await {
-                                        Ok(execution_result) => {
-                                            for msg in execution_result.messages {
-                                                let _ = status_tx_clone.send(msg);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("LLM error on connection opened: {}", e);
-                                            let _ = status_tx_clone.send(format!("✗ LLM error: {e}"));
-                                        }
+                            // Notify LLM of new connection
+                            let event = Event::new(&HTTP3_CONNECTION_OPENED_EVENT, serde_json::json!({}));
+                            match call_llm(
+                                &llm_client_clone,
+                                &app_state_clone,
+                                server_id,
+                                Some(connection_id),
+                                &event,
+                                protocol_clone.as_ref(),
+                            ).await {
+                                Ok(execution_result) => {
+                                    for msg in execution_result.messages {
+                                        let _ = status_tx_clone.send(msg);
                                     }
-
-                                    // Handle streams on this connection
-                                    let streams = Arc::new(Mutex::new(HashMap::new()));
-                                    loop {
-                                        match connection.accept_bi().await {
-                                            Ok((send_stream, recv_stream)) => {
-                                                let stream_id = ConnectionId::new();
-                                                info!("Accepted HTTP3 stream {} on connection {}", stream_id, connection_id);
-                                                let _ = status_tx_clone.send(format!("→ Stream {} opened on connection {}", stream_id, connection_id));
-
-                                                let llm_clone = llm_client_clone.clone();
-                                                let state_clone = app_state_clone.clone();
-                                                let status_clone = status_tx_clone.clone();
-                                                let streams_clone = streams.clone();
-                                                let protocol_clone = protocol_clone.clone();
-
-                                                tokio::spawn(async move {
-                                                    Self::handle_stream_with_actions(
-                                                        stream_id,
-                                                        connection_id,
-                                                        server_id,
-                                                        send_stream,
-                                                        recv_stream,
-                                                        llm_clone,
-                                                        state_clone,
-                                                        status_clone,
-                                                        streams_clone,
-                                                        protocol_clone,
-                                                    ).await;
-                                                });
-                                            }
-                                            Err(quinn::ConnectionError::ApplicationClosed(_)) => {
-                                                info!("HTTP3 connection {} closed by peer", connection_id);
-                                                let _ = status_tx_clone.send(format!("✗ HTTP3 connection {} closed", connection_id));
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                error!("Error accepting stream on {}: {}", connection_id, e);
-                                                let _ = status_tx_clone.send(format!("✗ Stream accept error on {}: {}", connection_id, e));
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    // Connection closed
-                                    app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                                    let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                 }
                                 Err(e) => {
-                                    error!("Connection error on {}: {}", connection_id, e);
-                                    let _ = status_tx_clone.send(format!("✗ Connection error on {}: {}", connection_id, e));
+                                    error!("LLM error on connection opened: {}", e);
+                                    let _ = status_tx_clone.send(format!("✗ LLM error: {e}"));
                                 }
                             }
+
+                            // Handle streams on this connection
+                            let streams = Arc::new(Mutex::new(HashMap::new()));
+                            loop {
+                                match connection.accept_bi().await {
+                                    Ok((send_stream, recv_stream)) => {
+                                        let stream_id = ConnectionId::new();
+                                        info!("Accepted HTTP3 stream {} on connection {}", stream_id, connection_id);
+                                        let _ = status_tx_clone.send(format!("→ Stream {} opened on connection {}", stream_id, connection_id));
+
+                                        let llm_clone = llm_client_clone.clone();
+                                        let state_clone = app_state_clone.clone();
+                                        let status_clone = status_tx_clone.clone();
+                                        let streams_clone = streams.clone();
+                                        let protocol_clone = protocol_clone.clone();
+
+                                        tokio::spawn(async move {
+                                            Self::handle_stream_with_actions(
+                                                stream_id,
+                                                connection_id,
+                                                server_id,
+                                                send_stream,
+                                                recv_stream,
+                                                llm_clone,
+                                                state_clone,
+                                                status_clone,
+                                                streams_clone,
+                                                protocol_clone,
+                                            ).await;
+                                        });
+                                    }
+                                    Err(quinn::ConnectionError::ApplicationClosed(_)) => {
+                                        info!("HTTP3 connection {} closed by peer", connection_id);
+                                        let _ = status_tx_clone.send(format!("✗ HTTP3 connection {} closed", connection_id));
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        error!("Error accepting stream on {}: {}", connection_id, e);
+                                        let _ = status_tx_clone.send(format!("✗ Stream accept error on {}: {}", connection_id, e));
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Connection closed
+                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
+                            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+                        }
+                        Err(e) => {
+                            error!("Connection error on {}: {}", connection_id, e);
+                            let _ = status_tx_clone.send(format!("✗ Connection error on {}: {}", connection_id, e));
+                        }
+                    }
                         });
-                    }
-                    None => {
-                        // Endpoint closed
-                        break;
-                    }
-                }
             }
         });
 
@@ -210,6 +202,7 @@ impl Http3Server {
     }
 
     /// Handle a HTTP3 stream with LLM actions
+    #[allow(clippy::too_many_arguments)]
     async fn handle_stream_with_actions(
         stream_id: ConnectionId,
         _connection_id: ConnectionId,
@@ -337,6 +330,7 @@ impl Http3Server {
     }
 
     /// Handle data received on a stream with LLM actions
+    #[allow(clippy::too_many_arguments)]
     async fn handle_data_with_actions(
         stream_id: ConnectionId,
         server_id: crate::state::ServerId,

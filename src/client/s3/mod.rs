@@ -4,6 +4,7 @@ pub mod actions;
 pub use actions::S3ClientProtocol;
 
 use anyhow::{Context, Result};
+use crate::llm::actions::client_trait::Client;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;

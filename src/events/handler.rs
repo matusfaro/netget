@@ -1263,7 +1263,7 @@ impl EventHandler {
         // LLM configuration
         let model = self.state.get_ollama_model().await;
         let web_search_mode = self.state.get_web_search_mode().await;
-        let scripting_mode = self.state.get_scripting_mode().await;
+        let scripting_mode = self.state.get_selected_scripting_mode().await;
 
         ui.add_llm_message("LLM Configuration:".to_string());
         ui.add_llm_message(format!("  Ollama Model: {}", model));

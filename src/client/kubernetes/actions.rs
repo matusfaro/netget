@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -63,32 +64,20 @@ pub static K8S_CLIENT_RESOURCE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 /// Kubernetes client protocol action handler
 pub struct KubernetesClientProtocol;
 
-impl KubernetesClientProtocol {
-    pub fn new() -> Self {
+impl Default for KubernetesClientProtocol {
+    fn default() -> Self {
         Self
     }
 }
 
-impl Client for KubernetesClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::kubernetes::KubernetesClient;
-            KubernetesClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
+impl KubernetesClientProtocol {
+    pub fn new() -> Self {
+        Self::default()
     }
+}
 
+// Implement Protocol trait with common methods
+impl Protocol for KubernetesClientProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -313,6 +302,80 @@ impl Client for KubernetesClientProtocol {
         ]
     }
 
+    fn protocol_name(&self) -> &'static str {
+        "Kubernetes"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "k8s_connected".to_string(),
+                description: "Triggered when Kubernetes client connects to cluster".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "k8s_resource_received".to_string(),
+                description: "Triggered when Kubernetes operation completes".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>TLS>HTTP>K8s API"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["kubernetes", "k8s", "kubectl", "kube", "cluster"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("kube-rs library for Kubernetes API access")
+            .llm_control("Full control over cluster resources (Pods, Deployments, Services, etc.)")
+            .e2e_testing("minikube or kind local cluster")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "Kubernetes API client for cluster management"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to Kubernetes cluster and list all pods in the default namespace"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Cloud & Orchestration"
+    }
+}
+
+// Implement Client trait with client-specific methods
+impl Client for KubernetesClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::kubernetes::KubernetesClient;
+            KubernetesClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+
     fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
         let action_type = action
             .get("type")
@@ -459,57 +522,5 @@ impl Client for KubernetesClientProtocol {
             "disconnect" => Ok(ClientActionResult::Disconnect),
             _ => Err(anyhow::anyhow!("Unknown Kubernetes client action: {}", action_type)),
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Kubernetes"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "k8s_connected".to_string(),
-                description: "Triggered when Kubernetes client connects to cluster".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "k8s_resource_received".to_string(),
-                description: "Triggered when Kubernetes operation completes".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>TLS>HTTP>K8s API"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["kubernetes", "k8s", "kubectl", "kube", "cluster"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("kube-rs library for Kubernetes API access")
-            .llm_control("Full control over cluster resources (Pods, Deployments, Services, etc.)")
-            .e2e_testing("minikube or kind local cluster")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Kubernetes API client for cluster management"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to Kubernetes cluster and list all pods in the default namespace"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Cloud & Orchestration"
     }
 }
