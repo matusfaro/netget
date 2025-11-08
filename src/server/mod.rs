@@ -583,12 +583,26 @@ pub use saml_sp::SamlSpServer;
 #[cfg(feature = "saml-sp")]
 pub use saml_sp::actions::SamlSpProtocol;
 
-#[cfg(feature = "bluetooth-server")]
-pub mod bluetooth_server;
-#[cfg(feature = "bluetooth-server")]
-pub use bluetooth_server::BluetoothServer;
-#[cfg(feature = "bluetooth-server")]
-pub use bluetooth_server::actions::BluetoothServerProtocol;
+#[cfg(feature = "bluetooth-ble")]
+pub mod bluetooth_ble;
+#[cfg(feature = "bluetooth-ble")]
+pub use bluetooth_ble::BluetoothBle;
+#[cfg(feature = "bluetooth-ble")]
+pub use bluetooth_ble::actions::BluetoothBleProtocol;
+
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub mod bluetooth_ble_keyboard;
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub use bluetooth_ble_keyboard::BluetoothBleKeyboard;
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub use bluetooth_ble_keyboard::actions::BluetoothBleKeyboardProtocol;
+
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub mod bluetooth_ble_mouse;
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub use bluetooth_ble_mouse::BluetoothBleMouse;
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub use bluetooth_ble_mouse::actions::BluetoothBleMouseProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;

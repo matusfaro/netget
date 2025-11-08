@@ -363,8 +363,14 @@ impl ServerRegistry {
         #[cfg(feature = "saml-sp")]
         self.register(Arc::new(crate::server::SamlSpProtocol::new()));
 
-        #[cfg(feature = "bluetooth-server")]
-        self.register(Arc::new(crate::server::BluetoothServerProtocol::new()));
+        #[cfg(feature = "bluetooth-ble")]
+        self.register(Arc::new(crate::server::BluetoothBleProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-keyboard")]
+        self.register(Arc::new(crate::server::BluetoothBleKeyboardProtocol::new()));
+
+        #[cfg(feature = "bluetooth-ble-mouse")]
+        self.register(Arc::new(crate::server::BluetoothBleMouseProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

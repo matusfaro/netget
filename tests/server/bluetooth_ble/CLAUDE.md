@@ -111,7 +111,7 @@ bluetoothctl
 - Verifies single-byte values (vs multi-byte in heart rate)
 - Confirms LLM can handle multiple service types
 
-### 3. `test_bluetooth_server_startup` (E2E, No Client)
+### 3. `test_bluetooth_ble_startup` (E2E, No Client)
 
 **LLM Calls**: 1-2 (initial configuration)
 
@@ -229,14 +229,14 @@ bluetoothctl
 ## Example Test Run
 
 ```bash
-# Build with bluetooth-server feature
-./cargo-isolated.sh build --no-default-features --features bluetooth-server,bluetooth-ble
+# Build with bluetooth-ble feature
+./cargo-isolated.sh build --no-default-features --features bluetooth-ble,bluetooth-ble
 
 # Run tests sequentially (important for BLE)
-./cargo-isolated.sh test --no-default-features --features bluetooth-server,bluetooth-ble --test bluetooth_server -- --test-threads=1
+./cargo-isolated.sh test --no-default-features --features bluetooth-ble,bluetooth-ble --test bluetooth_ble -- --test-threads=1
 
 # Run single test with output
-./cargo-isolated.sh test --no-default-features --features bluetooth-server,bluetooth-ble test_bluetooth_heart_rate_server -- --nocapture
+./cargo-isolated.sh test --no-default-features --features bluetooth-ble,bluetooth-ble test_bluetooth_heart_rate_server -- --nocapture
 ```
 
 **Expected output**:

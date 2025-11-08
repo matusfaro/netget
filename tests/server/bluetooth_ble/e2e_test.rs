@@ -13,7 +13,7 @@
 //! - Linux may require user in `bluetooth` group or sudo
 //! - These tests are resource-intensive (real Bluetooth hardware)
 
-#![cfg(all(test, feature = "bluetooth-server"))]
+#![cfg(all(test, feature = "bluetooth-ble"))]
 
 use super::super::super::helpers::{self, ServerConfig, E2EResult};
 use std::time::Duration;
@@ -294,7 +294,7 @@ async fn test_bluetooth_battery_service() -> E2EResult<()> {
 
 // Test without BLE client (server-only validation)
 #[tokio::test]
-async fn test_bluetooth_server_startup() -> E2EResult<()> {
+async fn test_bluetooth_ble_startup() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Server Startup (No Client) ===");
 
     let prompt = "Act as a BLE device. Create a simple custom service with UUID 12345678-1234-5678-1234-567812345678 with one characteristic that has UUID 12345678-1234-5678-1234-567812345679 supporting read. Set the value to 'TEST' (hex: 54455354). Start advertising as 'NetGet-Test'.";

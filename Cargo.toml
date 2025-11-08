@@ -21,8 +21,10 @@ doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-ht
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = ["dep:rsntp"]  # NTP client support
-bluetooth-ble = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
-bluetooth-server = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
+bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
+bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
+bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
+bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
 whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
@@ -111,7 +113,7 @@ all-protocols = [
     "dhcp",
     "bootp",
     "ntp",
-    "bluetooth-ble",
+    "bluetooth-ble-client",
     "whois",
     "snmp",
     "igmp",
@@ -176,7 +178,9 @@ all-protocols = [
     "saml-idp",
     "saml-sp",
     "usb",
-    "bluetooth-server",
+    "bluetooth-ble",
+    "bluetooth-ble-keyboard",
+    "bluetooth-ble-mouse",
 ]
 
 e2e-tests = []  # Feature flag for E2E tests
