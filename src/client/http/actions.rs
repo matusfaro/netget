@@ -200,16 +200,16 @@ impl Protocol for HttpClientProtocol {
     
             ProtocolMetadataV2::builder()
                 .state(DevelopmentState::Experimental)
-                .implementation("reqwest HTTP client library")
+                .implementation("reqwest HTTP/HTTPS client library (HTTP/1.1, HTTP/2 via rustls)")
                 .llm_control("Full control over requests (method, path, headers, body)")
-                .e2e_testing("httpbin.org or local HTTP server")
+                .e2e_testing("httpbin.org or local HTTPS server")
                 .build()
         }
         fn description(&self) -> &'static str {
-            "HTTP client for making web requests"
+            "HTTP/HTTPS client for making web requests (HTTP/1.1, HTTP/2)"
         }
         fn example_prompt(&self) -> &'static str {
-            "Connect to http://example.com and fetch /api/status"
+            "Connect to https://example.com and fetch /api/status"
         }
         fn group_name(&self) -> &'static str {
             "Core"
