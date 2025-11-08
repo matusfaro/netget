@@ -52,7 +52,7 @@ Unit Tests            ← Action parsing, EventType construction
 
 **Example**:
 ```rust
-#[cfg(all(test, feature = "bluetooth"))]
+#[cfg(all(test, feature = "bluetooth-ble"))]
 mod tests {
     use super::*;
     use crate::llm::actions::client_trait::Client;
@@ -283,7 +283,7 @@ tests/client/bluetooth/
 ## E2E Test Template
 
 ```rust
-#[cfg(all(test, feature = "bluetooth"))]
+#[cfg(all(test, feature = "bluetooth-ble"))]
 mod e2e_tests {
     use super::*;
 
