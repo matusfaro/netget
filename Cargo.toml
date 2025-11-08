@@ -85,6 +85,7 @@ usb-common = ["dep:usbip"]  # Common USB/IP functionality for USB device protoco
 usb-keyboard = ["usb-common"]  # USB HID Keyboard virtual device
 usb-mouse = ["usb-common"]  # USB HID Mouse virtual device
 usb-serial = ["usb-common"]  # USB CDC ACM Serial virtual device
+usb-msc = ["usb-common"]  # USB Mass Storage Class virtual device (flash drive/disk)
 usb = ["usb-common"]  # Low-level USB device with full descriptor control
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
@@ -182,6 +183,7 @@ all-protocols = [
     "usb-keyboard",
     "usb-mouse",
     "usb-serial",
+    "usb-msc",
     "usb",
 ]
 
