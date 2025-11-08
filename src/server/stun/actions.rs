@@ -18,25 +18,7 @@ impl StunProtocol {
     }
 }
 
-impl Server for StunProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::stun::StunServer;
-            StunServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
+impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         Vec::new() // STUN server is purely reactive
     }
@@ -47,20 +29,6 @@ impl Server for StunProtocol {
             send_stun_error_response_action(),
             ignore_request_action(),
         ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_stun_binding_response" => self.execute_send_binding_response(action),
-            "send_stun_error_response" => self.execute_send_error_response(action),
-            "ignore_request" => Ok(ActionResult::NoAction),
-            _ => Err(anyhow::anyhow!("Unknown STUN action: {}", action_type)),
-        }
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -101,6 +69,40 @@ impl Server for StunProtocol {
 
     fn group_name(&self) -> &'static str {
         "Proxy & Network"
+    }
+}
+
+impl Server for StunProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::stun::StunServer;
+            StunServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_stun_binding_response" => self.execute_send_binding_response(action),
+            "send_stun_error_response" => self.execute_send_error_response(action),
+            "ignore_request" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown STUN action: {}", action_type)),
+        }
     }
 }
 

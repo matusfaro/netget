@@ -75,26 +75,7 @@ impl S3ClientProtocol {
     }
 }
 
-impl Client for S3ClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::s3::S3Client;
-            S3Client::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
+impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -376,6 +357,79 @@ impl Client for S3ClientProtocol {
         ]
     }
 
+    fn protocol_name(&self) -> &'static str {
+        "S3"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "s3_connected".to_string(),
+                description: "Triggered when S3 client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "s3_response_received".to_string(),
+                description: "Triggered when S3 client receives a response".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>S3"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["s3", "s3 client", "aws s3", "object storage", "minio"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("AWS SDK for Rust (aws-sdk-s3)")
+            .llm_control("Full control over S3 operations (put, get, list, delete)")
+            .e2e_testing("LocalStack, MinIO, or real AWS S3")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "S3 client for object storage operations (AWS S3 and S3-compatible services)"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to S3 at s3.amazonaws.com and list all buckets"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Cloud"
+    }
+}
+
+impl Client for S3ClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::s3::S3Client;
+            S3Client::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+
     fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
         let action_type = action
             .get("type")
@@ -543,57 +597,5 @@ impl Client for S3ClientProtocol {
             "disconnect" => Ok(ClientActionResult::Disconnect),
             _ => Err(anyhow::anyhow!("Unknown S3 client action: {}", action_type)),
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "S3"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "s3_connected".to_string(),
-                description: "Triggered when S3 client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "s3_response_received".to_string(),
-                description: "Triggered when S3 client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>S3"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["s3", "s3 client", "aws s3", "object storage", "minio"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("AWS SDK for Rust (aws-sdk-s3)")
-            .llm_control("Full control over S3 operations (put, get, list, delete)")
-            .e2e_testing("LocalStack, MinIO, or real AWS S3")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "S3 client for object storage operations (AWS S3 and S3-compatible services)"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to S3 at s3.amazonaws.com and list all buckets"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Cloud"
     }
 }
