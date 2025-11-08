@@ -1,7 +1,7 @@
 //! Tor Directory protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -127,113 +127,108 @@ impl TorDirectoryProtocol {
     }
 }
 
-impl Server for TorDirectoryProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::tor_directory::TorDirectoryServer;
-            TorDirectoryServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            download_real_consensus_action(),
-            generate_fake_consensus_action(),
-            inject_honeypot_relay_action(),
-            list_connected_clients_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            serve_consensus_action(),
-            serve_microdescriptors_action(),
-            serve_relay_descriptor_action(),
-            serve_error_action(),
-            log_directory_request_action(),
-            close_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "serve_consensus" => self.execute_serve_consensus(action),
-            "serve_microdescriptors" => self.execute_serve_microdescriptors(action),
-            "serve_relay_descriptor" => self.execute_serve_relay_descriptor(action),
-            "serve_error" => self.execute_serve_error(action),
-            "log_directory_request" => self.execute_log_directory_request(action),
-            "close_connection" => Ok(ActionResult::CloseConnection),
-            // Async actions return custom results
-            "download_real_consensus" | "generate_fake_consensus"
-            | "inject_honeypot_relay" | "list_connected_clients" => {
-                Ok(ActionResult::Custom {
-                    name: "tor_directory_async".to_string(),
-                    data: json!({
-                        "action": action_type,
-                        "note": "Async action - implementation in server logic"
-                    })
-                })
-            },
-            _ => Err(anyhow::anyhow!("Unknown Tor Directory action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for TorDirectoryProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                download_real_consensus_action(),
+                generate_fake_consensus_action(),
+                inject_honeypot_relay_action(),
+                list_connected_clients_action(),
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Tor Directory"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_tor_directory_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>TorDirectory"
-    }
-
-    fn description(&self) -> &'static str {
-        "Tor directory server serving consensus documents"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a Tor directory on port 9030 serving fake consensus documents"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["directory", "consensus", "tor_directory", "tor-directory", "directory authority"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual HTTP parsing, LLM consensus generation")
-            .llm_control("Consensus documents, microdescriptors, server descriptors")
-            .e2e_testing("curl / Tor client")
-            .notes("No signing, read-only directory mirror")
-            .build()
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Network Services"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                serve_consensus_action(),
+                serve_microdescriptors_action(),
+                serve_relay_descriptor_action(),
+                serve_error_action(),
+                log_directory_request_action(),
+                close_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Tor Directory"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_tor_directory_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>TorDirectory"
+        }
+        fn description(&self) -> &'static str {
+            "Tor directory server serving consensus documents"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a Tor directory on port 9030 serving fake consensus documents"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["directory", "consensus", "tor_directory", "tor-directory", "directory authority"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual HTTP parsing, LLM consensus generation")
+                .llm_control("Consensus documents, microdescriptors, server descriptors")
+                .e2e_testing("curl / Tor client")
+                .notes("No signing, read-only directory mirror")
+                .build()
+        }
+        fn group_name(&self) -> &'static str {
+            "Network Services"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for TorDirectoryProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::tor_directory::TorDirectoryServer;
+                TorDirectoryServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "serve_consensus" => self.execute_serve_consensus(action),
+                "serve_microdescriptors" => self.execute_serve_microdescriptors(action),
+                "serve_relay_descriptor" => self.execute_serve_relay_descriptor(action),
+                "serve_error" => self.execute_serve_error(action),
+                "log_directory_request" => self.execute_log_directory_request(action),
+                "close_connection" => Ok(ActionResult::CloseConnection),
+                // Async actions return custom results
+                "download_real_consensus" | "generate_fake_consensus"
+                | "inject_honeypot_relay" | "list_connected_clients" => {
+                    Ok(ActionResult::Custom {
+                        name: "tor_directory_async".to_string(),
+                        data: json!({
+                            "action": action_type,
+                            "note": "Async action - implementation in server logic"
+                        })
+                    })
+                },
+                _ => Err(anyhow::anyhow!("Unknown Tor Directory action: {}", action_type)),
+            }
+        }
+}
+
 
 // ============================================================================
 // Action Definitions - Sync Actions (Network Event Triggered)

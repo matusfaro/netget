@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::llm::actions::protocol_trait::{ActionResult, Server};
+use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
 use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::jsonrpc::actions::JsonRpcProtocol;

@@ -1,7 +1,7 @@
 //! BitTorrent DHT protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -18,93 +18,88 @@ impl TorrentDhtProtocol {
     }
 }
 
-impl Server for TorrentDhtProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::torrent_dht::TorrentDhtServer;
-            TorrentDhtServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            SEND_PING_RESPONSE_ACTION.clone(),
-            SEND_FIND_NODE_RESPONSE_ACTION.clone(),
-            SEND_GET_PEERS_RESPONSE_ACTION.clone(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action.get("type").and_then(|v| v.as_str()).context("Missing 'type' field")?;
-
-        match action_type {
-            "send_ping_response" => self.execute_send_ping_response(action),
-            "send_find_node_response" => self.execute_send_find_node_response(action),
-            "send_get_peers_response" => self.execute_send_get_peers_response(action),
-            _ => Err(anyhow::anyhow!("Unknown DHT action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for TorrentDhtProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Torrent-DHT"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            DHT_PING_QUERY_EVENT.clone(),
-            DHT_FIND_NODE_QUERY_EVENT.clone(),
-            DHT_GET_PEERS_QUERY_EVENT.clone(),
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>BitTorrent-DHT"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["torrent-dht", "dht", "kademlia"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("UDP KRPC protocol with bencode encoding")
-            .llm_control("DHT query responses (ping, find_node, get_peers)")
-            .e2e_testing("Real BitTorrent clients with DHT")
-            .notes("Kademlia DHT, BEP 5")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "BitTorrent DHT server for distributed peer discovery"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "start a bittorrent dht node on port 6881"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "P2P"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                SEND_PING_RESPONSE_ACTION.clone(),
+                SEND_FIND_NODE_RESPONSE_ACTION.clone(),
+                SEND_GET_PEERS_RESPONSE_ACTION.clone(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Torrent-DHT"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                DHT_PING_QUERY_EVENT.clone(),
+                DHT_FIND_NODE_QUERY_EVENT.clone(),
+                DHT_GET_PEERS_QUERY_EVENT.clone(),
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>BitTorrent-DHT"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["torrent-dht", "dht", "kademlia"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .privilege_requirement(PrivilegeRequirement::None)
+                .implementation("UDP KRPC protocol with bencode encoding")
+                .llm_control("DHT query responses (ping, find_node, get_peers)")
+                .e2e_testing("Real BitTorrent clients with DHT")
+                .notes("Kademlia DHT, BEP 5")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "BitTorrent DHT server for distributed peer discovery"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "start a bittorrent dht node on port 6881"
+        }
+        fn group_name(&self) -> &'static str {
+            "P2P"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for TorrentDhtProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::torrent_dht::TorrentDhtServer;
+                TorrentDhtServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action.get("type").and_then(|v| v.as_str()).context("Missing 'type' field")?;
+    
+            match action_type {
+                "send_ping_response" => self.execute_send_ping_response(action),
+                "send_find_node_response" => self.execute_send_find_node_response(action),
+                "send_get_peers_response" => self.execute_send_get_peers_response(action),
+                _ => Err(anyhow::anyhow!("Unknown DHT action: {}", action_type)),
+            }
+        }
+}
+
 
 impl TorrentDhtProtocol {
     fn execute_send_ping_response(&self, action: serde_json::Value) -> Result<ActionResult> {

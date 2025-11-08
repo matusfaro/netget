@@ -1,7 +1,7 @@
 //! Maven repository protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -20,91 +20,86 @@ impl MavenProtocol {
     }
 }
 
-impl Server for MavenProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::maven::MavenServer;
-            MavenServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // Maven has no async actions - it's purely request-response
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_maven_artifact_action(),
-            send_maven_metadata_action(),
-            send_maven_error_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_maven_artifact" => self.execute_send_maven_artifact(action),
-            "send_maven_metadata" => self.execute_send_maven_metadata(action),
-            "send_maven_error" => self.execute_send_maven_error(action),
-            _ => Err(anyhow::anyhow!("Unknown Maven action: {action_type}")),
+// Implement Protocol trait (common functionality)
+impl Protocol for MavenProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // Maven has no async actions - it's purely request-response
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Maven"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_maven_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>Maven"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["maven", "maven repository", "maven repo", "via maven"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("hyper v1.0 HTTP server with Maven repository path parsing")
-            .llm_control("Artifact availability, content generation (POM, JAR, checksums), version metadata")
-            .e2e_testing("mvn CLI client - target < 10 LLM calls")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Maven repository server serving Java artifacts"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Maven repository on port 8080 serving a simple library com.example:hello-world:1.0.0 with a JAR and POM file"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Application"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_maven_artifact_action(),
+                send_maven_metadata_action(),
+                send_maven_error_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Maven"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_maven_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>Maven"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["maven", "maven repository", "maven repo", "via maven"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("hyper v1.0 HTTP server with Maven repository path parsing")
+                .llm_control("Artifact availability, content generation (POM, JAR, checksums), version metadata")
+                .e2e_testing("mvn CLI client - target < 10 LLM calls")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Maven repository server serving Java artifacts"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Maven repository on port 8080 serving a simple library com.example:hello-world:1.0.0 with a JAR and POM file"
+        }
+        fn group_name(&self) -> &'static str {
+            "Application"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for MavenProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::maven::MavenServer;
+                MavenServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_maven_artifact" => self.execute_send_maven_artifact(action),
+                "send_maven_metadata" => self.execute_send_maven_metadata(action),
+                "send_maven_error" => self.execute_send_maven_error(action),
+                _ => Err(anyhow::anyhow!("Unknown Maven action: {action_type}")),
+            }
+        }
+}
+
 
 impl MavenProtocol {
     /// Execute send_maven_artifact sync action

@@ -7,7 +7,7 @@
 //! - Extensions (nil values, i8/64-bit integers, system.multicall)
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::{Event, EventType};
@@ -198,96 +198,91 @@ impl XmlRpcProtocol {
     }
 }
 
-impl Server for XmlRpcProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::xmlrpc::XmlRpcServer;
-            XmlRpcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // XML-RPC is purely request-response, no async actions needed
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            success_response_action(),
-            fault_response_action(),
-            list_methods_response_action(),
-            method_help_response_action(),
-            method_signature_response_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field")?;
-
-        match action_type {
-            "xmlrpc_success_response" => self.execute_success_response(action),
-            "xmlrpc_fault_response" => self.execute_fault_response(action),
-            "xmlrpc_list_methods_response" => self.execute_list_methods_response(action),
-            "xmlrpc_method_help_response" => self.execute_method_help_response(action),
-            "xmlrpc_method_signature_response" => self.execute_method_signature_response(action),
-            _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for XmlRpcProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // XML-RPC is purely request-response, no async actions needed
+            Vec::new()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "XML-RPC"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![XMLRPC_METHOD_CALL_EVENT.clone()]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>XML-RPC"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["xmlrpc", "xml-rpc", "xml rpc"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual XML-RPC parsing")
-            .llm_control("Method responses")
-            .e2e_testing("XML-RPC client libs")
-            .notes("Legacy RPC format")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "XML-RPC server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an XML-RPC server on port 8080 with methods add(a,b) and greet(name)"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "AI & API"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                success_response_action(),
+                fault_response_action(),
+                list_methods_response_action(),
+                method_help_response_action(),
+                method_signature_response_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "XML-RPC"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![XMLRPC_METHOD_CALL_EVENT.clone()]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>XML-RPC"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["xmlrpc", "xml-rpc", "xml rpc"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual XML-RPC parsing")
+                .llm_control("Method responses")
+                .e2e_testing("XML-RPC client libs")
+                .notes("Legacy RPC format")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "XML-RPC server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an XML-RPC server on port 8080 with methods add(a,b) and greet(name)"
+        }
+        fn group_name(&self) -> &'static str {
+            "AI & API"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for XmlRpcProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::xmlrpc::XmlRpcServer;
+                XmlRpcServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field")?;
+    
+            match action_type {
+                "xmlrpc_success_response" => self.execute_success_response(action),
+                "xmlrpc_fault_response" => self.execute_fault_response(action),
+                "xmlrpc_list_methods_response" => self.execute_list_methods_response(action),
+                "xmlrpc_method_help_response" => self.execute_method_help_response(action),
+                "xmlrpc_method_signature_response" => self.execute_method_signature_response(action),
+                _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
+            }
+        }
+}
+
 
 // Action definitions
 

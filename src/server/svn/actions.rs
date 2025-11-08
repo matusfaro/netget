@@ -1,7 +1,7 @@
 //! SVN protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -18,99 +18,94 @@ impl SvnProtocol {
     }
 }
 
-impl Server for SvnProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::svn::SvnServer;
-            SvnServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        Vec::new() // SVN has no async actions
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_greeting_action(),
-            send_success_action(),
-            send_failure_action(),
-            send_list_action(),
-            send_response_action(),
-            close_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_svn_greeting" => self.execute_send_greeting(action),
-            "send_svn_success" => self.execute_send_success(action),
-            "send_svn_failure" => self.execute_send_failure(action),
-            "send_svn_list" => self.execute_send_list(action),
-            "send_svn_response" => self.execute_send_response(action),
-            "close_connection" => Ok(ActionResult::CloseConnection),
-            _ => Err(anyhow::anyhow!("Unknown SVN action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for SvnProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            Vec::new() // SVN has no async actions
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SVN"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_svn_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>SVN"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["svn", "subversion"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(3690))
-            .implementation("Manual SVN protocol implementation (custom format)")
-            .llm_control("SVN commands (get-latest-rev, get-dir, get-file, update, commit)")
-            .e2e_testing("svn command-line client")
-            .notes("Simplified SVN protocol for testing, not full implementation")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "SVN (Subversion) version control server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "SVN server on port 3690 - respond to repository commands with fake data"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Infrastructure"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_greeting_action(),
+                send_success_action(),
+                send_failure_action(),
+                send_list_action(),
+                send_response_action(),
+                close_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "SVN"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_svn_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>SVN"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["svn", "subversion"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(3690))
+                .implementation("Manual SVN protocol implementation (custom format)")
+                .llm_control("SVN commands (get-latest-rev, get-dir, get-file, update, commit)")
+                .e2e_testing("svn command-line client")
+                .notes("Simplified SVN protocol for testing, not full implementation")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "SVN (Subversion) version control server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "SVN server on port 3690 - respond to repository commands with fake data"
+        }
+        fn group_name(&self) -> &'static str {
+            "Infrastructure"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SvnProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::svn::SvnServer;
+                SvnServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_svn_greeting" => self.execute_send_greeting(action),
+                "send_svn_success" => self.execute_send_success(action),
+                "send_svn_failure" => self.execute_send_failure(action),
+                "send_svn_list" => self.execute_send_list(action),
+                "send_svn_response" => self.execute_send_response(action),
+                "close_connection" => Ok(ActionResult::CloseConnection),
+                _ => Err(anyhow::anyhow!("Unknown SVN action: {}", action_type)),
+            }
+        }
+}
+
 
 impl SvnProtocol {
     fn execute_send_greeting(&self, action: serde_json::Value) -> Result<ActionResult> {
