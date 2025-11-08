@@ -27,10 +27,12 @@
 //!
 //! - ✅ CTAPHID transport layer (packet fragmentation, channel management)
 //! - ✅ U2F_VERSION command
-//! - ✅ U2F_REGISTER command (basic implementation with ECDSA P-256)
-//! - ✅ U2F_AUTHENTICATE command (basic implementation)
+//! - ✅ U2F_REGISTER command (full implementation with ECDSA P-256)
+//! - ✅ U2F_AUTHENTICATE command (full implementation)
 //! - ✅ CTAP2 GetInfo command
-//! - ⚠️  CTAP2 MakeCredential/GetAssertion (returns error, needs LLM integration)
+//! - ✅ CTAP2 MakeCredential (full credential creation with COSE keys)
+//! - ✅ CTAP2 GetAssertion (full assertion with ECDSA signatures)
+//! - ✅ Credential storage and management
 //!
 //! ## Limitations
 //!

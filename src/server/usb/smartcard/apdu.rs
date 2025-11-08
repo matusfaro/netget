@@ -230,14 +230,31 @@ impl Default for SmartCardFileSystem {
 pub struct ApduHandler {
     fs: SmartCardFileSystem,
     pin_verified: bool,
+    key_store: Option<crate::server::usb::smartcard::crypto::SmartCardKeyStore>,
 }
 
 #[cfg(feature = "usb-smartcard")]
 impl ApduHandler {
     pub fn new() -> Self {
+        Self::new_with_crypto(false)
+    }
+
+    pub fn new_with_crypto(enable_crypto: bool) -> Self {
+        let key_store = if enable_crypto {
+            let mut store = crate::server::usb::smartcard::crypto::SmartCardKeyStore::new();
+            // Pre-generate a demo key (key ref 0x9A - PIV authentication key)
+            if let Err(e) = store.generate_key(0x9A, 2048) {
+                debug!("Failed to generate demo key: {}", e);
+            }
+            Some(store)
+        } else {
+            None
+        };
+
         Self {
             fs: SmartCardFileSystem::new(),
             pin_verified: false,
+            key_store,
         }
     }
 
@@ -267,6 +284,7 @@ impl ApduHandler {
             ins::UPDATE_BINARY => self.handle_update_binary(&cmd),
             ins::VERIFY => self.handle_verify(&cmd),
             ins::GET_DATA => self.handle_get_data(&cmd),
+            ins::INTERNAL_AUTHENTICATE => self.handle_internal_authenticate(&cmd),
             _ => {
                 debug!("Unsupported instruction: {:#04x}", cmd.ins);
                 ApduResponse::error(sw::INS_NOT_SUPPORTED)
@@ -337,6 +355,49 @@ impl ApduHandler {
 
         // Return dummy data for demo
         ApduResponse::success(vec![0x01, 0x02, 0x03, 0x04])
+    }
+
+    fn handle_internal_authenticate(&self, cmd: &ApduCommand) -> ApduResponse {
+        // INTERNAL_AUTHENTICATE: Sign data with private key
+        // P2 = key reference
+        if !self.pin_verified {
+            debug!("INTERNAL_AUTHENTICATE rejected: PIN not verified");
+            return ApduResponse::error(sw::SECURITY_NOT_SATISFIED);
+        }
+
+        let key_store = match &self.key_store {
+            Some(store) => store,
+            None => {
+                debug!("INTERNAL_AUTHENTICATE rejected: Crypto not enabled");
+                return ApduResponse::error(sw::FUNCTION_NOT_SUPPORTED);
+            }
+        };
+
+        let key_ref = cmd.p2;
+        let key_pair = match key_store.get_key(key_ref) {
+            Some(kp) => kp,
+            None => {
+                debug!("INTERNAL_AUTHENTICATE: Key {:#04x} not found", key_ref);
+                return ApduResponse::error(sw::WRONG_DATA);
+            }
+        };
+
+        // Sign the challenge data
+        match key_pair.sign(&cmd.data) {
+            Ok(signature) => {
+                debug!(
+                    "INTERNAL_AUTHENTICATE: Signed {} bytes with key {:#04x}, signature {} bytes",
+                    cmd.data.len(),
+                    key_ref,
+                    signature.len()
+                );
+                ApduResponse::success(signature)
+            }
+            Err(e) => {
+                debug!("INTERNAL_AUTHENTICATE failed: {}", e);
+                ApduResponse::error(sw::WRONG_DATA)
+            }
+        }
     }
 }
 

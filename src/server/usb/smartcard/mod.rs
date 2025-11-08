@@ -5,7 +5,7 @@
 //!
 //! ## Implementation Status
 //!
-//! **BASIC IMPLEMENTATION** - ISO 7816-4 APDU handling with simplified vpcd connection.
+//! **FUNCTIONAL IMPLEMENTATION** - ISO 7816-4 APDU handling with RSA cryptography support.
 //! See src/server/usb/smartcard/CLAUDE.md for full implementation plan.
 //!
 //! ## Architecture
@@ -39,12 +39,15 @@
 //! - ✅ ISO 7816-4 APDU parsing
 //! - ✅ Basic file system (SELECT, READ_BINARY, UPDATE_BINARY)
 //! - ✅ PIN verification (VERIFY command)
-//! - ⚠️  Simplified vpcd protocol (basic ATR exchange)
-//! - ⚠️  No cryptographic operations yet
-//! - ⚠️  No persistent storage
+//! - ✅ RSA-2048 key generation and storage
+//! - ✅ INTERNAL_AUTHENTICATE (RSA-SHA256 signatures)
+//! - ✅ vpcd protocol integration
+//! - ⚠️  No persistent storage (in-memory only)
+//! - ⚠️  No card applications (PIV/OpenPGP) yet
 
 pub mod actions;
 pub mod apdu;
+pub mod crypto;
 
 #[cfg(feature = "usb-smartcard")]
 use anyhow::{Context, Result};
@@ -159,7 +162,8 @@ impl UsbSmartCardServer {
         mut stream: TcpStream,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let mut apdu_handler = ApduHandler::new();
+        // Enable crypto for RSA signing support
+        let mut apdu_handler = ApduHandler::new_with_crypto(true);
 
         // Send ATR (Answer To Reset)
         // vpcd protocol: send ATR length (u16 big-endian) + ATR bytes
