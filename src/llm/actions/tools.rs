@@ -64,6 +64,36 @@ pub enum ToolAction {
 
     /// List available models from Ollama
     ListModels,
+
+    /// Generate random data (strings, numbers, UUIDs, etc.)
+    GenerateRandom {
+        /// Type of random data to generate
+        data_type: String,
+
+        /// Optional: length for strings/arrays
+        #[serde(default)]
+        length: Option<usize>,
+
+        /// Optional: minimum value for numbers
+        #[serde(default)]
+        min: Option<f64>,
+
+        /// Optional: maximum value for numbers
+        #[serde(default)]
+        max: Option<f64>,
+
+        /// Optional: character set for strings (alphanumeric, hex, base64, letters, digits)
+        #[serde(default)]
+        charset: Option<String>,
+
+        /// Optional: array of choices to pick from
+        #[serde(default)]
+        choices: Option<Vec<serde_json::Value>>,
+
+        /// Optional: number of items to pick from choices
+        #[serde(default)]
+        count: Option<usize>,
+    },
 }
 
 fn default_read_mode() -> String {
@@ -75,8 +105,8 @@ impl ToolAction {
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         // Check if the tool type is recognized first
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models") {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_network_interfaces, list_models", action_type);
+            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models" | "generate_random") {
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_network_interfaces, list_models, generate_random", action_type);
             }
         }
 
@@ -86,7 +116,7 @@ impl ToolAction {
     /// Check if a JSON value is a tool action
     pub fn is_tool_action(value: &serde_json::Value) -> bool {
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models")
+            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models" | "generate_random")
         } else {
             false
         }
@@ -132,6 +162,25 @@ impl ToolAction {
             }
             ToolAction::ListModels => {
                 "list_models: query available Ollama models".to_string()
+            }
+            ToolAction::GenerateRandom {
+                data_type,
+                length,
+                min,
+                max,
+                ..
+            } => {
+                let mut desc = format!("generate_random: {}", data_type);
+                if let Some(len) = length {
+                    desc.push_str(&format!(" (length: {})", len));
+                }
+                if let Some(min_val) = min {
+                    desc.push_str(&format!(" (min: {})", min_val));
+                }
+                if let Some(max_val) = max {
+                    desc.push_str(&format!(" (max: {})", max_val));
+                }
+                desc
             }
         }
     }
@@ -704,6 +753,360 @@ pub async fn execute_list_models() -> ToolResult {
     }
 }
 
+/// Execute a generate_random tool action
+pub async fn execute_generate_random(
+    data_type: &str,
+    length: Option<usize>,
+    min: Option<f64>,
+    max: Option<f64>,
+    charset: Option<&str>,
+    choices: Option<&[serde_json::Value]>,
+    count: Option<usize>,
+) -> ToolResult {
+    use rand::Rng;
+    use tracing::info;
+
+    info!("🔧 Tool: generate_random - type={}", data_type);
+    debug!("Generating random data: type={}", data_type);
+
+    let mut rng = rand::thread_rng();
+
+    let result = match data_type {
+        // UUID v4
+        "uuid" | "uuid4" => {
+            let uuid = uuid::Uuid::new_v4();
+            info!("  ✓ Generated UUID: {}", uuid);
+            uuid.to_string()
+        }
+
+        // Random integer
+        "integer" | "int" => {
+            let min_val = min.unwrap_or(0.0) as i64;
+            let max_val = max.unwrap_or(100.0) as i64;
+            if min_val >= max_val {
+                return ToolResult::error(
+                    "generate_random",
+                    format!("{} (int)", data_type),
+                    "min must be less than max".to_string(),
+                );
+            }
+            let value = rng.gen_range(min_val..=max_val);
+            info!("  ✓ Generated integer: {}", value);
+            value.to_string()
+        }
+
+        // Random float
+        "float" | "number" => {
+            let min_val = min.unwrap_or(0.0);
+            let max_val = max.unwrap_or(1.0);
+            if min_val >= max_val {
+                return ToolResult::error(
+                    "generate_random",
+                    format!("{} (float)", data_type),
+                    "min must be less than max".to_string(),
+                );
+            }
+            let value: f64 = rng.gen_range(min_val..=max_val);
+            info!("  ✓ Generated float: {}", value);
+            value.to_string()
+        }
+
+        // Random string
+        "string" => {
+            let len = length.unwrap_or(16);
+            let chars = match charset.unwrap_or("alphanumeric") {
+                "hex" => "0123456789abcdef",
+                "digits" => "0123456789",
+                "letters" => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                "lowercase" => "abcdefghijklmnopqrstuvwxyz",
+                "uppercase" => "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                "alphanumeric" | _ => {
+                    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                }
+            };
+
+            let result: String = (0..len)
+                .map(|_| {
+                    let idx = rng.gen_range(0..chars.len());
+                    chars.chars().nth(idx).unwrap()
+                })
+                .collect();
+            info!("  ✓ Generated string: {} chars", len);
+            result
+        }
+
+        // Random hex bytes (as hex string)
+        "hex" | "hex_bytes" => {
+            let len = length.unwrap_or(16);
+            let bytes: Vec<u8> = (0..len).map(|_| rng.gen()).collect();
+            let hex_string = bytes
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
+            info!("  ✓ Generated hex bytes: {} bytes", len);
+            hex_string
+        }
+
+        // Random base64 string
+        "base64" => {
+            use base64::{engine::general_purpose, Engine as _};
+            let len = length.unwrap_or(16);
+            let bytes: Vec<u8> = (0..len).map(|_| rng.gen()).collect();
+            let b64 = general_purpose::STANDARD.encode(&bytes);
+            info!("  ✓ Generated base64: {} bytes", len);
+            b64
+        }
+
+        // Random word (lorem ipsum style)
+        "word" => {
+            const WORDS: &[&str] = &[
+                "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
+                "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
+                "magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
+                "exercitation", "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo",
+                "consequat", "duis", "aute", "irure", "in", "reprehenderit", "voluptate",
+                "velit", "esse", "cillum", "fugiat", "nulla", "pariatur", "excepteur", "sint",
+                "occaecat", "cupidatat", "non", "proident", "sunt", "culpa", "qui", "officia",
+                "deserunt", "mollit", "anim", "id", "est", "laborum",
+            ];
+            let word = WORDS[rng.gen_range(0..WORDS.len())];
+            info!("  ✓ Generated word: {}", word);
+            word.to_string()
+        }
+
+        // Random sentence
+        "sentence" => {
+            const WORDS: &[&str] = &[
+                "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
+                "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
+                "magna", "aliqua",
+            ];
+            let word_count = length.unwrap_or(10);
+            let sentence: Vec<String> = (0..word_count)
+                .map(|i| {
+                    let word = WORDS[rng.gen_range(0..WORDS.len())];
+                    if i == 0 {
+                        let mut s = word.to_string();
+                        s[0..1].make_ascii_uppercase();
+                        s
+                    } else {
+                        word.to_string()
+                    }
+                })
+                .collect();
+            let result = format!("{}.", sentence.join(" "));
+            info!("  ✓ Generated sentence: {} words", word_count);
+            result
+        }
+
+        // Random paragraph
+        "paragraph" => {
+            const WORDS: &[&str] = &[
+                "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
+                "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
+                "magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
+            ];
+            let sentence_count = length.unwrap_or(5);
+            let paragraph: Vec<String> = (0..sentence_count)
+                .map(|_| {
+                    let word_count = rng.gen_range(5..15);
+                    let sentence_words: Vec<String> = (0..word_count)
+                        .map(|i| {
+                            let word = WORDS[rng.gen_range(0..WORDS.len())];
+                            if i == 0 {
+                                let mut s = word.to_string();
+                                s[0..1].make_ascii_uppercase();
+                                s
+                            } else {
+                                word.to_string()
+                            }
+                        })
+                        .collect();
+                    format!("{}.", sentence_words.join(" "))
+                })
+                .collect();
+            info!("  ✓ Generated paragraph: {} sentences", sentence_count);
+            paragraph.join(" ")
+        }
+
+        // Random email
+        "email" => {
+            let username_len = length.unwrap_or(8);
+            let username: String = (0..username_len)
+                .map(|_| {
+                    let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+                    let idx = rng.gen_range(0..chars.len());
+                    chars.chars().nth(idx).unwrap()
+                })
+                .collect();
+            let domains = &["example.com", "test.com", "demo.org", "sample.net"];
+            let domain = domains[rng.gen_range(0..domains.len())];
+            let email = format!("{}@{}", username, domain);
+            info!("  ✓ Generated email: {}", email);
+            email
+        }
+
+        // Random IPv4 address
+        "ipv4" | "ip" => {
+            let ip = format!(
+                "{}.{}.{}.{}",
+                rng.gen_range(1..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(1..=255)
+            );
+            info!("  ✓ Generated IPv4: {}", ip);
+            ip
+        }
+
+        // Random IPv6 address
+        "ipv6" => {
+            let segments: Vec<String> = (0..8)
+                .map(|_| format!("{:04x}", rng.gen_range(0..=0xffff)))
+                .collect();
+            let ip = segments.join(":");
+            info!("  ✓ Generated IPv6: {}", ip);
+            ip
+        }
+
+        // Random MAC address
+        "mac" | "mac_address" => {
+            let octets: Vec<String> = (0..6)
+                .map(|_| format!("{:02x}", rng.gen_range(0..=255)))
+                .collect();
+            let mac = octets.join(":");
+            info!("  ✓ Generated MAC address: {}", mac);
+            mac
+        }
+
+        // Random port number
+        "port" => {
+            let min_port = min.unwrap_or(1024.0) as u16;
+            let max_port = max.unwrap_or(65535.0) as u16;
+            let port = rng.gen_range(min_port..=max_port);
+            info!("  ✓ Generated port: {}", port);
+            port.to_string()
+        }
+
+        // Random timestamp (Unix timestamp)
+        "timestamp" | "unix_timestamp" => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            // Generate random timestamp within ±1 year from now
+            let one_year = 365 * 24 * 60 * 60;
+            let min_time = min.map(|m| m as u64).unwrap_or(now.saturating_sub(one_year));
+            let max_time = max.map(|m| m as u64).unwrap_or(now + one_year);
+            let timestamp = rng.gen_range(min_time..=max_time);
+            info!("  ✓ Generated timestamp: {}", timestamp);
+            timestamp.to_string()
+        }
+
+        // Random date (ISO 8601 format)
+        "date" | "iso_date" => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let one_year = 365 * 24 * 60 * 60;
+            let min_time = min.map(|m| m as u64).unwrap_or(now.saturating_sub(one_year));
+            let max_time = max.map(|m| m as u64).unwrap_or(now + one_year);
+            let timestamp = rng.gen_range(min_time..=max_time);
+
+            // Convert to date
+            let days_since_epoch = timestamp / (24 * 60 * 60);
+            let year = 1970 + (days_since_epoch / 365);
+            let day_of_year = days_since_epoch % 365;
+            let month = (day_of_year / 30) + 1;
+            let day = (day_of_year % 30) + 1;
+
+            let date = format!("{:04}-{:02}-{:02}", year, month.min(12), day.min(28));
+            info!("  ✓ Generated date: {}", date);
+            date
+        }
+
+        // Random boolean
+        "boolean" | "bool" => {
+            let value = rng.gen_bool(0.5);
+            info!("  ✓ Generated boolean: {}", value);
+            value.to_string()
+        }
+
+        // Pick random choice from list
+        "choice" => {
+            if let Some(choice_list) = choices {
+                if choice_list.is_empty() {
+                    return ToolResult::error(
+                        "generate_random",
+                        "choice".to_string(),
+                        "choices array cannot be empty".to_string(),
+                    );
+                }
+                let idx = rng.gen_range(0..choice_list.len());
+                let choice = &choice_list[idx];
+                info!("  ✓ Picked random choice: {}", choice);
+                serde_json::to_string(choice).unwrap_or_else(|_| choice.to_string())
+            } else {
+                return ToolResult::error(
+                    "generate_random",
+                    "choice".to_string(),
+                    "choices parameter is required for choice type".to_string(),
+                );
+            }
+        }
+
+        // Pick multiple random choices from list
+        "choices" | "sample" => {
+            if let Some(choice_list) = choices {
+                if choice_list.is_empty() {
+                    return ToolResult::error(
+                        "generate_random",
+                        "choices".to_string(),
+                        "choices array cannot be empty".to_string(),
+                    );
+                }
+                let pick_count = count.unwrap_or(1).min(choice_list.len());
+                let mut indices: Vec<usize> = (0..choice_list.len()).collect();
+                use rand::seq::SliceRandom;
+                indices.shuffle(&mut rng);
+
+                let picked: Vec<String> = indices[..pick_count]
+                    .iter()
+                    .map(|&i| {
+                        serde_json::to_string(&choice_list[i])
+                            .unwrap_or_else(|_| choice_list[i].to_string())
+                    })
+                    .collect();
+
+                info!("  ✓ Picked {} random choices", pick_count);
+                format!("[{}]", picked.join(", "))
+            } else {
+                return ToolResult::error(
+                    "generate_random",
+                    "choices".to_string(),
+                    "choices parameter is required for choices type".to_string(),
+                );
+            }
+        }
+
+        _ => {
+            return ToolResult::error(
+                "generate_random",
+                data_type.to_string(),
+                format!(
+                    "Unknown data type: '{}'. Valid types: uuid, integer, float, string, hex, base64, word, sentence, paragraph, email, ipv4, ipv6, mac, port, timestamp, date, boolean, choice, choices",
+                    data_type
+                ),
+            );
+        }
+    };
+
+    ToolResult::success("generate_random", data_type.to_string(), result)
+}
+
 /// Get action definition for read_file tool
 pub fn read_file_action() -> ActionDefinition {
     ActionDefinition {
@@ -815,11 +1218,68 @@ pub fn list_models_action() -> ActionDefinition {
     }
 }
 
+/// Get generate_random action definition
+pub fn generate_random_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "generate_random".to_string(),
+        description: "Generate random data of various types. IMPORTANT: LLMs cannot generate truly random data - you MUST use this tool whenever you need random/mock data for responses. Supports: UUIDs, numbers, strings, emails, IPs, dates, lorem ipsum text, and more. This tool returns the random value which you can then use in your response.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "data_type".to_string(),
+                type_hint: "string".to_string(),
+                description: "Type of random data: uuid, integer, float, string, hex, base64, word, sentence, paragraph, email, ipv4, ipv6, mac, port, timestamp, date, boolean, choice, choices".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "length".to_string(),
+                type_hint: "number".to_string(),
+                description: "Optional: Length for strings (default: 16), number of words for sentences (default: 10), or sentences for paragraphs (default: 5)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "min".to_string(),
+                type_hint: "number".to_string(),
+                description: "Optional: Minimum value for integer/float (default: 0 for int, 0.0 for float), or min timestamp".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "max".to_string(),
+                type_hint: "number".to_string(),
+                description: "Optional: Maximum value for integer/float (default: 100 for int, 1.0 for float), or max timestamp".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "charset".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: Character set for strings - alphanumeric (default), hex, digits, letters, lowercase, uppercase".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "choices".to_string(),
+                type_hint: "array".to_string(),
+                description: "Optional: Array of values to choose from (required for choice/choices types)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "count".to_string(),
+                type_hint: "number".to_string(),
+                description: "Optional: Number of items to pick for 'choices' type (default: 1)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "generate_random",
+            "data_type": "uuid"
+        }),
+    }
+}
+
 /// Get all tool action definitions
 pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchMode) -> Vec<ActionDefinition> {
     use crate::state::app_state::WebSearchMode;
 
     let mut actions = vec![
+        generate_random_action(), // Put first - LLMs need this for mock data
         read_file_action(),
         read_base_stack_docs_action(),
         list_network_interfaces_action(),
@@ -1007,6 +1467,26 @@ pub async fn execute_tool(
         }
         ToolAction::ListModels => {
             execute_list_models().await
+        }
+        ToolAction::GenerateRandom {
+            data_type,
+            length,
+            min,
+            max,
+            charset,
+            choices,
+            count,
+        } => {
+            execute_generate_random(
+                data_type,
+                *length,
+                *min,
+                *max,
+                charset.as_deref(),
+                choices.as_deref(),
+                *count,
+            )
+            .await
         }
     }
 }
