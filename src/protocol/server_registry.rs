@@ -371,6 +371,9 @@ impl ServerRegistry {
 
         #[cfg(feature = "usb-serial")]
         self.register(Arc::new(crate::server::UsbSerialProtocol::new()));
+
+        #[cfg(feature = "usb-msc")]
+        self.register(Arc::new(crate::server::UsbMscProtocol::new()));
     }
 
     /// Build keyword map for fast protocol parsing

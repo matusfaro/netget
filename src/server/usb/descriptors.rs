@@ -738,3 +738,193 @@ impl ControlLineState {
         value
     }
 }
+
+// ============================================================================
+// USB Mass Storage Class (MSC) Descriptors
+// ============================================================================
+
+/// Build USB Mass Storage Class configuration descriptor
+/// MSC uses Bulk-Only Transport (BOT) with two bulk endpoints (IN + OUT)
+#[cfg(feature = "usb-msc")]
+pub fn build_msc_config_descriptor() -> Vec<u8> {
+    let mut desc = Vec::new();
+
+    // Configuration descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::CONFIGURATION,
+        32, 0, // wTotalLength (32 bytes total) - will be updated
+        1,    // bNumInterfaces
+        1,    // bConfigurationValue
+        0,    // iConfiguration (no string)
+        0xC0, // bmAttributes (self-powered)
+        50,   // bMaxPower (100mA)
+    ]);
+
+    // Interface descriptor (9 bytes)
+    desc.extend_from_slice(&[
+        9,    // bLength
+        descriptor_type::INTERFACE,
+        0,    // bInterfaceNumber
+        0,    // bAlternateSetting
+        2,    // bNumEndpoints (Bulk IN + Bulk OUT)
+        0x08, // bInterfaceClass (Mass Storage)
+        0x06, // bInterfaceSubClass (SCSI transparent command set)
+        0x50, // bInterfaceProtocol (Bulk-Only Transport)
+        0,    // iInterface (no string)
+    ]);
+
+    // Endpoint descriptor: Bulk IN (7 bytes)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x81, // bEndpointAddress (EP1 IN)
+        transfer_type::BULK, // bmAttributes (Bulk)
+        0x00, 0x02, // wMaxPacketSize (512 bytes for High Speed)
+        0,    // bInterval (ignored for bulk)
+    ]);
+
+    // Endpoint descriptor: Bulk OUT (7 bytes)
+    desc.extend_from_slice(&[
+        7,    // bLength
+        descriptor_type::ENDPOINT,
+        0x02, // bEndpointAddress (EP2 OUT)
+        transfer_type::BULK, // bmAttributes (Bulk)
+        0x00, 0x02, // wMaxPacketSize (512 bytes for High Speed)
+        0,    // bInterval (ignored for bulk)
+    ]);
+
+    // Update total length
+    let total_len = desc.len() as u16;
+    desc[2] = (total_len & 0xff) as u8;
+    desc[3] = (total_len >> 8) as u8;
+
+    desc
+}
+
+/// Command Block Wrapper (CBW) for Bulk-Only Transport
+/// Size: Exactly 31 bytes
+#[cfg(feature = "usb-msc")]
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct CommandBlockWrapper {
+    pub signature: u32,         // 0x43425355 ("USBC")
+    pub tag: u32,              // Command tag (echo in CSW)
+    pub data_transfer_length: u32, // Expected data transfer bytes
+    pub flags: u8,             // Direction: 0x80=IN, 0x00=OUT
+    pub lun: u8,               // Logical Unit Number (0-15)
+    pub cb_length: u8,         // Command Block length (1-16)
+    pub cb: [u8; 16],          // SCSI command block
+}
+
+#[cfg(feature = "usb-msc")]
+impl CommandBlockWrapper {
+    pub const SIGNATURE: u32 = 0x43425355; // "USBC" in little-endian
+    pub const SIZE: usize = 31;
+
+    pub fn parse(data: &[u8]) -> Option<Self> {
+        if data.len() != Self::SIZE {
+            return None;
+        }
+
+        let signature = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        if signature != Self::SIGNATURE {
+            return None;
+        }
+
+        let tag = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        let data_transfer_length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+        let flags = data[12];
+        let lun = data[13];
+        let cb_length = data[14];
+
+        let mut cb = [0u8; 16];
+        cb.copy_from_slice(&data[15..31]);
+
+        Some(Self {
+            signature,
+            tag,
+            data_transfer_length,
+            flags,
+            lun,
+            cb_length,
+            cb,
+        })
+    }
+
+    pub fn is_data_in(&self) -> bool {
+        (self.flags & 0x80) != 0
+    }
+
+    pub fn scsi_command(&self) -> &[u8] {
+        &self.cb[0..(self.cb_length as usize).min(16)]
+    }
+}
+
+/// Command Status Wrapper (CSW) for Bulk-Only Transport
+/// Size: Exactly 13 bytes
+#[cfg(feature = "usb-msc")]
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct CommandStatusWrapper {
+    pub signature: u32,        // 0x53425355 ("USBS")
+    pub tag: u32,             // Echo of CBW tag
+    pub data_residue: u32,    // Difference (expected - actual)
+    pub status: u8,           // 0x00=success, 0x01=fail, 0x02=phase_error
+}
+
+#[cfg(feature = "usb-msc")]
+impl CommandStatusWrapper {
+    pub const SIGNATURE: u32 = 0x53425355; // "USBS" in little-endian
+    pub const SIZE: usize = 13;
+
+    pub const STATUS_PASSED: u8 = 0x00;
+    pub const STATUS_FAILED: u8 = 0x01;
+    pub const STATUS_PHASE_ERROR: u8 = 0x02;
+
+    pub fn new(tag: u32, data_residue: u32, status: u8) -> Self {
+        Self {
+            signature: Self::SIGNATURE,
+            tag,
+            data_residue,
+            status,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut bytes = [0u8; Self::SIZE];
+        bytes[0..4].copy_from_slice(&self.signature.to_le_bytes());
+        bytes[4..8].copy_from_slice(&self.tag.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.data_residue.to_le_bytes());
+        bytes[12] = self.status;
+        bytes
+    }
+}
+
+/// SCSI command opcodes (subset)
+#[cfg(feature = "usb-msc")]
+pub mod scsi_opcode {
+    pub const TEST_UNIT_READY: u8 = 0x00;
+    pub const REQUEST_SENSE: u8 = 0x03;
+    pub const INQUIRY: u8 = 0x12;
+    pub const MODE_SENSE_6: u8 = 0x1A;
+    pub const START_STOP_UNIT: u8 = 0x1B;
+    pub const PREVENT_ALLOW_MEDIUM_REMOVAL: u8 = 0x1E;
+    pub const READ_CAPACITY_10: u8 = 0x25;
+    pub const READ_10: u8 = 0x28;
+    pub const WRITE_10: u8 = 0x2A;
+}
+
+/// SCSI sense key codes
+#[cfg(feature = "usb-msc")]
+pub mod scsi_sense_key {
+    pub const NO_SENSE: u8 = 0x00;
+    pub const RECOVERED_ERROR: u8 = 0x01;
+    pub const NOT_READY: u8 = 0x02;
+    pub const MEDIUM_ERROR: u8 = 0x03;
+    pub const HARDWARE_ERROR: u8 = 0x04;
+    pub const ILLEGAL_REQUEST: u8 = 0x05;
+    pub const UNIT_ATTENTION: u8 = 0x06;
+    pub const DATA_PROTECT: u8 = 0x07;
+    pub const ABORTED_COMMAND: u8 = 0x0B;
+}
