@@ -235,68 +235,27 @@ pub fn open_server_action(
             Parameter {
                 name: "scheduled_tasks".to_string(),
                 type_hint: "array".to_string(),
-                description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional), and optional script fields (script_runtime, script_inline, script_handles). When script_inline is provided, script_runtime MUST also be specified.".to_string(),
+                description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).".to_string(),
                 required: false,
             },
         ];
 
-    // Add script parameters based on scripting mode
-    match selected_mode {
-            crate::state::app_state::ScriptingMode::On => {
-                // ON mode: LLM chooses runtime from available options
-                let available_runtimes = env.format_available();
-                parameters.extend(vec![
-                Parameter {
-                    name: "script_runtime".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "REQUIRED when script_inline is provided: Choose runtime for script execution. Available: {}. Choose the best runtime for the task.",
-                        available_runtimes
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Optional: Inline script code to handle deterministic responses instead of LLM. Must match the script_runtime language. If provided, the script will be executed for network events and script_runtime MUST be specified.".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-            }
-            crate::state::app_state::ScriptingMode::Off => {
-                // OFF mode: no script parameters
-            }
-            crate::state::app_state::ScriptingMode::Python
-            | crate::state::app_state::ScriptingMode::JavaScript
-            | crate::state::app_state::ScriptingMode::Go
-            | crate::state::app_state::ScriptingMode::Perl => {
-                // Specific language mode: only show that language
-                let lang = selected_mode.as_str();
-                parameters.extend(vec![
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Optional: Inline {} script code to handle deterministic responses instead of LLM. If provided, the script will be executed for network events.",
-                        lang
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles, e.g. [\"ssh_auth\", \"ssh_banner\"] or [\"all\"]. Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-    }
+    // Add event_handlers parameter with description based on handler mode
+    let handler_mode_guidance = "You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or \"*\" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.";
+
+    let available_runtimes = env.format_available();
+    let event_handlers_description = format!(
+        "Optional: Array of event handlers to configure how events are processed. {}\\n\\nEach handler has:\\n- event_pattern: Event ID to match (e.g., \\\"tcp_data_received\\\") or \\\"*\\\" for all events\\n- handler: Object with:\\n  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n  - For script: language ({}), code (inline script)\\n  - For static: actions (array of action objects)\\n\\nExample script handler: {{\\\"event_pattern\\\": \\\"ssh_auth\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'send_data','data':'OK'}}]}}))\\\"}}}}\\n\\nExample static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_data\\\", \\\"data\\\": \\\"Welcome\\\"}}]}}}}\\n\\nExample LLM handler: {{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\"}}}}",
+        handler_mode_guidance,
+        available_runtimes
+    );
+
+    parameters.push(Parameter {
+        name: "event_handlers".to_string(),
+        type_hint: "array".to_string(),
+        description: event_handlers_description,
+        required: false,
+    });
 
     let example = json!({
         "type": "open_server",
@@ -403,61 +362,22 @@ pub fn open_client_action(
         },
     ];
 
-    // Add script parameters based on scripting mode
-    match selected_mode {
-        crate::state::app_state::ScriptingMode::On => {
-            let available_runtimes = env.format_available();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_runtime".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Optional: Choose runtime for script execution. Available: {}",
-                        available_runtimes
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Optional: Inline script code to handle client responses instead of LLM. Must match the script_runtime language.".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles (e.g., [\"data_received\"]). Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-        crate::state::app_state::ScriptingMode::Off => {
-            // OFF mode: no script parameters
-        }
-        crate::state::app_state::ScriptingMode::Python
-        | crate::state::app_state::ScriptingMode::JavaScript
-        | crate::state::app_state::ScriptingMode::Go
-        | crate::state::app_state::ScriptingMode::Perl => {
-            let lang = selected_mode.as_str();
-            parameters.extend(vec![
-                Parameter {
-                    name: "script_inline".to_string(),
-                    type_hint: "string".to_string(),
-                    description: format!(
-                        "Optional: Inline {} script code to handle client responses instead of LLM.",
-                        lang
-                    ),
-                    required: false,
-                },
-                Parameter {
-                    name: "script_handles".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Optional: Context types the script handles (e.g., [\"data_received\"]). Defaults to [\"all\"].".to_string(),
-                    required: false,
-                },
-            ]);
-        }
-    }
+    // Add event_handlers parameter
+    let handler_mode_guidance = "You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or \"*\" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.";
+
+    let available_runtimes = env.format_available();
+    let event_handlers_description = format!(
+        "Optional: Array of event handlers to configure how client events are processed. {}\\n\\nEach handler has:\\n- event_pattern: Event ID to match (e.g., \\\"http_response_received\\\") or \\\"*\\\" for all events\\n- handler: Object with:\\n  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n  - For script: language ({}), code (inline script)\\n  - For static: actions (array of action objects)\\n\\nExample script handler: {{\\\"event_pattern\\\": \\\"redis_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'execute_redis_command','command':'PING'}}]}}))\\\"}}}}\\n\\nExample static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}",
+        handler_mode_guidance,
+        available_runtimes
+    );
+
+    parameters.push(Parameter {
+        name: "event_handlers".to_string(),
+        type_hint: "array".to_string(),
+        description: event_handlers_description,
+        required: false,
+    });
 
     let example = json!({
         "type": "open_client",

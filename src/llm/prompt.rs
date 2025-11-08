@@ -372,6 +372,7 @@ Your response must be **pure JSON** only:
             .field("include_disabled_protocols", include_disabled)
             .field("scripting_enabled", has_scripting)
             .field("selected_scripting_mode", selected_mode.as_str())
+            .field("event_handler_mode", state.get_event_handler_mode().await.as_str())
             .field("mode", state.get_mode().await.as_str())
             .field("servers", &servers_data)
             .optional_field("active_server", active_server_data)
