@@ -1083,7 +1083,7 @@ impl StickyFooter {
             ("".to_string(), self.palette.success)
         } else {
             (
-                format!("{} excluded (/dep)", total_excluded),
+                format!("{} excluded (/env)", total_excluded),
                 self.palette.ask
             )
         }
