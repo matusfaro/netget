@@ -1,6 +1,6 @@
 //! Socket File client E2E tests
 
-#[cfg(all(test, feature = "socket_file"))]
+#[cfg(all(test, feature = "socket_file", unix))]
 mod tests {
     use netget::llm::ollama_client::OllamaClient;
     use netget::state::app_state::AppState;

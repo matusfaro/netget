@@ -317,9 +317,9 @@ pub mod socks5;
 pub use socks5::actions::Socks5ClientProtocol;
 
 // socket_file client
-#[cfg(feature = "socket_file")]
+#[cfg(all(feature = "socket_file", unix))]
 pub mod socket_file;
-#[cfg(feature = "socket_file")]
+#[cfg(all(feature = "socket_file", unix))]
 pub use socket_file::SocketFileClientProtocol;
 
 // sqs client
