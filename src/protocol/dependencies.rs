@@ -4,7 +4,10 @@
 //! checking logic to determine if dependencies are available.
 
 use std::process::Command;
-use tracing::{debug, warn};
+use tracing::debug;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+use tracing::warn;
 
 /// A runtime dependency that a protocol requires
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
