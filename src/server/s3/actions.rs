@@ -206,25 +206,7 @@ pub fn get_s3_event_types() -> Vec<EventType> {
     ]
 }
 
-impl Server for S3Protocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::s3::S3Server;
-            S3Server::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
+impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -277,6 +259,66 @@ impl Server for S3Protocol {
             send_s3_bucket_list_action(),
             send_s3_error_action(),
         ]
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "S3"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_s3_event_types()
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>S3"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["s3", "object storage", "minio"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("hyper v1.5 HTTP with manual S3 REST API")
+            .llm_control("All S3 operations (GetObject, PutObject, ListBuckets)")
+            .e2e_testing("aws-sdk-s3 / rust-s3 client")
+            .notes("Virtual objects (no persistence)")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "S3-compatible object storage server"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Start an S3-compatible server on port 9000 with a test-bucket containing hello.txt"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Web & File"
+    }
+}
+
+impl Server for S3Protocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::s3::S3Server;
+            S3Server::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            ).await
+        })
     }
 
     fn execute_action(&self, action: Value) -> Result<ActionResult> {
@@ -363,45 +405,5 @@ impl Server for S3Protocol {
             }
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type))
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "S3"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_s3_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>S3"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["s3", "object storage", "minio"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("hyper v1.5 HTTP with manual S3 REST API")
-            .llm_control("All S3 operations (GetObject, PutObject, ListBuckets)")
-            .e2e_testing("aws-sdk-s3 / rust-s3 client")
-            .notes("Virtual objects (no persistence)")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "S3-compatible object storage server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an S3-compatible server on port 9000 with a test-bucket containing hello.txt"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Web & File"
     }
 }
