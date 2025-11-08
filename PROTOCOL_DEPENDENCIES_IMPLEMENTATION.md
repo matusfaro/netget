@@ -48,7 +48,9 @@ Each dependency provides:
 
 ### 4. UI Integration
 
-**/dep Command** (`/deps`, `/dependencies`):
+**/env Command** (`/environment`):
+- Shows system information (OS, architecture, versions)
+- Shows LLM configuration (model, web search, scripting)
 - Shows system capabilities (root, privileged ports, raw sockets)
 - Lists excluded server protocols with missing dependencies
 - Lists excluded client protocols with missing dependencies
@@ -56,9 +58,9 @@ Each dependency provides:
 
 **TUI Status Bar** (`src/cli/sticky_footer.rs`):
 - Replaced separate "Ports<1024 denied" and "PCAP denied" indicators
-- New unified indicator: `N excluded (/dep)` where N is the count
+- New unified indicator: `N excluded (/env)` where N is the count
 - Shows nothing if all protocols are available
-- Hints user to run `/dep` command for details
+- Hints user to run `/env` command for details
 
 ## Protocol Dependency Mapping
 
@@ -95,7 +97,7 @@ Based on analysis of all protocol CLAUDE.md files, here are the runtime dependen
 - ✅ Protocol trait with `get_dependencies()` method
 - ✅ ProtocolDependency enum with availability checking
 - ✅ Dependency checking in ServerRegistry and ClientRegistry
-- ✅ `/dep` slash command to show excluded protocols
+- ✅ `/env` slash command to show environment and excluded protocols
 - ✅ TUI status bar showing unified dependency status
 - ✅ System library checking (ldconfig, pkg-config, dyld)
 - ✅ Tool checking (which/where command)
@@ -105,7 +107,7 @@ Based on analysis of all protocol CLAUDE.md files, here are the runtime dependen
 
 - ⏳ Update individual protocols to return their dependencies
 - ⏳ Filter LLM prompts to exclude unavailable protocols
-- ⏳ Show dependency warnings when user tries to use excluded protocol
+- ⏳ Show dependency warnings when user tries to use excluded protocol with /env hint
 
 ## How to Add Dependencies to a Protocol
 
@@ -162,27 +164,27 @@ To test the dependency system:
 1. **Without root/capabilities:**
    ```bash
    ./netget
-   # In TUI, type: /dep
-   # Should show excluded protocols (ARP, DataLink, etc.)
+   # In TUI, type: /env
+   # Should show system info, LLM config, and excluded protocols (ARP, DataLink, etc.)
    ```
 
 2. **With CAP_NET_RAW:**
    ```bash
    sudo setcap cap_net_raw+ep ./target/release/netget
    ./target/release/netget
-   # /dep should show fewer exclusions
+   # /env should show fewer exclusions (ARP, DataLink now available)
    ```
 
 3. **As root:**
    ```bash
    sudo ./netget
-   # /dep should show only protocols missing system libraries/tools
+   # /env should show only protocols missing system libraries/tools
    ```
 
 ## Future Enhancements
 
 1. **LLM Prompt Filtering**: Exclude unavailable protocols from `open_server` action documentation
-2. **Runtime Warnings**: When user tries to use excluded protocol, show friendly error with /dep hint
+2. **Runtime Warnings**: When user tries to use excluded protocol, show friendly error with /env hint
 3. **Conditional Dependencies**: Some protocols have optional dependencies (e.g., gRPC protoc only for .proto files)
 4. **Dependency Installation**: Integrate with package managers to suggest installation commands
 5. **Docker Support**: Special handling for containerized environments
@@ -196,8 +198,8 @@ To test the dependency system:
 5. `src/protocol/mod.rs` - Export dependencies module
 6. `src/protocol/server_registry.rs` - Added dependency checking methods
 7. `src/protocol/client_registry.rs` - Added dependency checking methods
-8. `src/events/types.rs` - Added ShowDependencies command
-9. `src/events/handler.rs` - Added handle_show_dependencies() method
+8. `src/events/types.rs` - Added ShowEnvironment command
+9. `src/events/handler.rs` - Added handle_show_environment() method with system info
 10. `src/cli/sticky_footer.rs` - Updated status bar with unified dependency indicator
 
 ## References

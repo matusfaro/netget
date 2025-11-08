@@ -162,8 +162,8 @@ impl EventHandler {
                 self.handle_show_docs(protocol, ui).await?;
                 Ok(false)
             }
-            UserCommand::ShowDependencies => {
-                self.handle_show_dependencies(ui).await?;
+            UserCommand::ShowEnvironment => {
+                self.handle_show_environment(ui).await?;
                 Ok(false)
             }
         }
@@ -1244,16 +1244,35 @@ impl EventHandler {
         Ok(())
     }
 
-    /// Handle show dependencies command - display protocol dependencies and exclusions
-    async fn handle_show_dependencies(&mut self, ui: &mut App) -> Result<()> {
+    /// Handle show environment command - display environment information
+    async fn handle_show_environment(&mut self, ui: &mut App) -> Result<()> {
         use crate::protocol::{registry, CLIENT_REGISTRY};
+
+        ui.add_llm_message("".to_string());
+        ui.add_llm_message("=== NetGet Environment ===".to_string());
+        ui.add_llm_message("".to_string());
+
+        // System information
+        ui.add_llm_message("System Information:".to_string());
+        ui.add_llm_message(format!("  OS: {}", std::env::consts::OS));
+        ui.add_llm_message(format!("  Architecture: {}", std::env::consts::ARCH));
+        ui.add_llm_message(format!("  Rust Version: {}", env!("CARGO_PKG_RUST_VERSION", "unknown")));
+        ui.add_llm_message(format!("  NetGet Version: {}", env!("CARGO_PKG_VERSION")));
+        ui.add_llm_message("".to_string());
+
+        // LLM configuration
+        let model = self.state.get_ollama_model().await;
+        let web_search_mode = self.state.get_web_search_mode().await;
+        let scripting_mode = self.state.get_scripting_mode().await;
+
+        ui.add_llm_message("LLM Configuration:".to_string());
+        ui.add_llm_message(format!("  Ollama Model: {}", model));
+        ui.add_llm_message(format!("  Web Search: {}", web_search_mode.as_str()));
+        ui.add_llm_message(format!("  Scripting: {}", scripting_mode.as_str()));
+        ui.add_llm_message("".to_string());
 
         // Get system capabilities
         let caps = self.state.get_system_capabilities().await;
-
-        ui.add_llm_message("".to_string());
-        ui.add_llm_message("=== Protocol Dependencies ===".to_string());
-        ui.add_llm_message("".to_string());
 
         // Check server protocols
         let server_excluded = registry().get_excluded_protocols(&caps);
@@ -1266,8 +1285,8 @@ impl EventHandler {
         // System capabilities summary
         ui.add_llm_message("System Capabilities:".to_string());
         ui.add_llm_message(format!("  Root Access: {}", if caps.is_root { "Yes" } else { "No" }));
-        ui.add_llm_message(format!("  Privileged Ports: {}", if caps.can_bind_privileged_ports { "Yes" } else { "No" }));
-        ui.add_llm_message(format!("  Raw Socket Access: {}", if caps.has_raw_socket_access { "Yes" } else { "No" }));
+        ui.add_llm_message(format!("  Privileged Ports (<1024): {}", if caps.can_bind_privileged_ports { "Yes" } else { "No" }));
+        ui.add_llm_message(format!("  Raw Socket Access (pcap): {}", if caps.has_raw_socket_access { "Yes" } else { "No" }));
         ui.add_llm_message("".to_string());
 
         // Summary
