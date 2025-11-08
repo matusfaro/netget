@@ -108,6 +108,8 @@ pub mod s3;
 pub mod sqs;
 #[cfg(feature = "ssh")]
 pub mod ssh;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;
 #[cfg(feature = "stun")]
 pub mod stun;
 #[cfg(feature = "tcp")]
