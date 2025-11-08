@@ -114,7 +114,8 @@ impl ClientRegistry {
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::client::kafka::KafkaClientProtocol::new()));
 
-        // kubernetes feature disabled: k8s-openapi requires version features library crates cannot enable
+        #[cfg(feature = "kubernetes")]
+        self.register(Arc::new(crate::client::kubernetes::KubernetesClientProtocol::new()));
 
         #[cfg(feature = "ldap")]
         self.register(Arc::new(crate::client::ldap::LdapClientProtocol::new()));
