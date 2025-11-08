@@ -26,7 +26,6 @@ use dhcproto::{v4, Decodable, Decoder};
 enum ConnectionState {
     Idle,
     Processing,
-    Accumulating,
 }
 
 /// Per-client data for LLM handling
@@ -331,7 +330,7 @@ impl DhcpClient {
                                 // Reset to idle state
                                 client_data_clone.lock().await.state = ConnectionState::Idle;
                             }
-                            ConnectionState::Processing | ConnectionState::Accumulating => {
+                            ConnectionState::Processing => {
                                 // Queue data for later processing
                                 debug!("DHCP client {} is processing, queueing response", client_id);
                             }

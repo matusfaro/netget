@@ -40,10 +40,9 @@ DHCP clients bind to port 68:
 - Receives responses from DHCP servers on port 67
 
 ### 3. Connection State Machine
-Each client maintains state (Idle/Processing/Accumulating):
+Each client maintains state (Idle/Processing):
 - **Idle**: Ready to process new responses
 - **Processing**: LLM is analyzing response, queue incoming data
-- **Accumulating**: Waiting for more data (not used for DHCP, reserved for future)
 
 This prevents concurrent LLM calls on the same client.
 
