@@ -368,11 +368,7 @@ impl EventHandler {
                 initial_memory,
                 instruction,
                 startup_params,
-                script_runtime,
-                script_language: _,
-                script_path: _,
-                script_inline,
-                script_handles,
+                event_handlers,
                 scheduled_tasks,
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
@@ -403,30 +399,15 @@ impl EventHandler {
                 // Add server to state (this assigns the real ID)
                 let server_id = self.state.add_server(server).await;
 
-                // Set up script configuration if provided
-                if script_inline.is_some() {
-                    let selected_mode = self.state.get_selected_scripting_mode().await;
-                    match crate::scripting::ScriptManager::build_config(
-                        selected_mode,
-                        script_runtime.as_deref(),
-                        script_inline.as_deref(),
-                        script_handles,
-                    ) {
-                        Ok(Some(config)) => {
-                            let scripting_env = self.state.get_scripting_env().await;
-                            if scripting_env.is_available(config.language) {
-                                self.state.set_script_config(server_id, Some(config)).await;
-                                let _ = status_tx.send("[INFO] Script configuration applied to server".to_string());
-                            } else {
-                                let _ = status_tx.send(format!(
-                                    "[WARN] {} not available, script not configured",
-                                    config.language.as_str()
-                                ));
-                            }
+                // Parse event handlers if provided
+                if let Some(handlers_json) = event_handlers {
+                    match Self::parse_event_handlers(handlers_json) {
+                        Ok(config) => {
+                            self.state.set_event_handler_config(server_id, Some(config)).await;
+                            let _ = status_tx.send("[INFO] Event handler configuration applied to server".to_string());
                         }
-                        Ok(None) => {}
                         Err(e) => {
-                            let _ = status_tx.send(format!("[WARN] Failed to build script config: {}", e));
+                            let _ = status_tx.send(format!("[WARN] Failed to parse event handlers: {}", e));
                         }
                     }
                 }
@@ -607,118 +588,6 @@ impl EventHandler {
                     self.state.append_memory(server_id, value).await;
                 }
             }
-            CommonAction::UpdateScript {
-                server_id,
-                operation,
-                script_runtime,
-                script_language: _,
-                script_path: _,
-                script_inline,
-                script_handles,
-            } => {
-                use crate::scripting::types::ScriptUpdateOperation;
-
-                let target_server_id = crate::state::ServerId::new(server_id);
-
-                // Parse operation
-                let op = ScriptUpdateOperation::from_str(&operation)
-                    .unwrap_or(ScriptUpdateOperation::Set);
-
-                match op {
-                    ScriptUpdateOperation::Set => {
-                        // Build new script configuration using selected mode
-                        let selected_mode = self.state.get_selected_scripting_mode().await;
-                        match crate::scripting::ScriptManager::build_config(
-                            selected_mode,
-                            script_runtime.as_deref(),
-                            script_inline.as_deref(),
-                            script_handles,
-                        ) {
-                            Ok(Some(new_config)) => {
-                                // Check if language is available
-                                let scripting_env = self.state.get_scripting_env().await;
-                                if scripting_env.is_available(new_config.language) {
-                                    self.state.set_script_config(target_server_id, Some(new_config.clone())).await;
-                                    let _ = status_tx.send(format!(
-                                        "[INFO] Server #{} script updated ({} handling {:?})",
-                                        target_server_id.as_u32(),
-                                        new_config.language.as_str(),
-                                        new_config.handles_contexts
-                                    ));
-                                } else {
-                                    let _ = status_tx.send(format!(
-                                        "[WARN] {} not available, script not updated",
-                                        new_config.language.as_str()
-                                    ));
-                                }
-                            }
-                            Ok(None) => {
-                                // Null values mean disable/unset the script
-                                self.state.set_script_config(target_server_id, None).await;
-                                let _ = status_tx.send(format!(
-                                    "[INFO] Server #{} script disabled (null values provided)",
-                                    target_server_id.as_u32()
-                                ));
-                            }
-                            Err(e) => {
-                                let _ = status_tx.send(format!("[ERROR] Failed to build script config: {}", e));
-                            }
-                        }
-                    }
-                    ScriptUpdateOperation::AddContexts => {
-                        if let Some(contexts) = script_handles {
-                            if let Some(mut config) = self.state.get_script_config(target_server_id).await {
-                                config.add_contexts(contexts.clone());
-                                self.state.set_script_config(target_server_id, Some(config.clone())).await;
-                                let _ = status_tx.send(format!(
-                                    "[INFO] Server #{} script now handles: {:?}",
-                                    target_server_id.as_u32(),
-                                    config.handles_contexts
-                                ));
-                            } else {
-                                let _ = status_tx.send(format!(
-                                    "[WARN] Server #{} has no script configuration to update",
-                                    target_server_id.as_u32()
-                                ));
-                            }
-                        }
-                    }
-                    ScriptUpdateOperation::RemoveContexts => {
-                        if let Some(contexts) = script_handles {
-                            if let Some(mut config) = self.state.get_script_config(target_server_id).await {
-                                config.remove_contexts(&contexts);
-                                if config.handles_contexts.is_empty() {
-                                    // No contexts left, disable script
-                                    self.state.set_script_config(target_server_id, None).await;
-                                    let _ = status_tx.send(format!(
-                                        "[INFO] Server #{} script disabled (no contexts remaining)",
-                                        target_server_id.as_u32()
-                                    ));
-                                } else {
-                                    self.state.set_script_config(target_server_id, Some(config.clone())).await;
-                                    let _ = status_tx.send(format!(
-                                        "[INFO] Server #{} script now handles: {:?}",
-                                        target_server_id.as_u32(),
-                                        config.handles_contexts
-                                    ));
-                                }
-                            } else {
-                                let _ = status_tx.send(format!(
-                                    "[WARN] Server #{} has no script configuration to update",
-                                    target_server_id.as_u32()
-                                ));
-                            }
-                        }
-                    }
-                    ScriptUpdateOperation::Disable => {
-                        self.state.set_script_config(target_server_id, None).await;
-                        let _ = status_tx.send(format!(
-                            "[INFO] Server #{} script disabled, using LLM only",
-                            target_server_id.as_u32()
-                        ));
-                    }
-                }
-            }
             CommonAction::AppendToLog { .. } => {
                 // AppendToLog is handled by the action executor, not here
                 // This match arm exists to satisfy exhaustiveness checking
@@ -879,11 +748,7 @@ impl EventHandler {
                 instruction,
                 startup_params,
                 initial_memory,
-                script_runtime,
-                script_language: _,
-                script_path: _,
-                script_inline,
-                script_handles,
+                event_handlers,
                 scheduled_tasks,
             } => {
                 use crate::state::client::{ClientInstance, ClientStatus};
@@ -905,30 +770,15 @@ impl EventHandler {
                 // Add client to state (this allocates the real client ID)
                 let client_id = self.state.add_client(client).await;
 
-                // Set script configuration if provided
-                if script_runtime.is_some() || script_inline.is_some() || script_handles.is_some() {
-                    let selected_mode = self.state.get_selected_scripting_mode().await;
-                    match crate::scripting::ScriptManager::build_config(
-                        selected_mode,
-                        script_runtime.as_deref(),
-                        script_inline.as_deref(),
-                        script_handles,
-                    ) {
-                        Ok(Some(config)) => {
-                            let scripting_env = self.state.get_scripting_env().await;
-                            if scripting_env.is_available(config.language) {
-                                self.state.set_client_script_config(client_id, Some(config)).await;
-                                let _ = status_tx.send("[INFO] Script configuration applied to client".to_string());
-                            } else {
-                                let _ = status_tx.send(format!(
-                                    "[WARN] {} not available, script not configured",
-                                    config.language.as_str()
-                                ));
-                            }
+                // Parse event handlers if provided
+                if let Some(handlers_json) = event_handlers {
+                    match Self::parse_event_handlers(handlers_json) {
+                        Ok(config) => {
+                            self.state.set_client_event_handler_config(client_id, Some(config)).await;
+                            let _ = status_tx.send("[INFO] Event handler configuration applied to client".to_string());
                         }
-                        Ok(None) => {}
                         Err(e) => {
-                            let _ = status_tx.send(format!("[ERROR] Failed to build script config: {}", e));
+                            let _ = status_tx.send(format!("[WARN] Failed to parse event handlers: {}", e));
                         }
                     }
                 }
@@ -1118,6 +968,55 @@ impl EventHandler {
         }
 
         Ok(())
+    }
+
+    /// Parse event handlers from JSON array into EventHandlerConfig
+    fn parse_event_handlers(handlers_json: Vec<serde_json::Value>) -> Result<crate::scripting::EventHandlerConfig> {
+        use crate::scripting::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};
+
+        let mut config = EventHandlerConfig::new();
+
+        for handler_json in handlers_json {
+            // Parse event_pattern field
+            let event_pattern = if let Some(pattern_str) = handler_json.get("event_pattern").and_then(|v| v.as_str()) {
+                EventPattern::from(pattern_str)
+            } else {
+                // Default to wildcard if not specified
+                EventPattern::wildcard()
+            };
+
+            // Parse handler field
+            let handler_type_json = handler_json.get("handler")
+                .ok_or_else(|| anyhow::anyhow!("Missing 'handler' field in event handler configuration"))?;
+
+            let handler_type_str = handler_type_json.get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'type' field in handler configuration"))?;
+
+            let handler_type = match handler_type_str {
+                "llm" => EventHandlerType::Llm,
+                "script" => {
+                    let language = handler_type_json.get("language")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("Missing 'language' field for script handler"))?;
+                    let code = handler_type_json.get("code")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("Missing 'code' field for script handler"))?;
+                    EventHandlerType::script(language, code)
+                }
+                "static" => {
+                    let actions = handler_type_json.get("actions")
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'actions' field for static handler"))?;
+                    EventHandlerType::static_response(actions.clone())
+                }
+                _ => anyhow::bail!("Unknown handler type: {}", handler_type_str),
+            };
+
+            config.add_handler(EventHandler::new(event_pattern, handler_type));
+        }
+
+        Ok(config)
     }
 
     async fn handle_quit(&mut self, ui: &mut App) -> Result<()> {
