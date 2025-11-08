@@ -8,7 +8,7 @@ pub mod actions;
 pub use actions::SshAgentClientProtocol;
 
 use anyhow::{Context, Result};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
 use crate::llm::action_helper::call_llm_for_client;
-use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -131,16 +131,38 @@ impl SshAgentClient {
 
                     // Execute initial actions
                     for action in actions {
-                        if let Err(e) = Self::execute_custom_action(
-                            action,
-                            client_id,
-                            &write_half_arc,
-                            &app_state,
-                            &status_tx,
-                        )
-                        .await
-                        {
-                            error!("Failed to execute action: {}", e);
+                        use crate::llm::actions::client_trait::Client;
+                        match protocol.as_ref().execute_action(action) {
+                            Ok(ClientActionResult::Custom { name, data }) => {
+                                if let Err(e) = Self::handle_custom_action(
+                                    &name,
+                                    data,
+                                    client_id,
+                                    &write_half_arc,
+                                    &app_state,
+                                    &status_tx,
+                                )
+                                .await
+                                {
+                                    error!("Failed to execute custom action: {}", e);
+                                }
+                            }
+                            Ok(ClientActionResult::Disconnect) => {
+                                info!("SSH Agent client {} disconnecting", client_id);
+                                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                return Ok("127.0.0.1:0".parse().unwrap());
+                            }
+                            Ok(ClientActionResult::WaitForMore) => {}
+                            Ok(ClientActionResult::NoAction) => {}
+                            Ok(ClientActionResult::SendData(_)) => {
+                                error!("SendData not expected in SSH Agent client (protocol should use Custom actions)");
+                            }
+                            Ok(ClientActionResult::Multiple(_)) => {
+                                error!("Multiple not expected in SSH Agent client (protocol should use individual actions)");
+                            }
+                            Err(e) => {
+                                error!("Action execution error: {}", e);
+                            }
                         }
                     }
                 }
@@ -228,7 +250,13 @@ impl SshAgentClient {
                                                                 return;
                                                             }
                                                             Ok(ClientActionResult::WaitForMore) => {}
-                                                            Ok(ClientActionResult::ModifyInstruction(_)) => {}
+                                                            Ok(ClientActionResult::NoAction) => {}
+                                                            Ok(ClientActionResult::SendData(_)) => {
+                                                                error!("SendData not expected in SSH Agent client (protocol should use Custom actions)");
+                                                            }
+                                                            Ok(ClientActionResult::Multiple(_)) => {
+                                                                error!("Multiple not expected in SSH Agent client (protocol should use individual actions)");
+                                                            }
                                                             Err(e) => {
                                                                 error!("Action execution error: {}", e);
                                                             }
@@ -249,7 +277,7 @@ impl SshAgentClient {
                                 // Check for queued data
                                 let mut client_data_lock = client_data.lock().await;
                                 if client_data_lock.state == ConnectionState::Accumulating {
-                                    let queued = std::mem::take(&mut client_data_lock.queued_data);
+                                    let _queued = std::mem::take(&mut client_data_lock.queued_data);
                                     client_data_lock.state = ConnectionState::Idle;
                                     drop(client_data_lock);
                                     // Process queued data (recursive)
@@ -271,7 +299,7 @@ impl SshAgentClient {
                     }
                     Err(e) => {
                         error!("SSH Agent client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error).await;
+                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
                         break;
                     }
                 }
@@ -337,26 +365,6 @@ impl SshAgentClient {
             _ => {
                 anyhow::bail!("Unknown SSH Agent response type: {}", msg_type);
             }
-        }
-    }
-
-    /// Execute custom action from LLM
-    async fn execute_custom_action(
-        result: ClientActionResult,
-        client_id: ClientId,
-        write_half: &Arc<Mutex<tokio::io::WriteHalf<UnixStream>>>,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        match result {
-            ClientActionResult::Custom { name, data } => {
-                Self::handle_custom_action(&name, data, client_id, write_half, app_state, status_tx).await
-            }
-            ClientActionResult::Disconnect => {
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                Ok(())
-            }
-            _ => Ok(()),
         }
     }
 

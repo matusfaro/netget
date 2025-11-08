@@ -6,7 +6,7 @@
 pub mod actions;
 
 use anyhow::{Context, Result};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -226,53 +226,47 @@ impl SshAgentServer {
         );
 
         // Call LLM with connection opened event
-        if let Some(instruction) = app_state.get_instruction_for_server(server_id).await {
-            let event = Event::new(
-                &SSH_AGENT_CONNECTION_OPENED_EVENT,
-                serde_json::json!({
-                    "connection_id": connection_id.to_string(),
-                }),
-            );
+        let event = Event::new(
+            &SSH_AGENT_CONNECTION_OPENED_EVENT,
+            serde_json::json!({
+                "connection_id": connection_id.to_string(),
+            }),
+        );
 
-            match call_llm(
-                &llm_client,
-                &app_state,
-                server_id.to_string(),
-                connection_id.to_string(),
-                &instruction,
-                "",
-                Some(&event),
-                protocol.as_ref(),
-                &status_tx,
-            )
-            .await
-            {
-                Ok((actions, memory_updates)) => {
-                    if let Some(mem) = memory_updates {
-                        if let Some(conn_data) = connections.lock().await.get_mut(&connection_id) {
-                            conn_data.memory = mem;
-                        }
-                    }
+        match call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(execution_result) => {
+                // Display messages
+                for msg in execution_result.messages {
+                    let _ = status_tx.send(msg);
+                }
 
-                    // Execute initial actions if any
-                    for action in actions {
-                        if let Err(e) = Self::execute_action_result(
-                            action,
-                            connection_id,
-                            server_id,
-                            &connections,
-                            &app_state,
-                            &status_tx,
-                        )
-                        .await
-                        {
-                            error!("Failed to execute action: {}", e);
-                        }
+                // Execute protocol actions
+                for action in execution_result.protocol_results {
+                    if let Err(e) = Self::execute_action_result(
+                        action,
+                        connection_id,
+                        server_id,
+                        &connections,
+                        &app_state,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        error!("Failed to execute action: {}", e);
                     }
                 }
-                Err(e) => {
-                    error!("LLM error on connection opened: {}", e);
-                }
+            }
+            Err(e) => {
+                error!("LLM error on connection opened: {}", e);
             }
         }
     }
@@ -303,7 +297,7 @@ impl SshAgentServer {
                 drop(conns);
 
                 // Parse and handle message
-                Self::process_message_with_llm(
+                Box::pin(Self::process_message_with_llm(
                     connection_id,
                     server_id,
                     data.to_vec(),
@@ -313,7 +307,7 @@ impl SshAgentServer {
                     connections.clone(),
                     protocol,
                     current_memory,
-                )
+                ))
                 .await;
             }
             ConnectionState::Processing => {
@@ -348,7 +342,7 @@ impl SshAgentServer {
         status_tx: mpsc::UnboundedSender<String>,
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: Arc<SshAgentProtocol>,
-        current_memory: String,
+        _current_memory: String,
     ) {
         // Parse SSH Agent message
         let event = match Self::parse_message(&data) {
@@ -386,48 +380,41 @@ impl SshAgentServer {
         };
 
         // Call LLM
-        if let Some(instruction) = app_state.get_instruction_for_server(server_id).await {
-            match call_llm(
-                &llm_client,
-                &app_state,
-                server_id.to_string(),
-                connection_id.to_string(),
-                &instruction,
-                &current_memory,
-                Some(&event),
-                protocol.as_ref(),
-                &status_tx,
-            )
-            .await
-            {
-                Ok((actions, memory_updates)) => {
-                    // Update memory
-                    if let Some(mem) = memory_updates {
-                        if let Some(conn_data) = connections.lock().await.get_mut(&connection_id) {
-                            conn_data.memory = mem;
-                        }
-                    }
+        match call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(execution_result) => {
+                // Send messages to TUI
+                for msg in execution_result.messages {
+                    let _ = status_tx.send(msg);
+                }
 
-                    // Execute actions
-                    for action in actions {
-                        if let Err(e) = Self::execute_action_result(
-                            action,
-                            connection_id,
-                            server_id,
-                            &connections,
-                            &app_state,
-                            &status_tx,
-                        )
-                        .await
-                        {
-                            error!("Failed to execute action: {}", e);
-                        }
+                // Execute actions
+                for action in execution_result.protocol_results {
+                    if let Err(e) = Self::execute_action_result(
+                        action,
+                        connection_id,
+                        server_id,
+                        &connections,
+                        &app_state,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        error!("Failed to execute action: {}", e);
                     }
                 }
-                Err(e) => {
-                    error!("LLM error: {}", e);
-                    Self::send_failure(connection_id, &connections).await;
-                }
+            }
+            Err(e) => {
+                error!("LLM error: {}", e);
+                Self::send_failure(connection_id, &connections).await;
             }
         }
 
@@ -582,10 +569,10 @@ impl SshAgentServer {
                     }
                 }
             }
-            ActionResult::CloseConnection(conn_id) => {
-                connections.lock().await.remove(&conn_id);
-                app_state.close_connection_on_server(server_id, conn_id).await;
-                let _ = status_tx.send(format!("✗ SSH Agent connection {} closed", conn_id));
+            ActionResult::CloseConnection => {
+                connections.lock().await.remove(&connection_id);
+                app_state.close_connection_on_server(server_id, connection_id).await;
+                let _ = status_tx.send(format!("✗ SSH Agent connection {} closed", connection_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {}
@@ -696,7 +683,7 @@ impl SshAgentServer {
                 let current_memory = conn_data.memory.clone();
                 drop(conns);
 
-                Self::process_message_with_llm(
+                Box::pin(Self::process_message_with_llm(
                     connection_id,
                     server_id,
                     queued,
@@ -706,7 +693,7 @@ impl SshAgentServer {
                     connections,
                     protocol,
                     current_memory,
-                )
+                ))
                 .await;
             } else {
                 conn_data.state = ConnectionState::Idle;
