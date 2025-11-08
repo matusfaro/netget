@@ -81,26 +81,7 @@ impl StunClientProtocol {
     }
 }
 
-impl Client for StunClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::stun::StunClient;
-            StunClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
+impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![]
     }
@@ -145,25 +126,6 @@ impl Client for StunClientProtocol {
                 }),
             },
         ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_binding_request" => {
-                Ok(ClientActionResult::Custom {
-                    name: "send_binding_request".to_string(),
-                    data: json!({}),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown STUN client action: {}", action_type)),
-        }
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -216,5 +178,45 @@ impl Client for StunClientProtocol {
 
     fn group_name(&self) -> &'static str {
         "Network Infrastructure"
+    }
+}
+
+impl Client for StunClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::stun::StunClient;
+            StunClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_binding_request" => {
+                Ok(ClientActionResult::Custom {
+                    name: "send_binding_request".to_string(),
+                    data: json!({}),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!("Unknown STUN client action: {}", action_type)),
+        }
     }
 }

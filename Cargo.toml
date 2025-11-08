@@ -41,8 +41,8 @@ webdav = ["dav-server", "dep:reqwest_dav"]
 nfs = ["nfsserve", "dep:nfs3_client"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
 smb = ["smb-msg"]
+stun = ["dep:webrtc-stun", "dep:stunclient"]
 smb-client = ["smb", "pavao"]  # SMB client requires native libsmbclient library
-stun = ["dep:webrtc-stun"]
 turn = ["dep:webrtc-turn"]
 webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
@@ -321,6 +321,7 @@ pavao = { version = "0.2", optional = true }
 
 # STUN server (Session Traversal Utilities for NAT)
 webrtc-stun = { version = "0.1", optional = true }
+stunclient = { version = "0.4", optional = true }  # STUN client for discovering external IP/port
 
 # TURN server (Traversal Using Relays around NAT)
 webrtc-turn = { version = "0.1", optional = true }
