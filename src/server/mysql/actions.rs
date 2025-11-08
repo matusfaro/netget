@@ -1,7 +1,7 @@
 //! MySQL protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -39,112 +39,106 @@ impl MysqlProtocol {
     }
 }
 
-impl Server for MysqlProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::mysql::MysqlServer;
-            let send_first = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
-                .unwrap_or(false);
-
-            MysqlServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                send_first,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "send_first".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
-                required: false,
-                example: serde_json::json!(false),
-            },
-        ]
-    }
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_mysql_connections_action()]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            mysql_query_response_action(),
-            mysql_error_response_action(),
-            mysql_ok_response_action(),
-            close_this_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "mysql_query_response" => self.execute_mysql_query_response(action),
-            "mysql_error_response" => self.execute_mysql_error_response(action),
-            "mysql_ok_response" => self.execute_mysql_ok_response(action),
-            "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_mysql_connections" => self.execute_list_mysql_connections(action),
-            _ => Err(anyhow::anyhow!("Unknown MySQL action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for MysqlProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "send_first".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                    required: false,
+                    example: serde_json::json!(false),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "MySQL"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_mysql_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>MySQL"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["mysql"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("opensrv-mysql v0.8 protocol library")
-            .llm_control("Query responses (result sets, OK packets, errors)")
-            .e2e_testing("mysql_async client crate")
-            .notes("No authentication, errors sent as OK (library limitation)")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "MySQL database server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a MySQL server on port 3306"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![list_mysql_connections_action()]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                mysql_query_response_action(),
+                mysql_error_response_action(),
+                mysql_ok_response_action(),
+                close_this_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "MySQL"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_mysql_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>MySQL"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["mysql"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("opensrv-mysql v0.8 protocol library")
+                .llm_control("Query responses (result sets, OK packets, errors)")
+                .e2e_testing("mysql_async client crate")
+                .notes("No authentication, errors sent as OK (library limitation)")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "MySQL database server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a MySQL server on port 3306"
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for MysqlProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::mysql::MysqlServer;
+                let send_first = ctx.startup_params
+                    .as_ref()
+                    .and_then(|p| p.get_optional_bool("send_first"))
+                    .unwrap_or(false);
+    
+                MysqlServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    send_first,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "mysql_query_response" => self.execute_mysql_query_response(action),
+                "mysql_error_response" => self.execute_mysql_error_response(action),
+                "mysql_ok_response" => self.execute_mysql_ok_response(action),
+                "close_this_connection" => Ok(ActionResult::CloseConnection),
+                "list_mysql_connections" => self.execute_list_mysql_connections(action),
+                _ => Err(anyhow::anyhow!("Unknown MySQL action: {}", action_type)),
+            }
+        }
+}
+
 
 impl MysqlProtocol {
     fn execute_mysql_query_response(&self, action: serde_json::Value) -> Result<ActionResult> {

@@ -15,7 +15,7 @@ datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
 dc = []  # DC (Direct Connect) uses only TCP, no extra deps
 dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
-dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # DNS-over-TLS server
+dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
@@ -62,7 +62,7 @@ oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
 saml-sp = ["urlencoding"]  # SAML Service Provider (assertion validation, session management)
-saml = ["quick-xml", "urlencoding", "flate2"]  # SAML client (SP-initiated SSO, assertion validation)
+saml = ["quick-xml", "urlencoding", "dep:flate2"]  # SAML client (SP-initiated SSO, assertion validation)
 wireguard = ["dep:defguard_wireguard_rs", "dep:x25519-dalek"]  # Full WireGuard VPN server with LLM control
 openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:sha2", "dep:hmac", "dep:hkdf"]  # Full OpenVPN VPN server with TLS control channel and data channel encryption
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
@@ -258,6 +258,7 @@ hickory-proto = { version = "0.24", optional = true }
 rustls = { version = "0.23", features = ["ring"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2.0", optional = true }
+webpki-roots = { version = "0.26", optional = true }  # Root certificates for TLS verification
 
 # HTTP/2 support for DoH
 h2 = { version = "0.4", optional = true }
@@ -511,7 +512,6 @@ prost-reflect = "0.14"
 prost-types = "0.13"
 # HTTP/3 (QUIC) client for e2e integration tests
 quinn = "0.11"
-webpki-roots = "0.26"  # Root certificates for TLS verification
 # BitTorrent client for e2e integration tests
 # Using cratetorrent library for programmatic testing, also supports transmission-cli/aria2
 sha1 = "0.10"  # For info_hash calculation

@@ -8,7 +8,7 @@
 //! - Handling HTTPS connections in pass-through mode (allow/block)
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use super::filter::{
@@ -30,174 +30,168 @@ impl ProxyProtocol {
     }
 }
 
-impl Server for ProxyProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::proxy::ProxyServer;
-            ProxyServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                ctx.startup_params,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "certificate_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)".to_string(),
-                required: false,
-                example: json!("generate"),
-            },
-            ParameterDefinition {
-                name: "cert_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to certificate file (only if certificate_mode is 'load_from_file')".to_string(),
-                required: false,
-                example: json!("/path/to/cert.pem"),
-            },
-            ParameterDefinition {
-                name: "key_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to private key file (only if certificate_mode is 'load_from_file')".to_string(),
-                required: false,
-                example: json!("/path/to/key.pem"),
-            },
-            ParameterDefinition {
-                name: "request_filter_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass through)".to_string(),
-                required: false,
-                example: json!("match_only"),
-            },
-            ParameterDefinition {
-                name: "response_filter_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Response filter mode: 'all', 'match_only', or 'none'".to_string(),
-                required: false,
-                example: json!("all"),
-            },
-            ParameterDefinition {
-                name: "https_connection_filter_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTPS connection filter mode (pass-through only): 'all', 'match_only', or 'none'".to_string(),
-                required: false,
-                example: json!("match_only"),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            // Configuration actions (async - can be called anytime)
-            configure_certificate_action(),
-            configure_request_filters_action(),
-            configure_response_filters_action(),
-            configure_https_connection_filters_action(),
-            set_filter_mode_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            // Request handling actions (sync - in response to intercepted request)
-            handle_request_pass_action(),
-            handle_request_block_action(),
-            handle_request_modify_action(),
-            // Response handling actions (sync - in response to intercepted response)
-            handle_response_pass_action(),
-            handle_response_block_action(),
-            handle_response_modify_action(),
-            // HTTPS connection handling (sync - in response to HTTPS CONNECT in pass-through mode)
-            handle_https_connection_allow_action(),
-            handle_https_connection_block_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            // Configuration actions
-            "configure_certificate" => self.execute_configure_certificate(action),
-            "configure_request_filters" => self.execute_configure_request_filters(action),
-            "configure_response_filters" => self.execute_configure_response_filters(action),
-            "configure_https_connection_filters" => {
-                self.execute_configure_https_connection_filters(action)
-            }
-            "set_filter_mode" => self.execute_set_filter_mode(action),
-
-            // Request handling
-            "handle_request_pass" => self.execute_handle_request_pass(action),
-            "handle_request_block" => self.execute_handle_request_block(action),
-            "handle_request_modify" => self.execute_handle_request_modify(action),
-
-            // Response handling
-            "handle_response_pass" => self.execute_handle_response_pass(action),
-            "handle_response_block" => self.execute_handle_response_block(action),
-            "handle_response_modify" => self.execute_handle_response_modify(action),
-
-            // HTTPS connection handling
-            "handle_https_connection_allow" => self.execute_handle_https_connection_allow(action),
-            "handle_https_connection_block" => self.execute_handle_https_connection_block(action),
-
-            _ => Err(anyhow::anyhow!("Unknown Proxy action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for ProxyProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "certificate_mode".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)".to_string(),
+                    required: false,
+                    example: json!("generate"),
+                },
+                ParameterDefinition {
+                    name: "cert_path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to certificate file (only if certificate_mode is 'load_from_file')".to_string(),
+                    required: false,
+                    example: json!("/path/to/cert.pem"),
+                },
+                ParameterDefinition {
+                    name: "key_path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to private key file (only if certificate_mode is 'load_from_file')".to_string(),
+                    required: false,
+                    example: json!("/path/to/key.pem"),
+                },
+                ParameterDefinition {
+                    name: "request_filter_mode".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Request filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass through)".to_string(),
+                    required: false,
+                    example: json!("match_only"),
+                },
+                ParameterDefinition {
+                    name: "response_filter_mode".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Response filter mode: 'all', 'match_only', or 'none'".to_string(),
+                    required: false,
+                    example: json!("all"),
+                },
+                ParameterDefinition {
+                    name: "https_connection_filter_mode".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "HTTPS connection filter mode (pass-through only): 'all', 'match_only', or 'none'".to_string(),
+                    required: false,
+                    example: json!("match_only"),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Proxy"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_proxy_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>PROXY"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["proxy", "mitm"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual HTTP/1.1 with rcgen v0.13")
-            .llm_control("Request/response filtering, HTTPS allow/block")
-            .e2e_testing("curl / HTTP clients")
-            .notes("MITM cert gen works, TLS interception pending")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "HTTP/HTTPS proxy server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an HTTP proxy on port 8080"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Proxy & Network"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                // Configuration actions (async - can be called anytime)
+                configure_certificate_action(),
+                configure_request_filters_action(),
+                configure_response_filters_action(),
+                configure_https_connection_filters_action(),
+                set_filter_mode_action(),
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                // Request handling actions (sync - in response to intercepted request)
+                handle_request_pass_action(),
+                handle_request_block_action(),
+                handle_request_modify_action(),
+                // Response handling actions (sync - in response to intercepted response)
+                handle_response_pass_action(),
+                handle_response_block_action(),
+                handle_response_modify_action(),
+                // HTTPS connection handling (sync - in response to HTTPS CONNECT in pass-through mode)
+                handle_https_connection_allow_action(),
+                handle_https_connection_block_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "Proxy"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_proxy_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>PROXY"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["proxy", "mitm"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual HTTP/1.1 with rcgen v0.13")
+                .llm_control("Request/response filtering, HTTPS allow/block")
+                .e2e_testing("curl / HTTP clients")
+                .notes("MITM cert gen works, TLS interception pending")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "HTTP/HTTPS proxy server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an HTTP proxy on port 8080"
+        }
+        fn group_name(&self) -> &'static str {
+            "Proxy & Network"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for ProxyProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::proxy::ProxyServer;
+                ProxyServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                    ctx.startup_params,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                // Configuration actions
+                "configure_certificate" => self.execute_configure_certificate(action),
+                "configure_request_filters" => self.execute_configure_request_filters(action),
+                "configure_response_filters" => self.execute_configure_response_filters(action),
+                "configure_https_connection_filters" => {
+                    self.execute_configure_https_connection_filters(action)
+                }
+                "set_filter_mode" => self.execute_set_filter_mode(action),
+    
+                // Request handling
+                "handle_request_pass" => self.execute_handle_request_pass(action),
+                "handle_request_block" => self.execute_handle_request_block(action),
+                "handle_request_modify" => self.execute_handle_request_modify(action),
+    
+                // Response handling
+                "handle_response_pass" => self.execute_handle_response_pass(action),
+                "handle_response_block" => self.execute_handle_response_block(action),
+                "handle_response_modify" => self.execute_handle_response_modify(action),
+    
+                // HTTPS connection handling
+                "handle_https_connection_allow" => self.execute_handle_https_connection_allow(action),
+                "handle_https_connection_block" => self.execute_handle_https_connection_block(action),
+    
+                _ => Err(anyhow::anyhow!("Unknown Proxy action: {}", action_type)),
+            }
+        }
+}
+
 
 impl ProxyProtocol {
     // ========================================================================

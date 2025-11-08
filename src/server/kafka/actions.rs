@@ -3,7 +3,7 @@
 //! This module defines the action-based interface for Kafka protocol.
 //! The LLM can control Kafka broker behavior through these actions.
 
-use crate::llm::actions::protocol_trait::ActionResult;
+use crate::llm::actions::protocol_trait::{ActionResult, Protocol};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, Server};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -436,154 +436,148 @@ fn error_response_action() -> ActionDefinition {
     }
 }
 
+// Implement Protocol trait (common functionality)
+impl Protocol for KafkaProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "cluster_id".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Unique cluster identifier".to_string(),
+                    required: false,
+                    example: json!("netget-kafka-1"),
+                },
+                ParameterDefinition {
+                    name: "broker_id".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Broker ID within the cluster".to_string(),
+                    required: false,
+                    example: json!(0),
+                },
+                ParameterDefinition {
+                    name: "auto_create_topics".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Automatically create topics on first produce".to_string(),
+                    required: false,
+                    example: json!(true),
+                },
+                ParameterDefinition {
+                    name: "default_partitions".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Default partition count for auto-created topics".to_string(),
+                    required: false,
+                    example: json!(1),
+                },
+                ParameterDefinition {
+                    name: "log_retention_hours".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Log retention time in hours".to_string(),
+                    required: false,
+                    example: json!(168),
+                },
+            ]
+        }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                publish_message_action(),
+                create_topic_action(),
+                delete_topic_action(),
+                set_retention_action(),
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                produce_response_action(),
+                fetch_response_action(),
+                metadata_response_action(),
+                offset_commit_response_action(),
+                error_response_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "KAFKA"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                PRODUCE_REQUEST_EVENT.clone(),
+                FETCH_REQUEST_EVENT.clone(),
+                METADATA_REQUEST_EVENT.clone(),
+                OFFSET_COMMIT_REQUEST_EVENT.clone(),
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>KAFKA"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["kafka", "kafka broker", "via kafka"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("kafka-protocol v0.13 wire format, manual broker logic")
+                .llm_control("Message routing, topic management, consumer offsets")
+                .e2e_testing("kafka-client / rdkafka")
+                .notes("Core APIs only, in-memory storage, no replication")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Apache Kafka broker for distributed message streaming"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a Kafka broker on port 9092 with topics 'orders' and 'events'. Accept all produce requests and return the last 10 messages on fetch."
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
+}
+
+// Implement Server trait (server-specific functionality)
 impl Server for KafkaProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
-    {
-        Box::pin(async move {
-            use crate::server::kafka::KafkaServer;
-            KafkaServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                ctx.startup_params,
-            )
-            .await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "cluster_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Unique cluster identifier".to_string(),
-                required: false,
-                example: json!("netget-kafka-1"),
-            },
-            ParameterDefinition {
-                name: "broker_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "Broker ID within the cluster".to_string(),
-                required: false,
-                example: json!(0),
-            },
-            ParameterDefinition {
-                name: "auto_create_topics".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Automatically create topics on first produce".to_string(),
-                required: false,
-                example: json!(true),
-            },
-            ParameterDefinition {
-                name: "default_partitions".to_string(),
-                type_hint: "number".to_string(),
-                description: "Default partition count for auto-created topics".to_string(),
-                required: false,
-                example: json!(1),
-            },
-            ParameterDefinition {
-                name: "log_retention_hours".to_string(),
-                type_hint: "number".to_string(),
-                description: "Log retention time in hours".to_string(),
-                required: false,
-                example: json!(168),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            publish_message_action(),
-            create_topic_action(),
-            delete_topic_action(),
-            set_retention_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            produce_response_action(),
-            fetch_response_action(),
-            metadata_response_action(),
-            offset_commit_response_action(),
-            error_response_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'type' field in action"))?;
-
-        match action_type {
-            // Async actions - return Custom result for async execution
-            "publish_message" | "create_topic" | "delete_topic" | "set_retention" => {
-                Ok(ActionResult::Custom {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+        {
+            Box::pin(async move {
+                use crate::server::kafka::KafkaServer;
+                KafkaServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                    ctx.startup_params,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing 'type' field in action"))?;
+    
+            match action_type {
+                // Async actions - return Custom result for async execution
+                "publish_message" | "create_topic" | "delete_topic" | "set_retention" => {
+                    Ok(ActionResult::Custom {
+                        name: action_type.to_string(),
+                        data: action,
+                    })
+                }
+                // Sync actions - return Custom result for protocol handler
+                "produce_response"
+                | "fetch_response"
+                | "metadata_response"
+                | "offset_commit_response"
+                | "error_response" => Ok(ActionResult::Custom {
                     name: action_type.to_string(),
                     data: action,
-                })
+                }),
+                _ => Err(anyhow!("Unknown Kafka action type: {}", action_type)),
             }
-            // Sync actions - return Custom result for protocol handler
-            "produce_response"
-            | "fetch_response"
-            | "metadata_response"
-            | "offset_commit_response"
-            | "error_response" => Ok(ActionResult::Custom {
-                name: action_type.to_string(),
-                data: action,
-            }),
-            _ => Err(anyhow!("Unknown Kafka action type: {}", action_type)),
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "KAFKA"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            PRODUCE_REQUEST_EVENT.clone(),
-            FETCH_REQUEST_EVENT.clone(),
-            METADATA_REQUEST_EVENT.clone(),
-            OFFSET_COMMIT_REQUEST_EVENT.clone(),
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>KAFKA"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["kafka", "kafka broker", "via kafka"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("kafka-protocol v0.13 wire format, manual broker logic")
-            .llm_control("Message routing, topic management, consumer offsets")
-            .e2e_testing("kafka-client / rdkafka")
-            .notes("Core APIs only, in-memory storage, no replication")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Apache Kafka broker for distributed message streaming"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a Kafka broker on port 9092 with topics 'orders' and 'events'. Accept all produce requests and return the last 10 messages on fetch."
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
 }
+

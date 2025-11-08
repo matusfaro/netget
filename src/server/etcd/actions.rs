@@ -1,7 +1,7 @@
 //! etcd protocol action definitions
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -134,140 +134,134 @@ fn etcd_error_action() -> ActionDefinition {
     }
 }
 
-impl Server for EtcdProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::etcd::EtcdServer;
-            EtcdServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                ctx.startup_params,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "cluster_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Cluster identifier name (default: netget-cluster)".to_string(),
-                required: false,
-                example: json!("my-cluster"),
-            },
-            ParameterDefinition {
-                name: "initial_cluster_state".to_string(),
-                type_hint: "string".to_string(),
-                description: "Initial cluster state: 'new' or 'existing' (default: new)".to_string(),
-                required: false,
-                example: json!("new"),
-            },
-            ParameterDefinition {
-                name: "max_keys".to_string(),
-                type_hint: "number".to_string(),
-                description: "Maximum number of keys to store (default: 10000)".to_string(),
-                required: false,
-                example: json!(10000),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            etcd_range_response_action(),
-            etcd_error_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: Value) -> Result<ActionResult> {
-        let action_type = action.get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
-
-        match action_type {
-            "etcd_range_response" => {
-                Ok(ActionResult::Custom {
-                    name: "etcd_range_response".to_string(),
-                    data: action,
-                })
-            }
-            "etcd_error" => {
-                Ok(ActionResult::Custom {
-                    name: "etcd_error".to_string(),
-                    data: action,
-                })
-            }
-            _ => anyhow::bail!("Unknown etcd action type: {}", action_type),
+// Implement Protocol trait (common functionality)
+impl Protocol for EtcdProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "cluster_name".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Cluster identifier name (default: netget-cluster)".to_string(),
+                    required: false,
+                    example: json!("my-cluster"),
+                },
+                ParameterDefinition {
+                    name: "initial_cluster_state".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Initial cluster state: 'new' or 'existing' (default: new)".to_string(),
+                    required: false,
+                    example: json!("new"),
+                },
+                ParameterDefinition {
+                    name: "max_keys".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Maximum number of keys to store (default: 10000)".to_string(),
+                    required: false,
+                    example: json!(10000),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "etcd"
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>GRPC>ETCD"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["etcd", "etcd3", "etcdv3", "etcd server"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("tonic gRPC, official etcd protobuf schemas")
-            .llm_control("All KV operations (Range, Put, Delete, Txn)")
-            .e2e_testing("etcdctl / etcd-client")
-            .notes("KV service only, no Watch/Lease/Auth, simplified MVCC")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "etcd v3 distributed key-value store server"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            (*ETCD_RANGE_REQUEST_EVENT).clone(),
-            (*ETCD_PUT_REQUEST_EVENT).clone(),
-            (*ETCD_DELETE_REQUEST_EVENT).clone(),
-            (*ETCD_TXN_REQUEST_EVENT).clone(),
-        ]
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        r#"listen on port 2379 via etcd
-
-Store configuration under /config/ prefix.
-When clients PUT /config/database with value "localhost:5432", store it (revision 1).
-When clients GET /config/database, return "localhost:5432" with revision metadata.
-For unknown keys, return empty kvs array.
-
-Examples:
-- PUT /config/timeout = "30" → Success, increment revision
-- GET /config/timeout → Return "30" with create_revision, mod_revision, version
-- DELETE /config/timeout → Remove key, return deleted count
-- Range query /config/ → Return all keys with /config/ prefix
-
-Track revisions for MVCC."#
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                etcd_range_response_action(),
+                etcd_error_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "etcd"
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>GRPC>ETCD"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["etcd", "etcd3", "etcdv3", "etcd server"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("tonic gRPC, official etcd protobuf schemas")
+                .llm_control("All KV operations (Range, Put, Delete, Txn)")
+                .e2e_testing("etcdctl / etcd-client")
+                .notes("KV service only, no Watch/Lease/Auth, simplified MVCC")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "etcd v3 distributed key-value store server"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                (*ETCD_RANGE_REQUEST_EVENT).clone(),
+                (*ETCD_PUT_REQUEST_EVENT).clone(),
+                (*ETCD_DELETE_REQUEST_EVENT).clone(),
+                (*ETCD_TXN_REQUEST_EVENT).clone(),
+            ]
+        }
+        fn example_prompt(&self) -> &'static str {
+            r#"listen on port 2379 via etcd
+    
+    Store configuration under /config/ prefix.
+    When clients PUT /config/database with value "localhost:5432", store it (revision 1).
+    When clients GET /config/database, return "localhost:5432" with revision metadata.
+    For unknown keys, return empty kvs array.
+    
+    Examples:
+    - PUT /config/timeout = "30" → Success, increment revision
+    - GET /config/timeout → Return "30" with create_revision, mod_revision, version
+    - DELETE /config/timeout → Remove key, return deleted count
+    - Range query /config/ → Return all keys with /config/ prefix
+    
+    Track revisions for MVCC."#
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for EtcdProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::etcd::EtcdServer;
+                EtcdServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                    ctx.startup_params,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: Value) -> Result<ActionResult> {
+            let action_type = action.get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
+    
+            match action_type {
+                "etcd_range_response" => {
+                    Ok(ActionResult::Custom {
+                        name: "etcd_range_response".to_string(),
+                        data: action,
+                    })
+                }
+                "etcd_error" => {
+                    Ok(ActionResult::Custom {
+                        name: "etcd_error".to_string(),
+                        data: action,
+                    })
+                }
+                _ => anyhow::bail!("Unknown etcd action type: {}", action_type),
+            }
+        }
+}
+

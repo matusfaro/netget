@@ -3,7 +3,7 @@
 //! Defines the actions the LLM can take in response to SQS API requests.
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
@@ -106,128 +106,122 @@ pub fn get_sqs_event_types() -> Vec<EventType> {
     ]
 }
 
-impl Server for SqsProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::sqs::SqsServer;
-            SqsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                false,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "default_visibility_timeout".to_string(),
-                type_hint: "number".to_string(),
-                description: "Default visibility timeout in seconds (0-43200, default: 30)".to_string(),
-                required: false,
-                example: json!(30),
-            },
-            ParameterDefinition {
-                name: "default_message_retention".to_string(),
-                type_hint: "number".to_string(),
-                description: "Default message retention period in seconds (60-1209600, default: 345600 = 4 days)".to_string(),
-                required: false,
-                example: json!(345600),
-            },
-            ParameterDefinition {
-                name: "max_receive_count".to_string(),
-                type_hint: "number".to_string(),
-                description: "Maximum number of receives before message considered undeliverable (default: 10)".to_string(),
-                required: false,
-                example: json!(10),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // No async actions for SQS currently (all operations are request-driven)
-        vec![]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_sqs_response_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: Value) -> Result<ActionResult> {
-        let action_type = action.get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
-
-        match action_type {
-            "send_sqs_response" => {
-                let status_code = action.get("status_code")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))? as u16;
-
-                let body = action.get("body")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing body"))?
-                    .to_string();
-
-                Ok(ActionResult::Custom {
-                    name: "sqs_response".to_string(),
-                    data: json!({
-                        "status": status_code,
-                        "body": body
-                    }),
-                })
-            }
-            _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type))
+// Implement Protocol trait (common functionality)
+impl Protocol for SqsProtocol {
+        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+            vec![
+                ParameterDefinition {
+                    name: "default_visibility_timeout".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Default visibility timeout in seconds (0-43200, default: 30)".to_string(),
+                    required: false,
+                    example: json!(30),
+                },
+                ParameterDefinition {
+                    name: "default_message_retention".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Default message retention period in seconds (60-1209600, default: 345600 = 4 days)".to_string(),
+                    required: false,
+                    example: json!(345600),
+                },
+                ParameterDefinition {
+                    name: "max_receive_count".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Maximum number of receives before message considered undeliverable (default: 10)".to_string(),
+                    required: false,
+                    example: json!(10),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "SQS"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_sqs_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP>SQS"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["sqs", "queue", "message queue"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("hyper v1.5 HTTP with AWS JSON protocol")
-            .llm_control("All SQS operations (SendMessage, ReceiveMessage, DeleteMessage)")
-            .e2e_testing("aws-sdk-sqs client")
-            .notes("Virtual queues, visibility timeout tracking")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "AWS SQS-compatible message queue server"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start an AWS SQS-compatible queue server on port 9324"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // No async actions for SQS currently (all operations are request-driven)
+            vec![]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_sqs_response_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "SQS"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_sqs_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP>SQS"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["sqs", "queue", "message queue"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("hyper v1.5 HTTP with AWS JSON protocol")
+                .llm_control("All SQS operations (SendMessage, ReceiveMessage, DeleteMessage)")
+                .e2e_testing("aws-sdk-sqs client")
+                .notes("Virtual queues, visibility timeout tracking")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "AWS SQS-compatible message queue server"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start an AWS SQS-compatible queue server on port 9324"
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for SqsProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::sqs::SqsServer;
+                SqsServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    false,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: Value) -> Result<ActionResult> {
+            let action_type = action.get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
+    
+            match action_type {
+                "send_sqs_response" => {
+                    let status_code = action.get("status_code")
+                        .and_then(|v| v.as_u64())
+                        .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))? as u16;
+    
+                    let body = action.get("body")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("Missing body"))?
+                        .to_string();
+    
+                    Ok(ActionResult::Custom {
+                        name: "sqs_response".to_string(),
+                        data: json!({
+                            "status": status_code,
+                            "body": body
+                        }),
+                    })
+                }
+                _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type))
+            }
+        }
+}
+

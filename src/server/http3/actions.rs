@@ -1,7 +1,7 @@
 //! HTTP3 protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -67,165 +67,159 @@ impl Http3Protocol {
     }
 }
 
-impl Server for Http3Protocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::http3::Http3Server;
+// Implement Protocol trait (common functionality)
+impl Protocol for Http3Protocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            crate::server::tls_cert_manager::get_tls_startup_parameters()
+        }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                send_to_stream_action(),
+                close_stream_action(),
+                list_streams_action(),
+            ]
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_http3_data_action(),
+                wait_for_more_action(),
+                close_this_stream_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "HTTP3"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_http3_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>UDP>HTTP3"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["http3"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Quinn async HTTP3 with built-in TLS 1.3")
+                .llm_control("Full stream control - all sent/received data on bidirectional streams")
+                .e2e_testing("quinn::Endpoint client")
+                .notes("UDP-based, encrypted, multiplexed transport - basis for HTTP/3")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "HTTP3 protocol server with multiplexed streams"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "HTTP3 echo server on port 4433; echo back all data received on each stream"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
+}
 
-            // Parse TLS configuration from startup_params (HTTP/3 always uses TLS)
-            let tls_config = if let Some(ref params) = ctx.startup_params {
-                // For HTTP/3, extract TLS config or use default
-                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
-                    Ok(Some(config)) => Some(config),
-                    Ok(None) => {
-                        // If tls_enabled is false or not set, use default for HTTP/3
-                        match crate::server::tls_cert_manager::generate_default_tls_config() {
-                            Ok(config) => Some(config),
-                            Err(e) => {
-                                return Err(anyhow::anyhow!("Failed to generate default TLS config: {}", e));
+// Implement Server trait (server-specific functionality)
+impl Server for Http3Protocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::http3::Http3Server;
+    
+                // Parse TLS configuration from startup_params (HTTP/3 always uses TLS)
+                let tls_config = if let Some(ref params) = ctx.startup_params {
+                    // For HTTP/3, extract TLS config or use default
+                    match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
+                        Ok(Some(config)) => Some(config),
+                        Ok(None) => {
+                            // If tls_enabled is false or not set, use default for HTTP/3
+                            match crate::server::tls_cert_manager::generate_default_tls_config() {
+                                Ok(config) => Some(config),
+                                Err(e) => {
+                                    return Err(anyhow::anyhow!("Failed to generate default TLS config: {}", e));
+                                }
                             }
                         }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                        }
                     }
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                } else {
+                    // Use default self-signed certificate
+                    match crate::server::tls_cert_manager::generate_default_tls_config() {
+                        Ok(config) => Some(config),
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("Failed to generate default TLS config: {}", e));
+                        }
                     }
-                }
-            } else {
-                // Use default self-signed certificate
-                match crate::server::tls_cert_manager::generate_default_tls_config() {
-                    Ok(config) => Some(config),
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("Failed to generate default TLS config: {}", e));
-                    }
-                }
-            };
-
-            Http3Server::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                tls_config,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        crate::server::tls_cert_manager::get_tls_startup_parameters()
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            send_to_stream_action(),
-            close_stream_action(),
-            list_streams_action(),
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_http3_data_action(),
-            wait_for_more_action(),
-            close_this_stream_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_to_stream" => {
-                // Async action - not fully implemented here, needs to be handled by caller
-                // because we need async context to send data
-                let stream_id_str = action
-                    .get("stream_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'stream_id' parameter")?;
-
-                let data = action
-                    .get("data")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'data' parameter")?;
-
-                let _stream_id = ConnectionId::from_string(stream_id_str)
-                    .context("Invalid stream_id format")?;
-
-                // Return the data with stream ID embedded
-                // The caller will need to handle actually sending it
-                Ok(ActionResult::Output(data.as_bytes().to_vec()))
-            }
-            "close_stream" => {
-                // Async action - signal that stream should be closed
-                let stream_id_str = action
-                    .get("stream_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'stream_id' parameter")?;
-
-                let _stream_id = ConnectionId::from_string(stream_id_str)
-                    .context("Invalid stream_id format")?;
-
-                Ok(ActionResult::CloseConnection)
-            }
-            "list_streams" => {
-                // This needs to be handled specially by the caller
-                Ok(ActionResult::NoAction)
-            }
-            "send_http3_data" => self.execute_send_http3_data(action),
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_this_stream" => Ok(ActionResult::CloseConnection),
-            _ => Err(anyhow::anyhow!("Unknown HTTP3 action: {action_type}")),
+                };
+    
+                Http3Server::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                    tls_config,
+                ).await
+            })
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "HTTP3"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_http3_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>HTTP3"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["http3"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Quinn async HTTP3 with built-in TLS 1.3")
-            .llm_control("Full stream control - all sent/received data on bidirectional streams")
-            .e2e_testing("quinn::Endpoint client")
-            .notes("UDP-based, encrypted, multiplexed transport - basis for HTTP/3")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "HTTP3 protocol server with multiplexed streams"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "HTTP3 echo server on port 4433; echo back all data received on each stream"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_to_stream" => {
+                    // Async action - not fully implemented here, needs to be handled by caller
+                    // because we need async context to send data
+                    let stream_id_str = action
+                        .get("stream_id")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'stream_id' parameter")?;
+    
+                    let data = action
+                        .get("data")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'data' parameter")?;
+    
+                    let _stream_id = ConnectionId::from_string(stream_id_str)
+                        .context("Invalid stream_id format")?;
+    
+                    // Return the data with stream ID embedded
+                    // The caller will need to handle actually sending it
+                    Ok(ActionResult::Output(data.as_bytes().to_vec()))
+                }
+                "close_stream" => {
+                    // Async action - signal that stream should be closed
+                    let stream_id_str = action
+                        .get("stream_id")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'stream_id' parameter")?;
+    
+                    let _stream_id = ConnectionId::from_string(stream_id_str)
+                        .context("Invalid stream_id format")?;
+    
+                    Ok(ActionResult::CloseConnection)
+                }
+                "list_streams" => {
+                    // This needs to be handled specially by the caller
+                    Ok(ActionResult::NoAction)
+                }
+                "send_http3_data" => self.execute_send_http3_data(action),
+                "wait_for_more" => Ok(ActionResult::WaitForMore),
+                "close_this_stream" => Ok(ActionResult::CloseConnection),
+                _ => Err(anyhow::anyhow!("Unknown HTTP3 action: {action_type}")),
+            }
+        }
 }
+
 
 impl Http3Protocol {
     /// Execute send_http3_data sync action

@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -57,248 +58,243 @@ impl EtcdClientProtocol {
     }
 }
 
-impl Client for EtcdClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::etcd::EtcdClient;
-            EtcdClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "etcd_get".to_string(),
-                description: "Get a key-value pair from etcd".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "key".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Key to retrieve".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "etcd_get",
-                    "key": "/config/database"
-                }),
-            },
-            ActionDefinition {
-                name: "etcd_put".to_string(),
-                description: "Put a key-value pair into etcd".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "key".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Key to set".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "value".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Value to set".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "etcd_put",
-                    "key": "/config/database",
-                    "value": "postgresql://localhost:5432/mydb"
-                }),
-            },
-            ActionDefinition {
-                name: "etcd_delete".to_string(),
-                description: "Delete a key from etcd".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "key".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Key to delete".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "etcd_delete",
-                    "key": "/config/database"
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the etcd server".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "etcd_get".to_string(),
-                description: "Get a key in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "key".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Key to retrieve".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "etcd_get",
-                    "key": "/config/database"
-                }),
-            },
-            ActionDefinition {
-                name: "etcd_put".to_string(),
-                description: "Put a key in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "key".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Key to set".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "value".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Value to set".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "etcd_put",
-                    "key": "/config/database",
-                    "value": "postgresql://localhost:5432/mydb"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "etcd_get" => {
-                let key = action
-                    .get("key")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'key' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+// Implement Protocol trait (common functionality)
+impl Protocol for EtcdClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
                     name: "etcd_get".to_string(),
-                    data: json!({
-                        "key": key,
+                    description: "Get a key-value pair from etcd".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "key".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Key to retrieve".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "etcd_get",
+                        "key": "/config/database"
                     }),
-                })
-            }
-            "etcd_put" => {
-                let key = action
-                    .get("key")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'key' field")?
-                    .to_string();
-
-                let value = action
-                    .get("value")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'value' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+                },
+                ActionDefinition {
                     name: "etcd_put".to_string(),
-                    data: json!({
-                        "key": key,
-                        "value": value,
+                    description: "Put a key-value pair into etcd".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "key".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Key to set".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "value".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Value to set".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "etcd_put",
+                        "key": "/config/database",
+                        "value": "postgresql://localhost:5432/mydb"
                     }),
-                })
-            }
-            "etcd_delete" => {
-                let key = action
-                    .get("key")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'key' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
+                },
+                ActionDefinition {
                     name: "etcd_delete".to_string(),
-                    data: json!({
-                        "key": key,
+                    description: "Delete a key from etcd".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "key".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Key to delete".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "etcd_delete",
+                        "key": "/config/database"
                     }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown etcd client action: {}", action_type)),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from the etcd server".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "etcd"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "etcd_connected".to_string(),
-                description: "Triggered when etcd client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "etcd_response_received".to_string(),
-                description: "Triggered when etcd client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>gRPC>etcd"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["etcd", "etcd client", "connect to etcd"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("etcd-client crate for gRPC-based KV operations")
-            .llm_control("Full control over get/put/delete operations")
-            .e2e_testing("Docker etcd container")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "etcd client for distributed key-value operations"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to etcd at localhost:2379 and get the value of '/config/database'"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "etcd_get".to_string(),
+                    description: "Get a key in response to received data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "key".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Key to retrieve".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "etcd_get",
+                        "key": "/config/database"
+                    }),
+                },
+                ActionDefinition {
+                    name: "etcd_put".to_string(),
+                    description: "Put a key in response to received data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "key".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Key to set".to_string(),
+                            required: true,
+                        },
+                        Parameter {
+                            name: "value".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "Value to set".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "etcd_put",
+                        "key": "/config/database",
+                        "value": "postgresql://localhost:5432/mydb"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "etcd"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "etcd_connected".to_string(),
+                    description: "Triggered when etcd client connects to server".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "etcd_response_received".to_string(),
+                    description: "Triggered when etcd client receives a response".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>gRPC>etcd"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["etcd", "etcd client", "connect to etcd"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("etcd-client crate for gRPC-based KV operations")
+                .llm_control("Full control over get/put/delete operations")
+                .e2e_testing("Docker etcd container")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "etcd client for distributed key-value operations"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to etcd at localhost:2379 and get the value of '/config/database'"
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for EtcdClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::etcd::EtcdClient;
+                EtcdClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "etcd_get" => {
+                    let key = action
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'key' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "etcd_get".to_string(),
+                        data: json!({
+                            "key": key,
+                        }),
+                    })
+                }
+                "etcd_put" => {
+                    let key = action
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'key' field")?
+                        .to_string();
+    
+                    let value = action
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'value' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "etcd_put".to_string(),
+                        data: json!({
+                            "key": key,
+                            "value": value,
+                        }),
+                    })
+                }
+                "etcd_delete" => {
+                    let key = action
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'key' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "etcd_delete".to_string(),
+                        data: json!({
+                            "key": key,
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                _ => Err(anyhow::anyhow!("Unknown etcd client action: {}", action_type)),
+            }
+        }
+}
+

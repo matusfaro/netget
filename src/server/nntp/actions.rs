@@ -1,7 +1,7 @@
 //! NNTP protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::server::connection::ConnectionId;
@@ -171,115 +171,109 @@ impl NntpProtocol {
     }
 }
 
-impl Server for NntpProtocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::nntp::NntpServer;
-
-            NntpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "send_first".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether the server should send greeting after connection (typically true for NNTP)".to_string(),
-                required: false,
-                example: serde_json::json!(true),
-            },
-        ]
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // NNTP could have async actions like post_article in the future
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_nntp_message_action(),
-            send_nntp_response_action(),
-            send_nntp_article_action(),
-            send_nntp_list_action(),
-            send_nntp_group_action(),
-            send_nntp_overview_action(),
-            wait_for_more_action(),
-            close_connection_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_nntp_message" => self.execute_send_nntp_message(action),
-            "send_nntp_response" => self.execute_send_nntp_response(action),
-            "send_nntp_article" => self.execute_send_nntp_article(action),
-            "send_nntp_list" => self.execute_send_nntp_list(action),
-            "send_nntp_group" => self.execute_send_nntp_group(action),
-            "send_nntp_overview" => self.execute_send_nntp_overview(action),
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_connection" => Ok(ActionResult::CloseConnection),
-            _ => Err(anyhow::anyhow!("Unknown NNTP action: {}", action_type)),
+// Implement Protocol trait (common functionality)
+impl Protocol for NntpProtocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "send_first".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Whether the server should send greeting after connection (typically true for NNTP)".to_string(),
+                    required: false,
+                    example: serde_json::json!(true),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "NNTP"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_nntp_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>NNTP"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["nntp", "usenet", "news", "newsgroup"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual line-based NNTP parsing (RFC 3977)")
-            .llm_control("All NNTP commands (LIST, GROUP, ARTICLE, POST)")
-            .e2e_testing("Raw TCP NNTP client")
-            .notes("No article storage, POST not implemented yet")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Usenet news server (NNTP)"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Start a Usenet news server"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Application"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // NNTP could have async actions like post_article in the future
+            Vec::new()
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_nntp_message_action(),
+                send_nntp_response_action(),
+                send_nntp_article_action(),
+                send_nntp_list_action(),
+                send_nntp_group_action(),
+                send_nntp_overview_action(),
+                wait_for_more_action(),
+                close_connection_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "NNTP"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_nntp_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>NNTP"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["nntp", "usenet", "news", "newsgroup"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("Manual line-based NNTP parsing (RFC 3977)")
+                .llm_control("All NNTP commands (LIST, GROUP, ARTICLE, POST)")
+                .e2e_testing("Raw TCP NNTP client")
+                .notes("No article storage, POST not implemented yet")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Usenet news server (NNTP)"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Start a Usenet news server"
+        }
+        fn group_name(&self) -> &'static str {
+            "Application"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for NntpProtocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::nntp::NntpServer;
+    
+                NntpServer::spawn_with_llm_actions(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_nntp_message" => self.execute_send_nntp_message(action),
+                "send_nntp_response" => self.execute_send_nntp_response(action),
+                "send_nntp_article" => self.execute_send_nntp_article(action),
+                "send_nntp_list" => self.execute_send_nntp_list(action),
+                "send_nntp_group" => self.execute_send_nntp_group(action),
+                "send_nntp_overview" => self.execute_send_nntp_overview(action),
+                "wait_for_more" => Ok(ActionResult::WaitForMore),
+                "close_connection" => Ok(ActionResult::CloseConnection),
+                _ => Err(anyhow::anyhow!("Unknown NNTP action: {}", action_type)),
+            }
+        }
+}
+
 
 // Event type definition
 pub static NNTP_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {

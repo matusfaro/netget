@@ -1,7 +1,7 @@
 //! HTTP/2 protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -19,108 +19,102 @@ impl Http2Protocol {
     }
 }
 
-impl Server for Http2Protocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::server::http2::H2Server;
-
-            // Parse TLS configuration from startup_params
-            let tls_config = if let Some(ref params) = ctx.startup_params {
-                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
-                    Ok(config) => config,
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Use h2-based server for full server push support
-            H2Server::spawn_with_push_support(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                tls_config,
-            ).await
-        })
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        crate::server::tls_cert_manager::get_tls_startup_parameters()
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // HTTP/2 has no async actions - it's purely request-response
-        Vec::new()
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            send_http2_response_action(),
-            push_resource_action(),
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "send_http2_response" => self.execute_send_http2_response(action),
-            "push_resource" => self.execute_push_resource(action),
-            _ => Err(anyhow::anyhow!("Unknown HTTP/2 action: {action_type}")),
+// Implement Protocol trait (common functionality)
+impl Protocol for Http2Protocol {
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            crate::server::tls_cert_manager::get_tls_startup_parameters()
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "HTTP2"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_http2_event_types()
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>HTTP/2"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["http2", "http/2", "http 2", "http2 server", "http/2 server", "via http2", "via http/2"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("hyper v1.0 HTTP/2 server library")
-            .llm_control("Response content (status, headers, body)")
-            .e2e_testing("reqwest HTTP/2 client - 6 LLM calls")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Web server serving HTTP/2 traffic with multiplexing and header compression"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "HTTP/2 server on port 8443 serving JSON API with fast multiplexed responses"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Core"
-    }
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            // HTTP/2 has no async actions - it's purely request-response
+            Vec::new()
+        }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                send_http2_response_action(),
+                push_resource_action(),
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "HTTP2"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            get_http2_event_types()
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>HTTP/2"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["http2", "http/2", "http 2", "http2 server", "http/2 server", "via http2", "via http/2"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("hyper v1.0 HTTP/2 server library")
+                .llm_control("Response content (status, headers, body)")
+                .e2e_testing("reqwest HTTP/2 client - 6 LLM calls")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "Web server serving HTTP/2 traffic with multiplexing and header compression"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "HTTP/2 server on port 8443 serving JSON API with fast multiplexed responses"
+        }
+        fn group_name(&self) -> &'static str {
+            "Core"
+        }
 }
+
+// Implement Server trait (server-specific functionality)
+impl Server for Http2Protocol {
+        fn spawn(
+            &self,
+            ctx: crate::protocol::SpawnContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::server::http2::H2Server;
+    
+                // Parse TLS configuration from startup_params
+                let tls_config = if let Some(ref params) = ctx.startup_params {
+                    match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
+                        Ok(config) => config,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                        }
+                    }
+                } else {
+                    None
+                };
+    
+                // Use h2-based server for full server push support
+                H2Server::spawn_with_push_support(
+                    ctx.listen_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.server_id,
+                    tls_config,
+                ).await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "send_http2_response" => self.execute_send_http2_response(action),
+                "push_resource" => self.execute_push_resource(action),
+                _ => Err(anyhow::anyhow!("Unknown HTTP/2 action: {action_type}")),
+            }
+        }
+}
+
 
 impl Http2Protocol {
     /// Execute send_http2_response sync action

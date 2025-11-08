@@ -2,6 +2,7 @@
 
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
+    protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -57,235 +58,229 @@ impl MysqlClientProtocol {
     }
 }
 
-impl Client for MysqlClientProtocol {
-    fn connect(
-        &self,
-        ctx: crate::protocol::ConnectContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            use crate::client::mysql::MysqlClient;
-            MysqlClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.client_id,
-                ctx.startup_params,
-            )
-            .await
-        })
-    }
-
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "execute_query".to_string(),
-                description: "Execute a SQL query (SELECT, INSERT, UPDATE, DELETE, etc.)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "query".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "SQL query to execute".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "execute_query",
-                    "query": "SELECT * FROM users WHERE id = 1"
-                }),
-            },
-            ActionDefinition {
-                name: "begin_transaction".to_string(),
-                description: "Begin a transaction".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "begin_transaction"
-                }),
-            },
-            ActionDefinition {
-                name: "commit_transaction".to_string(),
-                description: "Commit the current transaction".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "commit_transaction"
-                }),
-            },
-            ActionDefinition {
-                name: "rollback_transaction".to_string(),
-                description: "Rollback the current transaction".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "rollback_transaction"
-                }),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the MySQL server".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            },
-        ]
-    }
-
-    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "execute_query".to_string(),
-                description: "Execute a SQL query in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "query".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "SQL query to execute".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "execute_query",
-                    "query": "INSERT INTO logs (message) VALUES ('processed')"
-                }),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more results without executing new queries".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action
-            .get("type")
-            .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "execute_query" => {
-                let query = action
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'query' field")?
-                    .to_string();
-
-                Ok(ClientActionResult::Custom {
-                    name: "mysql_query".to_string(),
-                    data: json!({
-                        "query": query,
+// Implement Protocol trait (common functionality)
+impl Protocol for MysqlClientProtocol {
+        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "execute_query".to_string(),
+                    description: "Execute a SQL query (SELECT, INSERT, UPDATE, DELETE, etc.)".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "query".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "SQL query to execute".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "execute_query",
+                        "query": "SELECT * FROM users WHERE id = 1"
                     }),
-                })
-            }
-            "begin_transaction" => {
-                Ok(ClientActionResult::Custom {
-                    name: "mysql_query".to_string(),
-                    data: json!({
-                        "query": "BEGIN",
+                },
+                ActionDefinition {
+                    name: "begin_transaction".to_string(),
+                    description: "Begin a transaction".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "begin_transaction"
                     }),
-                })
-            }
-            "commit_transaction" => {
-                Ok(ClientActionResult::Custom {
-                    name: "mysql_query".to_string(),
-                    data: json!({
-                        "query": "COMMIT",
+                },
+                ActionDefinition {
+                    name: "commit_transaction".to_string(),
+                    description: "Commit the current transaction".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "commit_transaction"
                     }),
-                })
-            }
-            "rollback_transaction" => {
-                Ok(ClientActionResult::Custom {
-                    name: "mysql_query".to_string(),
-                    data: json!({
-                        "query": "ROLLBACK",
+                },
+                ActionDefinition {
+                    name: "rollback_transaction".to_string(),
+                    description: "Rollback the current transaction".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "rollback_transaction"
                     }),
-                })
-            }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
-            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown MySQL client action: {}", action_type)),
+                },
+                ActionDefinition {
+                    name: "disconnect".to_string(),
+                    description: "Disconnect from the MySQL server".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "disconnect"
+                    }),
+                },
+            ]
         }
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "MySQL"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            EventType {
-                id: "mysql_connected".to_string(),
-                description: "Triggered when MySQL client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "mysql_result_received".to_string(),
-                description: "Triggered when MySQL client receives a query result".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-        ]
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "ETH>IP>TCP>MySQL"
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["mysql", "mysql client", "connect to mysql", "sql", "database"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("mysql_async library with connection pooling")
-            .llm_control("Full control over SQL queries and transactions")
-            .e2e_testing("Docker MySQL container")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "MySQL client for database operations"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Connect to MySQL at localhost:3306 as root and query the users table"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "Database"
-    }
-
-    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-            crate::llm::actions::ParameterDefinition {
-                name: "username".to_string(),
-                type_hint: "string".to_string(),
-                description: "MySQL username (default: root)".to_string(),
-                required: false,
-                example: json!("myuser"),
-            },
-            crate::llm::actions::ParameterDefinition {
-                name: "password".to_string(),
-                type_hint: "string".to_string(),
-                description: "MySQL password (default: empty)".to_string(),
-                required: false,
-                example: json!("mypassword"),
-            },
-            crate::llm::actions::ParameterDefinition {
-                name: "database".to_string(),
-                type_hint: "string".to_string(),
-                description: "Database name to connect to (default: none)".to_string(),
-                required: false,
-                example: json!("mydb"),
-            },
-        ]
-    }
+        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+            vec![
+                ActionDefinition {
+                    name: "execute_query".to_string(),
+                    description: "Execute a SQL query in response to received data".to_string(),
+                    parameters: vec![
+                        Parameter {
+                            name: "query".to_string(),
+                            type_hint: "string".to_string(),
+                            description: "SQL query to execute".to_string(),
+                            required: true,
+                        },
+                    ],
+                    example: json!({
+                        "type": "execute_query",
+                        "query": "INSERT INTO logs (message) VALUES ('processed')"
+                    }),
+                },
+                ActionDefinition {
+                    name: "wait_for_more".to_string(),
+                    description: "Wait for more results without executing new queries".to_string(),
+                    parameters: vec![],
+                    example: json!({
+                        "type": "wait_for_more"
+                    }),
+                },
+            ]
+        }
+        fn protocol_name(&self) -> &'static str {
+            "MySQL"
+        }
+        fn get_event_types(&self) -> Vec<EventType> {
+            vec![
+                EventType {
+                    id: "mysql_connected".to_string(),
+                    description: "Triggered when MySQL client connects to server".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+                EventType {
+                    id: "mysql_result_received".to_string(),
+                    description: "Triggered when MySQL client receives a query result".to_string(),
+                    actions: vec![],
+                    parameters: vec![],
+                },
+            ]
+        }
+        fn stack_name(&self) -> &'static str {
+            "ETH>IP>TCP>MySQL"
+        }
+        fn keywords(&self) -> Vec<&'static str> {
+            vec!["mysql", "mysql client", "connect to mysql", "sql", "database"]
+        }
+        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+    
+            ProtocolMetadataV2::builder()
+                .state(DevelopmentState::Experimental)
+                .implementation("mysql_async library with connection pooling")
+                .llm_control("Full control over SQL queries and transactions")
+                .e2e_testing("Docker MySQL container")
+                .build()
+        }
+        fn description(&self) -> &'static str {
+            "MySQL client for database operations"
+        }
+        fn example_prompt(&self) -> &'static str {
+            "Connect to MySQL at localhost:3306 as root and query the users table"
+        }
+        fn group_name(&self) -> &'static str {
+            "Database"
+        }
+        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+            vec![
+                crate::llm::actions::ParameterDefinition {
+                    name: "username".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "MySQL username (default: root)".to_string(),
+                    required: false,
+                    example: json!("myuser"),
+                },
+                crate::llm::actions::ParameterDefinition {
+                    name: "password".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "MySQL password (default: empty)".to_string(),
+                    required: false,
+                    example: json!("mypassword"),
+                },
+                crate::llm::actions::ParameterDefinition {
+                    name: "database".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Database name to connect to (default: none)".to_string(),
+                    required: false,
+                    example: json!("mydb"),
+                },
+            ]
+        }
 }
+
+// Implement Client trait (client-specific functionality)
+impl Client for MysqlClientProtocol {
+        fn connect(
+            &self,
+            ctx: crate::protocol::ConnectContext,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+        > {
+            Box::pin(async move {
+                use crate::client::mysql::MysqlClient;
+                MysqlClient::connect_with_llm_actions(
+                    ctx.remote_addr,
+                    ctx.llm_client,
+                    ctx.state,
+                    ctx.status_tx,
+                    ctx.client_id,
+                    ctx.startup_params,
+                )
+                .await
+            })
+        }
+        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+    
+            match action_type {
+                "execute_query" => {
+                    let query = action
+                        .get("query")
+                        .and_then(|v| v.as_str())
+                        .context("Missing 'query' field")?
+                        .to_string();
+    
+                    Ok(ClientActionResult::Custom {
+                        name: "mysql_query".to_string(),
+                        data: json!({
+                            "query": query,
+                        }),
+                    })
+                }
+                "begin_transaction" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "mysql_query".to_string(),
+                        data: json!({
+                            "query": "BEGIN",
+                        }),
+                    })
+                }
+                "commit_transaction" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "mysql_query".to_string(),
+                        data: json!({
+                            "query": "COMMIT",
+                        }),
+                    })
+                }
+                "rollback_transaction" => {
+                    Ok(ClientActionResult::Custom {
+                        name: "mysql_query".to_string(),
+                        data: json!({
+                            "query": "ROLLBACK",
+                        }),
+                    })
+                }
+                "disconnect" => Ok(ClientActionResult::Disconnect),
+                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+                _ => Err(anyhow::anyhow!("Unknown MySQL client action: {}", action_type)),
+            }
+        }
+}
+
