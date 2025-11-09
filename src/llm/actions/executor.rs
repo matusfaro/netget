@@ -214,9 +214,10 @@ async fn execute_common_action(
         CommonAction::OpenClient { .. }
         | CommonAction::CloseClient { .. }
         | CommonAction::CloseAllClients
+        | CommonAction::CloseConnectionById { .. }
         | CommonAction::ReconnectClient { .. }
         | CommonAction::UpdateClientInstruction { .. } => {
-            // Client management handled by event handler, not executor
+            // Client and connection management handled by event handler, not executor
         }
     }
 

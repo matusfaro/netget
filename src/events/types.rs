@@ -72,6 +72,10 @@ pub enum UserCommand {
     },
     /// Show environment information (slash command: /env or /environment)
     ShowEnvironment,
+    /// Stop everything - all servers, connections, and clients (slash command: /stop)
+    StopAll,
+    /// Stop a specific server, connection, or client by unified ID (slash command: /stop <id>)
+    StopById { id: u32 },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -200,6 +204,23 @@ impl UserCommand {
         // /env, /environment command - show environment information
         if input_lower == "/env" || input_lower == "/environment" {
             return UserCommand::ShowEnvironment;
+        }
+
+        // /stop command - stop everything or specific ID
+        if input_lower.starts_with("/stop") {
+            let rest = trimmed[5..].trim();
+            if rest.is_empty() {
+                // Stop everything
+                return UserCommand::StopAll;
+            }
+            // Try to parse ID
+            if let Ok(id) = rest.parse::<u32>() {
+                return UserCommand::StopById { id };
+            }
+            // Invalid ID - treat as unknown command
+            return UserCommand::UnknownSlashCommand {
+                command: trimmed.to_string(),
+            };
         }
 
         // Unknown slash command - return error, don't send to LLM

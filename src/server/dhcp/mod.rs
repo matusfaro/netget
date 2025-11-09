@@ -92,7 +92,7 @@ impl DhcpServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
                         debug!("DHCP received {} bytes from {}", n, peer_addr);

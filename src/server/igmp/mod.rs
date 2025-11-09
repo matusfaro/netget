@@ -217,7 +217,7 @@ impl IgmpServer {
                         // Extract the IGMP payload (after IP header)
                         let igmp_data = &raw_data[ihl..];
                         let data = igmp_data.to_vec();
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};

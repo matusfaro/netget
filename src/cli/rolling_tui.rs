@@ -1195,6 +1195,18 @@ async fn handle_key_event(
 
                         footer.render(&mut stdout())?;
                     }
+                    UserCommand::StopAll => {
+                        // Stop all servers and clients
+                        handle_stop_all(state, footer, &palette).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::StopById { id } => {
+                        // Stop specific server, client, or connection by ID
+                        handle_stop_by_id(id, state, footer, &palette).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
                     UserCommand::Quit => {
                         return Ok(true);
                     }
@@ -1729,5 +1741,85 @@ async fn handle_status_command(
         }
         _ => {}
     }
+    Ok(())
+}
+
+async fn handle_stop_all(
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::state::server::ServerStatus;
+    use crate::state::client::ClientStatus;
+
+    print_output_line("Stopping all servers, connections, and clients...", footer, palette)?;
+
+    // Stop all servers
+    let server_ids: Vec<_> = state.get_all_server_ids().await;
+    for server_id in server_ids {
+        state.update_server_status(server_id, ServerStatus::Stopped).await;
+        state.cleanup_server_tasks(server_id).await;
+        print_output_line(&format!("[SERVER] Stopped server #{}", server_id.as_u32()), footer, palette)?;
+    }
+
+    // Stop all clients
+    let client_ids: Vec<_> = state.get_all_client_ids().await;
+    for client_id in client_ids {
+        state.update_client_status(client_id, ClientStatus::Disconnected).await;
+        state.cleanup_client_tasks(client_id).await;
+        print_output_line(&format!("[CLIENT] Stopped client #{}", client_id.as_u32()), footer, palette)?;
+    }
+
+    print_output_line("All servers and clients stopped.", footer, palette)?;
+    Ok(())
+}
+
+async fn handle_stop_by_id(
+    id: u32,
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::state::server::{ServerId, ServerStatus};
+    use crate::state::client::{ClientId, ClientStatus};
+    use crate::server::connection::ConnectionId;
+
+    // Try to find what type of entity this ID corresponds to
+    let mut found = false;
+
+    // Check if it's a server
+    let server_id = ServerId::new(id);
+    if state.get_server(server_id).await.is_some() {
+        state.update_server_status(server_id, ServerStatus::Stopped).await;
+        state.cleanup_server_tasks(server_id).await;
+        print_output_line(&format!("[SERVER] Stopped server #{}", id), footer, palette)?;
+        found = true;
+    }
+
+    // Check if it's a client
+    let client_id = ClientId::new(id);
+    if state.get_client(client_id).await.is_some() {
+        state.update_client_status(client_id, ClientStatus::Disconnected).await;
+        state.cleanup_client_tasks(client_id).await;
+        print_output_line(&format!("[CLIENT] Stopped client #{}", id), footer, palette)?;
+        found = true;
+    }
+
+    // Check if it's a connection
+    let connection_id = ConnectionId::new(id);
+    let all_servers = state.get_all_servers().await;
+    for server in all_servers {
+        if server.connections.contains_key(&connection_id) {
+            state.close_connection_on_server(server.id, connection_id).await;
+            print_output_line(&format!("[CONNECTION] Closed connection #{} on server #{}", id, server.id.as_u32()), footer, palette)?;
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        print_output_line(&format!("No server, client, or connection found with ID #{}", id), footer, palette)?;
+    }
+
     Ok(())
 }
