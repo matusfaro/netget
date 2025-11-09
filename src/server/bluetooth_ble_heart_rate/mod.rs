@@ -20,14 +20,14 @@ impl BluetoothBleHeartRate {
         instruction: String,
     ) -> Result<std::net::SocketAddr> {
         info!("Starting BLE Heart Rate Service: {}", device_name);
-        let hr_instruction = format!("{}. Configure as BLE Heart Rate Service (UUID: 0x180D) with Heart Rate Measurement characteristic (UUID: 0x2A37).", instruction);
+        let hr_instruction = format!("Configure as BLE Heart Rate Service (UUID: 0x180D) with Heart Rate Measurement characteristic (UUID: 0x2A37).", "");
         crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(device_name, llm_client, app_state, status_tx, server_id, hr_instruction).await
     }
 }
 
 #[cfg(not(feature = "bluetooth-ble-heart-rate"))]
 impl BluetoothBleHeartRate {
-    pub async fn spawn_with_llm_actions(_: String, _: crate::llm::ollama_client::OllamaClient, _: Arc<crate::state::app_state::AppState>, _: mpsc::UnboundedSender<String>, _: crate::state::ServerId, _: String) -> Result<std::net::SocketAddr> {
+    pub async fn spawn_with_llm_actions(_: String, _: crate::llm::ollama_client::OllamaClient, _: Arc<crate::state::app_state::AppState>, _: mpsc::UnboundedSender<String>, _: crate::state::ServerId) -> Result<std::net::SocketAddr> {
         anyhow::bail!("BLE heart-rate not enabled - compile with --features bluetooth-ble-heart-rate")
     }
 }

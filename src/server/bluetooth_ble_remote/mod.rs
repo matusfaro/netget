@@ -32,7 +32,7 @@ impl BluetoothBleRemote {
 
         // Create the underlying BLE server with HID remote configuration
         let remote_instruction = format!(
-            "{}. Configure as a BLE HID remote control with HID Service (UUID: 0x1812). {}",
+            "Configure as a BLE HID remote control with HID Service (UUID: 0x1812). {}",
             instruction,
             "Add HID Report Map, HID Report Input, HID Information, and HID Control Point characteristics for consumer control."
         );

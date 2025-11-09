@@ -23,7 +23,7 @@ use actions::{BluetoothBleProtocol, BLUETOOTH_BLE_STARTED_EVENT, BLUETOOTH_STATE
 use ble_peripheral_rust::{Peripheral, PeripheralEvent, Service, Characteristic,
     CharacteristicProperty, AttributePermission, RequestResponse, ReadRequestResponse, WriteRequestResponse};
 #[cfg(feature = "bluetooth-ble")]
-use ble_peripheral_rust::uuid::Uuid;
+use ble_peripheral_rust::Uuid;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -685,7 +685,7 @@ impl BluetoothBle {
         server_data: &Arc<Mutex<ServerData>>,
         protocol: &Arc<BluetoothBleProtocol>,
         event: Event,
-    ) -> Result<crate::llm::LlmResult> {
+    ) -> Result<crate::llm::actions::executor::ExecutionResult> {
         let memory = server_data.lock().await.memory.clone();
 
         let llm_result = call_llm(
@@ -693,9 +693,8 @@ impl BluetoothBle {
             app_state,
             *server_id,
             None, // No connection_id for server-level events
-            protocol,
-            Some(&event),
-            status_tx,
+            &event,
+            protocol.as_ref(),
         ).await?;
 
         // Execute returned actions (except read/write responses which are handled inline)
