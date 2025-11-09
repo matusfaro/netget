@@ -175,7 +175,7 @@ The LLM can use memory to:
 ### Basic Agent
 
 ```
-Start SSH Agent server on /tmp/netget-ssh-agent.sock
+Start SSH Agent server on ./tmp/netget-ssh-agent.sock
 Provide 2 pre-configured Ed25519 keys:
   - admin-key (full access)
   - deploy-key (read-only)

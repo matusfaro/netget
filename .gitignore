@@ -5,6 +5,9 @@ netget.log
 /target-claude/
 /$(pwd)/
 
+# Local temporary directory (used instead of /tmp for project isolation)
+/tmp/
+
 logs
 *.log
 

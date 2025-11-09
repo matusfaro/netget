@@ -408,7 +408,7 @@ impl Session for MyAgent {
 }
 
 // Start listening
-agent::listen(MyAgent::new(), "/tmp/ssh-agent.sock").await?;
+agent::listen(MyAgent::new(), "./tmp/ssh-agent.sock").await?;
 ```
 
 **Dependencies**:

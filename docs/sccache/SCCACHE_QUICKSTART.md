@@ -68,7 +68,7 @@ aws s3api put-bucket-versioning \
   --versioning-configuration Status=Enabled
 
 # Set lifecycle policy to expire old objects (optional, saves costs)
-cat > /tmp/lifecycle.json <<'EOF'
+cat > ./tmp/lifecycle.json <<'EOF'
 {
   "Rules": [
     {
@@ -87,7 +87,7 @@ EOF
 
 aws s3api put-bucket-lifecycle-configuration \
   --bucket netget-sccache-YOUR_ORG_NAME \
-  --lifecycle-configuration file:///tmp/lifecycle.json
+  --lifecycle-configuration file://./tmp/lifecycle.json
 ```
 
 ### Step 2: Create IAM User with Minimum Permissions
@@ -298,8 +298,8 @@ sccache --stop-server
 aws iam list-attached-user-policies --user-name sccache-netget
 
 # Test S3 write permission
-echo "test" > /tmp/test.txt
-aws s3 cp /tmp/test.txt s3://netget-sccache-YOUR_ORG_NAME/test.txt --profile sccache-netget
+echo "test" > ./tmp/test.txt
+aws s3 cp ./tmp/test.txt s3://netget-sccache-YOUR_ORG_NAME/test.txt --profile sccache-netget
 aws s3 rm s3://netget-sccache-YOUR_ORG_NAME/test.txt --profile sccache-netget
 ```
 
