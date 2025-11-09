@@ -2,7 +2,7 @@
 
 ## Overview
 
-RSS (Really Simple Syndication) feed server implementing RSS 2.0 XML generation served over HTTP. The LLM controls feed content, items, and metadata.
+RSS (Really Simple Syndication) feed server implementing RSS 2.0 XML generation served over HTTP. The LLM **dynamically generates feed content** on every request - no in-memory storage.
 
 **Status**: Experimental
 **RFC**: RSS 2.0 Specification
@@ -17,104 +17,153 @@ RSS (Really Simple Syndication) feed server implementing RSS 2.0 XML generation 
 
 ## Architecture Decisions
 
-### 1. HTTP-Based Serving
+### 1. LLM-Driven Feed Generation (No Storage)
 
-RSS feeds are served over HTTP:
-- Each feed has a path (e.g., `/tech-news.xml`, `/blog.xml`)
-- Feeds are generated as XML and served with `Content-Type: application/rss+xml`
-- Only GET requests are supported (RSS is read-only from client perspective)
+RSS server operates **stateless** - feeds are generated fresh on every request:
+- Client makes HTTP GET request (e.g., `/tech-news.xml`)
+- Server fires `rss_feed_requested` event to LLM
+- LLM responds with `generate_rss_feed` action containing structured feed data
+- Server builds RSS XML from LLM-provided JSON
+- Returns XML with `Content-Type: application/rss+xml`
 
-### 2. In-Memory Feed Storage
+**No in-memory storage** - each request is independent. This is similar to the HTTP server pattern.
 
-Feeds stored in `RssFeedStore`:
-- `HashMap<String, Channel>` maps path to RSS channel
-- Wrapped in `Arc<RwLock<>>` for concurrent access
-- Cloned for each HTTP request handler
-- No persistence - feeds lost on server restart
+### 2. Request Flow
 
-### 3. LLM Control Points
+```
+1. Client → HTTP GET /feed.xml
+2. Server → LLM event (rss_feed_requested with path and headers)
+3. LLM → generate_rss_feed action with JSON data
+4. Server → Build RSS XML from JSON
+5. Server → Client with RSS XML
+```
 
-**Async Actions** (user-triggered):
-- `create_rss_feed` - Create new feed with metadata
-- `add_rss_item` - Add item to existing feed
-- `delete_rss_feed` - Remove feed
-- `list_rss_feeds` - List all available feeds
+### 3. Category Support
 
-**No Sync Actions**: RSS feeds are served via HTTP GET, LLM doesn't respond to individual requests
+Items can have categories in two formats:
 
-### 4. Feed Structure
+**Simple string**:
+```json
+"categories": ["AI", "Technology", "Science"]
+```
 
-RSS 2.0 Channel contains:
-- **Metadata**: title, link, description
-- **Items**: Array of feed items
+Renders as:
+```xml
+<category>AI</category>
+<category>Technology</category>
+<category>Science</category>
+```
 
-Each Item contains:
-- title (required for display)
-- link (URL to full article)
-- description (summary or full content)
-- pub_date (RFC 2822 format, e.g., "Mon, 01 Jan 2024 12:00:00 GMT")
-- guid (unique identifier)
+**Object with domain**:
+```json
+"categories": [
+  "AI",
+  {"name": "Machine Learning", "domain": "tech.example.com"}
+]
+```
+
+Renders as:
+```xml
+<category>AI</category>
+<category domain="tech.example.com">Machine Learning</category>
+```
+
+### 4. Sync Action Model
+
+RSS uses **sync actions** (not async):
+- `generate_rss_feed` - LLM action to generate feed XML
+- Returns structured JSON with feed metadata and items
+- Server parses JSON and builds RSS XML using `rss` crate
 
 ### 5. Dual Logging
 
 All RSS operations use dual logging:
-- **INFO**: Feed requests, feed creation
-- **DEBUG**: Request summaries
+- **INFO**: Feed requests, feed generation
+- **DEBUG**: LLM interactions, request details
 - Both go to `netget.log` (via tracing) and TUI (via status_tx)
 
 ### 6. Error Handling
 
-- **Feed Not Found**: Return 404 with "Feed Not Found"
+- **Feed Not Generated**: Return 404 with "Feed Not Found"
 - **Method Not Allowed**: Return 405 for non-GET requests
-- **XML Generation**: Handled by `rss` crate, should not fail
+- **LLM Error**: Return 500 Internal Server Error
+- **XML Generation**: Handled by `rss` crate with fallbacks
 
 ## LLM Integration
 
 ### Events
 
-- `rss_feed_created` - Feed created successfully
-  - Parameters: `path`
-- `rss_item_added` - Item added to feed
-  - Parameters: `path`, `title`
+**rss_feed_requested** - Fired when client requests a feed
+- Parameters:
+  - `path` - Feed path (e.g., `/news.xml`)
+  - `headers` - HTTP request headers (object)
 
 ### Actions
 
-**create_rss_feed**:
+**generate_rss_feed** (sync action):
+
 ```json
 {
-  "type": "create_rss_feed",
-  "path": "/tech-news.xml",
+  "type": "generate_rss_feed",
   "title": "Tech News Feed",
   "link": "https://example.com",
-  "description": "Latest technology news"
+  "description": "Latest technology news",
+  "language": "en-us",
+  "ttl": "60",
+  "last_build_date": "Mon, 09 Nov 2025 12:00:00 GMT",
+  "items": [
+    {
+      "title": "New AI Model Released",
+      "link": "https://example.com/ai-news",
+      "description": "Company X released new model",
+      "author": "editor@example.com (Editor Name)",
+      "pub_date": "Mon, 09 Nov 2025 10:00:00 GMT",
+      "guid": "https://example.com/ai-news",
+      "categories": [
+        "AI",
+        "Technology",
+        {"name": "Machine Learning", "domain": "tech.example.com"}
+      ]
+    }
+  ]
 }
 ```
 
-**add_rss_item**:
-```json
-{
-  "type": "add_rss_item",
-  "path": "/tech-news.xml",
-  "title": "New AI Model Released",
-  "link": "https://example.com/ai-news",
-  "description": "Company X released new model",
-  "pub_date": "Mon, 01 Jan 2024 12:00:00 GMT"
-}
-```
+### Feed Data Structure
+
+**Channel fields** (all strings):
+- `title` - Feed title (required)
+- `link` - Feed link/website URL (required)
+- `description` - Feed description (required)
+- `language` - Language code (optional, e.g., "en-us")
+- `ttl` - Time to live in minutes (optional)
+- `last_build_date` - Last build date in RFC 2822 format (optional)
+
+**Item fields**:
+- `title` - Item title (string)
+- `link` - Item link/URL (string, optional)
+- `description` - Item description/content (string, optional)
+- `author` - Author email (RFC 2822 format, optional)
+- `pub_date` - Publication date (RFC 2822 format, optional)
+- `guid` - Globally unique identifier (string, optional)
+- `categories` - Array of strings or objects (optional)
 
 ## Known Limitations
 
 ### 1. No Persistence
 
-- Feeds stored in memory only
-- Lost on server restart
-- No database or file storage
+- Feeds generated on every request
+- No caching between requests
+- LLM must regenerate content each time
+- Good: Always fresh, no stale data
+- Bad: Higher LLM call volume
 
 ### 2. No Feed Discovery
 
 - No index page listing available feeds
 - Clients must know feed paths
-- Could add `/` endpoint listing all feeds
+- No `/` endpoint showing all feeds
+- Could add as future enhancement
 
 ### 3. No Authentication
 
@@ -122,11 +171,11 @@ All RSS operations use dual logging:
 - No access control or authentication
 - Anyone can read any feed
 
-### 4. No Feed Updates via HTTP
+### 4. No Pagination
 
-- Feeds cannot be modified via HTTP POST/PUT
-- Only LLM actions can modify feeds
-- No REST API for feed management
+- All items returned in single response
+- Large feeds may be slow to generate/transmit
+- No support for paging or item limits
 
 ### 5. No Atom Support
 
@@ -134,95 +183,109 @@ All RSS operations use dual logging:
 - No Atom 1.0 feeds
 - Could add Atom support via `atom_syndication` crate
 
-### 6. No Pagination
+### 6. No Conditional Requests
 
-- All items returned in single response
-- Large feeds may be slow to generate/transmit
-- No support for paging or item limits
-
-### 7. Async Actions Not Fully Integrated
-
-- Async actions return `ActionResult::Async`
-- Need event handler integration to process these
-- Currently actions may not execute automatically
-- Workaround: Manually call server methods or use scripting
+- No If-Modified-Since support (server side)
+- No ETag generation
+- No 304 Not Modified responses
+- Client has If-Modified-Since support though
 
 ## Example Prompts
 
 ### Basic Feed Server
 ```
 listen on port 8080 via rss
-Create a feed at /news.xml about technology news
-Add 3 items to the feed about AI, robotics, and cloud computing
+For /news.xml, serve a feed titled "Daily News" with 3 tech news items
+Include categories like AI, Cloud, and Quantum for each item
 ```
 
 ### Multiple Feeds
 ```
 start rss server on port 8080
-Create /tech.xml feed for tech news
-Create /sports.xml feed for sports news
-Add items about latest AI breakthroughs to tech feed
-Add items about football scores to sports feed
+For /tech.xml: "Tech News" feed with 5 items about AI and programming
+For /sports.xml: "Sports Daily" feed with 3 items about football and basketball
+Use relevant categories for each item
 ```
 
-### Blog Feed
+### Blog Feed with Metadata
 ```
 rss server on 8080
-Create /blog.xml feed titled "My Personal Blog"
-Add blog post "Getting Started with Rust" to the feed
-Add blog post "Understanding RSS" to the feed
+For /blog.xml: "My Dev Blog"
+- Language: en-us
+- TTL: 60 minutes
+- 3 blog posts about Rust, Python, and Web Development
+- Include author field: john@example.com (John Doe)
+- Add GUID for each post
+- Categories: Programming, Tutorial, etc.
 ```
 
 ## Performance Characteristics
 
 ### Latency
-- XML generation is fast (<1ms for typical feeds)
-- No LLM call per HTTP request (feeds served directly)
-- HTTP overhead from hyper (~few ms)
+- One LLM call per HTTP request
+- Typical latency: 2-5 seconds per request with qwen3-coder:30b
+- XML generation: <1ms after LLM response
+- Total: ~2-5 seconds per feed request
 
 ### Throughput
-- Limited by HTTP/hyper (thousands of requests/sec)
-- No LLM bottleneck for serving feeds
-- Concurrent requests handled efficiently via Arc<RwLock<>>
+- Limited by LLM response time (2-5s per request)
+- Concurrent requests processed in parallel (each on separate tokio task)
+- No shared state means no lock contention
 
 ### Memory Usage
-- Each feed and all items kept in memory
-- Large feeds with many items can use significant RAM
-- No automatic cleanup or garbage collection
+- No persistent storage - very low memory footprint
+- Each request allocates temporarily for XML generation
+- Memory freed immediately after response sent
+
+## Comparison with HTTP Server
+
+| Feature | HTTP | RSS |
+|---------|------|-----|
+| Request Handling | LLM per request | LLM per request |
+| Response Format | LLM chooses (HTML, JSON, etc.) | Always RSS 2.0 XML |
+| Structured Actions | send_http_response | generate_rss_feed |
+| State | Stateless | Stateless |
+| Categories | N/A | Built-in support |
+
+Both protocols follow the same pattern: receive request → call LLM → generate response.
 
 ## Future Enhancements
 
-### 1. Persistence
-Add file or database storage:
-- Save feeds to JSON/XML files
-- Reload on server restart
-- SQLite for feed and item storage
+### 1. Conditional Requests
+Support If-Modified-Since:
+- Store last-modified timestamps
+- Return 304 Not Modified when appropriate
+- Reduce bandwidth for unchanged feeds
 
-### 2. Atom Support
+### 2. ETag Support
+Generate ETags for feeds:
+- Hash of feed content
+- Enable client caching
+- Return 304 when ETag matches
+
+### 3. Atom Support
 Support Atom 1.0 format:
 - Use `atom_syndication` crate
-- Serve both RSS and Atom at different paths
+- Serve both RSS and Atom
 - Content negotiation via Accept header
 
-### 3. Feed Management API
-REST API for feed modification:
-- POST `/feeds` to create feed
-- PUT `/feeds/{id}/items` to add items
-- DELETE `/feeds/{id}` to remove feed
-- Requires authentication
+### 4. Feed Index
+Add `/` endpoint:
+- List all available feeds
+- Generate HTML or JSON directory
+- Auto-discovery links
 
-### 4. Auto-Update Feeds
-Scheduled tasks to update feeds:
-- Fetch content from external sources
-- Generate items based on events
-- Update pub_dates automatically
+### 5. Pagination
+Support large feeds:
+- Limit items per page
+- Add next/prev links
+- Query parameters for pagination
 
-### 5. Validation
-Add feed validation:
-- Validate RSS 2.0 spec compliance
-- Check required fields
-- Validate URLs and dates
-- Feed validators available online
+### 6. Media Enclosures
+Support podcast/media RSS:
+- `<enclosure>` tags
+- File size and type metadata
+- iTunes/Spotify RSS extensions
 
 ## References
 
@@ -230,3 +293,4 @@ Add feed validation:
 - [rss Crate Documentation](https://docs.rs/rss/latest/rss/)
 - [RSS on Wikipedia](https://en.wikipedia.org/wiki/RSS)
 - [RSS Best Practices](https://www.rssboard.org/rss-profile)
+- [RFC 2822 Date Format](https://datatracker.ietf.org/doc/html/rfc2822#section-3.3)
