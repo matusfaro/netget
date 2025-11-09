@@ -121,8 +121,7 @@ impl Server for BluetoothBleMouseProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            let device_name = ctx.params
-                .get("device_name")
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("NetGet-Mouse")
                 .to_string();
@@ -130,7 +129,7 @@ impl Server for BluetoothBleMouseProtocol {
             crate::server::bluetooth_ble_mouse::BluetoothBleMouse::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
                 ctx.instruction,
@@ -165,28 +164,30 @@ fn move_cursor_action() -> ActionDefinition {
         name: "move_cursor".to_string(),
         description: "Move the mouse cursor by relative amounts".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "dx".to_string(),
                 type_hint: "number".to_string(),
                 description: "Horizontal movement (-127 to 127)".to_string(),
                 required: true,
-                example: json!(10),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "dy".to_string(),
                 type_hint: "number".to_string(),
                 description: "Vertical movement (-127 to 127)".to_string(),
                 required: true,
-                example: json!(-5),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+    example: json!({
+            "type": "move_cursor",
+            "dx": 42,
+            "dy": 42
+        }),
     }
 }
 
@@ -195,21 +196,23 @@ fn click_action() -> ActionDefinition {
         name: "click".to_string(),
         description: "Click a mouse button".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "button".to_string(),
                 type_hint: "string".to_string(),
                 description: "Button to click: 'left', 'right', 'middle'".to_string(),
                 required: true,
-                example: json!("left"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+    example: json!({
+            "type": "click",
+            "button": "example_button"
+        }),
     }
 }
 
@@ -218,21 +221,23 @@ fn scroll_action() -> ActionDefinition {
         name: "scroll".to_string(),
         description: "Scroll the mouse wheel".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "amount".to_string(),
                 type_hint: "number".to_string(),
                 description: "Scroll amount (-127 to 127, positive=up, negative=down)".to_string(),
                 required: true,
-                example: json!(3),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+    example: json!({
+            "type": "scroll",
+            "amount": 42
+        }),
     }
 }
 
@@ -241,35 +246,37 @@ fn drag_action() -> ActionDefinition {
         name: "drag".to_string(),
         description: "Drag with a mouse button held down".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "button".to_string(),
                 type_hint: "string".to_string(),
                 description: "Button to hold: 'left', 'right', 'middle'".to_string(),
                 required: true,
-                example: json!("left"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "dx".to_string(),
                 type_hint: "number".to_string(),
                 description: "Horizontal movement while dragging".to_string(),
                 required: true,
-                example: json!(50),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "dy".to_string(),
                 type_hint: "number".to_string(),
                 description: "Vertical movement while dragging".to_string(),
                 required: true,
-                example: json!(30),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+    example: json!({
+            "type": "drag",
+            "button": "example_button",
+            "dx": 42,
+            "dy": 42
+        }),
     }
 }
 
@@ -278,21 +285,24 @@ fn send_to_client_action() -> ActionDefinition {
         name: "send_to_client".to_string(),
         description: "Send raw HID report to a specific client".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Client ID to send to".to_string(),
                 required: true,
-                example: json!(1),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "report".to_string(),
                 type_hint: "string".to_string(),
                 description: "Hex-encoded HID report (4 bytes: buttons, X, Y, wheel)".to_string(),
                 required: true,
-                example: json!("010A0500"),
             },
         ],
+    example: json!({
+            "type": "send_to_client",
+            "client_id": 42,
+            "report": "example_report"
+        }),
     }
 }
 
@@ -301,5 +311,8 @@ fn list_clients_action() -> ActionDefinition {
         name: "list_clients".to_string(),
         description: "List all connected mouse clients".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "list_clients"
+        }),
     }
 }

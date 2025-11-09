@@ -17,7 +17,7 @@ impl Protocol for BluetoothBleThermometerProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> { vec![] }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![ActionDefinition { name: "set_temperature".to_string(), description: "Set temperature".to_string(), parameters: vec![
-            ParameterDefinition { name: "celsius".to_string(), type_hint: "number".to_string(), description: "Temperature in Celsius".to_string(), required: true, example: json!(22.5) }
+            Parameter { name: "celsius".to_string(), type_hint: "number".to_string(), description: "Temperature in Celsius".to_string(), required: true}
         ]}]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> { vec![] }
@@ -37,10 +37,10 @@ impl Protocol for BluetoothBleThermometerProtocol {
 impl Server for BluetoothBleThermometerProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
-            crate::server::bluetooth_ble_thermometer::BluetoothBleThermometer::spawn_with_llm_actions("NetGet-Thermometer".to_string(), ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction).await
+            crate::server::bluetooth_ble_thermometer::BluetoothBleThermometer::spawn_with_llm_actions("NetGet-Thermometer".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id).await
         })
     }
-    fn execute_action(&self, _: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "set_temperature" => Ok(ActionResult::Custom { name: action_type.to_string(), data: action }),

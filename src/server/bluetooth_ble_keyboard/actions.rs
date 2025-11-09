@@ -120,8 +120,7 @@ impl Server for BluetoothBleKeyboardProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            let device_name = ctx.params
-                .get("device_name")
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("NetGet-Keyboard")
                 .to_string();
@@ -129,7 +128,7 @@ impl Server for BluetoothBleKeyboardProtocol {
             crate::server::bluetooth_ble_keyboard::BluetoothBleKeyboard::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
                 ctx.instruction,
@@ -164,21 +163,23 @@ fn type_text_action() -> ActionDefinition {
         name: "type_text".to_string(),
         description: "Type a string of text on all connected devices or a specific client".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "text".to_string(),
                 type_hint: "string".to_string(),
                 description: "Text to type".to_string(),
-                required: true,
-                example: json!("Hello, World!"),
+                required: true, World!"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client ID only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+    example: json!({
+            "type": "type_text",
+            "text": "example_text"
+        }),
     }
 }
 
@@ -187,21 +188,23 @@ fn press_key_action() -> ActionDefinition {
         name: "press_key".to_string(),
         description: "Press a single key (e.g., 'enter', 'escape', 'tab')".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "key".to_string(),
                 type_hint: "string".to_string(),
                 description: "Key name to press".to_string(),
                 required: true,
-                example: json!("enter"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+    example: json!({
+            "type": "press_key",
+            "key": "example_key"
+        }),
     }
 }
 
@@ -210,12 +213,11 @@ fn key_combo_action() -> ActionDefinition {
         name: "key_combo".to_string(),
         description: "Press a key combination (e.g., Ctrl+C, Alt+Tab)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "modifiers".to_string(),
                 type_hint: "array".to_string(),
                 description: "Modifier keys: 'ctrl', 'shift', 'alt', 'gui' (Windows key)".to_string(),
                 required: false,
-                example: json!(["ctrl"]),
             },
             ParameterDefinition {
                 name: "key".to_string(),
@@ -240,21 +242,24 @@ fn send_to_client_action() -> ActionDefinition {
         name: "send_to_client".to_string(),
         description: "Send raw HID report to a specific client".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Client ID to send to".to_string(),
                 required: true,
-                example: json!(1),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "report".to_string(),
                 type_hint: "string".to_string(),
                 description: "Hex-encoded HID report (8 bytes)".to_string(),
                 required: true,
-                example: json!("0000040000000000"),
             },
         ],
+    example: json!({
+            "type": "send_to_client",
+            "client_id": 42,
+            "report": "example_report"
+        }),
     }
 }
 
@@ -263,5 +268,8 @@ fn list_clients_action() -> ActionDefinition {
         name: "list_clients".to_string(),
         description: "List all connected keyboard clients".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "list_clients"
+        }),
     }
 }

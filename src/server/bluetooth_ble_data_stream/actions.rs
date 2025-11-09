@@ -40,26 +40,41 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                 name: "start_stream".to_string(),
                 description: "Start data streaming".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true, example: json!("imu_data") },
-                    ParameterDefinition { name: "sample_rate".to_string(), type_hint: "number".to_string(), description: "Samples per second (1-100)".to_string(), required: true, example: json!(10) },
-                    ParameterDefinition { name: "data_type".to_string(), type_hint: "string".to_string(), description: "Data type (sensor, gps, imu, audio)".to_string(), required: true, example: json!("sensor") },
+                    Parameter { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true},
+                    Parameter { name: "sample_rate".to_string(), type_hint: "number".to_string(), description: "Samples per second (1-100)".to_string(), required: true},
+                    Parameter { name: "data_type".to_string(), type_hint: "string".to_string(), description: "Data type (sensor, gps, imu, audio)".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "start_stream",
+            "stream_id": "example_stream_id",
+            "sample_rate": 42,
+            "data_type": "example_data_type"
+        }),
+    },
             ActionDefinition {
                 name: "send_stream_data".to_string(),
                 description: "Send stream data packet".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true, example: json!("imu_data") },
-                    ParameterDefinition { name: "data".to_string(), type_hint: "object".to_string(), description: "Data payload (JSON)".to_string(), required: true, example: json!({"x": 1.5, "y": 2.3, "z": -0.8}) },
+                    Parameter { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true},
+                    Parameter { name: "data".to_string(), type_hint: "object".to_string(), description: "Data payload (JSON)".to_string(), required: true, "y": 2.3, "z": -0.8}) },
                 ],
-            },
+            example: json!({
+            "type": "send_stream_data",
+            "stream_id": "example_stream_id",
+            "data": {}
+        }),
+    },
             ActionDefinition {
                 name: "stop_stream".to_string(),
                 description: "Stop data streaming".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true, example: json!("imu_data") },
+                    Parameter { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "stop_stream",
+            "stream_id": "example_stream_id"
+        }),
+    },
         ]
     }
 
@@ -87,14 +102,14 @@ impl Protocol for BluetoothBleDataStreamProtocol {
 impl Server for BluetoothBleDataStreamProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
-            let device_name = ctx.params.get("device_name").and_then(|v| v.as_str()).unwrap_or("NetGet-Stream").to_string();
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name")).and_then(|v| v.as_str()).unwrap_or("NetGet-Stream").to_string();
             crate::server::bluetooth_ble_data_stream::BluetoothBleDataStream::spawn_with_llm_actions(
-                device_name, ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction
+                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
             ).await
         })
     }
 
-    fn execute_action(&self, _: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "start_stream" | "send_stream_data" | "stop_stream" => Ok(ActionResult::Custom { name: action_type.to_string(), data: action }),

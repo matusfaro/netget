@@ -24,23 +24,35 @@ impl Protocol for BluetoothBleCyclingProtocol {
                 name: "set_speed".to_string(),
                 description: "Set cycling speed".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "kmh".to_string(), type_hint: "number".to_string(), description: "Speed in km/h".to_string(), required: true, example: json!(25.5) },
+                    Parameter { name: "kmh".to_string(), type_hint: "number".to_string(), description: "Speed in km/h".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "set_speed",
+            "kmh": 42
+        }),
+    },
             ActionDefinition {
                 name: "set_cadence".to_string(),
                 description: "Set pedaling cadence".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "rpm".to_string(), type_hint: "number".to_string(), description: "Cadence in RPM".to_string(), required: true, example: json!(80) },
+                    Parameter { name: "rpm".to_string(), type_hint: "number".to_string(), description: "Cadence in RPM".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "set_cadence",
+            "rpm": 42
+        }),
+    },
             ActionDefinition {
                 name: "simulate_ride".to_string(),
                 description: "Simulate cycling ride with varying speed/cadence".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "profile".to_string(), type_hint: "string".to_string(), description: "Ride profile (flat, hill, interval)".to_string(), required: true, example: json!("hill") },
+                    Parameter { name: "profile".to_string(), type_hint: "string".to_string(), description: "Ride profile (flat, hill, interval)".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "simulate_ride",
+            "profile": "example_profile"
+        }),
+    },
         ]
     }
 
@@ -69,12 +81,12 @@ impl Server for BluetoothBleCyclingProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::bluetooth_ble_cycling::BluetoothBleCycling::spawn_with_llm_actions(
-                "NetGet-Cycling".to_string(), ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Cycling".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
             ).await
         })
     }
 
-    fn execute_action(&self, _: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "set_speed" | "set_cadence" | "simulate_ride" => Ok(ActionResult::Custom { name: action_type.to_string(), data: action }),
