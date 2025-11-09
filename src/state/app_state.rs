@@ -226,8 +226,10 @@ struct AppStateInner {
     /// Unified ID counter for servers, connections, and clients
     /// This ensures all IDs are unique across all three types
     next_unified_id: u32,
+    #[allow(dead_code)]
     /// Next server ID to assign (DEPRECATED - use next_unified_id)
     next_server_id: u32,
+    #[allow(dead_code)]
     /// Next client ID to assign (DEPRECATED - use next_unified_id)
     next_client_id: u32,
     /// Current Ollama model

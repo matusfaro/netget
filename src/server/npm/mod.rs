@@ -53,7 +53,7 @@ impl NpmServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("NPM connection {} from {}", connection_id, remote_addr);
                         let _ = status_tx.send(format!("[INFO] NPM connection from {}", remote_addr));

@@ -42,7 +42,7 @@ impl WhoisServer {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{

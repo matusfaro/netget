@@ -54,7 +54,7 @@ impl UsbSerialServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         info!("USB/IP connection {} from {} (USB serial)", connection_id, remote_addr);
 
                         use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo};

@@ -197,7 +197,7 @@ impl WireguardServer {
 
                 if !peers.contains_key(&peer_key) {
                     // New peer discovered
-                    let connection_id = ConnectionId::new();
+                    let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                     peers.insert(peer_key.clone(), connection_id);
 
                     info!("New WireGuard peer connected: {}", peer_key);

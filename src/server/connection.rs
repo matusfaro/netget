@@ -1,7 +1,6 @@
 //! Connection management
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpStream;
 
 /// Unique identifier for a connection

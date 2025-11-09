@@ -65,7 +65,7 @@ impl ImapServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!("IMAP connection {} from {}", connection_id, remote_addr);
                         let _ = status_tx.send(format!(
                             "→ IMAP connection {} from {}",
@@ -178,7 +178,7 @@ impl ImapServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!("IMAPS connection {} from {}", connection_id, remote_addr);
 
                         // Accept TLS connection

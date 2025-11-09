@@ -75,7 +75,7 @@ impl RedisServer {
                         debug!("Redis connection from {}", addr);
                         let _ = status_tx.send(format!("[DEBUG] Redis connection from {}", addr));
 
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
 
                         // Track the connection
