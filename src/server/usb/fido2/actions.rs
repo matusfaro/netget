@@ -110,6 +110,12 @@ impl UsbFido2Protocol {
     ) -> Option<Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>> {
         self.handlers.lock().await.get(&connection_id).cloned()
     }
+
+    /// Get the approval manager (returns first available from global storage)
+    async fn get_approval_manager(&self) -> Option<Arc<crate::server::usb::fido2::approval::ApprovalManager>> {
+        use crate::server::usb::fido2::approval::APPROVAL_MANAGERS;
+        APPROVAL_MANAGERS.read().await.values().next().cloned()
+    }
 }
 
 // Implement Protocol trait
@@ -153,16 +159,16 @@ impl Protocol for UsbFido2Protocol {
         vec![
             ActionDefinition {
                 name: "approve_request".to_string(),
-                description: "Approve pending FIDO2 registration or authentication request".to_string(),
+                description: "Approve pending FIDO2 registration or authentication request by approval ID".to_string(),
                 parameters: vec![
-                    Parameter::new("connection_id", "string", "Connection ID"),
+                    Parameter::new("approval_id", "number", "Approval request ID to approve"),
                 ],
             },
             ActionDefinition {
                 name: "deny_request".to_string(),
-                description: "Deny pending FIDO2 registration or authentication request".to_string(),
+                description: "Deny pending FIDO2 registration or authentication request by approval ID".to_string(),
                 parameters: vec![
-                    Parameter::new("connection_id", "string", "Connection ID"),
+                    Parameter::new("approval_id", "number", "Approval request ID to deny"),
                 ],
             },
             ActionDefinition {
@@ -189,6 +195,11 @@ impl Protocol for UsbFido2Protocol {
                     Parameter::new("credentials_json", "string", "JSON array of credentials to load"),
                 ],
             },
+            ActionDefinition {
+                name: "list_pending_approvals".to_string(),
+                description: "List all pending approval requests awaiting LLM decision".to_string(),
+                parameters: vec![],
+            },
         ]
     }
 
@@ -208,16 +219,40 @@ impl Protocol for UsbFido2Protocol {
 
         match action_type {
             "approve_request" => {
-                // NOTE: Approval requires sync/async bridge
-                // USB/IP requests are synchronous but LLM calls are async
-                // Current architecture doesn't support blocking USB requests for LLM approval
-                // See roadmap for potential approaches (timeout-based approval, auto-approve mode)
-                info!("approve_request called - not yet implemented (requires sync/async bridge)");
-                Ok(ActionResult::NoAction)
+                let approval_id = action["approval_id"]
+                    .as_u64()
+                    .context("Missing approval_id parameter")?;
+
+                // Get approval manager
+                let approval_mgr = tokio::runtime::Handle::current().block_on(self.get_approval_manager())
+                    .context("No approval manager found (server may not have LLM approval enabled)")?;
+
+                // Approve the request
+                tokio::runtime::Handle::current().block_on(approval_mgr.approve(approval_id))
+                    .map_err(|e| anyhow::anyhow!("Failed to approve request: {}", e))?;
+
+                info!("Approved FIDO2 request ID {}", approval_id);
+                Ok(ActionResult::Message {
+                    message: format!("Approved request ID {}", approval_id),
+                })
             }
             "deny_request" => {
-                info!("deny_request called - not yet implemented (requires sync/async bridge)");
-                Ok(ActionResult::NoAction)
+                let approval_id = action["approval_id"]
+                    .as_u64()
+                    .context("Missing approval_id parameter")?;
+
+                // Get approval manager
+                let approval_mgr = tokio::runtime::Handle::current().block_on(self.get_approval_manager())
+                    .context("No approval manager found (server may not have LLM approval enabled)")?;
+
+                // Deny the request
+                tokio::runtime::Handle::current().block_on(approval_mgr.deny(approval_id))
+                    .map_err(|e| anyhow::anyhow!("Failed to deny request: {}", e))?;
+
+                info!("Denied FIDO2 request ID {}", approval_id);
+                Ok(ActionResult::Message {
+                    message: format!("Denied request ID {}", approval_id),
+                })
             }
             "list_credentials" => {
                 // NOTE: Credentials are stored per USB/IP connection in the FIDO2 handler
@@ -252,6 +287,33 @@ impl Protocol for UsbFido2Protocol {
                     message: "Credential loading not supported. Credentials are created via WebAuthn registration only.".to_string()
                 })
             }
+            "list_pending_approvals" => {
+                // Get approval manager
+                let approval_mgr = tokio::runtime::Handle::current().block_on(self.get_approval_manager());
+
+                if let Some(mgr) = approval_mgr {
+                    let pending = tokio::runtime::Handle::current().block_on(mgr.list_pending());
+
+                    if pending.is_empty() {
+                        Ok(ActionResult::Message {
+                            message: "No pending approval requests".to_string(),
+                        })
+                    } else {
+                        let mut message = format!("Pending approval requests ({}):\n", pending.len());
+                        for (id, op_type, rp_id, user_name) in pending {
+                            message.push_str(&format!(
+                                "  - ID {}: {:?} for RP '{}' (user: {:?})\n",
+                                id, op_type, rp_id, user_name
+                            ));
+                        }
+                        Ok(ActionResult::Message { message })
+                    }
+                } else {
+                    Ok(ActionResult::Message {
+                        message: "LLM approval not enabled for this server (use auto_approve=false)".to_string(),
+                    })
+                }
+            }
             _ => Ok(ActionResult::NoAction),
         }
     }
@@ -267,4 +329,37 @@ impl Protocol for UsbFido2Protocol {
 
 // Implement Server trait
 #[cfg(feature = "usb-fido2")]
-impl Server for UsbFido2Protocol {}
+impl Server for UsbFido2Protocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            // Extract startup parameters
+            let support_u2f = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get_bool("support_u2f"));
+            let support_fido2 = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get_bool("support_fido2"));
+            let auto_approve = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get_bool("auto_approve"));
+
+            // Call the actual spawn function
+            crate::server::usb::fido2::UsbFido2Server::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                support_u2f,
+                support_fido2,
+                auto_approve,
+            )
+            .await
+        })
+    }
+}

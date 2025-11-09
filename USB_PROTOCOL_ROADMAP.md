@@ -332,10 +332,12 @@ This document tracks the enhancement roadmap for NetGet's USB protocol implement
 
 - ✅ **Phase 1**: LLM Integration & Action Framework
 - ✅ **Phase 2**: E2E Test Infrastructure
+- ✅ **Advanced Features** (Partial): PIN/UV, Resident Keys, Sync/Async Bridge
 
 ### In Progress
 
-- 🔄 **Phase 3**: New USB Protocols
+- 🔄 **Advanced Features** (Remaining): PIV Application, OpenPGP Application
+- 🔄 **Phase 3**: New USB Protocols (Future)
 
 ---
 
