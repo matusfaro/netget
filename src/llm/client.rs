@@ -75,6 +75,7 @@ impl Drop for OllamaLockGuard {
 
 /// Structured response from the LLM
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Default)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
     #[serde(default)]
@@ -105,19 +106,6 @@ pub struct LlmResponse {
     pub append_memory: Option<String>,
 }
 
-impl Default for LlmResponse {
-    fn default() -> Self {
-        Self {
-            output: None,
-            close_connection: false,
-            wait_for_more: false,
-            shutdown_server: false,
-            log_message: None,
-            set_memory: None,
-            append_memory: None,
-        }
-    }
-}
 
 impl LlmResponse {
     /// Parse from JSON string with fallback to legacy text format
@@ -342,6 +330,7 @@ impl OllamaClient {
             .create(true)
             .write(true)
             .read(true)
+            .truncate(true)
             .open(lock_path)
             .context("Failed to open Ollama lock file")?;
 
@@ -657,7 +646,7 @@ impl OllamaClient {
             let (tools, regular): (Vec<_>, Vec<_>) = action_response
                 .actions
                 .into_iter()
-                .partition(|action| ToolAction::is_tool_action(action));
+                .partition(ToolAction::is_tool_action);
 
             // Collect regular actions
             all_actions.extend(regular);

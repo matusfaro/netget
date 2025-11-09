@@ -381,7 +381,6 @@ pub async fn call_llm(
     Ok(result)
 }
 /// Call LLM for client protocol events (simplified version for MVP)
-
 /// Result from client LLM call
 #[derive(Debug, Clone)]
 pub struct ClientLlmResult {

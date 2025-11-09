@@ -58,6 +58,12 @@ pub static HTTP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
 /// HTTP client protocol action handler
 pub struct HttpClientProtocol;
 
+impl Default for HttpClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpClientProtocol {
     pub fn new() -> Self {
         Self

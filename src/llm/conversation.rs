@@ -332,7 +332,7 @@ impl ConversationHandler {
             let (tools, regular): (Vec<_>, Vec<_>) = action_response
                 .actions
                 .into_iter()
-                .partition(|action| ToolAction::is_tool_action(action));
+                .partition(ToolAction::is_tool_action);
 
             // Collect regular actions
             all_actions.extend(regular.clone());

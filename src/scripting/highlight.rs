@@ -1,4 +1,4 @@
-///! Syntax highlighting for script code in logs
+//! Syntax highlighting for script code in logs
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;

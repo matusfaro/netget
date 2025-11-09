@@ -48,11 +48,7 @@ pub async fn run() -> Result<()> {
         // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
         let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
             Some(mode)
-        } else if let Some(mode) = settings.parse_scripting_mode() {
-            Some(mode)
-        } else {
-            None
-        };
+        } else { settings.parse_scripting_mode() };
 
         if let Some(mode) = mode_to_set {
             // Validate that the requested environment is available

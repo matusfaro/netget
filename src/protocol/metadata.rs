@@ -206,6 +206,12 @@ pub struct ProtocolMetadataV2Builder {
     notes: Option<&'static str>,
 }
 
+impl Default for ProtocolMetadataV2Builder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProtocolMetadataV2Builder {
     pub const fn new() -> Self {
         Self {

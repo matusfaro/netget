@@ -58,6 +58,12 @@ pub static SSH_CLIENT_OUTPUT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
 /// SSH client protocol action handler
 pub struct SshClientProtocol;
 
+impl Default for SshClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SshClientProtocol {
     pub fn new() -> Self {
         Self

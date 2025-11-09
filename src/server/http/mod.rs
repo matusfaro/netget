@@ -272,7 +272,7 @@ async fn handle_http_request_with_llm_actions(
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
                     info!("HTTP/2 upgrade requested but http2 feature not enabled");
-                    let _ = status_tx.send(format!("[INFO] HTTP/2 upgrade not supported (http2 feature disabled)"));
+                    let _ = status_tx.send("[INFO] HTTP/2 upgrade not supported (http2 feature disabled)".to_string());
 
                     let response = Response::builder()
                         .status(501) // Not Implemented
