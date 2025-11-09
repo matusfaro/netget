@@ -58,12 +58,15 @@ if [[ "$CARGO_USE_ISOLATION" == true ]] && [[ "$CARGO_CLEANUP_OLD" == true ]] &&
     fi
 fi
 
+# Determine session PID (use CARGO_SESSION_PID if set, otherwise current PID)
+SESSION_PID="${CARGO_SESSION_PID:-$$}"
+
 # Set target directory based on isolation mode
 if [[ "$CARGO_USE_ISOLATION" == true ]]; then
-    # Create session-specific build directory using shell PID
-    # $$ is the PID of the current shell, so all invocations within the same
-    # terminal session will use the same directory, while different sessions are isolated
-    export CARGO_TARGET_DIR="${PROJECT_ROOT}/target-claude/claude-$$"
+    # Create session-specific build directory using session PID
+    # CARGO_SESSION_PID is set by cargo-isolated.sh to ensure consistency
+    # All invocations from the same shell session share the same directory
+    export CARGO_TARGET_DIR="${PROJECT_ROOT}/target-claude/claude-${SESSION_PID}"
     mkdir -p "$CARGO_TARGET_DIR"
     BUILD_MODE="Isolated"
 else
@@ -115,14 +118,28 @@ elif [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
     echo "" >&2
 fi
 
+# Create tmp directory for logs
+mkdir -p "${PROJECT_ROOT}/tmp"
+
+# Determine log file name based on command (first argument)
+COMMAND="${CARGO_ARGS[0]:-unknown}"
+LOG_FILE="${PROJECT_ROOT}/tmp/netget-${COMMAND}-${SESSION_PID}.log"
+
 # Echo the target directory and session info for visibility
 echo "=== Cargo $BUILD_MODE Build ===" >&2
 if [[ "$CARGO_USE_ISOLATION" == true ]]; then
-    echo "Session PID: $$" >&2
+    echo "Session PID: ${SESSION_PID}" >&2
 fi
 echo "Target directory: $CARGO_TARGET_DIR" >&2
 echo "Command: cargo ${CARGO_ARGS[*]}" >&2
+echo "Log file: $LOG_FILE" >&2
 echo "============================" >&2
 
-# Forward all arguments to cargo (excluding --skip-cleanup flag)
-exec cargo "${CARGO_ARGS[@]}"
+# Enable pipefail to capture cargo's exit code through the pipe
+set -o pipefail
+
+# Run cargo and tee output to log file (captures both stdout and stderr)
+cargo "${CARGO_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+
+# Exit with cargo's exit code
+exit $?
