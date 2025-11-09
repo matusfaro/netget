@@ -90,7 +90,7 @@ impl SshAgentServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         info!("Accepted SSH Agent connection {}", connection_id);
                         let _ = status_tx.send(format!("✓ SSH Agent connection {} opened", connection_id));
 

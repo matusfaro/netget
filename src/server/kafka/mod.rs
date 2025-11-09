@@ -115,7 +115,7 @@ impl KafkaServer {
                         debug!("Kafka client connected from {}", peer_addr);
                         let _ = status_tx.send(format!("[DEBUG] Kafka client connected from {}", peer_addr));
 
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();

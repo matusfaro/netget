@@ -42,7 +42,7 @@ impl SyslogServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance (Syslog "connection" = recent peer)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};

@@ -214,7 +214,7 @@ impl IsisServer {
                             src_mac[3], src_mac[4], src_mac[5]
                         ];
 
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
                         debug!("IS-IS received {} bytes from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",

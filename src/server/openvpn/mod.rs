@@ -322,7 +322,7 @@ impl OpenvpnServer {
         }
 
         // Create new peer
-        let connection_id = ConnectionId::new();
+        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
         let client_session_id = control_packet.header.session_id.unwrap_or(0);
 
         let mut peer = Peer::new(connection_id, peer_addr, client_session_id);

@@ -62,7 +62,7 @@ impl XmlRpcServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!(
                             "XML-RPC connection {} from {}",
                             connection_id, remote_addr

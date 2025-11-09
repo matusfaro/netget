@@ -274,7 +274,7 @@ impl OspfServer {
                 neighbor.last_hello = Instant::now();
                 neighbor.connection_id
             } else {
-                let connection_id = ConnectionId::new();
+                let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                 let neighbor = OspfNeighbor {
                     router_id: sender_router_id.clone(),
                     neighbor_ip: src_ip,
