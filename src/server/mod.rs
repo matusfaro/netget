@@ -166,6 +166,13 @@ pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshProtocol;
 
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::SshAgentServer;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::actions::SshAgentProtocol;
+
 #[cfg(feature = "svn")]
 pub mod svn;
 #[cfg(feature = "svn")]

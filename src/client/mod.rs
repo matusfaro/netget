@@ -340,6 +340,12 @@ pub mod ssh;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshClientProtocol;
 
+// ssh-agent client
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::actions::SshAgentClientProtocol;
+
 // stun client
 #[cfg(feature = "stun")]
 pub mod stun;
