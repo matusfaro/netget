@@ -292,6 +292,11 @@ impl ServerRegistry {
             Arc::new(crate::server::OpenAiProtocol::new()),
         );
 
+        #[cfg(feature = "ollama")]
+        self.register(
+            Arc::new(crate::server::OllamaProtocol::new()),
+        );
+
         #[cfg(feature = "oauth2")]
         self.register(
             Arc::new(crate::server::OAuth2Protocol::new()),

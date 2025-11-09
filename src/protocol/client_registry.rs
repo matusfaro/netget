@@ -156,6 +156,9 @@ impl ClientRegistry {
         #[cfg(feature = "openai")]
         self.register(Arc::new(crate::client::openai::OpenAiClientProtocol::new()));
 
+        #[cfg(feature = "ollama")]
+        self.register(Arc::new(crate::client::ollama::OllamaClientProtocol::new()));
+
         #[cfg(feature = "openidconnect")]
         self.register(Arc::new(crate::client::openidconnect::OpenIdConnectClientProtocol::new()));
 

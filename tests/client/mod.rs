@@ -14,5 +14,9 @@ pub mod wireguard;
 pub mod webrtc;
 #[cfg(feature = "saml")]
 pub mod saml;
+#[cfg(feature = "openai")]
+pub mod openai;
+#[cfg(feature = "ollama")]
+pub mod ollama;
 #[cfg(all(feature = "ssh-agent", unix))]
 pub mod ssh_agent;
