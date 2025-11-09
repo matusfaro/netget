@@ -122,7 +122,12 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 ./cargo-isolated.sh build --all-features  # DON'T USE IN WEB
 ```
 
-**Detection in code**: Check environment variable before building:
+**Detection**: Use the provided script to check your environment:
+```bash
+./am_i_claude_code_for_web.sh
+```
+
+This script checks all detection methods and provides build guidance. You can also check manually in code:
 ```bash
 if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
     echo "Running in Claude Code for Web - skipping bluetooth-ble"
