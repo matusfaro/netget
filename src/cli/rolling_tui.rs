@@ -1207,6 +1207,17 @@ async fn handle_key_event(
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
+                    UserCommand::Save { name, id } => {
+                        // Save configuration to file
+                        handle_save(name, id, state, footer, &palette).await?;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::Load { name } => {
+                        // Load configuration from file
+                        handle_load(name, state, footer, &palette, &llm).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
                     UserCommand::Quit => {
                         return Ok(true);
                     }
