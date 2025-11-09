@@ -121,6 +121,14 @@ impl EventHandler {
                 }
                 Ok(false)
             }
+            UserCommand::StopAll => {
+                self.handle_stop_all(ui).await?;
+                Ok(false)
+            }
+            UserCommand::StopById { id } => {
+                self.handle_stop_by_id(id, ui).await?;
+                Ok(false)
+            }
             UserCommand::Quit => {
                 self.handle_quit(ui).await?;
                 Ok(true) // Signal to quit
@@ -276,6 +284,7 @@ impl EventHandler {
                                     | CommonAction::OpenClient { .. }
                                     | CommonAction::CloseClient { .. }
                                     | CommonAction::CloseAllClients
+                                    | CommonAction::CloseConnectionById { .. }
                             );
 
                             match self.execute_server_management_action(common_action, &status_tx).await {
@@ -915,6 +924,35 @@ impl EventHandler {
 
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
+            CommonAction::CloseConnectionById { connection_id } => {
+                use crate::server::connection::ConnectionId;
+
+                let conn_id = ConnectionId::new(connection_id);
+                let all_servers = self.state.get_all_servers().await;
+
+                let mut found = false;
+                for server in all_servers {
+                    if server.connections.contains_key(&conn_id) {
+                        self.state.close_connection_on_server(server.id, conn_id).await;
+                        let _ = status_tx.send(format!(
+                            "[CONNECTION] Closed connection #{} on server #{}",
+                            connection_id,
+                            server.id.as_u32()
+                        ));
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    let _ = status_tx.send(format!(
+                        "[ERROR] Connection #{} not found",
+                        connection_id
+                    ));
+                }
+
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
             CommonAction::ReconnectClient { client_id } => {
                 let cid = crate::state::ClientId::new(client_id);
 
@@ -1022,6 +1060,77 @@ impl EventHandler {
     async fn handle_quit(&mut self, ui: &mut App) -> Result<()> {
         ui.add_llm_message("Quitting...".to_string());
         // The main event loop will handle the actual quit
+        Ok(())
+    }
+
+    async fn handle_stop_all(&mut self, ui: &mut App) -> Result<()> {
+        use crate::state::server::ServerStatus;
+        use crate::state::client::ClientStatus;
+
+        ui.add_llm_message("Stopping all servers, connections, and clients...".to_string());
+
+        // Stop all servers
+        let server_ids: Vec<_> = self.state.get_all_server_ids().await;
+        for server_id in server_ids {
+            self.state.update_server_status(server_id, ServerStatus::Stopped).await;
+            self.state.cleanup_server_tasks(server_id).await;
+            ui.add_llm_message(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
+        }
+
+        // Stop all clients
+        let client_ids: Vec<_> = self.state.get_all_client_ids().await;
+        for client_id in client_ids {
+            self.state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            self.state.cleanup_client_tasks(client_id).await;
+            ui.add_llm_message(format!("[CLIENT] Stopped client #{}", client_id.as_u32()));
+        }
+
+        ui.add_llm_message("All servers and clients stopped.".to_string());
+        Ok(())
+    }
+
+    async fn handle_stop_by_id(&mut self, id: u32, ui: &mut App) -> Result<()> {
+        use crate::state::server::{ServerId, ServerStatus};
+        use crate::state::client::{ClientId, ClientStatus};
+        use crate::server::connection::ConnectionId;
+
+        // Try to find what type of entity this ID corresponds to
+        let mut found = false;
+
+        // Check if it's a server
+        let server_id = ServerId::new(id);
+        if self.state.get_server(server_id).await.is_some() {
+            self.state.update_server_status(server_id, ServerStatus::Stopped).await;
+            self.state.cleanup_server_tasks(server_id).await;
+            ui.add_llm_message(format!("[SERVER] Stopped server #{}", id));
+            found = true;
+        }
+
+        // Check if it's a client
+        let client_id = ClientId::new(id);
+        if self.state.get_client(client_id).await.is_some() {
+            self.state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            self.state.cleanup_client_tasks(client_id).await;
+            ui.add_llm_message(format!("[CLIENT] Stopped client #{}", id));
+            found = true;
+        }
+
+        // Check if it's a connection
+        let connection_id = ConnectionId::new(id);
+        let all_servers = self.state.get_all_servers().await;
+        for server in all_servers {
+            if server.connections.contains_key(&connection_id) {
+                self.state.close_connection_on_server(server.id, connection_id).await;
+                ui.add_llm_message(format!("[CONNECTION] Closed connection #{} on server #{}", id, server.id.as_u32()));
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            ui.add_llm_message(format!("No server, client, or connection found with ID #{}", id));
+        }
+
         Ok(())
     }
 

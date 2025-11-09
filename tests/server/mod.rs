@@ -106,6 +106,8 @@ pub mod ntp;
 pub mod npm;
 #[cfg(feature = "openai")]
 pub mod openai;
+#[cfg(feature = "ollama")]
+pub mod ollama;
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
 #[cfg(feature = "openapi")]
@@ -126,6 +128,8 @@ pub mod proxy;
 pub mod http3;
 #[cfg(feature = "redis")]
 pub mod redis;
+#[cfg(feature = "rss")]
+pub mod rss;
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smtp")]

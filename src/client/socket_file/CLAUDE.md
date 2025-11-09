@@ -158,7 +158,7 @@ All significant events are logged via:
 
 **Basic Connection:**
 ```
-Connect to /tmp/app.sock and send "PING"
+Connect to ./app.sock and send "PING"
 ```
 
 **HTTP over Unix Socket:**

@@ -41,7 +41,7 @@ impl TorrentPeerServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();

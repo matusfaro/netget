@@ -182,6 +182,9 @@ impl ServerRegistry {
             );
         }
 
+        #[cfg(feature = "rss")]
+        self.register(Arc::new(crate::server::RssProtocol::new()));
+
         #[cfg(feature = "cassandra")]
         {
             use crate::server::connection::ConnectionId;
@@ -290,6 +293,11 @@ impl ServerRegistry {
         #[cfg(feature = "openai")]
         self.register(
             Arc::new(crate::server::OpenAiProtocol::new()),
+        );
+
+        #[cfg(feature = "ollama")]
+        self.register(
+            Arc::new(crate::server::OllamaProtocol::new()),
         );
 
         #[cfg(feature = "oauth2")]

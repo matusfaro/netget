@@ -420,8 +420,8 @@ The usbip crate provides the USB/IP server framework but does **NOT** include Ma
 
 3. **Create Disk Image** (on server):
    ```bash
-   dd if=/dev/zero of=/tmp/disk.img bs=1M count=100
-   mkfs.vfat -F 32 /tmp/disk.img
+   dd if=/dev/zero of=./disk.img bs=1M count=100
+   mkfs.vfat -F 32 ./disk.img
    ```
 
 4. **Attach from Linux Client**:

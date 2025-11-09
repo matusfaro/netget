@@ -5,11 +5,15 @@ netget.log
 /target-claude/
 /$(pwd)/
 
+# Local temporary directory (used instead of /tmp for project isolation)
+/tmp/
+
 logs
 *.log
 
-# Ollama lock file for concurrent instance coordination
+# Ollama lock files for concurrent instance coordination
 ollama.lock
+netget-ollama.lock
 
 .vscode/*
 !.vscode/extensions.json

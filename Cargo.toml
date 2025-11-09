@@ -55,6 +55,7 @@ mysql = ["dep:opensrv-mysql", "async-trait", "dep:mysql_async"]
 ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "async-trait", "dep:tokio-postgres"]
 redis = ["dep:redis-protocol", "dep:redis"]
+rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
 webdav = ["dav-server", "dep:reqwest_dav"]
@@ -78,6 +79,7 @@ s3 = ["aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:rust-s3"]
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS queue
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = ["async-openai"]  # OpenAI API client
+ollama = []  # Ollama API server and client (uses existing reqwest, no extra deps)
 oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
@@ -152,6 +154,7 @@ all-protocols = [
     "ipp",
     "postgresql",
     "redis",
+    "rss",
     "proxy",
     "webdav",
     "nfs",
@@ -172,6 +175,7 @@ all-protocols = [
     "sqs",
     "npm",
     "openai",
+    "ollama",
     "oauth2",
     "jsonrpc",
     "wireguard",
@@ -518,6 +522,8 @@ mysql_async = { version = "0.34", optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 # Redis client
 redis = { version = "0.27", optional = true, features = ["tokio-comp"] }
+# RSS feed generation and parsing
+rss = { version = "2.0", optional = true }
 # WebDAV client
 reqwest_dav = { version = "0.2", optional = true }
 # NFS client

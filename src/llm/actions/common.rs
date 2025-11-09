@@ -83,6 +83,11 @@ pub enum CommonAction {
     /// Close all clients
     CloseAllClients,
 
+    /// Close a specific connection by its unified ID
+    CloseConnectionById {
+        connection_id: u32,
+    },
+
     /// Reconnect a disconnected client
     ReconnectClient {
         client_id: u32,
@@ -420,6 +425,24 @@ pub fn close_all_clients_action() -> ActionDefinition {
         parameters: vec![],
         example: json!({
             "type": "close_all_clients"
+        }),
+    }
+}
+
+/// Get action definition for close_connection_by_id
+pub fn close_connection_by_id_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_connection_by_id".to_string(),
+        description: "Close a specific connection by its unified ID.".to_string(),
+        parameters: vec![Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Unified ID of the connection to close (e.g., 3, 5).".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "close_connection_by_id",
+            "connection_id": 3
         }),
     }
 }
@@ -766,6 +789,9 @@ pub fn get_all_common_actions(
         open_client_action(selected_mode, env, is_open_client_enabled),
         close_client_action(),
         close_all_clients_action(),
+        // === Connection Management ===
+        close_connection_by_id_action(),
+        // === Client Configuration ===
         reconnect_client_action(),
         update_client_instruction_action(),
         // === Server Configuration ===

@@ -567,11 +567,11 @@ Could be: Cryptographic key exchange or routing issues
 
 **All E2E Tests** (using generated script):
 ```bash
-/tmp/run_all_e2e_tests.sh
+./tmp/run_all_e2e_tests.sh
 ```
 
 ### Test Logs
-All E2E test logs saved to: `/tmp/e2e_<protocol>_output.log`
+All E2E test logs saved to: `./tmp/e2e_<protocol>_output.log`
 
 ---
 

@@ -87,7 +87,7 @@ The mock server is shown in `example_mock_ssh_agent_server` test.
 Tests use mock server instead of system ssh-agent because:
 - System agent may not be running
 - Requires SSH key setup
-- Platform-specific paths (`/tmp/ssh-*/agent.*`)
+- Platform-specific paths (`./tmp/ssh-*/agent.*` or system `/tmp/ssh-*/agent.*`)
 - Security implications of test keys
 
 **Trade-off**: Mock server is simpler but doesn't test real agent compatibility.
