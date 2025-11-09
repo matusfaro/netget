@@ -147,7 +147,9 @@ impl Http3Server {
                             loop {
                                 match connection.accept_bi().await {
                                     Ok((send_stream, recv_stream)) => {
-                                        let stream_id = ConnectionId::new();
+                                        let stream_id = ConnectionId::new(
+                                            app_state_clone.get_next_unified_id().await
+                                        );
                                         info!("Accepted HTTP3 stream {} on connection {}", stream_id, connection_id);
                                         let _ = status_tx_clone.send(format!("→ Stream {} opened on connection {}", stream_id, connection_id));
 

@@ -137,7 +137,6 @@ impl ArpServer {
                 match cap_rx.next_packet() {
                     Ok(packet) => {
                         let data = packet.data.to_vec();
-                        let _connection_id = ConnectionId::new();
 
                         // Parse Ethernet frame
                         let eth_packet = match EthernetPacket::new(&data) {

@@ -17,7 +17,12 @@ pub static BATTERY_LEVEL_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Battery level was updated",
     )
     .with_parameters(vec![
-        Parameter::new("level", "Battery level percentage (0-100)"),
+        Parameter {
+            name: "level".to_string(),
+            type_hint: "string".to_string(),
+            description: "Battery level percentage (0-100)".to_string(),
+            required: true,
+        },
     ])
 });
 

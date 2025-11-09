@@ -36,9 +36,24 @@ pub static FIDO2_DEVICE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "FIDO2 security key attached to host",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
-        Parameter::new("supports_u2f", "boolean", "Supports U2F (CTAP1) protocol"),
-        Parameter::new("supports_fido2", "boolean", "Supports FIDO2 (CTAP2) protocol"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "supports_u2f".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Supports U2F (CTAP1) protocol".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "supports_fido2".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Supports FIDO2 (CTAP2) protocol".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -49,10 +64,30 @@ pub static FIDO2_REGISTER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         "User requested to register new credential",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID"),
-        Parameter::new("rp_id", "string", "Relying party ID (website/app)"),
-        Parameter::new("user_name", "string", "User name for the credential"),
-        Parameter::new("requires_approval", "boolean", "Requires user presence confirmation"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "rp_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Relying party ID (website/app)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "user_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "User name for the credential".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "requires_approval".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Requires user presence confirmation".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -63,10 +98,30 @@ pub static FIDO2_AUTHENTICATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new
         "User requested to authenticate with credential",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID"),
-        Parameter::new("rp_id", "string", "Relying party ID (website/app)"),
-        Parameter::new("credential_count", "number", "Number of matching credentials"),
-        Parameter::new("requires_approval", "boolean", "Requires user presence confirmation"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "rp_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Relying party ID (website/app)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "credential_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of matching credentials".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "requires_approval".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Requires user presence confirmation".to_string(),
+            required: true,
+        },
     ])
 });
 

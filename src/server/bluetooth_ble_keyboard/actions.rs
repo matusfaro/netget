@@ -17,7 +17,12 @@ pub static KEYBOARD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
         "A device connected to the BLE keyboard",
     )
     .with_parameters(vec![
-        Parameter::new("client_id", "Unique client connection ID"),
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Unique client connection ID".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -28,7 +33,12 @@ pub static KEYBOARD_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::n
         "A device disconnected from the BLE keyboard",
     )
     .with_parameters(vec![
-        Parameter::new("client_id", "Unique client connection ID"),
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Unique client connection ID".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -125,13 +135,18 @@ impl Server for BluetoothBleKeyboardProtocol {
                 .unwrap_or("NetGet-Keyboard")
                 .to_string();
 
+            // Get instruction from server instance
+            let instruction = ctx.state.get_server(ctx.server_id).await
+                .map(|s| s.instruction)
+                .unwrap_or_default();
+
             crate::server::bluetooth_ble_keyboard::BluetoothBleKeyboard::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-                ctx.instruction,
+                instruction,
             )
             .await
         })
@@ -139,7 +154,6 @@ impl Server for BluetoothBleKeyboardProtocol {
 
     fn execute_action(
         &self,
-        _connection_id: Option<crate::server::connection::ConnectionId>,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
         let action_type = action["type"]

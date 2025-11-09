@@ -30,9 +30,24 @@ pub static USB_MSC_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host attached to USB mass storage device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
-        Parameter::new("total_sectors", "number", "Total number of 512-byte sectors"),
-        Parameter::new("capacity_mb", "number", "Total capacity in megabytes"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "total_sectors".to_string(),
+            type_hint: "number".to_string(),
+            description: "Total number of 512-byte sectors".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "capacity_mb".to_string(),
+            type_hint: "number".to_string(),
+            description: "Total capacity in megabytes".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -43,7 +58,12 @@ pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host detached from USB mass storage device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -51,10 +71,30 @@ pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("usb_msc_read", "Host read sectors from the mass storage device")
         .with_parameters(vec![
-            Parameter::new("connection_id", "string", "Connection ID"),
-            Parameter::new("lba", "number", "Logical Block Address (starting sector)"),
-            Parameter::new("sector_count", "number", "Number of sectors read"),
-            Parameter::new("bytes_read", "number", "Total bytes read"),
+            Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "lba".to_string(),
+            type_hint: "number".to_string(),
+            description: "Logical Block Address (starting sector)".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "sector_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of sectors read".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "bytes_read".to_string(),
+            type_hint: "number".to_string(),
+            description: "Total bytes read".to_string(),
+            required: true,
+        },
         ])
 });
 
@@ -65,10 +105,30 @@ pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host wrote sectors to the mass storage device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID"),
-        Parameter::new("lba", "number", "Logical Block Address (starting sector)"),
-        Parameter::new("sector_count", "number", "Number of sectors written"),
-        Parameter::new("bytes_written", "number", "Total bytes written"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "lba".to_string(),
+            type_hint: "number".to_string(),
+            description: "Logical Block Address (starting sector)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "sector_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of sectors written".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bytes_written".to_string(),
+            type_hint: "number".to_string(),
+            description: "Total bytes written".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -82,6 +142,7 @@ pub struct UsbMscProtocol {
 }
 
 #[cfg(feature = "usb-msc")]
+#[derive(Clone)]
 pub struct ConnectionData {
     // Placeholder for MSC-specific connection data
     // Will be populated during full implementation
@@ -162,14 +223,14 @@ impl Protocol for UsbMscProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        crate::protocol::metadata::ProtocolMetadataV2::new(
-            crate::protocol::metadata::ProtocolState::Experimental,
-            "Virtual USB Mass Storage device using USB/IP protocol",
-            "LLM controls virtual disk (mount, eject, write-protect)",
-            "E2E tests pending full SCSI implementation",
-            crate::protocol::metadata::PrivilegeRequirement::None,
-        )
-        .with_notes("Requires client to have vhci-hcd kernel module. SCSI command implementation pending.")
+        crate::protocol::metadata::ProtocolMetadataV2::builder()
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .implementation("Virtual USB Mass Storage device using USB/IP protocol")
+            .llm_control("LLM controls virtual disk (mount, eject, write-protect)")
+            .e2e_testing("E2E tests pending full SCSI implementation")
+            .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
+            .notes("Requires client to have vhci-hcd kernel module. SCSI command implementation pending.")
+            .build()
     }
 
     fn description(&self) -> &'static str {
@@ -216,8 +277,6 @@ impl Server for UsbMscProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        _connection_id: Option<ConnectionId>,
-        _app_state: &AppState,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
@@ -256,13 +315,18 @@ fn mount_disk_action() -> ActionDefinition {
         name: "mount_disk".to_string(),
         description: "Mount a disk image file as the virtual mass storage device".to_string(),
         parameters: vec![
-            Parameter::new("disk_image", "string", "Path to disk image file"),
-            Parameter::new(
-                "write_protect",
-                "boolean",
-                "Enable write protection (default: false)",
-            )
-            .optional(),
+            Parameter {
+            name: "disk_image".to_string(),
+            type_hint: "string".to_string(),
+            description: "Path to disk image file".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "write_protect".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Enable write protection (default: false)".to_string(),
+            required: false,
+        },
         ],
         example: json!({
             "type": "mount_disk",
@@ -289,11 +353,12 @@ fn set_write_protect_action() -> ActionDefinition {
     ActionDefinition {
         name: "set_write_protect".to_string(),
         description: "Enable or disable write protection on the virtual disk".to_string(),
-        parameters: vec![Parameter::new(
-            "enabled",
-            "boolean",
-            "true to enable write protection, false to disable",
-        )],
+        parameters: vec![Parameter {
+            name: "enabled".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "true to enable write protection, false to disable".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "set_write_protect",
             "enabled": true

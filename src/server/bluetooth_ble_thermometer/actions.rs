@@ -47,7 +47,12 @@ impl Protocol for BluetoothBleThermometerProtocol {
 impl Server for BluetoothBleThermometerProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
-            crate::server::bluetooth_ble_thermometer::BluetoothBleThermometer::spawn_with_llm_actions("NetGet-Thermometer".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction).await
+            // Get instruction from server instance
+            let instruction = ctx.state.get_server(ctx.server_id).await
+                .map(|s| s.instruction)
+                .unwrap_or_default();
+
+            crate::server::bluetooth_ble_thermometer::BluetoothBleThermometer::spawn_with_llm_actions("NetGet-Thermometer".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction).await
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
