@@ -135,6 +135,9 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::CloseAllClients => {
             "close_all_clients".to_string()
         }
+        CommonAction::CloseConnectionById { connection_id } => {
+            format!("close_connection_by_id: #{}", connection_id)
+        }
         CommonAction::ReconnectClient { client_id } => {
             format!("reconnect_client: #{}", client_id)
         }
