@@ -366,6 +366,24 @@ impl ServerRegistry {
         #[cfg(feature = "saml-sp")]
         self.register(Arc::new(crate::server::SamlSpProtocol::new()));
 
+        #[cfg(feature = "usb-keyboard")]
+        self.register(Arc::new(crate::server::UsbKeyboardProtocol::new()));
+
+        #[cfg(feature = "usb-mouse")]
+        self.register(Arc::new(crate::server::UsbMouseProtocol::new()));
+
+        #[cfg(feature = "usb-serial")]
+        self.register(Arc::new(crate::server::UsbSerialProtocol::new()));
+
+        #[cfg(feature = "usb-msc")]
+        self.register(Arc::new(crate::server::UsbMscProtocol::new()));
+
+        #[cfg(feature = "usb-fido2")]
+        self.register(Arc::new(crate::server::UsbFido2Protocol::new()));
+
+        #[cfg(feature = "usb-smartcard")]
+        self.register(Arc::new(crate::server::UsbSmartCardProtocol::new()));
+
         #[cfg(feature = "bluetooth-ble")]
         self.register(Arc::new(crate::server::BluetoothBleProtocol::new()));
 
