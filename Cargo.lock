@@ -7149,6 +7149,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-s3",
  "aws-sdk-sqs",
+ "aws-smithy-types",
  "axum",
  "axum-server",
  "base64 0.22.1",
