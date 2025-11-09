@@ -90,16 +90,26 @@ impl Protocol for RssClientProtocol {
             ActionDefinition {
                 name: "fetch_rss_feed".to_string(),
                 description: "Fetch and parse an RSS feed from a URL".to_string(),
-                parameters: vec![Parameter {
-                    name: "url".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Full URL to RSS feed (e.g., http://example.com/feed.xml)"
-                        .to_string(),
-                    required: true,
-                }],
+                parameters: vec![
+                    Parameter {
+                        name: "url".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Full URL to RSS feed (e.g., http://example.com/feed.xml)"
+                            .to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "if_modified_since".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "RFC 2822 date for conditional fetch (e.g., 'Mon, 09 Nov 2025 12:00:00 GMT')"
+                            .to_string(),
+                        required: false,
+                    },
+                ],
                 example: json!({
                     "type": "fetch_rss_feed",
-                    "url": "http://example.com/tech-news.xml"
+                    "url": "http://example.com/tech-news.xml",
+                    "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
                 }),
             },
             ActionDefinition {
@@ -118,15 +128,24 @@ impl Protocol for RssClientProtocol {
             ActionDefinition {
                 name: "fetch_rss_feed".to_string(),
                 description: "Fetch another RSS feed in response to received data".to_string(),
-                parameters: vec![Parameter {
-                    name: "url".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Full URL to RSS feed".to_string(),
-                    required: true,
-                }],
+                parameters: vec![
+                    Parameter {
+                        name: "url".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Full URL to RSS feed".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "if_modified_since".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "RFC 2822 date for conditional fetch".to_string(),
+                        required: false,
+                    },
+                ],
                 example: json!({
                     "type": "fetch_rss_feed",
-                    "url": "http://example.com/related-feed.xml"
+                    "url": "http://example.com/related-feed.xml",
+                    "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
                 }),
             },
             ActionDefinition {

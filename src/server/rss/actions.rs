@@ -11,6 +11,28 @@ use serde_json::json;
 use std::pin::Pin;
 use std::sync::LazyLock;
 
+/// RSS feed requested event - fired when a client requests a feed
+pub static RSS_FEED_REQUESTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "rss_feed_requested",
+        "RSS feed requested by client",
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Feed path (e.g., /news.xml)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "headers".to_string(),
+            type_hint: "object".to_string(),
+            description: "HTTP request headers".to_string(),
+            required: true,
+        },
+    ])
+});
+
 /// RSS protocol action handler
 pub struct RssProtocol;
 
@@ -20,43 +42,6 @@ impl RssProtocol {
     }
 }
 
-// Event types
-pub static RSS_FEED_CREATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "rss_feed_created",
-        "RSS feed created successfully",
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Feed path (e.g., /news.xml)".to_string(),
-            required: true,
-        },
-    ])
-});
-
-pub static RSS_ITEM_ADDED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "rss_item_added",
-        "RSS item added to feed",
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Feed path".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "title".to_string(),
-            type_hint: "string".to_string(),
-            description: "Item title".to_string(),
-            required: true,
-        },
-    ])
-});
-
 // Implement Protocol trait (common functionality)
 impl Protocol for RssProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
@@ -64,118 +49,12 @@ impl Protocol for RssProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "create_rss_feed".to_string(),
-                description: "Create a new RSS feed at a specific path".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Feed path (e.g., /news.xml, /blog.xml)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "title".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Feed title".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "link".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Feed link (website URL)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "description".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Feed description".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "create_rss_feed",
-                    "path": "/tech-news.xml",
-                    "title": "Tech News Feed",
-                    "link": "https://example.com",
-                    "description": "Latest technology news and updates"
-                }),
-            },
-            ActionDefinition {
-                name: "add_rss_item".to_string(),
-                description: "Add a new item to an existing RSS feed".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Feed path".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "title".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Item title".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "link".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Item link (article URL)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "description".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Item description or summary".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "pub_date".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Publication date (RFC 2822 format)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "add_rss_item",
-                    "path": "/tech-news.xml",
-                    "title": "New AI Model Released",
-                    "link": "https://example.com/ai-news",
-                    "description": "Company X released a new AI model today",
-                    "pub_date": "Mon, 01 Jan 2024 12:00:00 GMT"
-                }),
-            },
-            ActionDefinition {
-                name: "delete_rss_feed".to_string(),
-                description: "Delete an RSS feed".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Feed path to delete".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "delete_rss_feed",
-                    "path": "/old-feed.xml"
-                }),
-            },
-            ActionDefinition {
-                name: "list_rss_feeds".to_string(),
-                description: "List all available RSS feeds".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "list_rss_feeds"
-                }),
-            },
-        ]
+        // RSS has no async actions - feeds are generated on request
+        Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        // RSS feeds are served via HTTP GET, no sync actions needed
-        Vec::new()
+        vec![generate_rss_feed_action()]
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -183,10 +62,7 @@ impl Protocol for RssProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            RSS_FEED_CREATED_EVENT.clone(),
-            RSS_ITEM_ADDED_EVENT.clone(),
-        ]
+        vec![RSS_FEED_REQUESTED_EVENT.clone()]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -203,7 +79,7 @@ impl Protocol for RssProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("rss crate for RSS 2.0 XML generation, served over HTTP")
-            .llm_control("Feed metadata, items, publication dates")
+            .llm_control("Feed content generation (title, items, categories)")
             .e2e_testing("reqwest HTTP client - planned <10 LLM calls")
             .build()
     }
@@ -213,7 +89,7 @@ impl Protocol for RssProtocol {
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Create an RSS feed server on port 8080 serving tech news at /tech.xml and sports news at /sports.xml"
+        "Create an RSS feed server on port 8080 serving tech news at /tech.xml with categories"
     }
 
     fn group_name(&self) -> &'static str {
@@ -248,100 +124,105 @@ impl Server for RssProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "create_rss_feed" => self.execute_create_feed(action),
-            "add_rss_item" => self.execute_add_item(action),
-            "delete_rss_feed" => self.execute_delete_feed(action),
-            "list_rss_feeds" => self.execute_list_feeds(action),
+            "generate_rss_feed" => self.execute_generate_feed(action),
             _ => Err(anyhow::anyhow!("Unknown RSS action: {action_type}")),
         }
     }
 }
 
 impl RssProtocol {
-    /// Execute create_rss_feed action
-    fn execute_create_feed(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' field")?
-            .to_string();
-        let title = action
-            .get("title")
-            .and_then(|v| v.as_str())
-            .context("Missing 'title' field")?
-            .to_string();
-        let link = action
-            .get("link")
-            .and_then(|v| v.as_str())
-            .context("Missing 'link' field")?
-            .to_string();
-        let description = action
-            .get("description")
-            .and_then(|v| v.as_str())
-            .context("Missing 'description' field")?
-            .to_string();
+    /// Execute generate_rss_feed sync action
+    fn execute_generate_feed(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Extract feed data from action
+        let data = action.clone();
 
-        // Return custom result (RSS feed management will be added in future)
+        // Return custom result with feed data
         Ok(ActionResult::Custom {
-            name: "rss_feed_created".to_string(),
-            data: json!({
-                "path": path,
-                "title": title,
-                "link": link,
-                "description": description,
-            }),
+            name: "generate_rss_feed".to_string(),
+            data,
         })
     }
+}
 
-    /// Execute add_rss_item action
-    fn execute_add_item(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' field")?
-            .to_string();
-        let title = action
-            .get("title")
-            .and_then(|v| v.as_str())
-            .context("Missing 'title' field")?
-            .to_string();
-        let link = action.get("link").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let description = action.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let pub_date = action.get("pub_date").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-        Ok(ActionResult::Custom {
-            name: "rss_item_added".to_string(),
-            data: json!({
-                "path": path,
-                "title": title,
-                "link": link,
-                "description": description,
-                "pub_date": pub_date,
-            }),
-        })
-    }
-
-    /// Execute delete_rss_feed action
-    fn execute_delete_feed(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' field")?
-            .to_string();
-
-        Ok(ActionResult::Custom {
-            name: "rss_feed_deleted".to_string(),
-            data: json!({
-                "path": path,
-            }),
-        })
-    }
-
-    /// Execute list_rss_feeds action
-    fn execute_list_feeds(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        Ok(ActionResult::Custom {
-            name: "rss_feeds_listed".to_string(),
-            data: json!({}),
-        })
+/// Action definition for generate_rss_feed (sync)
+fn generate_rss_feed_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "generate_rss_feed".to_string(),
+        description: "Generate RSS feed XML for the current request".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "title".to_string(),
+                type_hint: "string".to_string(),
+                description: "Feed title".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "link".to_string(),
+                type_hint: "string".to_string(),
+                description: "Feed link (website URL)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "description".to_string(),
+                type_hint: "string".to_string(),
+                description: "Feed description".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "language".to_string(),
+                type_hint: "string".to_string(),
+                description: "Feed language (e.g., 'en-us')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "ttl".to_string(),
+                type_hint: "string".to_string(),
+                description: "Time to live in minutes".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "last_build_date".to_string(),
+                type_hint: "string".to_string(),
+                description: "Last build date (RFC 2822)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "items".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of feed items".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "generate_rss_feed",
+            "title": "Tech News Feed",
+            "link": "https://example.com",
+            "description": "Latest technology news",
+            "language": "en-us",
+            "ttl": "60",
+            "last_build_date": "Mon, 09 Nov 2025 12:00:00 GMT",
+            "items": [
+                {
+                    "title": "New AI Model Released",
+                    "link": "https://example.com/ai-news",
+                    "description": "Company X released a new AI model",
+                    "author": "john@example.com (John Doe)",
+                    "pub_date": "Mon, 09 Nov 2025 10:00:00 GMT",
+                    "guid": "https://example.com/ai-news",
+                    "categories": [
+                        "AI",
+                        "Technology",
+                        {"name": "Machine Learning", "domain": "tech.example.com"}
+                    ]
+                },
+                {
+                    "title": "Cloud Computing Trends",
+                    "link": "https://example.com/cloud-trends",
+                    "description": "Latest trends in cloud computing",
+                    "pub_date": "Mon, 09 Nov 2025 09:00:00 GMT",
+                    "categories": ["Cloud", "Infrastructure"]
+                }
+            ]
+        }),
     }
 }
