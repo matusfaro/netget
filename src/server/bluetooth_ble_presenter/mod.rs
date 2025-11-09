@@ -1,0 +1,19 @@
+//! BLE Presenter Service
+pub mod actions;
+use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+pub struct BluetoothBlePresenter;
+impl BluetoothBlePresenter {
+    #[cfg(feature = "bluetooth-ble-presenter")]
+    pub async fn spawn_with_llm_actions(_: String, llm: crate::llm::ollama_client::OllamaClient, state: Arc<crate::state::app_state::AppState>, tx: mpsc::UnboundedSender<String>, id: crate::state::ServerId, inst: String) -> Result<std::net::SocketAddr> {
+        crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions("NetGet-Presenter".to_string(), llm, state, tx, id, format!("{}. Configure as BLE Presenter.", inst)).await
+    }
+}
+#[cfg(not(feature = "bluetooth-ble-presenter"))]
+impl BluetoothBlePresenter {
+    pub async fn spawn_with_llm_actions(_: String, _: crate::llm::ollama_client::OllamaClient, _: Arc<crate::state::app_state::AppState>, _: mpsc::UnboundedSender<String>, _: crate::state::ServerId, _: String) -> Result<std::net::SocketAddr> {
+        anyhow::bail!("BLE presenter not enabled")
+    }
+}
