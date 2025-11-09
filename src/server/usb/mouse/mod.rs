@@ -6,6 +6,10 @@
 
 pub mod actions;
 
+// Re-export protocol struct for registration
+#[cfg(feature = "usb-mouse")]
+pub use actions::UsbMouseProtocol;
+
 #[cfg(feature = "usb-mouse")]
 use anyhow::{Context, Result};
 #[cfg(feature = "usb-mouse")]
@@ -22,9 +26,9 @@ use tracing::{debug, error, info, trace, warn};
 #[cfg(feature = "usb-mouse")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-mouse")]
-use crate::llm::ollama_client::OllamaClient;
+use crate::llm::actions::protocol_trait::Server;
 #[cfg(feature = "usb-mouse")]
-use crate::llm::ActionResult;
+use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "usb-mouse")]
 use crate::protocol::Event;
 #[cfg(feature = "usb-mouse")]
@@ -185,73 +189,24 @@ impl UsbMouseServer {
             },
         );
 
-        // Create HID mouse handler from usbip crate
-        let handler = Arc::new(std::sync::Mutex::new(
-            Box::new(usbip::hid::UsbHidMouseHandler::new_mouse())
-                as Box<dyn usbip::UsbInterfaceHandler + Send>,
-        ));
+        // TODO: USB mouse handler not yet available in usbip crate
+        // Once usbip crate adds UsbHidMouseHandler, uncomment the code below
 
-        // Store handler in protocol for action execution
-        protocol.set_handler(connection_id, handler.clone()).await;
-
-        // Create USB device with HID mouse interface
-        let device = usbip::UsbDevice::new(0).with_interface(
-            usbip::ClassCode::HID as u8,
-            0x00, // Subclass: no subclass
-            0x00, // Protocol: none
-            Some("NetGet Virtual Mouse"),
-            vec![usbip::UsbEndpoint {
-                address: 0x81,         // EP1 IN (interrupt)
-                attributes: 0x03,      // Interrupt transfer
-                max_packet_size: 0x04, // 4 bytes (mouse report)
-                interval: 10,          // 10ms polling interval
-            }],
-            handler.clone(),
-        );
-
-        // Create USB/IP server
-        let server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
-
-        // Get a unique address for this USB/IP device server
-        let usbip_addr = SocketAddr::new(remote_addr.ip(), 3240);
-
-        info!(
-            "Starting USB/IP server for mouse on {} (connection {})",
-            usbip_addr, connection_id
+        warn!(
+            "USB mouse protocol registered but not yet functional - waiting for usbip crate mouse support (connection {})",
+            connection_id
         );
         let _ = status_tx.send(format!(
-            "USB mouse device starting on {} - will be ready for: sudo usbip attach -r {} -b 1-1",
-            usbip_addr, usbip_addr
+            "USB mouse device for connection {} from {} - NOT YET FUNCTIONAL (waiting for usbip crate mouse support)",
+            connection_id, remote_addr
         ));
 
-        // Spawn USB/IP protocol server
-        let server_clone = server.clone();
-        let status_tx_clone = status_tx.clone();
-        let connection_id_clone = connection_id;
-        tokio::spawn(async move {
-            if let Err(e) = usbip::server(usbip_addr, server_clone).await {
-                error!(
-                    "USB/IP server error for mouse connection {}: {}",
-                    connection_id_clone, e
-                );
-                let _ = status_tx_clone.send(format!(
-                    "USB/IP server error for connection {}: {}",
-                    connection_id_clone, e
-                ));
-            }
-        });
-
-        // Wait a moment for server to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        info!(
-            "USB mouse device ready on {} (connection {})",
-            usbip_addr, connection_id
-        );
-        let _ = status_tx.send(format!(
-            "USB mouse ready - run: sudo usbip list -r {} && sudo usbip attach -r {} -b 1-1",
-            usbip_addr, usbip_addr
-        ));
+        // Placeholder: Would create HID mouse handler here
+        // let handler = Arc::new(std::sync::Mutex::new(
+        //     Box::new(usbip::hid::UsbHidMouseHandler::new_mouse())
+        //         as Box<dyn usbip::UsbInterfaceHandler + Send>,
+        // ));
+        // protocol.set_handler(connection_id, handler.clone()).await;
 
         // Call LLM on device attach
         if let Err(e) = Self::call_llm_on_attach(
@@ -311,8 +266,7 @@ impl UsbMouseServer {
 
         // Get instruction and memory
         let (instruction, memory) = {
-            let servers = app_state.servers.lock().await;
-            if let Some(server) = servers.iter().find(|s| s.id == server_id) {
+            if let Some(server) = app_state.get_server(server_id).await {
                 (server.instruction.clone(), String::new())
             } else {
                 return Err(anyhow::anyhow!("Server not found"));
@@ -336,37 +290,21 @@ impl UsbMouseServer {
         let result = call_llm(
             llm_client,
             app_state,
-            status_tx,
-            &instruction,
-            &memory,
-            protocol.get_sync_actions(),
-            Some(&event),
-            false, // scripting_mode
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
         )
         .await;
 
         // Process result
         match result {
-            Ok(llm_result) => {
-                // Update memory
-                if let Some(new_memory) = llm_result.memory_update {
-                    let mut conns = connections.lock().await;
-                    if let Some(conn_data) = conns.get_mut(&connection_id) {
-                        conn_data.memory = new_memory;
-                    }
-                }
-
-                // Execute actions
-                for action in llm_result.actions {
-                    if let Err(e) =
-                        protocol.execute_action(action, Some(connection_id), app_state)
-                    {
-                        error!(
-                            "Failed to execute mouse action on connection {}: {}",
-                            connection_id, e
-                        );
-                    }
-                }
+            Ok(_execution_result) => {
+                // Actions have already been executed by call_llm
+                info!(
+                    "USB mouse LLM call completed for connection {}",
+                    connection_id
+                );
 
                 // Set state back to idle
                 let mut conns = connections.lock().await;

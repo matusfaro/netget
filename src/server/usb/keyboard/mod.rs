@@ -6,6 +6,10 @@
 
 pub mod actions;
 
+// Re-export protocol struct for registration
+#[cfg(feature = "usb-keyboard")]
+pub use actions::UsbKeyboardProtocol;
+
 #[cfg(feature = "usb-keyboard")]
 use anyhow::{Context, Result};
 #[cfg(feature = "usb-keyboard")]
@@ -22,9 +26,9 @@ use tracing::{debug, error, info, trace, warn};
 #[cfg(feature = "usb-keyboard")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-keyboard")]
-use crate::llm::ollama_client::OllamaClient;
+use crate::llm::actions::protocol_trait::Server;
 #[cfg(feature = "usb-keyboard")]
-use crate::llm::ActionResult;
+use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "usb-keyboard")]
 use crate::protocol::Event;
 #[cfg(feature = "usb-keyboard")]
@@ -341,37 +345,21 @@ impl UsbKeyboardServer {
         let result = call_llm(
             llm_client,
             app_state,
-            status_tx,
-            &instruction,
-            &memory,
-            protocol.get_sync_actions(),
-            Some(&event),
-            false, // scripting_mode
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
         )
         .await;
 
         // Process result
         match result {
-            Ok(llm_result) => {
-                // Update memory
-                if let Some(new_memory) = llm_result.memory_update {
-                    let mut conns = connections.lock().await;
-                    if let Some(conn_data) = conns.get_mut(&connection_id) {
-                        conn_data.memory = new_memory;
-                    }
-                }
-
-                // Execute actions
-                for action in llm_result.actions {
-                    if let Err(e) =
-                        protocol.execute_action(action, Some(connection_id), app_state)
-                    {
-                        error!(
-                            "Failed to execute keyboard action on connection {}: {}",
-                            connection_id, e
-                        );
-                    }
-                }
+            Ok(_execution_result) => {
+                // Actions have already been executed by call_llm
+                info!(
+                    "USB keyboard LLM call completed for connection {}",
+                    connection_id
+                );
 
                 // Set state back to idle
                 let mut conns = connections.lock().await;

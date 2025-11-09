@@ -25,6 +25,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 #[cfg(feature = "usb-fido2")]
 use tokio::sync::Mutex;
+#[cfg(feature = "usb-fido2")]
+use tracing::{info, debug, error, warn};
 
 // Event type definitions
 #[cfg(feature = "usb-fido2")]
@@ -125,24 +127,24 @@ impl Protocol for UsbFido2Protocol {
         vec![
             crate::llm::actions::ParameterDefinition {
                 name: "support_u2f".to_string(),
-                param_type: "boolean".to_string(),
+                type_hint: "boolean".to_string(),
                 description: "Enable U2F (CTAP1) support".to_string(),
                 required: false,
-                default_value: Some("true".to_string()),
+                example: serde_json::json!(true),
             },
             crate::llm::actions::ParameterDefinition {
                 name: "support_fido2".to_string(),
-                param_type: "boolean".to_string(),
+                type_hint: "boolean".to_string(),
                 description: "Enable FIDO2 (CTAP2) support".to_string(),
                 required: false,
-                default_value: Some("true".to_string()),
+                example: serde_json::json!(true),
             },
             crate::llm::actions::ParameterDefinition {
                 name: "auto_approve".to_string(),
-                param_type: "boolean".to_string(),
+                type_hint: "boolean".to_string(),
                 description: "Automatically approve authentication requests (dev mode)".to_string(),
                 required: false,
-                default_value: Some("false".to_string()),
+                example: serde_json::json!(false),
             },
         ]
     }
@@ -155,50 +157,77 @@ impl Protocol for UsbFido2Protocol {
         "USB FIDO2/U2F Security Key"
     }
 
-    fn get_async_actions(&self) -> Vec<ActionDefinition> {
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
                 name: "approve_request".to_string(),
                 description: "Approve pending FIDO2 registration or authentication request by approval ID".to_string(),
                 parameters: vec![
-                    Parameter::new("approval_id", "number", "Approval request ID to approve"),
+                    Parameter {
+                        name: "approval_id".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Approval request ID to approve".to_string(),
+                        required: true,
+                    },
                 ],
+                example: serde_json::json!({"type": "approve_request", "approval_id": 1}),
             },
             ActionDefinition {
                 name: "deny_request".to_string(),
                 description: "Deny pending FIDO2 registration or authentication request by approval ID".to_string(),
                 parameters: vec![
-                    Parameter::new("approval_id", "number", "Approval request ID to deny"),
+                    Parameter {
+                        name: "approval_id".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Approval request ID to deny".to_string(),
+                        required: true,
+                    },
                 ],
+                example: serde_json::json!({"type": "deny_request", "approval_id": 1}),
             },
             ActionDefinition {
                 name: "list_credentials".to_string(),
                 description: "List all stored FIDO2 credentials".to_string(),
                 parameters: vec![],
+                example: serde_json::json!({"type": "list_credentials"}),
             },
             ActionDefinition {
                 name: "delete_credential".to_string(),
                 description: "Delete a stored FIDO2 credential by RP ID".to_string(),
                 parameters: vec![
-                    Parameter::new("rp_id", "string", "Relying Party ID whose credentials to delete"),
+                    Parameter {
+                        name: "rp_id".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Relying Party ID whose credentials to delete".to_string(),
+                        required: true,
+                    },
                 ],
+                example: serde_json::json!({"type": "delete_credential", "rp_id": "example.com"}),
             },
             ActionDefinition {
                 name: "save_credentials".to_string(),
                 description: "Export all credentials to JSON for LLM-controlled persistence".to_string(),
                 parameters: vec![],
+                example: serde_json::json!({"type": "save_credentials"}),
             },
             ActionDefinition {
                 name: "load_credentials".to_string(),
                 description: "Import credentials from JSON (LLM-controlled restoration)".to_string(),
                 parameters: vec![
-                    Parameter::new("credentials_json", "string", "JSON array of credentials to load"),
+                    Parameter {
+                        name: "credentials_json".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "JSON array of credentials to load".to_string(),
+                        required: true,
+                    },
                 ],
+                example: serde_json::json!({"type": "load_credentials", "credentials_json": "[]"}),
             },
             ActionDefinition {
                 name: "list_pending_approvals".to_string(),
                 description: "List all pending approval requests awaiting LLM decision".to_string(),
                 parameters: vec![],
+                example: serde_json::json!({"type": "list_pending_approvals"}),
             },
         ]
     }
@@ -210,8 +239,6 @@ impl Protocol for UsbFido2Protocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        connection_id: Option<ConnectionId>,
-        _app_state: Arc<AppState>,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
@@ -232,9 +259,7 @@ impl Protocol for UsbFido2Protocol {
                     .map_err(|e| anyhow::anyhow!("Failed to approve request: {}", e))?;
 
                 info!("Approved FIDO2 request ID {}", approval_id);
-                Ok(ActionResult::Message {
-                    message: format!("Approved request ID {}", approval_id),
-                })
+                Ok(ActionResult::NoAction)
             }
             "deny_request" => {
                 let approval_id = action["approval_id"]
@@ -250,18 +275,14 @@ impl Protocol for UsbFido2Protocol {
                     .map_err(|e| anyhow::anyhow!("Failed to deny request: {}", e))?;
 
                 info!("Denied FIDO2 request ID {}", approval_id);
-                Ok(ActionResult::Message {
-                    message: format!("Denied request ID {}", approval_id),
-                })
+                Ok(ActionResult::NoAction)
             }
             "list_credentials" => {
                 // NOTE: Credentials are stored per USB/IP connection in the FIDO2 handler
                 // To access them, we'd need to downcast the handler to Fido2HidHandler
                 // This requires architectural changes to expose credential access
                 info!("list_credentials called - credentials are per-connection in USB handlers");
-                Ok(ActionResult::Message {
-                    message: "Credential listing requires direct handler access. See FIDO2 handler logs for credential operations.".to_string()
-                })
+                Ok(ActionResult::NoAction)
             }
             "delete_credential" => {
                 let _rp_id = action["rp_id"]
@@ -269,23 +290,17 @@ impl Protocol for UsbFido2Protocol {
                     .context("Missing rp_id parameter")?;
 
                 info!("delete_credential called for RP: {} - requires direct handler access", _rp_id);
-                Ok(ActionResult::Message {
-                    message: "Credential deletion requires direct handler access. Use CTAP2 Reset command via client.".to_string()
-                })
+                Ok(ActionResult::NoAction)
             }
             "save_credentials" => {
                 // Credentials are in-memory in the handler
                 // LLM can observe credential events and maintain its own persistent state
                 info!("save_credentials called - LLM should track credentials via events");
-                Ok(ActionResult::Message {
-                    message: "FIDO2 credentials are in-memory. LLM can track via fido2_register_request and fido2_authenticate_request events.".to_string()
-                })
+                Ok(ActionResult::NoAction)
             }
             "load_credentials" => {
                 info!("load_credentials called - not supported (credentials are ephemeral per session)");
-                Ok(ActionResult::Message {
-                    message: "Credential loading not supported. Credentials are created via WebAuthn registration only.".to_string()
-                })
+                Ok(ActionResult::NoAction)
             }
             "list_pending_approvals" => {
                 // Get approval manager
@@ -295,35 +310,56 @@ impl Protocol for UsbFido2Protocol {
                     let pending = tokio::runtime::Handle::current().block_on(mgr.list_pending());
 
                     if pending.is_empty() {
-                        Ok(ActionResult::Message {
-                            message: "No pending approval requests".to_string(),
-                        })
+                        info!("No pending approval requests");
                     } else {
-                        let mut message = format!("Pending approval requests ({}):\n", pending.len());
+                        info!("Pending approval requests ({}):", pending.len());
                         for (id, op_type, rp_id, user_name) in pending {
-                            message.push_str(&format!(
-                                "  - ID {}: {:?} for RP '{}' (user: {:?})\n",
-                                id, op_type, rp_id, user_name
-                            ));
+                            info!("  - ID {}: {:?} for RP '{}' (user: {:?})", id, op_type, rp_id, user_name);
                         }
-                        Ok(ActionResult::Message { message })
                     }
                 } else {
-                    Ok(ActionResult::Message {
-                        message: "LLM approval not enabled for this server (use auto_approve=false)".to_string(),
-                    })
+                    info!("LLM approval not enabled for this server (use auto_approve=false)");
                 }
+                Ok(ActionResult::NoAction)
             }
             _ => Ok(ActionResult::NoAction),
         }
     }
 
-    fn get_event_types(&self) -> Vec<&EventType> {
+    fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            &FIDO2_DEVICE_ATTACHED_EVENT,
-            &FIDO2_REGISTER_REQUEST_EVENT,
-            &FIDO2_AUTHENTICATE_REQUEST_EVENT,
+            FIDO2_DEVICE_ATTACHED_EVENT.clone(),
+            FIDO2_REGISTER_REQUEST_EVENT.clone(),
+            FIDO2_AUTHENTICATE_REQUEST_EVENT.clone(),
         ]
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["fido2", "u2f", "webauthn", "security key", "yubikey"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Virtual FIDO2/U2F security key over USB/IP protocol")
+            .llm_control("Approval of authentication/registration requests, credential management")
+            .e2e_testing("Manual testing with web browsers (Chrome/Firefox) via USB/IP attach")
+            .notes("Requires vhci-hcd kernel module (Linux only). Inspired by softfido architecture.")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "Virtual FIDO2/U2F security key for passwordless authentication"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Create a FIDO2 security key on port 3240 that auto-approves authentication requests"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "USB"
     }
 }
 
