@@ -25,11 +25,14 @@ use crate::ui::App;
 pub async fn run() -> Result<()> {
     let args = Args::parse();
 
-    // Try to get prompt first (this reads stdin if needed)
+    // Check for actions JSON first (--load flag or JSON input)
+    let actions_json = args.get_actions_json()?;
+
+    // Try to get prompt (this reads stdin if needed)
     let prompt = args.get_prompt()?;
 
     // Determine if we're in interactive mode
-    let is_interactive = prompt.is_none() && args.is_interactive();
+    let is_interactive = prompt.is_none() && actions_json.is_none() && args.is_interactive();
 
     // Setup logging based on mode
     setup::init_logging(&args, is_interactive)?;
@@ -37,8 +40,11 @@ pub async fn run() -> Result<()> {
     // Load settings
     let settings = Settings::load();
 
-    // Decide on mode based on whether we have a prompt
-    if let Some(prompt) = prompt {
+    // Decide on mode based on input type
+    if let Some(actions) = actions_json {
+        // Non-interactive mode - we have actions JSON to execute
+        non_interactive::run_with_actions(actions, &args, settings).await
+    } else if let Some(prompt) = prompt {
         // Non-interactive mode - we have a prompt
         non_interactive::run_non_interactive(prompt, &args, settings).await
     } else if args.is_interactive() {
