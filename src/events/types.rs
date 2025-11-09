@@ -76,6 +76,10 @@ pub enum UserCommand {
     StopAll,
     /// Stop a specific server, connection, or client by unified ID (slash command: /stop <id>)
     StopById { id: u32 },
+    /// Save all servers/clients or a specific one by ID (slash command: /save <name> [id])
+    Save { name: String, id: Option<u32> },
+    /// Load servers/clients from a file (slash command: /load <name>)
+    Load { name: String },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -204,6 +208,40 @@ impl UserCommand {
         // /env, /environment command - show environment information
         if input_lower == "/env" || input_lower == "/environment" {
             return UserCommand::ShowEnvironment;
+        }
+
+        // /save command - save configuration to file
+        if input_lower.starts_with("/save") {
+            let rest = trimmed[5..].trim();
+            if rest.is_empty() {
+                // No filename provided - treat as unknown command
+                return UserCommand::UnknownSlashCommand {
+                    command: trimmed.to_string(),
+                };
+            }
+            // Parse name and optional ID
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            let name = parts[0].to_string();
+            let id = if parts.len() > 1 {
+                parts[1].parse::<u32>().ok()
+            } else {
+                None
+            };
+            return UserCommand::Save { name, id };
+        }
+
+        // /load command - load configuration from file
+        if input_lower.starts_with("/load") {
+            let rest = trimmed[5..].trim();
+            if rest.is_empty() {
+                // No filename provided - treat as unknown command
+                return UserCommand::UnknownSlashCommand {
+                    command: trimmed.to_string(),
+                };
+            }
+            return UserCommand::Load {
+                name: rest.to_string(),
+            };
         }
 
         // /stop command - stop everything or specific ID
