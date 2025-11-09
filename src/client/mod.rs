@@ -23,9 +23,9 @@ pub mod bitcoin;
 pub use bitcoin::actions::BitcoinClientProtocol;
 
 // bluetooth-ble client
-#[cfg(feature = "bluetooth-ble")]
+#[cfg(feature = "bluetooth-ble-client")]
 pub mod bluetooth;
-#[cfg(feature = "bluetooth-ble")]
+#[cfg(feature = "bluetooth-ble-client")]
 pub use bluetooth::actions::BluetoothClientProtocol;
 
 // bootp client
@@ -339,6 +339,12 @@ pub use sqs::actions::SqsClientProtocol;
 pub mod ssh;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshClientProtocol;
+
+// ssh-agent client
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::actions::SshAgentClientProtocol;
 
 // stun client
 #[cfg(feature = "stun")]

@@ -430,7 +430,7 @@ impl BluetoothClient {
                 match name.as_str() {
                     "scan_devices" => {
                         let duration_secs = data["duration_secs"].as_u64().unwrap_or(5);
-                        Self::perform_scan(client_data, app_state, status_tx, llm_client, client_id, duration_secs).await?;
+                        Box::pin(Self::perform_scan(client_data, app_state, status_tx, llm_client, client_id, duration_secs)).await?;
                     }
                     "connect_device" => {
                         let device_address = data["device_address"].as_str().map(|s| s.to_string());

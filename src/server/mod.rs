@@ -166,6 +166,13 @@ pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshProtocol;
 
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::SshAgentServer;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::actions::SshAgentProtocol;
+
 #[cfg(feature = "svn")]
 pub mod svn;
 #[cfg(feature = "svn")]
@@ -615,6 +622,125 @@ pub use usb::UsbFido2Protocol;
 pub use usb::smartcard::UsbSmartCardServer;
 #[cfg(feature = "usb-smartcard")]
 pub use usb::UsbSmartCardProtocol;
+
+#[cfg(feature = "bluetooth-ble")]
+pub mod bluetooth_ble;
+#[cfg(feature = "bluetooth-ble")]
+pub use bluetooth_ble::BluetoothBle;
+#[cfg(feature = "bluetooth-ble")]
+pub use bluetooth_ble::actions::BluetoothBleProtocol;
+
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub mod bluetooth_ble_keyboard;
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub use bluetooth_ble_keyboard::BluetoothBleKeyboard;
+#[cfg(feature = "bluetooth-ble-keyboard")]
+pub use bluetooth_ble_keyboard::actions::BluetoothBleKeyboardProtocol;
+
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub mod bluetooth_ble_mouse;
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub use bluetooth_ble_mouse::BluetoothBleMouse;
+#[cfg(feature = "bluetooth-ble-mouse")]
+pub use bluetooth_ble_mouse::actions::BluetoothBleMouseProtocol;
+
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub mod bluetooth_ble_beacon;
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub use bluetooth_ble_beacon::BluetoothBleBeacon;
+#[cfg(feature = "bluetooth-ble-beacon")]
+pub use bluetooth_ble_beacon::actions::BluetoothBleBeaconProtocol;
+
+#[cfg(feature = "bluetooth-ble-remote")]
+pub mod bluetooth_ble_remote;
+#[cfg(feature = "bluetooth-ble-remote")]
+pub use bluetooth_ble_remote::BluetoothBleRemote;
+#[cfg(feature = "bluetooth-ble-remote")]
+pub use bluetooth_ble_remote::actions::BluetoothBleRemoteProtocol;
+
+#[cfg(feature = "bluetooth-ble-battery")]
+pub mod bluetooth_ble_battery;
+#[cfg(feature = "bluetooth-ble-battery")]
+pub use bluetooth_ble_battery::BluetoothBleBattery;
+#[cfg(feature = "bluetooth-ble-battery")]
+pub use bluetooth_ble_battery::actions::BluetoothBleBatteryProtocol;
+
+#[cfg(feature = "bluetooth-ble-heart-rate")]
+pub mod bluetooth_ble_heart_rate;
+#[cfg(feature = "bluetooth-ble-heart-rate")]
+pub use bluetooth_ble_heart_rate::BluetoothBleHeartRate;
+#[cfg(feature = "bluetooth-ble-heart-rate")]
+pub use bluetooth_ble_heart_rate::actions::BluetoothBleHeartRateProtocol;
+
+#[cfg(feature = "bluetooth-ble-thermometer")]
+pub mod bluetooth_ble_thermometer;
+#[cfg(feature = "bluetooth-ble-thermometer")]
+pub use bluetooth_ble_thermometer::BluetoothBleThermometer;
+#[cfg(feature = "bluetooth-ble-thermometer")]
+pub use bluetooth_ble_thermometer::actions::BluetoothBleThermometerProtocol;
+
+#[cfg(feature = "bluetooth-ble-environmental")]
+pub mod bluetooth_ble_environmental;
+#[cfg(feature = "bluetooth-ble-environmental")]
+pub use bluetooth_ble_environmental::BluetoothBleEnvironmental;
+#[cfg(feature = "bluetooth-ble-environmental")]
+pub use bluetooth_ble_environmental::actions::BluetoothBleEnvironmentalProtocol;
+
+#[cfg(feature = "bluetooth-ble-proximity")]
+pub mod bluetooth_ble_proximity;
+#[cfg(feature = "bluetooth-ble-proximity")]
+pub use bluetooth_ble_proximity::BluetoothBleProximity;
+#[cfg(feature = "bluetooth-ble-proximity")]
+pub use bluetooth_ble_proximity::actions::BluetoothBleProximityProtocol;
+
+#[cfg(feature = "bluetooth-ble-gamepad")]
+pub mod bluetooth_ble_gamepad;
+#[cfg(feature = "bluetooth-ble-gamepad")]
+pub use bluetooth_ble_gamepad::BluetoothBleGamepad;
+#[cfg(feature = "bluetooth-ble-gamepad")]
+pub use bluetooth_ble_gamepad::actions::BluetoothBleGamepadProtocol;
+
+#[cfg(feature = "bluetooth-ble-presenter")]
+pub mod bluetooth_ble_presenter;
+#[cfg(feature = "bluetooth-ble-presenter")]
+pub use bluetooth_ble_presenter::BluetoothBlePresenter;
+#[cfg(feature = "bluetooth-ble-presenter")]
+pub use bluetooth_ble_presenter::actions::BluetoothBlePresenterProtocol;
+
+#[cfg(feature = "bluetooth-ble-file-transfer")]
+pub mod bluetooth_ble_file_transfer;
+#[cfg(feature = "bluetooth-ble-file-transfer")]
+pub use bluetooth_ble_file_transfer::BluetoothBleFileTransfer;
+#[cfg(feature = "bluetooth-ble-file-transfer")]
+pub use bluetooth_ble_file_transfer::actions::BluetoothBleFileTransferProtocol;
+
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub mod bluetooth_ble_data_stream;
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub use bluetooth_ble_data_stream::BluetoothBleDataStream;
+#[cfg(feature = "bluetooth-ble-data-stream")]
+pub use bluetooth_ble_data_stream::actions::BluetoothBleDataStreamProtocol;
+
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub mod bluetooth_ble_cycling;
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub use bluetooth_ble_cycling::BluetoothBleCycling;
+#[cfg(feature = "bluetooth-ble-cycling")]
+pub use bluetooth_ble_cycling::actions::BluetoothBleCyclingProtocol;
+
+#[cfg(feature = "bluetooth-ble-running")]
+pub mod bluetooth_ble_running;
+#[cfg(feature = "bluetooth-ble-running")]
+pub use bluetooth_ble_running::BluetoothBleRunning;
+#[cfg(feature = "bluetooth-ble-running")]
+pub use bluetooth_ble_running::actions::BluetoothBleRunningProtocol;
+
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub mod bluetooth_ble_weight_scale;
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub use bluetooth_ble_weight_scale::BluetoothBleWeightScale;
+#[cfg(feature = "bluetooth-ble-weight-scale")]
+pub use bluetooth_ble_weight_scale::actions::BluetoothBleWeightScaleProtocol;
 
 pub use connection::{Connection, ConnectionId};
 pub use packet::Packet;
