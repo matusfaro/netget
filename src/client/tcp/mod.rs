@@ -130,7 +130,7 @@ impl TcpClient {
                                                 use crate::llm::actions::client_trait::Client;
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
-                                                        if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
+                                                        if (write_half_arc.lock().await.write_all(&bytes).await).is_ok() {
                                                             trace!("TCP client {} sent {} bytes", client_id, bytes.len());
                                                         }
                                                     }

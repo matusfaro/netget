@@ -98,7 +98,7 @@ impl UdpClient {
                         &app_state,
                         client_id.to_string(),
                         &instruction,
-                        &"",
+                        "",
                         Some(&connected_event),
                         protocol.as_ref(),
                         &status_tx,

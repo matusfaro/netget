@@ -9,11 +9,17 @@ use std::collections::HashMap;
 
 /// Global registry of default instructions
 pub static DEFAULT_INSTRUCTIONS: Lazy<DefaultInstructionsRegistry> =
-    Lazy::new(|| DefaultInstructionsRegistry::new());
+    Lazy::new(DefaultInstructionsRegistry::new);
 
 /// Registry containing default instructions for all event types
 pub struct DefaultInstructionsRegistry {
     instructions: HashMap<String, EventInstructions>,
+}
+
+impl Default for DefaultInstructionsRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DefaultInstructionsRegistry {

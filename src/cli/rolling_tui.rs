@@ -622,7 +622,7 @@ async fn execute_single_task(
 
             let result = TaskExecutionResult {
                 success: true,
-                actions: actions,
+                actions,
                 error: None,
             };
 
@@ -635,7 +635,7 @@ async fn execute_single_task(
 
             let result = TaskExecutionResult {
                 success: false,
-                actions: actions,
+                actions,
                 error: Some(error),
             };
 
@@ -1646,9 +1646,9 @@ async fn handle_status_command(
 ) -> Result<()> {
     match command {
         UserCommand::Status => {
-            print_output_line("=== Server Status ===", footer, &palette)?;
+            print_output_line("=== Server Status ===", footer, palette)?;
             if app.servers.is_empty() {
-                print_output_line("No servers running", footer, &palette)?;
+                print_output_line("No servers running", footer, palette)?;
             } else {
                 for server in &app.servers {
                     print_output_line(
@@ -1657,39 +1657,39 @@ async fn handle_status_command(
                             server.id, server.protocol, server.port, server.status
                         ),
                         footer,
-                        &palette,
+                        palette,
                     )?;
                 }
             }
         }
         UserCommand::ShowModel => {
             let current_model = state.get_ollama_model().await;
-            print_output_line(&format!("Current model: {}", current_model), footer, &palette)?;
-            print_output_line("", footer, &palette)?;
-            print_output_line("Fetching available models...", footer, &palette)?;
+            print_output_line(&format!("Current model: {}", current_model), footer, palette)?;
+            print_output_line("", footer, palette)?;
+            print_output_line("Fetching available models...", footer, palette)?;
 
             // Fetch model list from Ollama via event handler's LLM client
             match event_handler.list_models().await {
                 Ok(models) => {
                     if models.is_empty() {
-                        print_output_line("No models found. Please pull a model first.", footer, &palette)?;
-                        print_output_line("Example: ollama pull llama3.2", footer, &palette)?;
+                        print_output_line("No models found. Please pull a model first.", footer, palette)?;
+                        print_output_line("Example: ollama pull llama3.2", footer, palette)?;
                     } else {
-                        print_output_line(&format!("Available models ({}):", models.len()), footer, &palette)?;
+                        print_output_line(&format!("Available models ({}):", models.len()), footer, palette)?;
                         for model in &models {
                             if model == &current_model {
-                                print_output_line(&format!("  * {} (current)", model), footer, &palette)?;
+                                print_output_line(&format!("  * {} (current)", model), footer, palette)?;
                             } else {
-                                print_output_line(&format!("    {}", model), footer, &palette)?;
+                                print_output_line(&format!("    {}", model), footer, palette)?;
                             }
                         }
-                        print_output_line("", footer, &palette)?;
-                        print_output_line("To change model, use: /model <name>", footer, &palette)?;
+                        print_output_line("", footer, palette)?;
+                        print_output_line("To change model, use: /model <name>", footer, palette)?;
                     }
                 }
                 Err(e) => {
-                    print_output_line(&format!("Failed to fetch models: {}", e), footer, &palette)?;
-                    print_output_line("Make sure Ollama is running.", footer, &palette)?;
+                    print_output_line(&format!("Failed to fetch models: {}", e), footer, palette)?;
+                    print_output_line("Make sure Ollama is running.", footer, palette)?;
                 }
             }
         }
@@ -1697,7 +1697,7 @@ async fn handle_status_command(
             print_output_line(
                 &format!("Current log level: {}", app.log_level.as_str()),
                 footer,
-                &palette,
+                palette,
             )?;
         }
         UserCommand::ShowWebSearch => {
@@ -1707,25 +1707,25 @@ async fn handle_status_command(
                 crate::state::app_state::WebSearchMode::Ask => "ASK (requires approval)",
                 crate::state::app_state::WebSearchMode::Off => "OFF (disabled)",
             };
-            print_output_line(&format!("Web search mode: {}", status), footer, &palette)?;
-            print_output_line("", footer, &palette)?;
-            print_output_line("To change, use: /web on, /web ask, or /web off", footer, &palette)?;
-            print_output_line("Or press Ctrl+W to cycle through modes", footer, &palette)?;
+            print_output_line(&format!("Web search mode: {}", status), footer, palette)?;
+            print_output_line("", footer, palette)?;
+            print_output_line("To change, use: /web on, /web ask, or /web off", footer, palette)?;
+            print_output_line("Or press Ctrl+W to cycle through modes", footer, palette)?;
         }
         UserCommand::ShowScriptingEnv => {
             let mode = state.get_selected_scripting_mode().await;
-            print_output_line(&format!("Current scripting mode: {}", mode), footer, &palette)?;
-            print_output_line("", footer, &palette)?;
-            print_output_line("To change, use: /script <env>", footer, &palette)?;
+            print_output_line(&format!("Current scripting mode: {}", mode), footer, palette)?;
+            print_output_line("", footer, palette)?;
+            print_output_line("To change, use: /script <env>", footer, palette)?;
         }
         UserCommand::ShowEnvironment => {
-            print_output_line("=== Environment Information ===", footer, &palette)?;
-            print_output_line(&format!("Platform: {}", std::env::consts::OS), footer, &palette)?;
-            print_output_line(&format!("Architecture: {}", std::env::consts::ARCH), footer, &palette)?;
+            print_output_line("=== Environment Information ===", footer, palette)?;
+            print_output_line(&format!("Platform: {}", std::env::consts::OS), footer, palette)?;
+            print_output_line(&format!("Architecture: {}", std::env::consts::ARCH), footer, palette)?;
             if let Ok(cwd) = std::env::current_dir() {
-                print_output_line(&format!("Working directory: {}", cwd.display()), footer, &palette)?;
+                print_output_line(&format!("Working directory: {}", cwd.display()), footer, palette)?;
             }
-            print_output_line(&format!("Model: {}", state.get_ollama_model().await), footer, &palette)?;
+            print_output_line(&format!("Model: {}", state.get_ollama_model().await), footer, palette)?;
         }
         _ => {}
     }

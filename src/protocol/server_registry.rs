@@ -469,7 +469,7 @@ impl ServerRegistry {
                 let key = keyword.to_lowercase();
                 keyword_to_protocols
                     .entry(key)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((protocol_name.clone(), format!("keyword '{}'", keyword)));
             }
 
@@ -478,7 +478,7 @@ impl ServerRegistry {
             let key = stack_name.to_lowercase();
             keyword_to_protocols
                 .entry(key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((protocol_name.clone(), format!("stack_name '{}'", stack_name)));
         }
 

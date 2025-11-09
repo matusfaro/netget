@@ -625,12 +625,10 @@ impl russh::server::Handler for SshHandler {
         session.channel_success(channel_id);
 
         // Execute command via LLM
-        if let Ok((output, _close)) = self.llm_shell_command(data).await {
-            if let Some(output_text) = output {
-                let data = CryptoVec::from_slice(output_text.as_bytes());
-                session.data(channel_id, data);
-                debug!("Sent exec output ({} bytes)", output_text.len());
-            }
+        if let Ok((Some(output_text), _close)) = self.llm_shell_command(data).await {
+            let data = CryptoVec::from_slice(output_text.as_bytes());
+            session.data(channel_id, data);
+            debug!("Sent exec output ({} bytes)", output_text.len());
         }
 
         // Close channel after exec
@@ -721,7 +719,7 @@ impl russh::server::Handler for SshHandler {
                 // NOTE: Echo has already happened above in the byte loop - LLM invocation comes AFTER echo
                 // Process on: Enter (\r, \n) or any control character except Tab (0x09)
                 let should_process = data.iter().any(|&b| {
-                    b == b'\n' || b == b'\r' || (b >= 0x01 && b <= 0x1F && b != 0x09)
+                    b == b'\n' || b == b'\r' || ((0x01..=0x1F).contains(&b) && b != 0x09)
                 });
 
                 if should_process {
@@ -740,8 +738,8 @@ impl russh::server::Handler for SshHandler {
                     // 2. Non-empty input (command to process)
                     // 3. Any control character present (Ctrl-C, Ctrl-D, etc.) - always process
                     // 4. Empty Enter - LLM should respond with prompt
-                    let has_ctrl_c = line.iter().any(|&b| b == 0x03);
-                    let has_any_ctrl = line.iter().any(|&b| b >= 0x01 && b <= 0x1F && b != 0x09);
+                    let has_ctrl_c = line.contains(&0x03);
+                    let has_any_ctrl = line.iter().any(|&b| (0x01..=0x1F).contains(&b) && b != 0x09);
                     let is_empty_cmd = line.iter().all(|&b| b == b'\n' || b == b'\r');
 
                     // Always process if we have any control character or non-empty command
@@ -766,10 +764,10 @@ impl russh::server::Handler for SshHandler {
                             context_parts.push("CTRL_C - user interrupted");
                         }
                         // Check for other common control characters
-                        if line.iter().any(|&b| b == 0x04) {
+                        if line.contains(&0x04) {
                             context_parts.push("CTRL_D - EOF signal");
                         }
-                        if line.iter().any(|&b| b == 0x1A) {
+                        if line.contains(&0x1A) {
                             context_parts.push("CTRL_Z - suspend signal");
                         }
                         if is_empty_cmd && !is_first_input {
@@ -810,7 +808,7 @@ impl russh::server::Handler for SshHandler {
                     } else {
                         // Empty Enter press after initialization - ignore it
                         trace!("SSH shell: ignoring empty Enter (already initialized)");
-                        let _ = self.status_tx.send(format!("[TRACE] SSH shell: ignoring empty Enter"));
+                        let _ = self.status_tx.send("[TRACE] SSH shell: ignoring empty Enter".to_string());
                     }
                 } else {
                     // Still accumulating input

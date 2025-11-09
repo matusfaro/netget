@@ -316,7 +316,7 @@ impl StickyFooter {
         }
 
         // Ensure at least 1 line, cap at 12
-        total.max(1).min(12)
+        total.clamp(1, 12)
     }
 
     /// Calculate how many visual lines a text string will take after wrapping
@@ -1046,11 +1046,7 @@ impl StickyFooter {
                 // Calculate padding needed to reach right border
                 let content_width = wrapped_line.chars().count();
                 let available_width = (self.terminal_width - 4) as usize; // -4 for "│ " on left and " │" on right
-                let padding = if content_width < available_width {
-                    available_width - content_width
-                } else {
-                    0
-                };
+                let padding = available_width.saturating_sub(content_width);
 
                 // Right border with padding and green color
                 execute!(
@@ -1100,9 +1096,7 @@ impl StickyFooter {
 
         // Determine script status and color based on scripting_env value
         // scripting_env contains the mode: "Off", "On", "Python", "JavaScript", "Go", "Perl"
-        let (script_status, script_color) = if self.connection_info.scripting_env == "Off" {
-            ("OFF", self.palette.failure)
-        } else if self.connection_info.scripting_env.is_empty() {
+        let (script_status, script_color) = if self.connection_info.scripting_env == "Off" || self.connection_info.scripting_env.is_empty() {
             ("OFF", self.palette.failure)
         } else {
             (self.connection_info.scripting_env.as_str(), self.palette.success)
@@ -1116,32 +1110,32 @@ impl StickyFooter {
             SetForegroundColor(self.palette.dimmed),
             Print(" Model:"),
             ResetColor,
-            Print(format!("{}", &self.connection_info.model)),
+            Print(self.connection_info.model.to_string()),
             SetForegroundColor(self.palette.dimmed),
             Print(" | Log:"),
             ResetColor,
             SetForegroundColor(self.log_level.color()),
-            Print(format!("{}", self.log_level.as_str())),
+            Print(self.log_level.as_str().to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
             Print(" ^l"),
             Print(" | Script:"),
             ResetColor,
             SetForegroundColor(script_color),
-            Print(format!("{}", script_status)),
+            Print(script_status.to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
             Print(" ^e"),
             Print(" | WebSearch:"),
             ResetColor,
             SetForegroundColor(web_color),
-            Print(format!("{}", web_status)),
+            Print(web_status.to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
             Print(" ^w"),
             Print(" | Handler:"),
             ResetColor,
-            Print(format!("{}", self.connection_info.event_handler_mode.as_str())),
+            Print(self.connection_info.event_handler_mode.as_str().to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
             Print(" ^h"),

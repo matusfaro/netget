@@ -10,6 +10,7 @@ use tracing::{debug, warn};
 
 /// Log level for output verbosity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default)]
 pub enum LogLevel {
     /// ERROR: Critical errors only
     Error,
@@ -20,14 +21,10 @@ pub enum LogLevel {
     /// DEBUG: Detailed LLM responses, memory updates, actions
     Debug,
     /// TRACE: Full protocol and LLM content
+    #[default]
     Trace,
 }
 
-impl Default for LogLevel {
-    fn default() -> Self {
-        LogLevel::Trace
-    }
-}
 
 impl LogLevel {
     pub fn from_str(s: &str) -> Option<Self> {
@@ -247,7 +244,7 @@ impl App {
                 let reader = BufReader::new(file);
                 let history: Vec<String> = reader
                     .lines()
-                    .filter_map(|line| line.ok())
+                    .map_while(Result::ok)
                     .filter(|line| !line.trim().is_empty())
                     .map(|line| Self::unescape_from_storage(&line))
                     .collect();

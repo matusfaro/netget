@@ -24,6 +24,12 @@ pub struct ExecutionResult {
     pub raw_actions: Vec<serde_json::Value>,
 }
 
+impl Default for ExecutionResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutionResult {
     pub fn new() -> Self {
         Self {

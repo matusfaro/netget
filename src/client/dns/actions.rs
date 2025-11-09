@@ -70,6 +70,12 @@ pub static DNS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 /// DNS client protocol action handler
 pub struct DnsClientProtocol;
 
+impl Default for DnsClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DnsClientProtocol {
     pub fn new() -> Self {
         Self
