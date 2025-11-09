@@ -130,7 +130,7 @@ struct ConnectionData {
 
 ### Required Parameters
 - **socket_path** (string): Filesystem path for the Unix domain socket file
-  - Example: `./tmp/netget.sock`
+  - Example: `./netget.sock`
   - Must be a valid path with write permissions
   - Existing socket files are removed automatically
 
@@ -173,20 +173,20 @@ struct ConnectionData {
 
 ### Echo Server
 ```
-Create socket file at ./tmp/echo.sock
+Create socket file at ./echo.sock
 When you receive any data, echo it back exactly
 ```
 
 ### Line-Based Protocol
 ```
-Listen on socket file ./tmp/myapp.sock
+Listen on socket file ./myapp.sock
 Wait for complete lines (ending with \n)
 Respond with "OK: <line>\n" for each line received
 ```
 
 ### Binary Protocol
 ```
-Create socket at ./tmp/binary.sock
+Create socket at ./binary.sock
 Receive 4-byte big-endian integers
 Respond with the integer doubled, also as 4-byte big-endian
 Use hex encoding for binary data
@@ -194,7 +194,7 @@ Use hex encoding for binary data
 
 ### Greeting Banner
 ```
-Listen on ./tmp/greeter.sock with send_first=true
+Listen on ./greeter.sock with send_first=true
 Send "READY\n" when client connects
 Then wait for commands: HELLO or QUIT
 HELLO -> respond "GREETINGS\n"
@@ -203,7 +203,7 @@ QUIT -> respond "BYE\n" and close connection
 
 ### IPC Command Server
 ```
-Socket file: ./tmp/commands.sock
+Socket file: ./commands.sock
 Wait for JSON commands: {"action": "ping"} or {"action": "status"}
 Respond with JSON: {"result": "pong"} or {"result": "ok"}
 ```

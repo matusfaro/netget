@@ -11,8 +11,9 @@ netget.log
 logs
 *.log
 
-# Ollama lock file for concurrent instance coordination
+# Ollama lock files for concurrent instance coordination
 ollama.lock
+netget-ollama.lock
 
 .vscode/*
 !.vscode/extensions.json

@@ -89,7 +89,7 @@ impl Protocol for GitClientProtocol {
                     description: "Local path for Git operations (clone destination or existing repo)".to_string(),
                     type_hint: "string".to_string(),
                     required: false,
-                    example: json!("./tmp/my-repo"),
+                    example: json!("./my-repo"),
                 },
                 ParameterDefinition {
                     name: "username".to_string(),
@@ -129,7 +129,7 @@ impl Protocol for GitClientProtocol {
                     example: json!({
                         "type": "git_clone",
                         "url": "https://github.com/user/repo.git",
-                        "path": "./tmp/repo"
+                        "path": "./repo"
                     }),
                 },
                 ActionDefinition {
@@ -409,7 +409,7 @@ impl Protocol for GitClientProtocol {
             "Git client for version control operations"
         }
         fn example_prompt(&self) -> &'static str {
-            "Clone the repository https://github.com/user/repo.git to ./tmp/repo"
+            "Clone the repository https://github.com/user/repo.git to ./repo"
         }
         fn group_name(&self) -> &'static str {
             "Version Control"

@@ -153,7 +153,7 @@ This directory contains comprehensive research and implementation guidance for t
 
 ```bash
 # Set agent socket location
-export SSH_AUTH_SOCK="./tmp/netget-agent.sock"
+export SSH_AUTH_SOCK="./netget-agent.sock"
 
 # List keys
 ssh-add -l

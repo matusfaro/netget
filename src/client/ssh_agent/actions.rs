@@ -62,9 +62,9 @@ impl Protocol for SshAgentClientProtocol {
         vec![ParameterDefinition {
             name: "socket_path".to_string(),
             type_hint: "string".to_string(),
-            description: "Path to SSH Agent Unix socket (default: $SSH_AUTH_SOCK or ./tmp/ssh-agent.sock)".to_string(),
+            description: "Path to SSH Agent Unix socket (default: $SSH_AUTH_SOCK or ./ssh-agent.sock)".to_string(),
             required: false,
-            example: json!("./tmp/ssh-agent.sock"),
+            example: json!("./ssh-agent.sock"),
         }]
     }
 
