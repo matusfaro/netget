@@ -143,7 +143,7 @@ fi
 
 **Building and testing takes a long time** (10s-2min depending on features). **NEVER rebuild/retest after each individual fix.** Instead:
 
-**Automatic Logging**: `./cargo-isolated.sh` automatically logs all output to `./tmp/netget-<command>-$$.log` and displays the log path. Use `./cargo-isolated-cat.sh` to view the last log.
+**Automatic Logging**: `./cargo-isolated.sh` automatically logs all output to `./tmp/netget-<command>-$$.log` and displays the log path. Use `./cargo-isolated.sh --print-last` to view the last log.
 
 1. **Build/test and view output**:
 ```bash
@@ -157,25 +157,25 @@ fi
 2. **Analyze saved log for ALL errors**:
 ```bash
 # View more of the log (last 100 lines)
-./cargo-isolated-cat.sh | tail -100
+./cargo-isolated.sh --print-last | tail -100
 
 # Find all compilation errors
-./cargo-isolated-cat.sh | grep "error\[E"
+./cargo-isolated.sh --print-last | grep "error\[E"
 
 # Get error summary (count by type)
-./cargo-isolated-cat.sh | grep "^error\[E" | sed 's/:.*$//' | sort | uniq -c | sort -rn
+./cargo-isolated.sh --print-last | grep "^error\[E" | sed 's/:.*$//' | sort | uniq -c | sort -rn
 
 # Find specific error types
-./cargo-isolated-cat.sh | grep "error\[E0425\]"  # Unresolved names
-./cargo-isolated-cat.sh | grep "error\[E0599\]"  # Method not found
+./cargo-isolated.sh --print-last | grep "error\[E0425\]"  # Unresolved names
+./cargo-isolated.sh --print-last | grep "error\[E0599\]"  # Method not found
 
 # Find test failures
-./cargo-isolated-cat.sh | grep "FAILED"
-./cargo-isolated-cat.sh | grep "assertion"
+./cargo-isolated.sh --print-last | grep "FAILED"
+./cargo-isolated.sh --print-last | grep "assertion"
 ```
 
 3. **Fix ALL issues before rebuilding**:
-   - Analyze the complete log using `./cargo-isolated-cat.sh`
+   - Analyze the complete log using `./cargo-isolated.sh --print-last`
    - Identify ALL problems (compilation errors, test failures, warnings)
    - Fix everything in a single batch
    - Only rebuild/retest once after all fixes are applied
@@ -197,7 +197,7 @@ fi
 ./cargo-isolated.sh build --no-default-features --features tcp | tail -50
 
 # Analyze ALL errors in the saved log
-./cargo-isolated-cat.sh | grep "error\[E"  # Shows all 15 errors
+./cargo-isolated.sh --print-last | grep "error\[E"  # Shows all 15 errors
 
 # Fix all 15 errors in code
 
@@ -207,7 +207,7 @@ fi
 
 **Time savings**: Fixing 10 errors one-by-one = 10-20 minutes. Fixing all at once = 30 seconds + one build.
 
-**Log files**: Located in `./tmp/netget-<command>-<pid>.log`. Use `./cargo-isolated-cat.sh` to view the most recent log.
+**Log files**: Located in `./tmp/netget-<command>-<pid>.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log.
 
 ## Logging (CRITICAL)
 
