@@ -75,7 +75,31 @@ else
 fi
 
 # Check for sccache
-if [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
+if [[ "$RUSTC_WRAPPER" == "sccache" ]]; then
+    # RUSTC_WRAPPER is set to sccache - verify it's installed
+    if ! command -v sccache &> /dev/null; then
+        echo "⚠️  RUSTC_WRAPPER is set to sccache, but sccache is not installed" >&2
+        echo "Installing sccache automatically..." >&2
+        echo "" >&2
+
+        # Install sccache
+        if cargo install sccache; then
+            echo "" >&2
+            echo "✓ sccache installed successfully" >&2
+            echo "" >&2
+        else
+            echo "" >&2
+            echo "❌ Failed to install sccache" >&2
+            echo "Build may fail. To fix manually:" >&2
+            echo "  cargo install sccache" >&2
+            echo "Or disable sccache for this session:" >&2
+            echo "  unset RUSTC_WRAPPER" >&2
+            echo "" >&2
+            exit 1
+        fi
+    fi
+elif [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
+    # sccache not configured - show optional warning
     echo "⚠️  WARNING: RUSTC_WRAPPER is not set to sccache" >&2
     echo "" >&2
     echo "To speed up builds, install sccache:" >&2
