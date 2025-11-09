@@ -129,6 +129,14 @@ impl EventHandler {
                 self.handle_stop_by_id(id, ui).await?;
                 Ok(false)
             }
+            UserCommand::Save { name, id } => {
+                self.handle_save(name, id, ui).await?;
+                Ok(false)
+            }
+            UserCommand::Load { name } => {
+                self.handle_load(name, ui).await?;
+                Ok(false)
+            }
             UserCommand::Quit => {
                 self.handle_quit(ui).await?;
                 Ok(true) // Signal to quit
@@ -1347,6 +1355,177 @@ impl EventHandler {
             ui.add_llm_message("".to_string());
         }
 
+        Ok(())
+    }
+
+    async fn handle_save(&mut self, name: String, id: Option<u32>, ui: &mut App) -> Result<()> {
+        use crate::utils::save_load;
+        use crate::state::server::ServerId;
+        use crate::state::client::ClientId;
+
+        let path = if let Some(id_val) = id {
+            // Save specific server or client by ID
+            // Try server first
+            let server_id = ServerId::new(id_val);
+            if self.state.get_server(server_id).await.is_some() {
+                match save_load::save_server(&self.state, server_id, &name).await {
+                    Ok(path) => {
+                        ui.add_llm_message(format!("[SAVE] Saved server #{} to: {}", id_val, path.display()));
+                        path
+                    }
+                    Err(e) => {
+                        ui.add_llm_message(format!("[ERROR] Failed to save server #{}: {}", id_val, e));
+                        return Ok(());
+                    }
+                }
+            } else {
+                // Try client
+                let client_id = ClientId::new(id_val);
+                if self.state.get_client(client_id).await.is_some() {
+                    match save_load::save_client(&self.state, client_id, &name).await {
+                        Ok(path) => {
+                            ui.add_llm_message(format!("[SAVE] Saved client #{} to: {}", id_val, path.display()));
+                            path
+                        }
+                        Err(e) => {
+                            ui.add_llm_message(format!("[ERROR] Failed to save client #{}: {}", id_val, e));
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    ui.add_llm_message(format!("[ERROR] No server or client found with ID #{}", id_val));
+                    return Ok(());
+                }
+            }
+        } else {
+            // Save all servers and clients
+            match save_load::save_all(&self.state, &name).await {
+                Ok(path) => {
+                    let servers = self.state.get_all_servers().await;
+                    let clients = self.state.get_all_clients().await;
+                    ui.add_llm_message(format!(
+                        "[SAVE] Saved {} server(s) and {} client(s) to: {}",
+                        servers.len(),
+                        clients.len(),
+                        path.display()
+                    ));
+                    path
+                }
+                Err(e) => {
+                    ui.add_llm_message(format!("[ERROR] Failed to save configuration: {}", e));
+                    return Ok(());
+                }
+            }
+        };
+
+        ui.add_llm_message(format!("[INFO] Use '/load {}' to restore this configuration", path.display()));
+        Ok(())
+    }
+
+    async fn handle_load(&mut self, name: String, ui: &mut App) -> Result<()> {
+        use crate::utils::save_load;
+
+        // Load actions from file
+        let actions = match save_load::load_actions(&name).await {
+            Ok(actions) => actions,
+            Err(e) => {
+                ui.add_llm_message(format!("[ERROR] Failed to load file '{}': {}", name, e));
+                return Ok(());
+            }
+        };
+
+        if actions.is_empty() {
+            ui.add_llm_message(format!("[WARN] File '{}' contains no actions", name));
+            return Ok(());
+        }
+
+        ui.add_llm_message(format!("[LOAD] Loading {} action(s) from: {}", actions.len(), save_load::normalize_filename(&name)));
+
+        // Execute each action
+        for (i, action) in actions.iter().enumerate() {
+            // Try to parse as common action
+            if let Ok(common_action) = crate::llm::actions::CommonAction::from_json(action) {
+                use crate::llm::actions::CommonAction;
+
+                match common_action {
+                    CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                        // Execute open_server action via server startup
+                        match server_startup::start_server_from_action(
+                            &self.state,
+                            port,
+                            &base_stack,
+                            send_first,
+                            initial_memory,
+                            instruction.clone(),
+                            startup_params,
+                            event_handlers,
+                            scheduled_tasks,
+                        ).await {
+                            Ok(server_id) => {
+                                ui.add_llm_message(format!(
+                                    "[LOAD] Opened server #{} on port {} ({})",
+                                    server_id.as_u32(),
+                                    port,
+                                    base_stack
+                                ));
+                            }
+                            Err(e) => {
+                                ui.add_llm_message(format!(
+                                    "[ERROR] Failed to open server (action {}): {}",
+                                    i + 1,
+                                    e
+                                ));
+                            }
+                        }
+                    }
+                    CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
+                        // Execute open_client action via client startup
+                        use crate::cli::client_startup;
+
+                        match client_startup::start_client_from_action(
+                            &self.state,
+                            &protocol,
+                            &remote_addr,
+                            instruction.clone(),
+                            startup_params,
+                            initial_memory,
+                            event_handlers,
+                            scheduled_tasks,
+                            self.llm.clone(),
+                        ).await {
+                            Ok(client_id) => {
+                                ui.add_llm_message(format!(
+                                    "[LOAD] Opened client #{} to {} ({})",
+                                    client_id.as_u32(),
+                                    remote_addr,
+                                    protocol
+                                ));
+                            }
+                            Err(e) => {
+                                ui.add_llm_message(format!(
+                                    "[ERROR] Failed to open client (action {}): {}",
+                                    i + 1,
+                                    e
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        ui.add_llm_message(format!(
+                            "[WARN] Skipping unsupported action type (action {})",
+                            i + 1
+                        ));
+                    }
+                }
+            } else {
+                ui.add_llm_message(format!(
+                    "[WARN] Skipping invalid action (action {})",
+                    i + 1
+                ));
+            }
+        }
+
+        ui.add_llm_message("[LOAD] Configuration loaded successfully".to_string());
         Ok(())
     }
 }
