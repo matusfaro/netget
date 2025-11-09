@@ -37,12 +37,14 @@
 //! ## Limitations
 //!
 //! - No persistent credential storage (in-memory only, LLM controls persistence)
-//! - No PIN/UV support
-//! - No resident key support
+//! - ✅ PIN/UV support (simplified for development, no full PIN protocol v1 shared secret)
+//! - ✅ Resident key support (basic implementation)
+//! - ✅ LLM approval system (sync/async bridge with configurable timeout and auto-approve mode)
 //! - Simplified attestation (no proper certificate chain)
-//! - No LLM integration for user presence yet
+//! - Simplified ClientPin (development mode - uses direct PIN strings not encrypted protocol)
 
 pub mod actions;
+pub mod approval;
 pub mod ctaphid;
 pub mod u2f;
 pub mod ctap2;
@@ -90,16 +92,23 @@ struct Fido2HidHandler {
     ctap2: Ctap2Handler,
     /// Pending response packets
     response_packets: Vec<Vec<u8>>,
+    /// Approval manager (stored for lifetime management)
+    _approval_manager: Option<Arc<approval::ApprovalManager>>,
 }
 
 #[cfg(feature = "usb-fido2")]
 impl Fido2HidHandler {
     fn new() -> Self {
+        Self::new_with_approval_manager(None)
+    }
+
+    fn new_with_approval_manager(approval_manager: Option<Arc<approval::ApprovalManager>>) -> Self {
         Self {
             ctaphid: CtapHidHandler::new(),
             u2f: U2fHandler::new(),
-            ctap2: Ctap2Handler::new(),
+            ctap2: Ctap2Handler::new_with_approval_manager(approval_manager.clone()),
             response_packets: Vec::new(),
+            _approval_manager: approval_manager,
         }
     }
 
@@ -290,13 +299,28 @@ impl UsbFido2Server {
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
         _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
         _support_u2f: Option<bool>,
         _support_fido2: Option<bool>,
+        auto_approve: Option<bool>,
     ) -> Result<SocketAddr> {
         info!("Starting USB FIDO2/U2F Security Key server on {}", listen_addr);
+
+        // Create approval manager with configuration
+        let auto_approve_enabled = auto_approve.unwrap_or(false);
+        let approval_config = approval::ApprovalConfig {
+            auto_approve: auto_approve_enabled,
+            timeout: std::time::Duration::from_secs(30),
+            timeout_decision: approval::ApprovalDecision::Denied,
+        };
+        let approval_manager = Arc::new(approval::ApprovalManager::new(approval_config));
+
+        // Store approval manager in global storage for access by actions
+        approval::APPROVAL_MANAGERS.write().await.insert(server_id, approval_manager.clone());
+
+        info!("FIDO2 approval mode: auto_approve={}", auto_approve_enabled);
 
         // Create TCP listener for USB/IP protocol
         let listener =
@@ -319,8 +343,8 @@ impl UsbFido2Server {
             num_configurations: 1,
         };
 
-        // Create FIDO2 HID handler
-        let handler = Box::new(Fido2HidHandler::new());
+        // Create FIDO2 HID handler with approval manager
+        let handler = Box::new(Fido2HidHandler::new_with_approval_manager(Some(approval_manager)));
         let handler_arc = Arc::new(std::sync::Mutex::new(handler as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
         // Create USB interface
