@@ -56,14 +56,14 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                 description: "Send stream data packet".to_string(),
                 parameters: vec![
                     Parameter { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true},
-                    Parameter { name: "data".to_string(), type_hint: "object".to_string(), description: "Data payload (JSON)".to_string(), required: true, "y": 2.3, "z": -0.8}) },
+                    Parameter { name: "data".to_string(), type_hint: "object".to_string(), description: "Data payload (JSON)".to_string(), required: true},
                 ],
-            example: json!({
-            "type": "send_stream_data",
-            "stream_id": "example_stream_id",
-            "data": {}
-        }),
-    },
+                example: json!({
+                    "type": "send_stream_data",
+                    "stream_id": "imu_sensor",
+                    "data": {"x": 1.2, "y": 2.3, "z": -0.8}
+                }),
+            },
             ActionDefinition {
                 name: "stop_stream".to_string(),
                 description: "Stop data streaming".to_string(),
