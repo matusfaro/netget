@@ -123,14 +123,24 @@ pub async fn start_client_from_action(
         .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
 
     // Create client instance
-    let client_id = state
-        .add_client(
-            remote_addr.to_string(),
-            protocol.to_string(),
-            instruction.clone(),
-            startup_params.clone(),
-        )
-        .await;
+    let client = crate::state::client::ClientInstance {
+        id: ClientId::new(0), // Will be assigned by add_client
+        remote_addr: remote_addr.to_string(),
+        protocol_name: protocol.to_string(),
+        instruction: instruction.clone(),
+        memory: String::new(),
+        status: ClientStatus::Connecting,
+        connection: None,
+        handle: None,
+        created_at: std::time::Instant::now(),
+        status_changed_at: std::time::Instant::now(),
+        startup_params: startup_params.clone(),
+        event_handler_config: None,
+        protocol_data: serde_json::Value::Null,
+        log_files: Default::default(),
+    };
+
+    let client_id = state.add_client(client).await;
 
     // Set initial memory if provided
     if let Some(mem) = initial_memory {
@@ -141,18 +151,18 @@ pub async fn start_client_from_action(
 
     // Configure event handlers if provided
     if let Some(handlers) = event_handlers {
-        use crate::scripting::EventHandlerConfig;
+        use crate::scripting::{EventHandlerConfig, EventHandler};
 
-        let handler_configs: Vec<EventHandlerConfig> = handlers
+        let event_handlers: Vec<EventHandler> = handlers
             .into_iter()
             .filter_map(|h| serde_json::from_value(h).ok())
             .collect();
 
-        if !handler_configs.is_empty() {
+        if !event_handlers.is_empty() {
             state
                 .with_client_mut(client_id, |c| {
-                    c.event_handler_config = Some(crate::scripting::EventHandlerConfig {
-                        handlers: handler_configs,
+                    c.event_handler_config = Some(EventHandlerConfig {
+                        handlers: event_handlers,
                     });
                 })
                 .await;
