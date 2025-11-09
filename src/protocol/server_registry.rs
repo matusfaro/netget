@@ -182,6 +182,9 @@ impl ServerRegistry {
             );
         }
 
+        #[cfg(feature = "rss")]
+        self.register(Arc::new(crate::server::RssProtocol::new()));
+
         #[cfg(feature = "cassandra")]
         {
             use crate::server::connection::ConnectionId;

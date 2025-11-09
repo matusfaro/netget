@@ -128,6 +128,8 @@ pub mod proxy;
 pub mod http3;
 #[cfg(feature = "redis")]
 pub mod redis;
+#[cfg(feature = "rss")]
+pub mod rss;
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smtp")]
