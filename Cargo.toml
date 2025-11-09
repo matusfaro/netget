@@ -99,6 +99,14 @@ tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:toki
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
 openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
+usb-common = ["dep:usbip"]  # Common USB/IP functionality for USB device protocols
+usb-keyboard = ["usb-common"]  # USB HID Keyboard virtual device
+usb-mouse = ["usb-common"]  # USB HID Mouse virtual device
+usb-serial = ["usb-common"]  # USB CDC ACM Serial virtual device
+usb-msc = ["usb-common", "memmap2"]  # USB Mass Storage Class virtual device (flash drive/disk)
+usb-fido2 = ["usb-common", "ring", "serde_cbor"]  # USB FIDO2/U2F Security Key virtual device
+usb-smartcard = ["usb-common", "dep:rsa", "dep:sha2"]  # USB Smart Card (CCID) virtual device via vsmartcard (with RSA crypto support)
+usb = ["usb-common"]  # Low-level USB device with full descriptor control
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
 git = ["dep:git2"]  # Git client support
@@ -109,7 +117,6 @@ torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer d
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
-usb = ["dep:nusb"]  # USB device client for low-level USB device interaction
 all-protocols = [
     "tcp",
     "socket_file",
@@ -193,6 +200,12 @@ all-protocols = [
     "tls",
     "saml-idp",
     "saml-sp",
+    "usb-keyboard",
+    "usb-mouse",
+    "usb-serial",
+    "usb-msc",
+    "usb-fido2",
+    "usb-smartcard",
     "usb",
     "bluetooth-ble",
     "bluetooth-ble-keyboard",
@@ -540,6 +553,20 @@ btleplug = { version = "0.11", optional = true }
 ble-peripheral-rust = { version = "0.2", optional = true }
 # USB client
 nusb = { version = "0.1", optional = true }
+
+# USB/IP protocol for virtual USB device creation
+usbip = { version = "0.3", optional = true }
+
+# Memory-mapped file I/O for USB MSC disk images
+memmap2 = { version = "0.9", optional = true }
+
+# USB FIDO2 dependencies
+ring = { version = "0.17", optional = true }  # ECDSA P-256 cryptography for FIDO2
+serde_cbor = { version = "0.11", optional = true }  # CBOR encoding for CTAP2
+
+# USB Smart Card dependencies
+rsa = { version = "0.9", optional = true, features = ["sha2"] }  # RSA cryptography for smart cards
+# sha2 already defined above for wireguard/tor
 
 [dev-dependencies]
 # For async tests
