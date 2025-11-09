@@ -28,21 +28,12 @@ impl OllamaClientImpl {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
-        startup_params: Option<StartupParams>,
+        _startup_params: Option<StartupParams>,
     ) -> Result<SocketAddr> {
-        let default_model = startup_params
-            .as_ref()
-            .and_then(|p| p.get_optional_string("default_model"))
-            .unwrap_or_else(|| "llama2".to_string());
-
         info!("Ollama client {} initializing with API endpoint: {}", client_id, remote_addr);
 
-        // Store configuration in protocol_data
+        // Store only endpoint in protocol_data (no model storage - LLM must provide model on every call)
         app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "default_model".to_string(),
-                serde_json::json!(default_model),
-            );
             client.set_protocol_field(
                 "api_endpoint".to_string(),
                 serde_json::json!(remote_addr),
@@ -72,37 +63,30 @@ impl OllamaClientImpl {
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Make a generate request
+    /// Make a generate request (model is required)
     pub async fn make_generate_request(
         client_id: ClientId,
         prompt: String,
-        model: Option<String>,
+        model: String,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        // Get API configuration from client
-        let (default_model, api_endpoint) = app_state.with_client_mut(client_id, |client| {
-            let model = client.get_protocol_field("default_model")
+        // Get API endpoint from client (model must be provided by LLM on every call)
+        let api_endpoint = app_state.with_client_mut(client_id, |client| {
+            client.get_protocol_field("api_endpoint")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let endpoint = client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (model, endpoint)
-        }).await.unwrap_or((None, None));
+                .map(|s| s.to_string())
+        }).await.flatten().context("No API endpoint found")?;
 
-        let api_endpoint = api_endpoint.context("No API endpoint found")?;
-        let model_to_use = model.unwrap_or_else(|| default_model.unwrap_or_else(|| "llama2".to_string()));
-
-        info!("Ollama client {} making generate request with model: {}", client_id, model_to_use);
+        info!("Ollama client {} making generate request with model: {}", client_id, model);
 
         // Build Ollama client with custom endpoint
         let client = reqwest::Client::new();
         let url = format!("{}/api/generate", api_endpoint);
 
         let request_body = serde_json::json!({
-            "model": model_to_use,
+            "model": model,
             "prompt": prompt,
             "stream": false
         });
@@ -133,7 +117,7 @@ impl OllamaClientImpl {
                             serde_json::json!({
                                 "response_type": "generate",
                                 "content": response_text,
-                                "model": model_to_use,
+                                "model": model,
                             }),
                         );
 
@@ -179,37 +163,30 @@ impl OllamaClientImpl {
         }
     }
 
-    /// Make a chat completion request
+    /// Make a chat completion request (model is required)
     pub async fn make_chat_request(
         client_id: ClientId,
         messages: serde_json::Value,
-        model: Option<String>,
+        model: String,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        // Get API configuration from client
-        let (default_model, api_endpoint) = app_state.with_client_mut(client_id, |client| {
-            let model = client.get_protocol_field("default_model")
+        // Get API endpoint from client (model must be provided by LLM on every call)
+        let api_endpoint = app_state.with_client_mut(client_id, |client| {
+            client.get_protocol_field("api_endpoint")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let endpoint = client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (model, endpoint)
-        }).await.unwrap_or((None, None));
+                .map(|s| s.to_string())
+        }).await.flatten().context("No API endpoint found")?;
 
-        let api_endpoint = api_endpoint.context("No API endpoint found")?;
-        let model_to_use = model.unwrap_or_else(|| default_model.unwrap_or_else(|| "llama2".to_string()));
-
-        info!("Ollama client {} making chat request with model: {}", client_id, model_to_use);
+        info!("Ollama client {} making chat request with model: {}", client_id, model);
 
         // Build Ollama client with custom endpoint
         let client = reqwest::Client::new();
         let url = format!("{}/api/chat", api_endpoint);
 
         let request_body = serde_json::json!({
-            "model": model_to_use,
+            "model": model,
             "messages": messages,
             "stream": false
         });
@@ -241,7 +218,7 @@ impl OllamaClientImpl {
                             serde_json::json!({
                                 "response_type": "chat",
                                 "content": message_content,
-                                "model": model_to_use,
+                                "model": model,
                             }),
                         );
 
@@ -374,6 +351,106 @@ impl OllamaClientImpl {
             Err(e) => {
                 error!("Ollama client {} request failed: {}", client_id, e);
                 let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Generate embeddings (model is required)
+    pub async fn make_embeddings_request(
+        client_id: ClientId,
+        prompt: String,
+        model: String,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        // Get API endpoint from client (model must be provided by LLM on every call)
+        let api_endpoint = app_state.with_client_mut(client_id, |client| {
+            client.get_protocol_field("api_endpoint")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        }).await.flatten().context("No API endpoint found")?;
+
+        info!("Ollama client {} making embeddings request with model: {}", client_id, model);
+
+        // Build Ollama client with custom endpoint
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/embeddings", api_endpoint);
+
+        let request_body = serde_json::json!({
+            "model": model,
+            "prompt": prompt
+        });
+
+        // Make request
+        match client.post(&url)
+            .json(&request_body)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                let status_code = response.status();
+                let response_json: serde_json::Value = response.json().await?;
+
+                if status_code.is_success() {
+                    let embedding = response_json.get("embedding")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
+
+                    info!("Ollama client {} received embeddings ({} dimensions)", client_id, embedding);
+
+                    // Call LLM with response
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                        let protocol = Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
+                        let event = Event::new(
+                            &OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT,
+                            serde_json::json!({
+                                "response_type": "embeddings",
+                                "content": format!("Generated embeddings with {} dimensions", embedding),
+                                "model": model,
+                                "dimensions": embedding,
+                            }),
+                        );
+
+                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+
+                        match call_llm_for_client(
+                            &llm_client,
+                            &app_state,
+                            client_id.to_string(),
+                            &instruction,
+                            &memory,
+                            Some(&event),
+                            protocol.as_ref(),
+                            &status_tx,
+                        ).await {
+                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                                // Update memory
+                                if let Some(mem) = memory_updates {
+                                    app_state.set_memory_for_client(client_id, mem).await;
+                                }
+                            }
+                            Err(e) => {
+                                error!("LLM error for Ollama client {}: {}", client_id, e);
+                            }
+                        }
+                    }
+
+                    Ok(())
+                } else {
+                    let error_msg = response_json.get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown error")
+                        .to_string();
+
+                    Err(anyhow::anyhow!("Ollama API error: {}", error_msg))
+                }
+            }
+            Err(e) => {
+                error!("Ollama client {} embeddings request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] Ollama embeddings request failed: {}", e));
                 Err(e.into())
             }
         }

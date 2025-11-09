@@ -77,15 +77,8 @@ impl OllamaClientProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for OllamaClientProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "default_model".to_string(),
-                description: "Default model to use for requests".to_string(),
-                type_hint: "string".to_string(),
-                required: false,
-                example: json!("llama2"),
-            },
-        ]
+        // No startup parameters - model must be provided on every request
+        vec![]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -103,8 +96,8 @@ impl Protocol for OllamaClientProtocol {
                     Parameter {
                         name: "model".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Model to use (e.g., llama2, codellama)".to_string(),
-                        required: false,
+                        description: "Model to use (e.g., llama2, codellama) - REQUIRED".to_string(),
+                        required: true,
                     },
                 ],
                 example: json!({
@@ -126,8 +119,8 @@ impl Protocol for OllamaClientProtocol {
                     Parameter {
                         name: "model".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Model to use".to_string(),
-                        required: false,
+                        description: "Model to use - REQUIRED".to_string(),
+                        required: true,
                     },
                 ],
                 example: json!({
@@ -144,6 +137,29 @@ impl Protocol for OllamaClientProtocol {
                 parameters: vec![],
                 example: json!({
                     "type": "list_models"
+                }),
+            },
+            ActionDefinition {
+                name: "generate_embeddings".to_string(),
+                description: "Generate embeddings for a text prompt".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "prompt".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Text to generate embeddings for".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "model".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Model to use for embeddings - REQUIRED".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({
+                    "type": "generate_embeddings",
+                    "prompt": "Hello world",
+                    "model": "llama2"
                 }),
             },
             ActionDefinition {
@@ -172,13 +188,14 @@ impl Protocol for OllamaClientProtocol {
                     Parameter {
                         name: "model".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Model to use".to_string(),
-                        required: false,
+                        description: "Model to use - REQUIRED".to_string(),
+                        required: true,
                     },
                 ],
                 example: json!({
                     "type": "send_generate_request",
-                    "prompt": "Tell me more"
+                    "prompt": "Tell me more",
+                    "model": "llama2"
                 }),
             },
             ActionDefinition {
@@ -277,7 +294,8 @@ impl Client for OllamaClientProtocol {
                 let model = action
                     .get("model")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .context("Missing required 'model' parameter")?
+                    .to_string();
 
                 Ok(ClientActionResult::Custom {
                     name: "send_generate_request".to_string(),
@@ -296,12 +314,34 @@ impl Client for OllamaClientProtocol {
                 let model = action
                     .get("model")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .context("Missing required 'model' parameter")?
+                    .to_string();
 
                 Ok(ClientActionResult::Custom {
                     name: "send_chat_request".to_string(),
                     data: json!({
                         "messages": messages,
+                        "model": model,
+                    }),
+                })
+            }
+            "generate_embeddings" => {
+                let prompt = action
+                    .get("prompt")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'prompt' parameter")?
+                    .to_string();
+
+                let model = action
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .context("Missing required 'model' parameter")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "generate_embeddings".to_string(),
+                    data: json!({
+                        "prompt": prompt,
                         "model": model,
                     }),
                 })

@@ -8,7 +8,72 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
+
+/// Ollama generate request event
+pub static OLLAMA_GENERATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ollama_generate_request",
+        "Received /api/generate request"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "model".to_string(),
+            type_hint: "string".to_string(),
+            description: "Model name requested".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "prompt".to_string(),
+            type_hint: "string".to_string(),
+            description: "Prompt text".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "stream".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether streaming is requested".to_string(),
+            required: false,
+        },
+    ])
+});
+
+/// Ollama chat request event
+pub static OLLAMA_CHAT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ollama_chat_request",
+        "Received /api/chat request"
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "model".to_string(),
+            type_hint: "string".to_string(),
+            description: "Model name requested".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "messages".to_string(),
+            type_hint: "array".to_string(),
+            description: "Chat messages".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "stream".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether streaming is requested".to_string(),
+            required: false,
+        },
+    ])
+});
+
+/// Ollama models request event
+pub static OLLAMA_MODELS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ollama_models_request",
+        "Received /api/tags request"
+    )
+});
 
 /// Ollama protocol action handler
 pub struct OllamaProtocol {}
