@@ -71,7 +71,7 @@ impl SshAgentClient {
             std::env::var("SSH_AUTH_SOCK")
                 .ok()
                 .and_then(|s| if s.is_empty() { None } else { Some(PathBuf::from(s)) })
-                .unwrap_or_else(|| PathBuf::from("/tmp/ssh-agent.sock"))
+                .unwrap_or_else(|| PathBuf::from("./tmp/ssh-agent.sock"))
         } else {
             PathBuf::from(&remote_addr)
         };

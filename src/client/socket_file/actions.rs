@@ -155,7 +155,7 @@ impl Protocol for SocketFileClientProtocol {
             "Socket File client for connecting to Unix domain sockets"
         }
         fn example_prompt(&self) -> &'static str {
-            "Connect to socket file at /tmp/app.sock and send 'HELLO'"
+            "Connect to socket file at ./tmp/app.sock and send 'HELLO'"
         }
         fn group_name(&self) -> &'static str {
             "Core"

@@ -139,5 +139,5 @@ curl http://localhost:8080/simple/
 pip index versions test-pkg --index-url http://localhost:8080/simple/
 
 # Try download (will likely fail with invalid wheel)
-pip download test-pkg --index-url http://localhost:8080/simple/ --dest /tmp/
+pip download test-pkg --index-url http://localhost:8080/simple/ --dest ./tmp/
 ```

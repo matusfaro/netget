@@ -206,7 +206,7 @@ impl UsbMscServer {
         );
 
         // Initialize connection data
-        let disk_path = disk_image.unwrap_or_else(|| PathBuf::from("/tmp/netget_msc_disk.img"));
+        let disk_path = disk_image.unwrap_or_else(|| PathBuf::from("./tmp/netget_msc_disk.img"));
         let disk_size_mb = 10; // Default 10MB disk
         let write_protect = true; // Start write-protected for safety
 
