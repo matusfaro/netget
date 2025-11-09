@@ -379,7 +379,7 @@ impl RusshServer for SshServer {
     type Handler = SshHandler;
 
     fn new_client(&mut self, peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        let connection_id = ConnectionId::new();
+        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
         let addr = peer_addr.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
 
         info!("SSH connection {} from {}", connection_id, addr);

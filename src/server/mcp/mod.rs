@@ -235,7 +235,7 @@ async fn handle_initialize(
     let _ = state.status_tx.send(format!("→ MCP client initializing: {}", client_info));
 
     // Create connection for tracking
-    let connection_id = ConnectionId::new();
+    let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
     let session_id = uuid::Uuid::new_v4().to_string();
 
     // Track in app_state

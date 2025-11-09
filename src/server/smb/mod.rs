@@ -167,7 +167,7 @@ impl SmbServer {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Generate connection ID
-        let connection_id = ConnectionId::new();
+        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
         info!("SMB connection {} from {}", connection_id, peer_addr);
         let _ = status_tx.send(format!("[INFO] SMB connection {} from {}", connection_id, peer_addr));

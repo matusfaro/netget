@@ -75,7 +75,7 @@ impl SocketFileServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         info!("Accepted socket file connection {}", connection_id);
 
                         // Split stream

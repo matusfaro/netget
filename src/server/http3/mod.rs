@@ -87,7 +87,7 @@ impl Http3Server {
         // Spawn accept loop
         tokio::spawn(async move {
             while let Some(connecting) = endpoint.accept().await {
-                let connection_id = ConnectionId::new();
+                let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                 let llm_client_clone = llm_client.clone();
                 let app_state_clone = app_state.clone();
                 let status_tx_clone = status_tx.clone();
