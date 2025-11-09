@@ -113,25 +113,23 @@ impl Server for BluetoothBleBatteryProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            let device_name = ctx.params
-                .get("device_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("NetGet-Battery")
-                .to_string();
+            let device_name = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_string("device_name"))
+                .unwrap_or_else(|| "NetGet-Battery".to_string());
 
-            let initial_level = ctx.params
-                .get("initial_level")
-                .and_then(|v| v.as_u64())
+            let initial_level = ctx.startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_u64("initial_level"))
                 .unwrap_or(100) as u8;
 
             crate::server::bluetooth_ble_battery::BluetoothBleBattery::spawn_with_llm_actions(
                 device_name,
                 initial_level,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-                ctx.instruction,
             )
             .await
         })
@@ -139,7 +137,6 @@ impl Server for BluetoothBleBatteryProtocol {
 
     fn execute_action(
         &self,
-        _connection_id: Option<crate::server::connection::ConnectionId>,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
@@ -163,14 +160,17 @@ fn set_battery_level_action() -> ActionDefinition {
         name: "set_battery_level".to_string(),
         description: "Set battery level percentage".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "level".to_string(),
                 type_hint: "number".to_string(),
                 description: "Battery level (0-100)".to_string(),
                 required: true,
-                example: json!(75),
             },
         ],
+        example: json!({
+            "type": "set_battery_level",
+            "level": 75
+        }),
     }
 }
 
@@ -179,21 +179,24 @@ fn simulate_drain_action() -> ActionDefinition {
         name: "simulate_drain".to_string(),
         description: "Gradually decrease battery level".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "amount".to_string(),
                 type_hint: "number".to_string(),
                 description: "Amount to drain (percentage points)".to_string(),
                 required: true,
-                example: json!(10),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "interval_ms".to_string(),
                 type_hint: "number".to_string(),
                 description: "Interval between updates (milliseconds)".to_string(),
                 required: false,
-                example: json!(5000),
             },
         ],
+        example: json!({
+            "type": "simulate_drain",
+            "amount": 10,
+            "interval_ms": 5000
+        }),
     }
 }
 
@@ -202,20 +205,23 @@ fn simulate_charge_action() -> ActionDefinition {
         name: "simulate_charge".to_string(),
         description: "Gradually increase battery level".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "amount".to_string(),
                 type_hint: "number".to_string(),
                 description: "Amount to charge (percentage points)".to_string(),
                 required: true,
-                example: json!(20),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "interval_ms".to_string(),
                 type_hint: "number".to_string(),
                 description: "Interval between updates (milliseconds)".to_string(),
                 required: false,
-                example: json!(2000),
             },
         ],
+        example: json!({
+            "type": "simulate_charge",
+            "amount": 20,
+            "interval_ms": 2000
+        }),
     }
 }

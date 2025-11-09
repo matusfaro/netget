@@ -24,23 +24,36 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                 name: "set_weight".to_string(),
                 description: "Set weight measurement".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "kg".to_string(), type_hint: "number".to_string(), description: "Weight in kilograms".to_string(), required: true, example: json!(70.5) },
+                    Parameter { name: "kg".to_string(), type_hint: "number".to_string(), description: "Weight in kilograms".to_string(), required: true },
                 ],
+                example: json!({
+                    "type": "set_weight",
+                    "kg": 70.5
+                }),
             },
             ActionDefinition {
                 name: "set_bmi".to_string(),
                 description: "Set Body Mass Index".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "bmi".to_string(), type_hint: "number".to_string(), description: "BMI value".to_string(), required: true, example: json!(22.5) },
+                    Parameter { name: "bmi".to_string(), type_hint: "number".to_string(), description: "BMI value".to_string(), required: true },
                 ],
+                example: json!({
+                    "type": "set_bmi",
+                    "bmi": 22.5
+                }),
             },
             ActionDefinition {
                 name: "multi_user".to_string(),
                 description: "Support multiple user profiles".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "user_id".to_string(), type_hint: "number".to_string(), description: "User ID (1-9)".to_string(), required: true, example: json!(1) },
-                    ParameterDefinition { name: "weight_kg".to_string(), type_hint: "number".to_string(), description: "Weight in kg".to_string(), required: true, example: json!(70.5) },
+                    Parameter { name: "user_id".to_string(), type_hint: "number".to_string(), description: "User ID (1-9)".to_string(), required: true },
+                    Parameter { name: "weight_kg".to_string(), type_hint: "number".to_string(), description: "Weight in kg".to_string(), required: true },
                 ],
+                example: json!({
+                    "type": "multi_user",
+                    "user_id": 1,
+                    "weight_kg": 70.5
+                }),
             },
         ]
     }
@@ -70,12 +83,12 @@ impl Server for BluetoothBleWeightScaleProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::bluetooth_ble_weight_scale::BluetoothBleWeightScale::spawn_with_llm_actions(
-                "NetGet-Scale".to_string(), ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Scale".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id
             ).await
         })
     }
 
-    fn execute_action(&self, _: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "set_weight" | "set_bmi" | "multi_user" => Ok(ActionResult::Custom { name: action_type.to_string(), data: action }),

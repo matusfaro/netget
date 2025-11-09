@@ -112,7 +112,7 @@ impl Server for BluetoothBleBeaconProtocol {
         Box::pin(async move {
             crate::server::bluetooth_ble_beacon::BluetoothBleBeacon::spawn_with_llm_actions(
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
                 ctx.instruction,
@@ -148,35 +148,37 @@ fn advertise_ibeacon_action() -> ActionDefinition {
         name: "advertise_ibeacon".to_string(),
         description: "Start advertising as an iBeacon (Apple standard)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "uuid".to_string(),
                 type_hint: "string".to_string(),
                 description: "128-bit UUID (e.g., '12345678-1234-5678-1234-567812345678')".to_string(),
                 required: true,
-                example: json!("12345678-1234-5678-1234-567812345678"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "major".to_string(),
                 type_hint: "number".to_string(),
                 description: "16-bit major identifier (0-65535, e.g., store ID)".to_string(),
                 required: true,
-                example: json!(1),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "minor".to_string(),
                 type_hint: "number".to_string(),
                 description: "16-bit minor identifier (0-65535, e.g., department ID)".to_string(),
                 required: true,
-                example: json!(100),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "tx_power".to_string(),
                 type_hint: "number".to_string(),
                 description: "Calibrated transmission power in dBm (default: -59)".to_string(),
                 required: false,
-                example: json!(-59),
             },
         ],
+    example: json!({
+            "type": "advertise_ibeacon",
+            "uuid": "example_uuid",
+            "major": 42,
+            "minor": 42
+        }),
     }
 }
 
@@ -185,28 +187,30 @@ fn advertise_eddystone_uid_action() -> ActionDefinition {
         name: "advertise_eddystone_uid".to_string(),
         description: "Start advertising as Eddystone-UID (unique beacon ID)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "namespace".to_string(),
                 type_hint: "string".to_string(),
                 description: "10-byte namespace ID (hex, e.g., '0123456789abcdef0123')".to_string(),
                 required: true,
-                example: json!("0123456789abcdef0123"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "instance".to_string(),
                 type_hint: "string".to_string(),
                 description: "6-byte instance ID (hex, e.g., '0123456789ab')".to_string(),
                 required: true,
-                example: json!("0123456789ab"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "tx_power".to_string(),
                 type_hint: "number".to_string(),
                 description: "Calibrated transmission power in dBm (default: -20)".to_string(),
                 required: false,
-                example: json!(-20),
             },
         ],
+    example: json!({
+            "type": "advertise_eddystone_uid",
+            "namespace": "example_namespace",
+            "instance": "example_instance"
+        }),
     }
 }
 
@@ -215,21 +219,23 @@ fn advertise_eddystone_url_action() -> ActionDefinition {
         name: "advertise_eddystone_url".to_string(),
         description: "Start advertising as Eddystone-URL (broadcast a URL)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "url".to_string(),
                 type_hint: "string".to_string(),
                 description: "URL to broadcast (max ~17 chars after compression)".to_string(),
                 required: true,
-                example: json!("https://example.com"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "tx_power".to_string(),
                 type_hint: "number".to_string(),
                 description: "Calibrated transmission power in dBm (default: -20)".to_string(),
                 required: false,
-                example: json!(-20),
             },
         ],
+    example: json!({
+            "type": "advertise_eddystone_url",
+            "url": "example_url"
+        }),
     }
 }
 
@@ -238,35 +244,34 @@ fn advertise_eddystone_tlm_action() -> ActionDefinition {
         name: "advertise_eddystone_tlm".to_string(),
         description: "Start advertising as Eddystone-TLM (telemetry data)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "battery_voltage".to_string(),
                 type_hint: "number".to_string(),
                 description: "Battery voltage in mV (0-65535)".to_string(),
                 required: false,
-                example: json!(3000),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "temperature".to_string(),
                 type_hint: "number".to_string(),
                 description: "Temperature in Celsius".to_string(),
                 required: false,
-                example: json!(22.5),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "adv_count".to_string(),
                 type_hint: "number".to_string(),
                 description: "Advertisement count since boot".to_string(),
                 required: false,
-                example: json!(0),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "uptime".to_string(),
                 type_hint: "number".to_string(),
                 description: "Uptime in seconds since boot".to_string(),
                 required: false,
-                example: json!(0),
             },
         ],
+    example: json!({
+            "type": "advertise_eddystone_tlm"
+        }),
     }
 }
 
@@ -275,5 +280,8 @@ fn stop_beacon_action() -> ActionDefinition {
         name: "stop_beacon".to_string(),
         description: "Stop beacon advertising".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "stop_beacon"
+        }),
     }
 }

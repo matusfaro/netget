@@ -24,23 +24,35 @@ impl Protocol for BluetoothBleRunningProtocol {
                 name: "set_pace".to_string(),
                 description: "Set running pace".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "min_per_km".to_string(), type_hint: "number".to_string(), description: "Pace in min/km".to_string(), required: true, example: json!(5.5) },
+                    Parameter { name: "min_per_km".to_string(), type_hint: "number".to_string(), description: "Pace in min/km".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "set_pace",
+            "min_per_km": 42
+        }),
+    },
             ActionDefinition {
                 name: "set_cadence".to_string(),
                 description: "Set running cadence".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "spm".to_string(), type_hint: "number".to_string(), description: "Steps per minute".to_string(), required: true, example: json!(180) },
+                    Parameter { name: "spm".to_string(), type_hint: "number".to_string(), description: "Steps per minute".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "set_cadence",
+            "spm": 42
+        }),
+    },
             ActionDefinition {
                 name: "simulate_run".to_string(),
                 description: "Simulate running activity".to_string(),
                 parameters: vec![
-                    ParameterDefinition { name: "profile".to_string(), type_hint: "string".to_string(), description: "Run profile (easy, tempo, interval, sprint)".to_string(), required: true, example: json!("tempo") },
+                    Parameter { name: "profile".to_string(), type_hint: "string".to_string(), description: "Run profile (easy, tempo, interval, sprint)".to_string(), required: true},
                 ],
-            },
+            example: json!({
+            "type": "simulate_run",
+            "profile": "example_profile"
+        }),
+    },
         ]
     }
 
@@ -69,12 +81,12 @@ impl Server for BluetoothBleRunningProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::bluetooth_ble_running::BluetoothBleRunning::spawn_with_llm_actions(
-                "NetGet-Running".to_string(), ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Running".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
             ).await
         })
     }
 
-    fn execute_action(&self, _: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "set_pace" | "set_cadence" | "simulate_run" => Ok(ActionResult::Custom { name: action_type.to_string(), data: action }),

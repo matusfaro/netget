@@ -27,25 +27,16 @@ impl BluetoothBleBattery {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        instruction: String,
     ) -> Result<std::net::SocketAddr> {
         info!("Starting BLE Battery Service: {} (initial level: {}%)", device_name, initial_level);
 
-        // Create the underlying BLE server with Battery Service configuration
-        let battery_instruction = format!(
-            "{}. Configure as a BLE Battery Service (UUID: 0x180F) with Battery Level characteristic (UUID: 0x2A19). Initial battery level: {}%.",
-            instruction,
-            initial_level
-        );
-
-        // Use the base bluetooth-ble server
+        // Use the base bluetooth-ble server with Battery Service configuration
         BluetoothBle::spawn_with_llm_actions(
             device_name,
             llm_client,
             app_state,
             status_tx,
             server_id,
-            battery_instruction,
         ).await
     }
 }

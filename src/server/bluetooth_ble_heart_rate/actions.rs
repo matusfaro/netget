@@ -37,27 +37,33 @@ impl Protocol for BluetoothBleHeartRateProtocol {
             ActionDefinition {
                 name: "set_bpm".to_string(),
                 description: "Set heart rate in beats per minute".to_string(),
-                parameters: vec![ParameterDefinition {
+                parameters: vec![Parameter {
                     name: "bpm".to_string(),
                     type_hint: "number".to_string(),
                     description: "Beats per minute (30-220)".to_string(),
                     required: true,
-                    example: json!(72),
                 }],
-            },
+            example: json!({
+            "type": "set_bpm",
+            "bpm": 42
+        }),
+    },
             ActionDefinition {
                 name: "simulate_activity".to_string(),
                 description: "Simulate physical activity with varying heart rate".to_string(),
                 parameters: vec![
-                    ParameterDefinition {
+                    Parameter {
                         name: "activity".to_string(),
                         type_hint: "string".to_string(),
                         description: "Activity type (rest, walk, jog, run, sprint)".to_string(),
                         required: true,
-                        example: json!("jog"),
                     },
                 ],
-            },
+            example: json!({
+            "type": "simulate_activity",
+            "activity": "example_activity"
+        }),
+    },
         ]
     }
 
@@ -86,14 +92,14 @@ impl Protocol for BluetoothBleHeartRateProtocol {
 impl Server for BluetoothBleHeartRateProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
-            let device_name = ctx.params.get("device_name").and_then(|v| v.as_str()).unwrap_or("NetGet-HeartRate").to_string();
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name")).and_then(|v| v.as_str()).unwrap_or("NetGet-HeartRate").to_string();
             crate::server::bluetooth_ble_heart_rate::BluetoothBleHeartRate::spawn_with_llm_actions(
-                device_name, ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction
+                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
             ).await
         })
     }
 
-    fn execute_action(&self, _connection_id: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "set_bpm" | "simulate_activity" => Ok(ActionResult::Custom { name: action_type.to_string(), data: action }),

@@ -31,11 +31,11 @@ impl Server for BluetoothBleProximityProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::bluetooth_ble_proximity::BluetoothBleProximity::spawn_with_llm_actions(
-                "NetGet-Proximity".to_string(), ctx.llm_client, ctx.app_state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Proximity".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
             ).await
         })
     }
-    fn execute_action(&self, _: Option<crate::server::connection::ConnectionId>, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         Ok(ActionResult::Custom { name: action_type.to_string(), data: action })
     }

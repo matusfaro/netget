@@ -112,8 +112,7 @@ impl Server for BluetoothBleRemoteProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            let device_name = ctx.params
-                .get("device_name")
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("NetGet-Remote")
                 .to_string();
@@ -121,7 +120,7 @@ impl Server for BluetoothBleRemoteProtocol {
             crate::server::bluetooth_ble_remote::BluetoothBleRemote::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
                 ctx.instruction,
@@ -157,6 +156,9 @@ fn play_pause_action() -> ActionDefinition {
         name: "play_pause".to_string(),
         description: "Toggle play/pause".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "play_pause"
+        }),
     }
 }
 
@@ -165,6 +167,9 @@ fn next_track_action() -> ActionDefinition {
         name: "next_track".to_string(),
         description: "Skip to next track".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "next_track"
+        }),
     }
 }
 
@@ -173,6 +178,9 @@ fn previous_track_action() -> ActionDefinition {
         name: "previous_track".to_string(),
         description: "Go to previous track".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "previous_track"
+        }),
     }
 }
 
@@ -181,6 +189,9 @@ fn volume_up_action() -> ActionDefinition {
         name: "volume_up".to_string(),
         description: "Increase volume".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "volume_up"
+        }),
     }
 }
 
@@ -189,6 +200,9 @@ fn volume_down_action() -> ActionDefinition {
         name: "volume_down".to_string(),
         description: "Decrease volume".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "volume_down"
+        }),
     }
 }
 
@@ -197,6 +211,9 @@ fn mute_action() -> ActionDefinition {
         name: "mute".to_string(),
         description: "Toggle mute".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "mute"
+        }),
     }
 }
 
@@ -205,6 +222,9 @@ fn fast_forward_action() -> ActionDefinition {
         name: "fast_forward".to_string(),
         description: "Fast forward".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "fast_forward"
+        }),
     }
 }
 
@@ -213,6 +233,9 @@ fn rewind_action() -> ActionDefinition {
         name: "rewind".to_string(),
         description: "Rewind".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "rewind"
+        }),
     }
 }
 
@@ -221,5 +244,8 @@ fn stop_action() -> ActionDefinition {
         name: "stop".to_string(),
         description: "Stop playback".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "stop"
+        }),
     }
 }

@@ -175,14 +175,12 @@ impl Server for BluetoothBleProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            let device_name = ctx.params
-                .get("device_name")
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("NetGet-BLE")
                 .to_string();
 
-            let instruction = ctx.params
-                .get("instruction")
+            let instruction = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("instruction"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(&ctx.instruction)
                 .to_string();
@@ -190,7 +188,7 @@ impl Server for BluetoothBleProtocol {
             crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
                 instruction,
@@ -230,27 +228,23 @@ fn add_service_action() -> ActionDefinition {
         name: "add_service".to_string(),
         description: "Add a GATT service with characteristics to the BLE server".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "uuid".to_string(),
                 type_hint: "string".to_string(),
                 description: "Service UUID (standard 16-bit like '180D' or full 128-bit UUID)".to_string(),
                 required: true,
-                example: json!("0000180d-0000-1000-8000-00805f9b34fb"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "primary".to_string(),
                 type_hint: "boolean".to_string(),
                 description: "Whether this is a primary service (default: true)".to_string(),
                 required: false,
-                example: json!(true),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "characteristics".to_string(),
                 type_hint: "array".to_string(),
                 description: "Array of characteristic definitions".to_string(),
                 required: true,
-                example: json!([{
-                    "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
                     "properties": ["read", "notify"],
                     "permissions": ["readable"],
                     "initial_value": "0048"
@@ -265,14 +259,16 @@ fn start_advertising_action() -> ActionDefinition {
         name: "start_advertising".to_string(),
         description: "Start BLE advertising to make the device discoverable".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "device_name".to_string(),
                 type_hint: "string".to_string(),
                 description: "Device name to advertise (optional, uses server default if not specified)".to_string(),
                 required: false,
-                example: json!("MyHeartRateMonitor"),
             },
         ],
+    example: json!({
+            "type": "start_advertising"
+        }),
     }
 }
 
@@ -281,6 +277,9 @@ fn stop_advertising_action() -> ActionDefinition {
         name: "stop_advertising".to_string(),
         description: "Stop BLE advertising".to_string(),
         parameters: vec![],
+    example: json!({
+            "type": "stop_advertising"
+        }),
     }
 }
 
@@ -289,21 +288,24 @@ fn send_notification_action() -> ActionDefinition {
         name: "send_notification".to_string(),
         description: "Send a notification to subscribed clients for a characteristic".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "characteristic_uuid".to_string(),
                 type_hint: "string".to_string(),
                 description: "UUID of the characteristic to update".to_string(),
                 required: true,
-                example: json!("00002a37-0000-1000-8000-00805f9b34fb"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "value".to_string(),
                 type_hint: "string".to_string(),
                 description: "Hex-encoded value to send (e.g., '0048' for 72 in decimal)".to_string(),
                 required: true,
-                example: json!("0048"),
             },
         ],
+    example: json!({
+            "type": "send_notification",
+            "characteristic_uuid": "example_characteristic_uuid",
+            "value": "example_value"
+        }),
     }
 }
 
@@ -312,14 +314,17 @@ fn respond_to_read_action() -> ActionDefinition {
         name: "respond_to_read".to_string(),
         description: "Respond to a client's read request with data (use in response to bluetooth_read_request event)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "value".to_string(),
                 type_hint: "string".to_string(),
                 description: "Hex-encoded value to return to client".to_string(),
                 required: true,
-                example: json!("0048"),
             },
         ],
+    example: json!({
+            "type": "respond_to_read",
+            "value": "example_value"
+        }),
     }
 }
 
@@ -328,13 +333,15 @@ fn respond_to_write_action() -> ActionDefinition {
         name: "respond_to_write".to_string(),
         description: "Acknowledge a client's write request (use in response to bluetooth_write_request event)".to_string(),
         parameters: vec![
-            ParameterDefinition {
+            Parameter {
                 name: "status".to_string(),
                 type_hint: "string".to_string(),
                 description: "Response status: 'success' or 'error' (default: success)".to_string(),
                 required: false,
-                example: json!("success"),
             },
         ],
+    example: json!({
+            "type": "respond_to_write"
+        }),
     }
 }
