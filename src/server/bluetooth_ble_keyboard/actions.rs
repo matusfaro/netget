@@ -167,7 +167,7 @@ fn type_text_action() -> ActionDefinition {
                 name: "text".to_string(),
                 type_hint: "string".to_string(),
                 description: "Text to type".to_string(),
-                required: true, World!"),
+                required: true,
             },
             Parameter {
                 name: "client_id".to_string(),
@@ -176,9 +176,9 @@ fn type_text_action() -> ActionDefinition {
                 required: false,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "type_text",
-            "text": "example_text"
+            "text": "Hello, World!"
         }),
     }
 }
@@ -186,7 +186,7 @@ fn type_text_action() -> ActionDefinition {
 fn press_key_action() -> ActionDefinition {
     ActionDefinition {
         name: "press_key".to_string(),
-        description: "Press a single key (e.g., 'enter', 'escape', 'tab')".to_string(),
+        description: "Press a single key (e.g., enter, escape, tab)".to_string(),
         parameters: vec![
             Parameter {
                 name: "key".to_string(),
@@ -201,9 +201,9 @@ fn press_key_action() -> ActionDefinition {
                 required: false,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "press_key",
-            "key": "example_key"
+            "key": "enter"
         }),
     }
 }
@@ -216,24 +216,27 @@ fn key_combo_action() -> ActionDefinition {
             Parameter {
                 name: "modifiers".to_string(),
                 type_hint: "array".to_string(),
-                description: "Modifier keys: 'ctrl', 'shift', 'alt', 'gui' (Windows key)".to_string(),
+                description: "Modifier keys: ctrl, shift, alt, gui (Windows key)".to_string(),
                 required: false,
             },
-            ParameterDefinition {
+            Parameter {
                 name: "key".to_string(),
                 type_hint: "string".to_string(),
                 description: "Main key to press with modifiers".to_string(),
                 required: true,
-                example: json!("c"),
             },
-            ParameterDefinition {
+            Parameter {
                 name: "client_id".to_string(),
                 type_hint: "number".to_string(),
                 description: "Optional: Send to specific client only".to_string(),
                 required: false,
-                example: json!(1),
             },
         ],
+        example: json!({
+            "type": "key_combo",
+            "modifiers": ["ctrl"],
+            "key": "c"
+        }),
     }
 }
 
@@ -255,10 +258,10 @@ fn send_to_client_action() -> ActionDefinition {
                 required: true,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "send_to_client",
-            "client_id": 42,
-            "report": "example_report"
+            "client_id": 1,
+            "report": "0000040000000000"
         }),
     }
 }
@@ -268,7 +271,7 @@ fn list_clients_action() -> ActionDefinition {
         name: "list_clients".to_string(),
         description: "List all connected keyboard clients".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "list_clients"
         }),
     }

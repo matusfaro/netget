@@ -245,12 +245,19 @@ fn add_service_action() -> ActionDefinition {
                 type_hint: "array".to_string(),
                 description: "Array of characteristic definitions".to_string(),
                 required: true,
-                    "properties": ["read", "notify"],
-                    "permissions": ["readable"],
-                    "initial_value": "0048"
-                }]),
             },
         ],
+        example: json!({
+            "type": "add_service",
+            "uuid": "180D",
+            "primary": true,
+            "characteristics": [{
+                "uuid": "2A37",
+                "properties": ["read", "notify"],
+                "permissions": ["readable"],
+                "initial_value": "0048"
+            }]
+        }),
     }
 }
 
