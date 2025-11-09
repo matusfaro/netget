@@ -345,6 +345,244 @@ mod tests {
         assert!(result.is_ok(), "Should succeed when UV required and PIN verified");
     }
 
+    /// Test CTAPHID packet fragmentation for small messages
+    #[tokio::test]
+    async fn test_ctaphid_small_message() {
+        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand};
+
+        let handler = CtapHidHandler::new();
+        let cid = 0x12345678u32;
+        let cmd = CtapHidCommand::Ping;
+
+        // Small message (fits in one packet)
+        let data = b"Hello FIDO2!";
+
+        let packets = handler.fragment_response(cid, cmd, data);
+
+        // Should be exactly 1 packet
+        assert_eq!(packets.len(), 1, "Small message should fit in 1 packet");
+
+        // Verify packet structure
+        let packet = &packets[0];
+        assert_eq!(packet.len(), 64, "Packet should be 64 bytes");
+
+        // Verify CID
+        let packet_cid = u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]);
+        assert_eq!(packet_cid, cid, "CID should match");
+
+        // Verify CMD with init bit
+        assert_eq!(packet[4], (cmd as u8) | 0x80, "CMD should have init bit set");
+
+        // Verify BCNT (byte count)
+        let bcnt = u16::from_be_bytes([packet[5], packet[6]]);
+        assert_eq!(bcnt, data.len() as u16, "BCNT should match data length");
+
+        // Verify data
+        assert_eq!(&packet[7..7 + data.len()], data, "Data should match");
+    }
+
+    /// Test CTAPHID packet fragmentation for large messages
+    #[tokio::test]
+    async fn test_ctaphid_large_message_fragmentation() {
+        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand};
+
+        let handler = CtapHidHandler::new();
+        let cid = 0xabcdef01u32;
+        let cmd = CtapHidCommand::Cbor;
+
+        // Large message requiring fragmentation (150 bytes)
+        let data = vec![0xAAu8; 150];
+
+        let packets = handler.fragment_response(cid, cmd, &data);
+
+        // Calculate expected packet count
+        // First packet: 57 bytes, continuation packets: 59 bytes each
+        // Remaining after first: 150 - 57 = 93 bytes
+        // Continuation packets needed: ceil(93 / 59) = 2
+        // Total: 1 init + 2 cont = 3 packets
+        assert_eq!(packets.len(), 3, "150-byte message should need 3 packets");
+
+        // Verify init packet
+        let init_packet = &packets[0];
+        assert_eq!(init_packet.len(), 64);
+        assert_eq!(init_packet[4], (cmd as u8) | 0x80, "Init packet should have CMD with init bit");
+        let bcnt = u16::from_be_bytes([init_packet[5], init_packet[6]]);
+        assert_eq!(bcnt, 150, "BCNT should be total message length");
+        assert_eq!(&init_packet[7..64], &data[0..57], "Init packet data should match first 57 bytes");
+
+        // Verify first continuation packet
+        let cont1 = &packets[1];
+        assert_eq!(cont1.len(), 64);
+        let cid1 = u32::from_be_bytes([cont1[0], cont1[1], cont1[2], cont1[3]]);
+        assert_eq!(cid1, cid, "Continuation packet CID should match");
+        assert_eq!(cont1[4], 0, "First continuation packet should have SEQ=0");
+        assert_eq!(&cont1[5..64], &data[57..116], "First cont packet data should match bytes 57-115");
+
+        // Verify second continuation packet
+        let cont2 = &packets[2];
+        assert_eq!(cont2.len(), 64);
+        assert_eq!(cont2[4], 1, "Second continuation packet should have SEQ=1");
+        assert_eq!(&cont2[5..5 + 34], &data[116..150], "Second cont packet data should match remaining bytes");
+    }
+
+    /// Test CTAPHID packet assembly from fragments
+    #[tokio::test]
+    async fn test_ctaphid_packet_assembly() {
+        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand, CtapHidPacket};
+
+        let mut handler = CtapHidHandler::new();
+        let cid = 0x99887766u32;
+
+        // Create a multi-packet message
+        let original_data = vec![0x42u8; 100];
+
+        // Fragment it
+        let packets = handler.fragment_response(cid, CtapHidCommand::Ping, &original_data);
+        assert!(packets.len() > 1, "Should have multiple packets");
+
+        // Now process the packets through the handler to reassemble
+        let mut assembled_message = None;
+
+        for packet_bytes in packets {
+            let result = handler.process_packet(&packet_bytes);
+            assert!(result.is_ok(), "Packet processing should not error");
+
+            if let Some(msg) = result.unwrap() {
+                assembled_message = Some(msg);
+            }
+        }
+
+        // Verify message was assembled
+        assert!(assembled_message.is_some(), "Message should be assembled after all packets");
+        let message = assembled_message.unwrap();
+
+        assert_eq!(message.cid, cid, "Assembled message CID should match");
+        assert_eq!(message.cmd, CtapHidCommand::Ping, "Assembled message CMD should match");
+
+        let reassembled_data = message.into_data();
+        assert_eq!(reassembled_data, original_data, "Reassembled data should match original");
+    }
+
+    /// Test CTAPHID invalid sequence error
+    #[tokio::test]
+    async fn test_ctaphid_invalid_sequence() {
+        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidPacket};
+
+        let mut handler = CtapHidHandler::new();
+        let cid = 0x11223344u32;
+
+        // Create a fragmented message
+        let data = vec![0x55u8; 150];
+        let packets = handler.fragment_response(cid, netget::server::usb::fido2::ctaphid::CtapHidCommand::Cbor, &data);
+
+        // Process init packet
+        let result = handler.process_packet(&packets[0]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none(), "Init packet should not complete message");
+
+        // Skip continuation packet 0, send continuation packet 1 (wrong sequence)
+        let result = handler.process_packet(&packets[2]);
+
+        // Should error due to invalid sequence
+        assert!(result.is_err(), "Should error on invalid sequence");
+    }
+
+    /// Test CTAPHID maximum message size
+    #[tokio::test]
+    async fn test_ctaphid_max_message_size() {
+        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand};
+
+        let handler = CtapHidHandler::new();
+        let cid = 0xfedcba98u32;
+
+        // CTAPHID max message size is 7609 bytes (per spec)
+        // First packet: 57 bytes, then 128 continuation packets of 59 bytes each
+        // 57 + (128 * 59) = 57 + 7552 = 7609 bytes
+        let data = vec![0x77u8; 7609];
+
+        let packets = handler.fragment_response(cid, CtapHidCommand::Msg, &data);
+
+        // Should be 1 init + 128 continuation = 129 packets
+        assert_eq!(packets.len(), 129, "Max size message should use 129 packets");
+
+        // Verify all packets are 64 bytes
+        for packet in &packets {
+            assert_eq!(packet.len(), 64, "All packets should be 64 bytes");
+        }
+
+        // Verify sequence numbers don't overflow (max seq is 127)
+        for (i, packet) in packets.iter().enumerate().skip(1) {
+            let seq = packet[4];
+            assert_eq!(seq as usize, i - 1, "Sequence should increment correctly");
+            assert!(seq < 128, "Sequence should not overflow");
+        }
+    }
+
+    /// Test Browser WebAuthn integration with headless Chrome (requires Chrome)
+    ///
+    /// This test demonstrates WebAuthn API integration with a real browser
+    #[tokio::test]
+    #[ignore] // Requires Chrome/Chromium and chromedriver
+    async fn test_webauthn_chrome_integration() {
+        // This test would:
+        // 1. Start FIDO2 server with auto-approve mode
+        // 2. Set up virtual USB/IP device
+        // 3. Launch headless Chrome with WebAuthn enabled
+        // 4. Navigate to test page with WebAuthn API calls
+        // 5. Trigger navigator.credentials.create() for registration
+        // 6. Verify credential created successfully
+        // 7. Trigger navigator.credentials.get() for authentication
+        // 8. Verify authentication successful
+        // 9. Clean up browser and USB/IP attachment
+
+        // Example WebAuthn JavaScript that would be executed:
+        /*
+        async function testRegistration() {
+            const challenge = new Uint8Array(32);
+            crypto.getRandomValues(challenge);
+
+            const publicKey = {
+                challenge: challenge,
+                rp: { name: "NetGet Test", id: "localhost" },
+                user: {
+                    id: new Uint8Array(16),
+                    name: "test@example.com",
+                    displayName: "Test User"
+                },
+                pubKeyCredParams: [{
+                    type: "public-key",
+                    alg: -7 // ES256
+                }],
+                timeout: 60000,
+                attestation: "none"
+            };
+
+            const credential = await navigator.credentials.create({ publicKey });
+            return credential;
+        }
+
+        async function testAuthentication(credentialId) {
+            const challenge = new Uint8Array(32);
+            crypto.getRandomValues(challenge);
+
+            const publicKey = {
+                challenge: challenge,
+                rpId: "localhost",
+                allowCredentials: [{
+                    type: "public-key",
+                    id: credentialId
+                }],
+                timeout: 60000
+            };
+
+            const assertion = await navigator.credentials.get({ publicKey });
+            return assertion;
+        }
+        */
+
+        // See tests/server/usb_fido2/CLAUDE.md for manual browser testing instructions
+    }
+
     /// Integration test: Real USB/IP libfido2 flow (requires system setup)
     ///
     /// NOTE: This test requires:
