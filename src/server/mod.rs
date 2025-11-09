@@ -166,6 +166,13 @@ pub use ssh::SshServer;
 #[cfg(feature = "ssh")]
 pub use ssh::actions::SshProtocol;
 
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::SshAgentServer;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub use ssh_agent::actions::SshAgentProtocol;
+
 #[cfg(feature = "svn")]
 pub mod svn;
 #[cfg(feature = "svn")]
@@ -582,6 +589,39 @@ pub mod saml_sp;
 pub use saml_sp::SamlSpServer;
 #[cfg(feature = "saml-sp")]
 pub use saml_sp::actions::SamlSpProtocol;
+
+#[cfg(feature = "usb-common")]
+pub mod usb;
+
+#[cfg(feature = "usb-keyboard")]
+pub use usb::keyboard::UsbKeyboardServer;
+#[cfg(feature = "usb-keyboard")]
+pub use usb::UsbKeyboardProtocol;
+
+#[cfg(feature = "usb-mouse")]
+pub use usb::mouse::UsbMouseServer;
+#[cfg(feature = "usb-mouse")]
+pub use usb::UsbMouseProtocol;
+
+#[cfg(feature = "usb-serial")]
+pub use usb::serial::UsbSerialServer;
+#[cfg(feature = "usb-serial")]
+pub use usb::UsbSerialProtocol;
+
+#[cfg(feature = "usb-msc")]
+pub use usb::msc::UsbMscServer;
+#[cfg(feature = "usb-msc")]
+pub use usb::UsbMscProtocol;
+
+#[cfg(feature = "usb-fido2")]
+pub use usb::fido2::UsbFido2Server;
+#[cfg(feature = "usb-fido2")]
+pub use usb::UsbFido2Protocol;
+
+#[cfg(feature = "usb-smartcard")]
+pub use usb::smartcard::UsbSmartCardServer;
+#[cfg(feature = "usb-smartcard")]
+pub use usb::UsbSmartCardProtocol;
 
 #[cfg(feature = "bluetooth-ble")]
 pub mod bluetooth_ble;
