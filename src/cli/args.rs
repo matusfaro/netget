@@ -111,6 +111,14 @@ pub struct Args {
     )]
     pub theme: String,
 
+    /// Load server/client configuration from a .netget file
+    #[clap(
+        long = "load",
+        value_name = "FILE",
+        help = "Load and execute server/client configurations from a .netget file"
+    )]
+    pub load_file: Option<String>,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,
@@ -158,23 +166,86 @@ impl Args {
     }
 
     /// Get the prompt to execute, from various sources
+    /// Returns None if the input should be treated as actions JSON instead
     pub fn get_prompt(&self) -> Result<Option<String>> {
-        // First priority: trailing arguments after command
-        if !self.prompt.is_empty() {
-            return Ok(Some(self.prompt.join(" ")));
+        // First priority: --load flag (will be handled separately)
+        if self.load_file.is_some() {
+            return Ok(None);
         }
 
-        // Second priority: stdin if not a terminal (piped/redirected input)
+        // Second priority: trailing arguments after command
+        if !self.prompt.is_empty() {
+            let joined = self.prompt.join(" ");
+            // Check if it's actions JSON instead of a prompt
+            if crate::utils::save_load::is_actions_json(&joined) {
+                // This will be handled by get_actions_json() instead
+                return Ok(None);
+            }
+            return Ok(Some(joined));
+        }
+
+        // Third priority: stdin if not a terminal (piped/redirected input)
         if !io::stdin().is_terminal() {
             let mut buffer = String::new();
             io::stdin().read_to_string(&mut buffer)?;
             let trimmed = buffer.trim();
             if !trimmed.is_empty() {
+                // Check if it's actions JSON instead of a prompt
+                if crate::utils::save_load::is_actions_json(trimmed) {
+                    // This will be handled by get_actions_json() instead
+                    return Ok(None);
+                }
                 return Ok(Some(trimmed.to_string()));
             }
         }
 
         // No prompt available
+        Ok(None)
+    }
+
+    /// Get actions JSON to execute, from various sources
+    /// Returns None if the input is a regular prompt or no input
+    pub fn get_actions_json(&self) -> Result<Option<Vec<serde_json::Value>>> {
+        use crate::utils::save_load;
+
+        // First priority: --load flag
+        if let Some(ref filename) = self.load_file {
+            // This will fail if file doesn't exist, which is appropriate
+            return Ok(Some(
+                tokio::runtime::Runtime::new()?
+                    .block_on(save_load::load_actions(filename))?
+            ));
+        }
+
+        // Second priority: trailing arguments after command
+        if !self.prompt.is_empty() {
+            let joined = self.prompt.join(" ");
+            if save_load::is_actions_json(&joined) {
+                // Parse {"actions": [...]} format and extract the array
+                let parsed: serde_json::Value = serde_json::from_str(&joined)?;
+                let actions = parsed["actions"].as_array()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
+                    .clone();
+                return Ok(Some(actions));
+            }
+        }
+
+        // Third priority: stdin if not a terminal (piped/redirected input)
+        if !io::stdin().is_terminal() {
+            let mut buffer = String::new();
+            io::stdin().read_to_string(&mut buffer)?;
+            let trimmed = buffer.trim();
+            if !trimmed.is_empty() && save_load::is_actions_json(trimmed) {
+                // Parse {"actions": [...]} format and extract the array
+                let parsed: serde_json::Value = serde_json::from_str(trimmed)?;
+                let actions = parsed["actions"].as_array()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
+                    .clone();
+                return Ok(Some(actions));
+            }
+        }
+
+        // No actions JSON available
         Ok(None)
     }
 
