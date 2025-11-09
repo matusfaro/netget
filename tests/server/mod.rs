@@ -106,6 +106,8 @@ pub mod ntp;
 pub mod npm;
 #[cfg(feature = "openai")]
 pub mod openai;
+#[cfg(feature = "ollama")]
+pub mod ollama;
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
 #[cfg(feature = "openapi")]

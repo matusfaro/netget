@@ -244,6 +244,12 @@ pub mod openai;
 #[cfg(feature = "openai")]
 pub use openai::actions::OpenAiClientProtocol;
 
+// ollama client
+#[cfg(feature = "ollama")]
+pub mod ollama;
+#[cfg(feature = "ollama")]
+pub use ollama::actions::OllamaClientProtocol;
+
 // openidconnect client
 #[cfg(feature = "openidconnect")]
 pub mod openidconnect;
