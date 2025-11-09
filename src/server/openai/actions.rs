@@ -13,6 +13,12 @@ use tracing::debug;
 /// OpenAI protocol action handler
 pub struct OpenAiProtocol {}
 
+impl Default for OpenAiProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiProtocol {
     pub fn new() -> Self {
         Self {}

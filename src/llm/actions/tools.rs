@@ -1311,11 +1311,11 @@ async fn execute_list_network_interfaces() -> ToolResult {
     {
         warn!("DataLink feature not enabled, cannot list network interfaces");
         info!("  ✗ DataLink feature not enabled");
-        return ToolResult::error(
+        ToolResult::error(
             "list_network_interfaces",
             "list interfaces",
             "DataLink feature not enabled. Rebuild with --features datalink to use this tool.".to_string(),
-        );
+        )
     }
 
     #[cfg(feature = "datalink")]
@@ -1529,7 +1529,7 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
             result.push_str("```json\n");
             result.push_str("{\n");
             result.push_str("  \"type\": \"open_server\",\n");
-            result.push_str(&format!("  \"port\": 8080,\n"));
+            result.push_str("  \"port\": 8080,\n");
             result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol.to_lowercase()));
             result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
             result.push_str("}\n");

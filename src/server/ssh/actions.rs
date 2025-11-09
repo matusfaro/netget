@@ -27,6 +27,12 @@ pub struct SshProtocol {
     connections: Arc<Mutex<HashMap<ConnectionId, SshConnectionData>>>,
 }
 
+impl Default for SshProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SshProtocol {
     pub fn new() -> Self {
         Self {

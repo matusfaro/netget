@@ -17,6 +17,12 @@ use std::sync::LazyLock;
 /// DNS protocol action handler
 pub struct DnsProtocol;
 
+impl Default for DnsProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DnsProtocol {
     pub fn new() -> Self {
         Self

@@ -13,6 +13,12 @@ use std::sync::LazyLock;
 /// HTTP protocol action handler
 pub struct HttpProtocol;
 
+impl Default for HttpProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpProtocol {
     pub fn new() -> Self {
         Self
@@ -159,7 +165,7 @@ fn send_http_response_action() -> ActionDefinition {
 // HTTP Action Constants
 // ============================================================================
 
-pub static SEND_HTTP_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_http_response_action());
+pub static SEND_HTTP_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(send_http_response_action);
 
 // ============================================================================
 // HTTP Event Type Constants

@@ -857,7 +857,7 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
             let group = protocol.group_name();
             groups
                 .entry(group)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((protocol_name.clone(), protocol));
         }
     }

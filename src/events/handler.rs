@@ -106,7 +106,7 @@ impl EventHandler {
 
                 // Display the result
                 if result.success {
-                    ui.add_llm_message(format!("[INFO] Web search completed successfully"));
+                    ui.add_llm_message("[INFO] Web search completed successfully".to_string());
                     ui.add_llm_message(format!("[DEBUG] Result: {}", result.result));
                 } else {
                     ui.add_llm_message(format!("[ERROR] Web search failed: {}", result.result));

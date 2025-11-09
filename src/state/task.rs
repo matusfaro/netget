@@ -217,16 +217,10 @@ impl ScheduledTask {
     pub fn is_max_executions_reached(&self) -> bool {
         match &self.task_type {
             TaskType::Recurring {
-                max_executions,
+                max_executions: Some(max),
                 executions_count,
                 ..
-            } => {
-                if let Some(max) = max_executions {
-                    executions_count >= max
-                } else {
-                    false
-                }
-            }
+            } => executions_count >= max,
             _ => false,
         }
     }

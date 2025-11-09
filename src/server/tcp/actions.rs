@@ -24,6 +24,12 @@ pub struct TcpProtocol {
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
 }
 
+impl Default for TcpProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TcpProtocol {
     pub fn new() -> Self {
         Self {
@@ -315,9 +321,9 @@ fn close_this_connection_action() -> ActionDefinition {
 // TCP Action Constants
 // ============================================================================
 
-pub static SEND_TCP_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_tcp_data_action());
-pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
-pub static CLOSE_THIS_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_this_connection_action());
+pub static SEND_TCP_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(send_tcp_data_action);
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(wait_for_more_action);
+pub static CLOSE_THIS_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(close_this_connection_action);
 
 // ============================================================================
 // TCP Event Type Constants

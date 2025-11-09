@@ -82,7 +82,7 @@ pub fn list_all_protocols() -> String {
     for (protocol_name, protocol) in &all_protocols {
         let group = protocol.group_name();
         let state = protocol.metadata().state;
-        groups.entry(group).or_insert_with(Vec::new).push((protocol_name.clone(), state));
+        groups.entry(group).or_default().push((protocol_name.clone(), state));
     }
 
     // Sort groups alphabetically
