@@ -171,7 +171,7 @@ Fields: certs_only, certsblob
 ssh-keygen -t ed25519 -f test_key -N ""
 
 # Start NetGet SSH agent on custom socket
-export SSH_AUTH_SOCK="./tmp/netget-agent.sock"
+export SSH_AUTH_SOCK="./netget-agent.sock"
 # (start netget agent)
 
 # Add key to agent

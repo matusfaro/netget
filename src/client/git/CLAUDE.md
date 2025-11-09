@@ -144,7 +144,7 @@ User Instruction → git_connected event
 {
   "type": "git_clone",
   "url": "https://github.com/user/repo.git",
-  "path": "./tmp/my-repo"
+  "path": "./my-repo"
 }
 
 {
@@ -273,7 +273,7 @@ See `tests/client/git/CLAUDE.md` for test implementation details.
 
 **User Prompt:**
 ```
-"Clone the repository https://github.com/rust-lang/rust.git to ./tmp/rust-repo and show me the last 5 commits"
+"Clone the repository https://github.com/rust-lang/rust.git to ./rust-repo and show me the last 5 commits"
 ```
 
 **LLM Flow:**

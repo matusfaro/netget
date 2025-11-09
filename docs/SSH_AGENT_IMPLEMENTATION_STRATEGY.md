@@ -309,7 +309,7 @@ match result.actions[0]["type"].as_str()? {
 use ssh_agent_lib::agent::listen;
 
 let server = MyAgent::new(llm_client, app_state);
-let socket_path = "./tmp/ssh-RANDOM/agent.PID";
+let socket_path = "./ssh-agent.sock";
 
 // Listen on Unix socket
 listen(server, socket_path).await?;
@@ -370,7 +370,7 @@ async fn test_with_real_ssh_add() {
 
 ```bash
 # Test with OpenSSH utilities
-export SSH_AUTH_SOCK=./tmp/netget-agent.sock
+export SSH_AUTH_SOCK=./netget-agent.sock
 ssh-keygen -c -C "new comment" -f test_key  # Requires agent
 ssh-add test_key
 ssh-add -l
