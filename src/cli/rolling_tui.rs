@@ -1207,6 +1207,18 @@ async fn handle_key_event(
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
+                    UserCommand::Save { name, id } => {
+                        // Save configuration to file
+                        handle_save(name, id, state, footer, &palette).await?;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::Load { name } => {
+                        // Load configuration from file
+                        let llm = event_handler.get_llm_client();
+                        handle_load(name, state, footer, &palette, &llm).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
                     UserCommand::Quit => {
                         return Ok(true);
                     }
@@ -1821,5 +1833,190 @@ async fn handle_stop_by_id(
         print_output_line(&format!("No server, client, or connection found with ID #{}", id), footer, palette)?;
     }
 
+    Ok(())
+}
+
+async fn handle_save(
+    name: String,
+    id: Option<u32>,
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::utils::save_load;
+    use crate::state::server::ServerId;
+    use crate::state::client::ClientId;
+
+    let path = if let Some(id_val) = id {
+        // Save specific server or client by ID
+        // Try server first
+        let server_id = ServerId::new(id_val);
+        if state.get_server(server_id).await.is_some() {
+            match save_load::save_server(state, server_id, &name).await {
+                Ok(path) => {
+                    print_output_line(&format!("[SAVE] Saved server #{} to: {}", id_val, path.display()), footer, palette)?;
+                    path
+                }
+                Err(e) => {
+                    print_output_line(&format!("[ERROR] Failed to save server #{}: {}", id_val, e), footer, palette)?;
+                    return Ok(());
+                }
+            }
+        } else {
+            // Try client
+            let client_id = ClientId::new(id_val);
+            if state.get_client(client_id).await.is_some() {
+                match save_load::save_client(state, client_id, &name).await {
+                    Ok(path) => {
+                        print_output_line(&format!("[SAVE] Saved client #{} to: {}", id_val, path.display()), footer, palette)?;
+                        path
+                    }
+                    Err(e) => {
+                        print_output_line(&format!("[ERROR] Failed to save client #{}: {}", id_val, e), footer, palette)?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                print_output_line(&format!("[ERROR] No server or client found with ID #{}", id_val), footer, palette)?;
+                return Ok(());
+            }
+        }
+    } else {
+        // Save all servers and clients
+        match save_load::save_all(state, &name).await {
+            Ok(path) => {
+                let servers = state.get_all_servers().await;
+                let clients = state.get_all_clients().await;
+                print_output_line(&format!(
+                    "[SAVE] Saved {} server(s) and {} client(s) to: {}",
+                    servers.len(),
+                    clients.len(),
+                    path.display()
+                ), footer, palette)?;
+                path
+            }
+            Err(e) => {
+                print_output_line(&format!("[ERROR] Failed to save configuration: {}", e), footer, palette)?;
+                return Ok(());
+            }
+        }
+    };
+
+    print_output_line(&format!("[INFO] Use '/load {}' to restore this configuration", path.display()), footer, palette)?;
+    Ok(())
+}
+
+async fn handle_load(
+    name: String,
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+    llm: &crate::llm::OllamaClient,
+) -> Result<()> {
+    use crate::utils::save_load;
+    use crate::cli::{server_startup, client_startup};
+
+    // Load actions from file
+    let actions = match save_load::load_actions(&name).await {
+        Ok(actions) => actions,
+        Err(e) => {
+            print_output_line(&format!("[ERROR] Failed to load file '{}': {}", name, e), footer, palette)?;
+            return Ok(());
+        }
+    };
+
+    if actions.is_empty() {
+        print_output_line(&format!("[WARN] File '{}' contains no actions", name), footer, palette)?;
+        return Ok(());
+    }
+
+    print_output_line(&format!("[LOAD] Loading {} action(s) from: {}", actions.len(), save_load::normalize_filename(&name)), footer, palette)?;
+
+    // Execute each action
+    for (i, action) in actions.iter().enumerate() {
+        // Try to parse as common action
+        if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
+            use crate::llm::actions::common::CommonAction;
+
+            match common_action {
+                CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                    // Execute open_server action via server startup
+                    match server_startup::start_server_from_action(
+                        state,
+                        port,
+                        &base_stack,
+                        send_first,
+                        initial_memory,
+                        instruction.clone(),
+                        startup_params,
+                        event_handlers,
+                        scheduled_tasks,
+                    ).await {
+                        Ok(server_id) => {
+                            print_output_line(&format!(
+                                "[LOAD] Opened server #{} on port {} ({})",
+                                server_id.as_u32(),
+                                port,
+                                base_stack
+                            ), footer, palette)?;
+                        }
+                        Err(e) => {
+                            print_output_line(&format!(
+                                "[ERROR] Failed to open server (action {}): {}",
+                                i + 1,
+                                e
+                            ), footer, palette)?;
+                        }
+                    }
+                }
+                CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
+                    // Execute open_client action via client startup
+                    match client_startup::start_client_from_action(
+                        state,
+                        &protocol,
+                        &remote_addr,
+                        instruction.clone(),
+                        startup_params,
+                        initial_memory,
+                        event_handlers,
+                        scheduled_tasks,
+                        llm.clone(),
+                    ).await {
+                        Ok(client_id) => {
+                            print_output_line(&format!(
+                                "[LOAD] Opened client #{} to {} ({})",
+                                client_id.as_u32(),
+                                remote_addr,
+                                protocol
+                            ), footer, palette)?;
+                        }
+                        Err(e) => {
+                            print_output_line(&format!(
+                                "[ERROR] Failed to open client (action {}): {}",
+                                i + 1,
+                                e
+                            ), footer, palette)?;
+                        }
+                    }
+                }
+                CommonAction::ShowMessage { message } => {
+                    print_output_line(&format!("[{}] {}", i + 1, message), footer, palette)?;
+                }
+                _ => {
+                    print_output_line(&format!(
+                        "[WARN] Skipping unsupported action type (action {})",
+                        i + 1
+                    ), footer, palette)?;
+                }
+            }
+        } else {
+            print_output_line(&format!(
+                "[WARN] Skipping invalid action (action {})",
+                i + 1
+            ), footer, palette)?;
+        }
+    }
+
+    print_output_line("[LOAD] Configuration loaded successfully", footer, palette)?;
     Ok(())
 }

@@ -101,3 +101,152 @@ pub async fn start_client_by_id(
 
     Ok(())
 }
+
+/// Start a client from action parameters (used by /load command)
+/// Returns the client ID on success
+pub async fn start_client_from_action(
+    state: &AppState,
+    protocol: &str,
+    remote_addr: &str,
+    instruction: String,
+    startup_params: Option<serde_json::Value>,
+    initial_memory: Option<String>,
+    event_handlers: Option<Vec<serde_json::Value>>,
+    scheduled_tasks: Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
+    llm_client: OllamaClient,
+) -> Result<ClientId> {
+    use crate::state::client::ClientStatus;
+
+    // Get protocol from registry
+    let protocol_impl = crate::protocol::CLIENT_REGISTRY
+        .get(protocol)
+        .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
+
+    // Create client instance
+    let client = crate::state::client::ClientInstance {
+        id: ClientId::new(0), // Will be assigned by add_client
+        remote_addr: remote_addr.to_string(),
+        protocol_name: protocol.to_string(),
+        instruction: instruction.clone(),
+        memory: String::new(),
+        status: ClientStatus::Connecting,
+        connection: None,
+        handle: None,
+        created_at: std::time::Instant::now(),
+        status_changed_at: std::time::Instant::now(),
+        startup_params: startup_params.clone(),
+        event_handler_config: None,
+        protocol_data: serde_json::Value::Null,
+        log_files: Default::default(),
+    };
+
+    let client_id = state.add_client(client).await;
+
+    // Set initial memory if provided
+    if let Some(mem) = initial_memory {
+        state.with_client_mut(client_id, |c| {
+            c.memory = mem;
+        }).await;
+    }
+
+    // Configure event handlers if provided
+    if let Some(handlers) = event_handlers {
+        use crate::scripting::{EventHandlerConfig, EventHandler};
+
+        let event_handlers: Vec<EventHandler> = handlers
+            .into_iter()
+            .filter_map(|h| serde_json::from_value(h).ok())
+            .collect();
+
+        if !event_handlers.is_empty() {
+            state
+                .with_client_mut(client_id, |c| {
+                    c.event_handler_config = Some(EventHandlerConfig {
+                        handlers: event_handlers,
+                    });
+                })
+                .await;
+        }
+    }
+
+    // Create scheduled tasks if provided
+    if let Some(tasks) = scheduled_tasks {
+        for task_def in tasks {
+            use crate::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus, TaskId};
+            use std::time::{Duration, Instant};
+
+            // Determine task type
+            let task_type = if task_def.recurring {
+                TaskType::Recurring {
+                    interval_secs: task_def.interval_secs.unwrap_or(60),
+                    max_executions: task_def.max_executions,
+                    executions_count: 0,
+                }
+            } else {
+                TaskType::OneShot {
+                    delay_secs: task_def.delay_secs.unwrap_or(0),
+                }
+            };
+
+            // Calculate next execution time
+            let delay = if task_def.recurring {
+                Duration::from_secs(0) // Start immediately for recurring
+            } else {
+                Duration::from_secs(task_def.delay_secs.unwrap_or(0))
+            };
+
+            let task = ScheduledTask {
+                id: TaskId::new(rand::random()),
+                name: task_def.task_id,
+                scope: TaskScope::Client(client_id),
+                task_type,
+                instruction: task_def.instruction,
+                context: task_def.context,
+                status: TaskStatus::Scheduled,
+                created_at: Instant::now(),
+                next_execution: Instant::now() + delay,
+                last_error: None,
+                failure_count: 0,
+            };
+
+            state.add_task(task).await;
+        }
+    }
+
+    // Build startup params
+    let startup_params_obj = if let Some(params_json) = startup_params {
+        let schema = protocol_impl.get_startup_parameters();
+        Some(crate::protocol::StartupParams::new(params_json, schema))
+    } else {
+        None
+    };
+
+    // Create a temporary status channel (commands don't use rolling TUI status)
+    let (status_tx, _status_rx) = mpsc::unbounded_channel();
+
+    // Build connect context
+    let connect_ctx = crate::protocol::ConnectContext {
+        remote_addr: remote_addr.to_string(),
+        llm_client: llm_client.clone(),
+        state: Arc::new(state.clone()),
+        status_tx,
+        client_id,
+        startup_params: startup_params_obj,
+    };
+
+    // Connect the client
+    match protocol_impl.connect(connect_ctx).await {
+        Ok(_local_addr) => {
+            state
+                .update_client_status(client_id, ClientStatus::Connected)
+                .await;
+            Ok(client_id)
+        }
+        Err(e) => {
+            state
+                .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                .await;
+            Err(e)
+        }
+    }
+}

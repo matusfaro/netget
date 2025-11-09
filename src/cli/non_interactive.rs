@@ -179,3 +179,165 @@ async fn run_server(
     println!("Server stopped.");
     Ok(())
 }
+
+/// Run NetGet in non-interactive mode with actions JSON (--load or piped JSON)
+pub async fn run_with_actions(
+    actions: Vec<serde_json::Value>,
+    args: &super::Args,
+    settings: Settings,
+) -> Result<()> {
+    info!("Starting NetGet in non-interactive mode (actions JSON)");
+    debug!("Loading {} actions", actions.len());
+
+    // Create application state
+    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
+
+    // Override model if specified in args
+    if let Some(model) = &args.model {
+        state.set_ollama_model(model.clone()).await;
+        debug!("Using model: {}", model);
+    } else if !settings.model.is_empty() {
+        state.set_ollama_model(settings.model.clone()).await;
+    }
+
+    // Determine scripting mode
+    let mode_to_set = if args.no_scripts {
+        Some(crate::state::app_state::ScriptingMode::Off)
+    } else if let Some(mode) = args.parse_scripting_mode()? {
+        Some(mode)
+    } else { settings.parse_scripting_mode() };
+
+    if let Some(mode) = mode_to_set {
+        state.set_selected_scripting_mode(mode).await;
+    }
+
+    // Setup web search mode
+    let mut web_search_mode = settings.get_web_search_mode();
+    if web_search_mode == crate::state::app_state::WebSearchMode::Ask {
+        web_search_mode = crate::state::app_state::WebSearchMode::Off;
+    }
+    state.set_web_search_mode(web_search_mode).await;
+
+    // Create LLM client
+    let lock_enabled = state.get_ollama_lock_enabled().await;
+    let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
+
+    // Create status channel
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+
+    println!("Loading {} action(s)...\n", actions.len());
+
+    // Execute each action
+    for (i, action) in actions.iter().enumerate() {
+        // Try to parse as common action
+        if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
+            use crate::llm::actions::common::CommonAction;
+            use crate::cli::{server_startup, client_startup};
+
+            match common_action {
+                CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                    // Execute open_server action
+                    match server_startup::start_server_from_action(
+                        &state,
+                        port,
+                        &base_stack,
+                        send_first,
+                        initial_memory,
+                        instruction.clone(),
+                        startup_params,
+                        event_handlers,
+                        scheduled_tasks,
+                    ).await {
+                        Ok(server_id) => {
+                            println!(
+                                "[{}] Opened server #{} on port {} ({})",
+                                i + 1,
+                                server_id.as_u32(),
+                                port,
+                                base_stack
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[{}] Failed to open server: {}",
+                                i + 1,
+                                e
+                            );
+                        }
+                    }
+                }
+                CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
+                    // Execute open_client action
+                    match client_startup::start_client_from_action(
+                        &state,
+                        &protocol,
+                        &remote_addr,
+                        instruction.clone(),
+                        startup_params,
+                        initial_memory,
+                        event_handlers,
+                        scheduled_tasks,
+                        llm.clone(),
+                    ).await {
+                        Ok(client_id) => {
+                            println!(
+                                "[{}] Opened client #{} to {} ({})",
+                                i + 1,
+                                client_id.as_u32(),
+                                remote_addr,
+                                protocol
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[{}] Failed to open client: {}",
+                                i + 1,
+                                e
+                            );
+                        }
+                    }
+                }
+                CommonAction::ShowMessage { message } => {
+                    println!("[{}] {}", i + 1, message);
+                }
+                _ => {
+                    println!(
+                        "[{}] Skipping unsupported action type",
+                        i + 1
+                    );
+                }
+            }
+        } else {
+            eprintln!(
+                "[{}] Skipping invalid action",
+                i + 1
+            );
+        }
+    }
+
+    // Print any status messages that were sent
+    while let Ok(msg) = status_rx.try_recv() {
+        if !msg.starts_with("__") {
+            let clean_msg = msg
+                .strip_prefix("[INFO] ")
+                .unwrap_or(&msg)
+                .strip_prefix("[ERROR] ")
+                .unwrap_or(&msg)
+                .strip_prefix("[WARN] ")
+                .unwrap_or(&msg)
+                .strip_prefix("[DEBUG] ")
+                .unwrap_or(&msg);
+            println!("{clean_msg}");
+        }
+    }
+
+    println!("\nConfiguration loaded successfully.");
+
+    // Check if we're in server mode
+    if state.get_mode().await == Mode::Server {
+        // Run the server
+        return run_server(&state, llm, status_rx).await;
+    }
+
+    Ok(())
+}
