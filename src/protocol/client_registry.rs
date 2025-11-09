@@ -204,6 +204,9 @@ impl ClientRegistry {
         #[cfg(feature = "ssh")]
         self.register(Arc::new(crate::client::ssh::SshClientProtocol::new()));
 
+        #[cfg(all(feature = "ssh-agent", unix))]
+        self.register(Arc::new(crate::client::ssh_agent::SshAgentClientProtocol::new()));
+
         #[cfg(feature = "stun")]
         self.register(Arc::new(crate::client::stun::StunClientProtocol::new()));
 

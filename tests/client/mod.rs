@@ -14,3 +14,5 @@ pub mod wireguard;
 pub mod webrtc;
 #[cfg(feature = "saml")]
 pub mod saml;
+#[cfg(all(feature = "ssh-agent", unix))]
+pub mod ssh_agent;

@@ -44,6 +44,7 @@ snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
 ssh = ["russh", "russh-keys", "russh-sftp", "async-trait", "dep:ssh2"]
+ssh-agent = ["async-trait", "dep:ssh-agent-lib", "dep:tempfile"]  # SSH Key Agent protocol (server and client for key management)
 svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = ["dep:irc"]  # IRC client support
 xmpp = ["dep:tokio-xmpp", "dep:xmpp-parsers"]  # XMPP/Jabber instant messaging client
@@ -133,6 +134,7 @@ all-protocols = [
     "igmp",
     "syslog",
     "ssh",
+    "ssh-agent",
     "svn",
     "irc",
     "xmpp",
@@ -319,6 +321,9 @@ russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }
 russh-sftp = { version = "2.1", optional = true }
 async-trait = { version = "0.1", optional = true }
+
+# SSH Agent protocol (key management server and client)
+ssh-agent-lib = { version = "0.5", optional = true }
 
 # Telnet server
 nectar = { version = "0.4", optional = true }
