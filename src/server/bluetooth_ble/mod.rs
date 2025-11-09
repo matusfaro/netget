@@ -13,17 +13,23 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use actions::{BluetoothBleProtocol, BLUETOOTH_BLE_STARTED_EVENT, BLUETOOTH_STATE_CHANGED_EVENT,
     BLUETOOTH_READ_REQUEST_EVENT, BLUETOOTH_WRITE_REQUEST_EVENT, BLUETOOTH_SUBSCRIBE_EVENT};
 
 #[cfg(feature = "bluetooth-ble")]
-use ble_peripheral_rust::{Peripheral, PeripheralEvent, Service, Characteristic,
-    CharacteristicProperty, AttributePermission, RequestResponse, ReadRequestResponse, WriteRequestResponse};
+use ble_peripheral_rust::{Peripheral, PeripheralImpl};
 #[cfg(feature = "bluetooth-ble")]
-use ble_peripheral_rust::Uuid;
+use ble_peripheral_rust::gatt::peripheral_event::{PeripheralEvent, RequestResponse, ReadRequestResponse, WriteRequestResponse};
+#[cfg(feature = "bluetooth-ble")]
+use ble_peripheral_rust::gatt::service::Service;
+#[cfg(feature = "bluetooth-ble")]
+use ble_peripheral_rust::gatt::characteristic::Characteristic;
+#[cfg(feature = "bluetooth-ble")]
+use ble_peripheral_rust::gatt::properties::{CharacteristicProperty, AttributePermission};
+#[cfg(feature = "bluetooth-ble")]
+use uuid::Uuid;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -66,10 +72,10 @@ impl BluetoothBle {
         instruction: String,
     ) -> Result<std::net::SocketAddr> {
         // Create event channel for peripheral events
-        let (event_tx, mut event_rx) = mpsc::channel::<PeripheralEvent>(256);
+        let (event_tx, event_rx) = mpsc::channel::<PeripheralEvent>(256);
 
         // Create BLE peripheral
-        let peripheral = Peripheral::new(event_tx).await
+        let mut peripheral = Peripheral::new(event_tx).await
             .context("Failed to create BLE peripheral")?;
 
         info!("Bluetooth server created, waiting for adapter to power on");
@@ -118,13 +124,12 @@ impl BluetoothBle {
             &app_state,
             server_id,
             None, // No connection_id for server-level actions
-            &protocol,
-            Some(&started_event),
-            &status_tx,
+            &started_event,
+            protocol.as_ref(),
         ).await?;
 
         // Execute initial actions (add services, start advertising, etc.)
-        for action in llm_result.actions {
+        for action in llm_result.raw_actions {
             debug!("Executing initial Bluetooth action: {:?}", action.get("type"));
             Self::execute_action(
                 &server_data,
@@ -132,11 +137,6 @@ impl BluetoothBle {
                 action,
                 &status_tx,
             ).await?;
-        }
-
-        // Update memory if returned
-        if let Some(memory) = llm_result.memory {
-            server_data.lock().await.memory = memory;
         }
 
         // Spawn event processing loop
@@ -160,7 +160,7 @@ impl BluetoothBle {
 
         // Return a dummy SocketAddr (BLE doesn't use IP addresses)
         // Use a unique "port" based on server_id for display purposes
-        let dummy_addr: std::net::SocketAddr = format!("127.0.0.1:{}", 5900 + server_id.0 % 100)
+        let dummy_addr: std::net::SocketAddr = format!("127.0.0.1:{}", 5900 + server_id.as_u32() % 100)
             .parse()
             .unwrap();
         Ok(dummy_addr)
@@ -256,9 +256,10 @@ impl BluetoothBle {
             }
 
             // Parse permissions
+            let empty_perms = Vec::new();
             let perms_json = char_json["permissions"]
                 .as_array()
-                .unwrap_or(&Vec::new());
+                .unwrap_or(&empty_perms);
             let mut permissions = Vec::new();
             for perm in perms_json {
                 let perm_str = perm.as_str().context("permission must be string")?;
@@ -306,7 +307,7 @@ impl BluetoothBle {
             characteristics,
         };
 
-        if let Some(ref peripheral) = server_data_guard.peripheral {
+        if let Some(ref mut peripheral) = server_data_guard.peripheral {
             peripheral.add_service(&service).await
                 .context("Failed to add service to peripheral")?;
 
@@ -333,13 +334,24 @@ impl BluetoothBle {
             .as_str()
             .unwrap_or(device_name);
 
-        let server_data_guard = server_data.lock().await;
-        if let Some(ref peripheral) = server_data_guard.peripheral {
-            peripheral.start_advertising(name).await
+        // Parse service UUIDs if provided
+        let service_uuids: Vec<Uuid> = action["service_uuids"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect()
+            })
+            .unwrap_or_else(Vec::new);
+
+        let mut server_data_guard = server_data.lock().await;
+        if let Some(ref mut peripheral) = server_data_guard.peripheral {
+            peripheral.start_advertising(name, &service_uuids).await
                 .context("Failed to start advertising")?;
 
-            info!("Started BLE advertising as '{}'", name);
-            let _ = status_tx.send(format!("[INFO] Started BLE advertising as '{}'", name));
+            info!("Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len());
+            let _ = status_tx.send(format!("[INFO] Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len()));
         }
 
         Ok(())
@@ -351,8 +363,8 @@ impl BluetoothBle {
         server_data: &Arc<Mutex<ServerData>>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let server_data_guard = server_data.lock().await;
-        if let Some(ref peripheral) = server_data_guard.peripheral {
+        let mut server_data_guard = server_data.lock().await;
+        if let Some(ref mut peripheral) = server_data_guard.peripheral {
             peripheral.stop_advertising().await
                 .context("Failed to stop advertising")?;
 
@@ -390,7 +402,7 @@ impl BluetoothBle {
             char_data.current_value = value.clone();
         }
 
-        if let Some(ref peripheral) = server_data_guard.peripheral {
+        if let Some(ref mut peripheral) = server_data_guard.peripheral {
             peripheral.update_characteristic(char_uuid, value.clone()).await
                 .context("Failed to send notification")?;
 
@@ -418,15 +430,15 @@ impl BluetoothBle {
     ) {
         while let Some(event) = event_rx.recv().await {
             match event {
-                PeripheralEvent::StateUpdate { state } => {
-                    info!("Bluetooth state update: {:?}", state);
-                    let _ = status_tx.send(format!("[INFO] Bluetooth state: {:?}", state));
+                PeripheralEvent::StateUpdate { is_powered, .. } => {
+                    info!("Bluetooth state update: powered = {}", is_powered);
+                    let _ = status_tx.send(format!("[INFO] Bluetooth state: powered = {}", is_powered));
 
                     // Create event for LLM
                     let llm_event = Event::new(
                         &BLUETOOTH_STATE_CHANGED_EVENT,
                         serde_json::json!({
-                            "state": format!("{:?}", state),
+                            "state": if is_powered { "powered_on" } else { "powered_off" },
                         })
                     );
 
@@ -442,7 +454,7 @@ impl BluetoothBle {
                     ).await;
                 }
                 PeripheralEvent::ReadRequest { request, offset, responder } => {
-                    let char_uuid_str = request.to_string();
+                    let char_uuid_str = request.characteristic.to_string();
 
                     debug!("BLE read request on characteristic {} at offset {}", char_uuid_str, offset);
                     let _ = status_tx.send(format!(
@@ -483,7 +495,7 @@ impl BluetoothBle {
                             ).await {
                                 Ok(llm_result) => {
                                     // Look for read response in actions
-                                    let value = llm_result.actions.iter()
+                                    let value = llm_result.raw_actions.iter()
                                         .find(|a| {
                                             a.get("type").and_then(|v| v.as_str()) == Some("respond_to_read") ||
                                             a.get("type").and_then(|v| v.as_str()) == Some("send_read_response")
@@ -533,8 +545,8 @@ impl BluetoothBle {
                         }
                     }
                 }
-                PeripheralEvent::WriteRequest { request, value, offset, with_response, responder } => {
-                    let char_uuid_str = request.to_string();
+                PeripheralEvent::WriteRequest { request, value, offset, responder } => {
+                    let char_uuid_str = request.characteristic.to_string();
                     let value_hex = hex::encode(&value);
 
                     debug!("BLE write request on characteristic {} with {} bytes at offset {}",
@@ -573,7 +585,6 @@ impl BluetoothBle {
                                     "characteristic_uuid": char_uuid_str,
                                     "value": value_hex,
                                     "offset": offset,
-                                    "with_response": with_response,
                                 })
                             );
 
@@ -588,23 +599,15 @@ impl BluetoothBle {
                                 llm_event,
                             ).await {
                                 Ok(_) => {
-                                    if with_response {
-                                        if let Some(resp) = responder {
-                                            let _ = resp.send(WriteRequestResponse {
-                                                response: RequestResponse::Success,
-                                            });
-                                        }
-                                    }
+                                    let _ = responder.send(WriteRequestResponse {
+                                        response: RequestResponse::Success,
+                                    });
                                 }
                                 Err(e) => {
                                     error!("LLM call failed for write request: {}", e);
-                                    if with_response {
-                                        if let Some(resp) = responder {
-                                            let _ = resp.send(WriteRequestResponse {
-                                                response: RequestResponse::UnlikelyError,
-                                            });
-                                        }
-                                    }
+                                    let _ = responder.send(WriteRequestResponse {
+                                        response: RequestResponse::UnlikelyError,
+                                    });
                                 }
                             }
 
@@ -614,50 +617,32 @@ impl BluetoothBle {
                         ConnectionState::Processing => {
                             // Queue the event
                             server_data.lock().await.queued_events.push(
-                                PeripheralEvent::WriteRequest { request, value, offset, with_response, responder }
+                                PeripheralEvent::WriteRequest { request, value, offset, responder }
                             );
                         }
                         ConnectionState::Accumulating => {
                             // Also queue
                             server_data.lock().await.queued_events.push(
-                                PeripheralEvent::WriteRequest { request, value, offset, with_response, responder }
+                                PeripheralEvent::WriteRequest { request, value, offset, responder }
                             );
                         }
                     }
                 }
-                PeripheralEvent::SubscribeNotifications { request } => {
-                    let char_uuid_str = request.to_string();
-                    info!("Client subscribed to notifications on {}", char_uuid_str);
-                    let _ = status_tx.send(format!("[INFO] Client subscribed to notifications on {}", char_uuid_str));
+                PeripheralEvent::CharacteristicSubscriptionUpdate { request, subscribed } => {
+                    let char_uuid_str = request.characteristic.to_string();
+                    if subscribed {
+                        info!("Client subscribed to notifications on {}", char_uuid_str);
+                        let _ = status_tx.send(format!("[INFO] Client subscribed to notifications on {}", char_uuid_str));
+                    } else {
+                        info!("Client unsubscribed from notifications on {}", char_uuid_str);
+                        let _ = status_tx.send(format!("[INFO] Client unsubscribed from notifications on {}", char_uuid_str));
+                    }
 
                     let llm_event = Event::new(
                         &BLUETOOTH_SUBSCRIBE_EVENT,
                         serde_json::json!({
                             "characteristic_uuid": char_uuid_str,
-                            "subscribed": true,
-                        })
-                    );
-
-                    let _ = Self::call_llm_for_event(
-                        &server_id,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        &server_data,
-                        &protocol,
-                        llm_event,
-                    ).await;
-                }
-                PeripheralEvent::UnsubscribeNotifications { request } => {
-                    let char_uuid_str = request.to_string();
-                    info!("Client unsubscribed from notifications on {}", char_uuid_str);
-                    let _ = status_tx.send(format!("[INFO] Client unsubscribed from notifications on {}", char_uuid_str));
-
-                    let llm_event = Event::new(
-                        &BLUETOOTH_SUBSCRIBE_EVENT,
-                        serde_json::json!({
-                            "characteristic_uuid": char_uuid_str,
-                            "subscribed": false,
+                            "subscribed": subscribed,
                         })
                     );
 
@@ -686,7 +671,7 @@ impl BluetoothBle {
         protocol: &Arc<BluetoothBleProtocol>,
         event: Event,
     ) -> Result<crate::llm::actions::executor::ExecutionResult> {
-        let memory = server_data.lock().await.memory.clone();
+        let _memory = server_data.lock().await.memory.clone();
 
         let llm_result = call_llm(
             llm_client,
@@ -698,7 +683,7 @@ impl BluetoothBle {
         ).await?;
 
         // Execute returned actions (except read/write responses which are handled inline)
-        for action in &llm_result.actions {
+        for action in &llm_result.raw_actions {
             let action_type = action.get("type").and_then(|v| v.as_str()).unwrap_or("");
             match action_type {
                 "respond_to_read" | "send_read_response" | "respond_to_write" | "send_write_response" => {
@@ -716,11 +701,6 @@ impl BluetoothBle {
                     }
                 }
             }
-        }
-
-        // Update memory
-        if let Some(new_memory) = &llm_result.memory {
-            server_data.lock().await.memory = new_memory.clone();
         }
 
         Ok(llm_result)

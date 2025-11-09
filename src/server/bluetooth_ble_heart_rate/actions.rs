@@ -12,7 +12,12 @@ use std::sync::LazyLock;
 
 pub static HEART_RATE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("heart_rate_updated", "Heart rate BPM was updated")
-        .with_parameters(vec![Parameter::new("bpm", "Beats per minute")])
+        .with_parameters(vec![Parameter {
+            name: "bpm".to_string(),
+            type_hint: "number".to_string(),
+            description: "Beats per minute".to_string(),
+            required: true,
+        }])
 });
 
 pub struct BluetoothBleHeartRateProtocol;
@@ -92,9 +97,10 @@ impl Protocol for BluetoothBleHeartRateProtocol {
 impl Server for BluetoothBleHeartRateProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
             let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name")).and_then(|v| v.as_str()).unwrap_or("NetGet-HeartRate").to_string();
             crate::server::bluetooth_ble_heart_rate::BluetoothBleHeartRate::spawn_with_llm_actions(
-                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
+                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }

@@ -148,31 +148,18 @@ impl UsbClient {
         })
         .await??;
 
-        // Get device descriptor for manufacturer/product strings
+        // Get manufacturer/product strings
+        // Use language ID 0x0409 (English - United States)
+        const LANG_EN_US: u16 = 0x0409;
+
         let (manufacturer, product) = tokio::task::spawn_blocking({
             let device = device.clone();
             move || -> Result<(Option<String>, Option<String>)> {
-                let descriptor = device.device_descriptor();
+                // Try to get manufacturer string (index 1 is common)
+                let manufacturer = device.get_string_descriptor(1, LANG_EN_US, Duration::from_secs(1)).ok();
 
-                let manufacturer = if descriptor.manufacturer_string_index() != 0 {
-                    device.get_string_descriptor(
-                        descriptor.manufacturer_string_index(),
-                        nusb::LanguageId::ENGLISH_US,
-                        Duration::from_secs(1)
-                    ).ok()
-                } else {
-                    None
-                };
-
-                let product = if descriptor.product_string_index() != 0 {
-                    device.get_string_descriptor(
-                        descriptor.product_string_index(),
-                        nusb::LanguageId::ENGLISH_US,
-                        Duration::from_secs(1)
-                    ).ok()
-                } else {
-                    None
-                };
+                // Try to get product string (index 2 is common)
+                let product = device.get_string_descriptor(2, LANG_EN_US, Duration::from_secs(1)).ok();
 
                 Ok((manufacturer, product))
             }

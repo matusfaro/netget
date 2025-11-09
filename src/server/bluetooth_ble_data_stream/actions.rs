@@ -8,15 +8,15 @@ use std::sync::LazyLock;
 
 pub static STREAM_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("stream_started", "Data stream started").with_parameters(vec![
-        Parameter::new("stream_id", "Stream identifier"),
-        Parameter::new("sample_rate", "Samples per second"),
+        Parameter { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true },
+        Parameter { name: "sample_rate".to_string(), type_hint: "number".to_string(), description: "Samples per second".to_string(), required: true },
     ])
 });
 
 pub static STREAM_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("stream_data", "Stream data packet received").with_parameters(vec![
-        Parameter::new("stream_id", "Stream identifier"),
-        Parameter::new("sequence", "Packet sequence number"),
+        Parameter { name: "stream_id".to_string(), type_hint: "string".to_string(), description: "Stream identifier".to_string(), required: true },
+        Parameter { name: "sequence".to_string(), type_hint: "number".to_string(), description: "Packet sequence number".to_string(), required: true },
     ])
 });
 
@@ -102,9 +102,10 @@ impl Protocol for BluetoothBleDataStreamProtocol {
 impl Server for BluetoothBleDataStreamProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
             let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name")).and_then(|v| v.as_str()).unwrap_or("NetGet-Stream").to_string();
             crate::server::bluetooth_ble_data_stream::BluetoothBleDataStream::spawn_with_llm_actions(
-                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
+                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }
