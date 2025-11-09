@@ -1805,7 +1805,7 @@ dependencies = [
  "objc2-core-bluetooth",
  "objc2-foundation",
  "once_cell",
- "tokio",
+ "tokio 1.48.0",
  "uuid",
  "windows 0.57.0",
 ]
@@ -1909,7 +1909,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.26.3",
- "tokio",
+ "tokio 1.48.0",
  "tokio-stream",
  "uuid",
 ]
@@ -11657,7 +11657,7 @@ dependencies = [
  "ssh-key",
  "subtle",
  "thiserror 1.0.69",
- "tokio",
+ "tokio 1.48.0",
  "tokio-util",
 ]
 
