@@ -70,9 +70,9 @@ impl Protocol for SocketFileProtocol {
             crate::llm::actions::ParameterDefinition {
                 name: "socket_path".to_string(),
                 type_hint: "string".to_string(),
-                description: "Filesystem path for the Unix domain socket file (e.g., /tmp/netget.sock)".to_string(),
+                description: "Filesystem path for the Unix domain socket file (e.g., ./netget.sock)".to_string(),
                 required: true,
-                example: serde_json::json!("/tmp/netget.sock"),
+                example: serde_json::json!("./netget.sock"),
             },
             crate::llm::actions::ParameterDefinition {
                 name: "send_first".to_string(),
@@ -133,7 +133,7 @@ impl Protocol for SocketFileProtocol {
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Create socket file at /tmp/myapp.sock and echo back any data received"
+        "Create socket file at ./myapp.sock and echo back any data received"
     }
 
     fn group_name(&self) -> &'static str {

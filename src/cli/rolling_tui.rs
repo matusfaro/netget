@@ -1063,7 +1063,7 @@ async fn handle_key_event(
                         use std::io::Write as IoWrite;
 
                         // Write debug info to file
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
+                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
                             let _ = writeln!(file, "[DEBUG] SetFooterStatus handler called with message: {:?}", message);
                         }
 
@@ -1083,7 +1083,7 @@ async fn handle_key_event(
                         let new_footer_height = term_height.saturating_sub(new_scroll_height);
 
                         // Write footer height info to file
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
+                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
                             let _ = writeln!(file, "[DEBUG] Footer heights: old={}, new={}, term_height={}",
                                 old_footer_height, new_footer_height, term_height);
                         }
@@ -1098,7 +1098,7 @@ async fn handle_key_event(
                             let lines_to_push = lines_to_add - consumed;
 
                             // Write debug info to file
-                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
+                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
                                 let _ = writeln!(file, "[DEBUG-EXPAND] Footer expanding: old_height={}, new_height={}, lines_to_add={}, consumed={}, lines_to_push={}",
                                     old_footer_height, new_footer_height, lines_to_add, consumed, lines_to_push);
                             }
@@ -1130,7 +1130,7 @@ async fn handle_key_event(
                             footer.add_to_blank_lines_buffer(lines_to_remove);
 
                             // Write debug info to file
-                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
+                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
                                 let _ = writeln!(file, "[DEBUG-SHRINK] Footer shrinking: lines_to_remove={}, buffer now={}",
                                     lines_to_remove, footer.blank_lines_buffer());
                             }
@@ -1152,14 +1152,14 @@ async fn handle_key_event(
                         } else {
                             // Footer size UNCHANGED - no buffer manipulation needed
                             // Just log for debugging
-                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
+                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
                                 let _ = writeln!(file, "[DEBUG-UNCHANGED] Footer size unchanged: height={}, buffer={}",
                                     new_footer_height, footer.blank_lines_buffer());
                             }
                         }
 
                         // Step 4 (all cases): Redraw the footer at the new position
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/netget_debug.log") {
+                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
                             let final_scroll_height = footer.scroll_region_height();
                             let final_footer_height = footer.terminal_height().saturating_sub(final_scroll_height);
                             let final_footer_start = footer.terminal_height().saturating_sub(final_footer_height);

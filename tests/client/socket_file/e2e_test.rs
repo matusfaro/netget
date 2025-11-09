@@ -13,7 +13,7 @@ mod tests {
     #[tokio::test]
     async fn test_socket_file_connect() {
         // Create a temporary socket path
-        let socket_path = format!("/tmp/netget_test_{}.sock", std::process::id());
+        let socket_path = format!("./tmp/netget_test_{}.sock", std::process::id());
 
         // Clean up any existing socket file
         let _ = std::fs::remove_file(&socket_path);

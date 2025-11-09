@@ -185,10 +185,10 @@ impl Protocol for SshAgentProtocol {
         vec![ParameterDefinition {
             name: "socket_path".to_string(),
             type_hint: "string".to_string(),
-            description: "Path to Unix domain socket (default: /tmp/netget-ssh-agent.sock)"
+            description: "Path to Unix domain socket (default: ./netget-ssh-agent.sock)"
                 .to_string(),
             required: false,
-            example: json!("/tmp/netget-ssh-agent.sock"),
+            example: json!("./netget-ssh-agent.sock"),
         }]
     }
 
@@ -305,7 +305,7 @@ impl Protocol for SshAgentProtocol {
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Start SSH Agent on /tmp/netget-ssh-agent.sock; provide 2 Ed25519 keys (admin-key, deploy-key); sign any requests automatically"
+        "Start SSH Agent on ./netget-ssh-agent.sock; provide 2 Ed25519 keys (admin-key, deploy-key); sign any requests automatically"
     }
 
     fn group_name(&self) -> &'static str {
@@ -328,7 +328,7 @@ impl Server for SshAgentProtocol {
                 .startup_params
                 .as_ref()
                 .and_then(|p| p.get_optional_string("socket_path"))
-                .unwrap_or_else(|| "/tmp/netget-ssh-agent.sock".to_string());
+                .unwrap_or_else(|| "./netget-ssh-agent.sock".to_string());
 
             let socket_path_buf = std::path::PathBuf::from(socket_path);
 

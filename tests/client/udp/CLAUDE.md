@@ -155,7 +155,7 @@ Tests UDP client can change target address:
 ```
 
 **Check NetGet Logs:**
-Tests create log files in `/tmp/netget-test-*` directories (if logging enabled).
+Tests create log files in `./tmp/netget-test-*` directories (if logging enabled).
 
 **Manual Test:**
 ```bash

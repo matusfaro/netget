@@ -143,7 +143,7 @@ Test data is cleaned up after each test (table deleted).
 To see DynamoDB Local output:
 ```bash
 # Run with verbose logging
-java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb -inMemory -port 8000 -dbPath /tmp/dynamodb
+java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb -inMemory -port 8000 -dbPath ./tmp/dynamodb
 ```
 
 To verify table creation:

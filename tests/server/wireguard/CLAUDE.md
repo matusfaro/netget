@@ -261,7 +261,7 @@ Use wireguard-go or kernel WireGuard as client:
 // Spawn wg-quick or wireguard-go
 let client = Command::new("wg-quick")
     .arg("up")
-    .arg("/tmp/test-client.conf")
+    .arg("./tmp/test-client.conf")
     .spawn()?;
 ```
 
