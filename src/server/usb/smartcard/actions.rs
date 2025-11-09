@@ -205,24 +205,71 @@ impl Protocol for UsbSmartCardProtocol {
 
         match action_type {
             "insert_card" => {
-                // TODO: Signal card insertion to vpicc
-                Ok(ActionResult::NoAction)
+                let _conn_id = action["connection_id"]
+                    .as_str()
+                    .context("Missing connection_id")?;
+
+                // NOTE: Card state is managed in the SmartCardHandler
+                // Virtual card is always "inserted" upon USB/IP connection
+                // True card insertion/removal would require vpicc integration
+                info!("insert_card called - card is virtually inserted on USB attach");
+                Ok(ActionResult::Message {
+                    message: "Smart card is virtually inserted upon USB connection".to_string()
+                })
             }
             "remove_card" => {
-                // TODO: Signal card removal to vpicc
-                Ok(ActionResult::NoAction)
+                let _conn_id = action["connection_id"]
+                    .as_str()
+                    .context("Missing connection_id")?;
+
+                info!("remove_card called - card removal requires USB disconnect");
+                Ok(ActionResult::Message {
+                    message: "To remove card, disconnect the USB/IP session".to_string()
+                })
             }
             "set_pin" => {
-                // TODO: Update PIN in card state
-                Ok(ActionResult::NoAction)
+                let _conn_id = action["connection_id"]
+                    .as_str()
+                    .context("Missing connection_id")?;
+                let new_pin = action["new_pin"]
+                    .as_str()
+                    .context("Missing new_pin")?;
+
+                // NOTE: PIN is managed in SmartCardHandler's PIN store
+                // Would need direct handler access to modify
+                info!("set_pin called - PIN management requires handler access");
+                Ok(ActionResult::Message {
+                    message: format!("PIN change to '{}...' requires direct handler access. Use CHANGE REFERENCE DATA APDU instead.",
+                        &new_pin.chars().take(1).collect::<String>())
+                })
             }
             "verify_pin" => {
-                // TODO: Verify PIN and update state
-                Ok(ActionResult::NoAction)
+                let _conn_id = action["connection_id"]
+                    .as_str()
+                    .context("Missing connection_id")?;
+                let pin = action["pin"]
+                    .as_str()
+                    .context("Missing pin")?;
+
+                // NOTE: PIN verification happens via VERIFY APDU from client
+                // LLM observes via smartcard_pin_requested_event
+                info!("verify_pin called - PIN verification is client-driven via APDU");
+                Ok(ActionResult::Message {
+                    message: format!("PIN verification with '{}...' happens via VERIFY APDU from PC/SC client",
+                        &pin.chars().take(1).collect::<String>())
+                })
             }
             "list_files" => {
-                // TODO: Return ISO 7816-4 file list
-                Ok(ActionResult::NoAction)
+                let _conn_id = action["connection_id"]
+                    .as_str()
+                    .context("Missing connection_id")?;
+
+                // NOTE: File system is in SmartCardHandler
+                // Currently implements basic RSA key storage, not full ISO 7816-4 FS
+                info!("list_files called - card has RSA key store, not full file system yet");
+                Ok(ActionResult::Message {
+                    message: "Current implementation: RSA key storage (see SmartCardKeyStore). Full ISO 7816-4 file system not yet implemented.".to_string()
+                })
             }
             _ => Ok(ActionResult::NoAction),
         }
