@@ -35,16 +35,16 @@ pub mod smartcard;
 
 // Re-export protocol implementations
 #[cfg(feature = "usb-keyboard")]
-pub use keyboard::actions::UsbKeyboardProtocol;
+pub use keyboard::UsbKeyboardProtocol;
 
 #[cfg(feature = "usb-mouse")]
-pub use mouse::actions::UsbMouseProtocol;
+pub use mouse::UsbMouseProtocol;
 
 #[cfg(feature = "usb-serial")]
 pub use serial::actions::UsbSerialProtocol;
 
 #[cfg(feature = "usb-msc")]
-pub use msc::actions::UsbMscProtocol;
+pub use msc::UsbMscProtocol;
 
 #[cfg(feature = "usb-fido2")]
 pub use fido2::actions::UsbFido2Protocol;

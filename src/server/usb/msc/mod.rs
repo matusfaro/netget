@@ -6,6 +6,10 @@
 
 pub mod actions;
 
+// Re-export protocol struct for registration
+#[cfg(feature = "usb-msc")]
+pub use actions::UsbMscProtocol;
+
 #[cfg(feature = "usb-msc")]
 mod disk;
 
@@ -23,16 +27,16 @@ use std::path::PathBuf;
 #[cfg(feature = "usb-msc")]
 use std::sync::Arc;
 #[cfg(feature = "usb-msc")]
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 #[cfg(feature = "usb-msc")]
 use tracing::{debug, error, info, trace, warn};
 
 #[cfg(feature = "usb-msc")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-msc")]
-use crate::llm::ollama_client::OllamaClient;
+use crate::llm::actions::protocol_trait::Server;
 #[cfg(feature = "usb-msc")]
-use crate::llm::ActionResult;
+use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "usb-msc")]
 use crate::protocol::Event;
 #[cfg(feature = "usb-msc")]
@@ -365,20 +369,19 @@ impl UsbMscServer {
             match call_llm(
                 &llm_client,
                 &app_state,
-                protocol.clone(),
-                Some(connection_id),
-                Some(&event),
-                &conn_data.memory,
-                &status_tx,
                 server_id,
+                Some(connection_id),
+                &event,
+                protocol.as_ref(),
             )
             .await
             {
-                Ok(result) => {
-                    // Update memory
-                    if let Some(new_memory) = result.new_memory {
-                        conn_data.memory = new_memory;
-                    }
+                Ok(_execution_result) => {
+                    // Actions have already been executed by call_llm
+                    info!(
+                        "USB MSC LLM call completed for connection {}",
+                        connection_id
+                    );
 
                     // Mark as idle
                     conn_data.state = ConnectionState::Idle;

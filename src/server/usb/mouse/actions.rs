@@ -30,7 +30,12 @@ pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host attached to USB mouse device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -41,7 +46,12 @@ pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host detached from USB mouse device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -128,14 +138,14 @@ impl Protocol for UsbMouseProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        crate::protocol::metadata::ProtocolMetadataV2::new(
-            crate::protocol::metadata::ProtocolState::Experimental,
-            "Virtual USB HID mouse device using USB/IP protocol",
-            "LLM controls mouse movement, clicks, and scrolling",
-            "E2E tests using Linux usbip client",
-            crate::protocol::metadata::PrivilegeRequirement::None,
-        )
-        .with_notes("Requires client to have vhci-hcd kernel module and run 'usbip attach'")
+        crate::protocol::metadata::ProtocolMetadataV2::builder()
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .implementation("Virtual USB HID mouse device using USB/IP protocol")
+            .llm_control("LLM controls mouse movement, clicks, and scrolling")
+            .e2e_testing("E2E tests using Linux usbip client")
+            .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
+            .notes("Requires client to have vhci-hcd kernel module and run 'usbip attach'")
+            .build()
     }
 
     fn description(&self) -> &'static str {
@@ -175,47 +185,30 @@ impl Server for UsbMouseProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        connection_id: Option<ConnectionId>,
-        _app_state: &AppState,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
 
-        let connection_id = connection_id.context("USB mouse actions require connection_id")?;
+        let _connection_id = action["connection_id"]
+            .as_str()
+            .context("USB mouse actions require 'connection_id' field in action")?;
 
-        // Get handler (need to use blocking approach since execute_action is sync)
-        let handler = {
-            let handlers = self.handlers.blocking_lock();
-            handlers
-                .get(&connection_id)
-                .cloned()
-                .context("No USB mouse handler found for connection")?
-        };
+        // TODO: USB mouse handler integration once usbip crate supports mouse
+        // For now, all actions are stubs that log warnings
 
         match action_type {
             "move_relative" => {
-                let x = action["x"].as_i64().context("move_relative requires 'x' field")? as i8;
-                let y = action["y"].as_i64().context("move_relative requires 'y' field")? as i8;
+                let _x = action["x"].as_i64().context("move_relative requires 'x' field")? as i8;
+                let _y = action["y"].as_i64().context("move_relative requires 'y' field")? as i8;
 
-                // Queue mouse movement event
-                let mut handler_guard = handler.lock().unwrap();
-                if let Some(hid) = handler_guard
-                    .as_any()
-                    .downcast_mut::<usbip::hid::UsbHidMouseHandler>()
-                {
-                    let report = usbip::hid::UsbHidMouseReport::new_movement(x, y);
-                    hid.pending_mouse_events.push_back(report);
-                    tracing::info!(
-                        "Queued mouse move ({}, {}) for connection {}",
-                        x,
-                        y,
-                        connection_id
-                    );
-                    Ok(ActionResult::NoAction)
-                } else {
-                    Err(anyhow::anyhow!("Handler is not a USB HID mouse handler"))
-                }
+                // TODO: USB mouse support not yet implemented in usbip crate
+                // Need to implement UsbHidMouseHandler and UsbHidMouseReport
+                // See keyboard implementation for reference
+                tracing::warn!(
+                    "move_relative not yet implemented - usbip crate lacks mouse support"
+                );
+                Ok(ActionResult::NoAction)
             }
             "move_absolute" => {
                 let _x = action["x"].as_i64().context("move_absolute requires 'x' field")?;
@@ -227,67 +220,27 @@ impl Server for UsbMouseProtocol {
                 Ok(ActionResult::NoAction)
             }
             "click" => {
-                let button = action["button"]
+                let _button = action["button"]
                     .as_str()
                     .context("click requires 'button' field")?;
 
-                let button_mask = match button {
-                    "left" => crate::server::usb::descriptors::mouse_buttons::LEFT,
-                    "right" => crate::server::usb::descriptors::mouse_buttons::RIGHT,
-                    "middle" => crate::server::usb::descriptors::mouse_buttons::MIDDLE,
-                    _ => return Err(anyhow::anyhow!("Invalid button: {}", button)),
-                };
-
-                // Queue click sequence: press, release
-                let mut handler_guard = handler.lock().unwrap();
-                if let Some(hid) = handler_guard
-                    .as_any()
-                    .downcast_mut::<usbip::hid::UsbHidMouseHandler>()
-                {
-                    // Press button
-                    let press = usbip::hid::UsbHidMouseReport::new_click(button_mask);
-                    hid.pending_mouse_events.push_back(press);
-
-                    // Release button
-                    let release = usbip::hid::UsbHidMouseReport::new_click(0);
-                    hid.pending_mouse_events.push_back(release);
-
-                    tracing::info!("Queued {} click for connection {}", button, connection_id);
-                    Ok(ActionResult::NoAction)
-                } else {
-                    Err(anyhow::anyhow!("Handler is not a USB HID mouse handler"))
-                }
+                // TODO: USB mouse support not yet implemented in usbip crate
+                tracing::warn!(
+                    "click not yet implemented - usbip crate lacks mouse support"
+                );
+                Ok(ActionResult::NoAction)
             }
             "scroll" => {
-                let direction = action["direction"]
+                let _direction = action["direction"]
                     .as_str()
                     .context("scroll requires 'direction' field")?;
-                let amount = action["amount"].as_i64().unwrap_or(1) as i8;
+                let _amount = action["amount"].as_i64().unwrap_or(1) as i8;
 
-                let wheel = match direction {
-                    "up" => amount,
-                    "down" => -amount,
-                    _ => return Err(anyhow::anyhow!("Invalid scroll direction: {}", direction)),
-                };
-
-                // Queue scroll event
-                let mut handler_guard = handler.lock().unwrap();
-                if let Some(hid) = handler_guard
-                    .as_any()
-                    .downcast_mut::<usbip::hid::UsbHidMouseHandler>()
-                {
-                    let report = usbip::hid::UsbHidMouseReport::new_scroll(wheel);
-                    hid.pending_mouse_events.push_back(report);
-                    tracing::info!(
-                        "Queued scroll {} ({}) for connection {}",
-                        direction,
-                        wheel,
-                        connection_id
-                    );
-                    Ok(ActionResult::NoAction)
-                } else {
-                    Err(anyhow::anyhow!("Handler is not a USB HID mouse handler"))
-                }
+                // TODO: USB mouse support not yet implemented in usbip crate
+                tracing::warn!(
+                    "scroll not yet implemented - usbip crate lacks mouse support"
+                );
+                Ok(ActionResult::NoAction)
             }
             "drag" => {
                 let _start_x = action["start_x"].as_i64().context("drag requires 'start_x'")?;
@@ -313,8 +266,18 @@ fn move_relative_action() -> ActionDefinition {
         name: "move_relative".to_string(),
         description: "Move mouse cursor by relative offset".to_string(),
         parameters: vec![
-            Parameter::new("x", "number", "Horizontal movement in pixels (-127 to 127)"),
-            Parameter::new("y", "number", "Vertical movement in pixels (-127 to 127)"),
+            Parameter {
+                name: "x".to_string(),
+                type_hint: "number".to_string(),
+                description: "Horizontal movement in pixels (-127 to 127)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "y".to_string(),
+                type_hint: "number".to_string(),
+                description: "Vertical movement in pixels (-127 to 127)".to_string(),
+                required: true,
+            },
         ],
         example: json!({
             "type": "move_relative",
@@ -330,10 +293,30 @@ fn move_absolute_action() -> ActionDefinition {
         name: "move_absolute".to_string(),
         description: "Move mouse cursor to absolute screen position".to_string(),
         parameters: vec![
-            Parameter::new("x", "number", "Target X coordinate"),
-            Parameter::new("y", "number", "Target Y coordinate"),
-            Parameter::new("screen_width", "number", "Screen width in pixels (default: 1920)").optional(),
-            Parameter::new("screen_height", "number", "Screen height in pixels (default: 1080)").optional(),
+            Parameter {
+                name: "x".to_string(),
+                type_hint: "number".to_string(),
+                description: "Target X coordinate".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "y".to_string(),
+                type_hint: "number".to_string(),
+                description: "Target Y coordinate".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "screen_width".to_string(),
+                type_hint: "number".to_string(),
+                description: "Screen width in pixels (default: 1920)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "screen_height".to_string(),
+                type_hint: "number".to_string(),
+                description: "Screen height in pixels (default: 1080)".to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "move_absolute",
@@ -351,7 +334,12 @@ fn click_action() -> ActionDefinition {
         name: "click".to_string(),
         description: "Click a mouse button".to_string(),
         parameters: vec![
-            Parameter::new("button", "string", "Button to click: 'left', 'right', or 'middle'"),
+            Parameter {
+                name: "button".to_string(),
+                type_hint: "string".to_string(),
+                description: "Button to click: 'left', 'right', or 'middle'".to_string(),
+                required: true,
+            },
         ],
         example: json!({
             "type": "click",
@@ -366,8 +354,18 @@ fn scroll_action() -> ActionDefinition {
         name: "scroll".to_string(),
         description: "Scroll the mouse wheel".to_string(),
         parameters: vec![
-            Parameter::new("direction", "string", "Scroll direction: 'up' or 'down'"),
-            Parameter::new("amount", "number", "Number of scroll steps (default: 1)").optional(),
+            Parameter {
+                name: "direction".to_string(),
+                type_hint: "string".to_string(),
+                description: "Scroll direction: 'up' or 'down'".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "amount".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of scroll steps (default: 1)".to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "scroll",
@@ -383,11 +381,36 @@ fn drag_action() -> ActionDefinition {
         name: "drag".to_string(),
         description: "Drag from one position to another with left button held".to_string(),
         parameters: vec![
-            Parameter::new("start_x", "number", "Starting X coordinate"),
-            Parameter::new("start_y", "number", "Starting Y coordinate"),
-            Parameter::new("end_x", "number", "Ending X coordinate"),
-            Parameter::new("end_y", "number", "Ending Y coordinate"),
-            Parameter::new("duration_ms", "number", "Duration of drag in milliseconds (default: 500)").optional(),
+            Parameter {
+                name: "start_x".to_string(),
+                type_hint: "number".to_string(),
+                description: "Starting X coordinate".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "start_y".to_string(),
+                type_hint: "number".to_string(),
+                description: "Starting Y coordinate".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "end_x".to_string(),
+                type_hint: "number".to_string(),
+                description: "Ending X coordinate".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "end_y".to_string(),
+                type_hint: "number".to_string(),
+                description: "Ending Y coordinate".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "duration_ms".to_string(),
+                type_hint: "number".to_string(),
+                description: "Duration of drag in milliseconds (default: 500)".to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "drag",

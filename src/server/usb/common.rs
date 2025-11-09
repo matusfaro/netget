@@ -27,12 +27,14 @@ pub enum UsbIpOp {
     RepDevlist = 0x0005,
     /// Import device request
     ReqImport = 0x8003,
-    /// Import device reply
+    /// Import device reply (same opcode as RetSubmit in USB/IP protocol)
     RepImport = 0x0003,
     /// Submit URB
     CmdSubmit = 0x0001,
-    /// URB reply
-    RetSubmit = 0x0003,
+    /// URB reply (same opcode 0x0003 as RepImport - context determines which)
+    /// NOTE: In USB/IP, RepImport and RetSubmit share opcode 0x0003.
+    /// Use context (connection state) to distinguish them.
+    // RetSubmit = 0x0003,  // Commented out - use RepImport variant for 0x0003
     /// Unlink URB
     CmdUnlink = 0x0002,
     /// Unlink reply
