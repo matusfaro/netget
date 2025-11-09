@@ -221,7 +221,11 @@ impl Args {
         if !self.prompt.is_empty() {
             let joined = self.prompt.join(" ");
             if save_load::is_actions_json(&joined) {
-                let actions: Vec<serde_json::Value> = serde_json::from_str(&joined)?;
+                // Parse {"actions": [...]} format and extract the array
+                let parsed: serde_json::Value = serde_json::from_str(&joined)?;
+                let actions = parsed["actions"].as_array()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
+                    .clone();
                 return Ok(Some(actions));
             }
         }
@@ -232,7 +236,11 @@ impl Args {
             io::stdin().read_to_string(&mut buffer)?;
             let trimmed = buffer.trim();
             if !trimmed.is_empty() && save_load::is_actions_json(trimmed) {
-                let actions: Vec<serde_json::Value> = serde_json::from_str(trimmed)?;
+                // Parse {"actions": [...]} format and extract the array
+                let parsed: serde_json::Value = serde_json::from_str(trimmed)?;
+                let actions = parsed["actions"].as_array()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
+                    .clone();
                 return Ok(Some(actions));
             }
         }

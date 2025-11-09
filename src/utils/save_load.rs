@@ -177,8 +177,13 @@ async fn save_actions(actions: Vec<Value>, filename: &str) -> Result<PathBuf> {
     let filename = normalize_filename(filename);
     let path = PathBuf::from(&filename);
 
-    // Serialize actions to pretty JSON
-    let json = serde_json::to_string_pretty(&actions)
+    // Wrap actions in the standard LLM format: {"actions": [...]}
+    let wrapped = json!({
+        "actions": actions
+    });
+
+    // Serialize to pretty JSON
+    let json = serde_json::to_string_pretty(&wrapped)
         .context("Failed to serialize actions to JSON")?;
 
     // Write to file
@@ -207,20 +212,28 @@ pub async fn load_actions(filename: &str) -> Result<Vec<Value>> {
         .await
         .context(format!("Failed to read file: {}", filename))?;
 
-    // Parse JSON
-    let actions: Vec<Value> = serde_json::from_str(&content)
+    // Parse JSON - expect {"actions": [...]} format
+    let parsed: Value = serde_json::from_str(&content)
         .context(format!("Failed to parse JSON from file: {}", filename))?;
+
+    // Extract actions array
+    let actions = parsed
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("File must contain {{\"actions\": [...]}} format"))?
+        .clone();
 
     Ok(actions)
 }
 
-/// Check if a string is a valid actions JSON array
+/// Check if a string is a valid actions JSON in {"actions": [...]} format
 pub fn is_actions_json(input: &str) -> bool {
-    // Try to parse as JSON array
+    // Try to parse as JSON object
     if let Ok(value) = serde_json::from_str::<Value>(input) {
-        if let Some(array) = value.as_array() {
+        // Check for {"actions": [...]} format
+        if let Some(actions) = value.get("actions").and_then(|v| v.as_array()) {
             // Check if all elements have a "type" field
-            return !array.is_empty() && array.iter().all(|item| {
+            return !actions.is_empty() && actions.iter().all(|item| {
                 item.as_object()
                     .and_then(|obj| obj.get("type"))
                     .and_then(|t| t.as_str())
@@ -246,18 +259,21 @@ mod tests {
 
     #[test]
     fn test_is_actions_json() {
-        // Valid actions JSON
-        assert!(is_actions_json(r#"[{"type":"open_server","port":8080,"base_stack":"http","instruction":"test"}]"#));
-        assert!(is_actions_json(r#"[{"type":"show_message","message":"hello"}]"#));
+        // Valid actions JSON - {"actions": [...]} format
+        assert!(is_actions_json(r#"{"actions":[{"type":"open_server","port":8080,"base_stack":"http","instruction":"test"}]}"#));
+        assert!(is_actions_json(r#"{"actions":[{"type":"show_message","message":"hello"}]}"#));
 
-        // Invalid - not an array
-        assert!(!is_actions_json(r#"{"type":"open_server"}"#));
+        // Invalid - not wrapped in actions object
+        assert!(!is_actions_json(r#"[{"type":"open_server"}]"#));
 
-        // Invalid - empty array
-        assert!(!is_actions_json(r#"[]"#));
+        // Invalid - wrong key name
+        assert!(!is_actions_json(r#"{"action":[{"type":"open_server"}]}"#));
+
+        // Invalid - empty actions array
+        assert!(!is_actions_json(r#"{"actions":[]}"#));
 
         // Invalid - missing type field
-        assert!(!is_actions_json(r#"[{"port":8080}]"#));
+        assert!(!is_actions_json(r#"{"actions":[{"port":8080}]}"#));
 
         // Invalid - not JSON
         assert!(!is_actions_json("hello world"));
