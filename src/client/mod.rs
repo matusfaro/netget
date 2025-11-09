@@ -274,6 +274,12 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
+// rss client - temporarily disabled (needs API updates)
+// #[cfg(feature = "rss")]
+// pub mod rss;
+// #[cfg(feature = "rss")]
+// pub use rss::actions::RssClientProtocol;
+
 // rip client
 #[cfg(feature = "rip")]
 pub mod rip;
