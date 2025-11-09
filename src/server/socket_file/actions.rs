@@ -163,7 +163,7 @@ impl Server for SocketFileProtocol {
 
             use crate::server::socket_file::SocketFileServer;
             let socket_path_buf = std::path::PathBuf::from(socket_path);
-            let result_path = SocketFileServer::spawn_with_llm_actions(
+            let _result_path = SocketFileServer::spawn_with_llm_actions(
                 socket_path_buf,
                 ctx.llm_client,
                 ctx.state,

@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 
 pub static WEIGHT_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("weight_measurement", "Weight measurement updated").with_parameters(vec![
-        Parameter::new("weight_kg", "Weight in kilograms"),
-        Parameter::new("bmi", "Body Mass Index"),
+        Parameter { name: "weight_kg".to_string(), type_hint: "number".to_string(), description: "Weight in kilograms".to_string(), required: true },
+        Parameter { name: "bmi".to_string(), type_hint: "number".to_string(), description: "Body Mass Index".to_string(), required: true },
     ])
 });
 
@@ -82,8 +82,9 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
 impl Server for BluetoothBleWeightScaleProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
             crate::server::bluetooth_ble_weight_scale::BluetoothBleWeightScale::spawn_with_llm_actions(
-                "NetGet-Scale".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id
+                "NetGet-Scale".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }

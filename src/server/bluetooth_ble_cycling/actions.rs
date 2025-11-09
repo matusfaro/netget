@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 
 pub static CYCLING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("cycling_measurement", "Cycling speed/cadence updated").with_parameters(vec![
-        Parameter::new("speed_kmh", "Speed in km/h"),
-        Parameter::new("cadence_rpm", "Cadence in RPM"),
+        Parameter { name: "speed_kmh".to_string(), type_hint: "number".to_string(), description: "Speed in km/h".to_string(), required: true },
+        Parameter { name: "cadence_rpm".to_string(), type_hint: "number".to_string(), description: "Cadence in RPM".to_string(), required: true },
     ])
 });
 
@@ -80,8 +80,9 @@ impl Protocol for BluetoothBleCyclingProtocol {
 impl Server for BluetoothBleCyclingProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
             crate::server::bluetooth_ble_cycling::BluetoothBleCycling::spawn_with_llm_actions(
-                "NetGet-Cycling".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Cycling".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }

@@ -4,7 +4,7 @@ pub mod actions;
 pub use actions::BluetoothClientProtocol;
 
 use anyhow::{Context, Result};
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -504,16 +504,22 @@ impl BluetoothClient {
             let mut characteristics_data = Vec::new();
 
             for char in service.characteristics {
-                let properties: Vec<String> = vec![
-                    if char.properties.read { Some("read") } else { None },
-                    if char.properties.write { Some("write") } else { None },
-                    if char.properties.write_without_response { Some("write_without_response") } else { None },
-                    if char.properties.notify { Some("notify") } else { None },
-                    if char.properties.indicate { Some("indicate") } else { None },
-                ]
-                .into_iter()
-                .filter_map(|p| p.map(|s| s.to_string()))
-                .collect();
+                let mut properties = Vec::new();
+                if char.properties.contains(CharPropFlags::READ) {
+                    properties.push("read".to_string());
+                }
+                if char.properties.contains(CharPropFlags::WRITE) {
+                    properties.push("write".to_string());
+                }
+                if char.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE) {
+                    properties.push("write_without_response".to_string());
+                }
+                if char.properties.contains(CharPropFlags::NOTIFY) {
+                    properties.push("notify".to_string());
+                }
+                if char.properties.contains(CharPropFlags::INDICATE) {
+                    properties.push("indicate".to_string());
+                }
 
                 characteristics_data.push(serde_json::json!({
                     "uuid": char.uuid.to_string(),

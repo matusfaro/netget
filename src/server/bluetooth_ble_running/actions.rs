@@ -8,8 +8,18 @@ use std::sync::LazyLock;
 
 pub static RUNNING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("running_measurement", "Running speed/cadence updated").with_parameters(vec![
-        Parameter::new("pace_min_km", "Pace in min/km"),
-        Parameter::new("cadence_spm", "Cadence in steps/min"),
+        Parameter {
+            name: "pace_min_km".to_string(),
+            type_hint: "number".to_string(),
+            description: "Pace in min/km".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "cadence_spm".to_string(),
+            type_hint: "number".to_string(),
+            description: "Cadence in steps/min".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -80,8 +90,13 @@ impl Protocol for BluetoothBleRunningProtocol {
 impl Server for BluetoothBleRunningProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            // Get instruction from server state
+            let instruction = ctx.state.get_server(ctx.server_id).await
+                .map(|s| s.instruction.clone())
+                .unwrap_or_default();
+
             crate::server::bluetooth_ble_running::BluetoothBleRunning::spawn_with_llm_actions(
-                "NetGet-Running".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Running".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }

@@ -30,8 +30,9 @@ impl Protocol for BluetoothBleProximityProtocol {
 impl Server for BluetoothBleProximityProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
             crate::server::bluetooth_ble_proximity::BluetoothBleProximity::spawn_with_llm_actions(
-                "NetGet-Proximity".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-Proximity".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }

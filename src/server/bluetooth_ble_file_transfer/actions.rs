@@ -30,8 +30,9 @@ impl Protocol for BluetoothBleFileTransferProtocol {
 impl Server for BluetoothBleFileTransferProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
+            let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
             crate::server::bluetooth_ble_file_transfer::BluetoothBleFileTransfer::spawn_with_llm_actions(
-                "NetGet-FileTransfer".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, ctx.instruction
+                "NetGet-FileTransfer".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await
         })
     }

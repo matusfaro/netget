@@ -19,8 +19,18 @@ pub static BLUETOOTH_BLE_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Bluetooth Low Energy GATT server started and ready for configuration",
     )
     .with_parameters(vec![
-        Parameter::new("device_name", "Name of the BLE device for advertising"),
-        Parameter::new("instruction", "User instruction for server behavior"),
+        Parameter {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Name of the BLE device for advertising".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "instruction".to_string(),
+            type_hint: "string".to_string(),
+            description: "User instruction for server behavior".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -31,7 +41,12 @@ pub static BLUETOOTH_STATE_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(||
         "Bluetooth adapter state changed (powered on/off, advertising started/stopped, etc.)",
     )
     .with_parameters(vec![
-        Parameter::new("state", "Current state description"),
+        Parameter {
+            name: "state".to_string(),
+            type_hint: "string".to_string(),
+            description: "Current state description".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -42,8 +57,18 @@ pub static BLUETOOTH_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         "Client is reading from a GATT characteristic - respond with data",
     )
     .with_parameters(vec![
-        Parameter::new("characteristic_uuid", "UUID of the characteristic being read"),
-        Parameter::new("offset", "Byte offset for long reads (usually 0)"),
+        Parameter {
+            name: "characteristic_uuid".to_string(),
+            type_hint: "string".to_string(),
+            description: "UUID of the characteristic being read".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "offset".to_string(),
+            type_hint: "number".to_string(),
+            description: "Byte offset for long reads (usually 0)".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -54,10 +79,30 @@ pub static BLUETOOTH_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
         "Client wrote data to a GATT characteristic",
     )
     .with_parameters(vec![
-        Parameter::new("characteristic_uuid", "UUID of the characteristic written to"),
-        Parameter::new("value", "Hex-encoded data written by client"),
-        Parameter::new("offset", "Byte offset for long writes (usually 0)"),
-        Parameter::new("with_response", "Whether client expects a response"),
+        Parameter {
+            name: "characteristic_uuid".to_string(),
+            type_hint: "string".to_string(),
+            description: "UUID of the characteristic written to".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "value".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded data written by client".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "offset".to_string(),
+            type_hint: "number".to_string(),
+            description: "Byte offset for long writes (usually 0)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "with_response".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether client expects a response".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -68,8 +113,18 @@ pub static BLUETOOTH_SUBSCRIBE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Client subscribed or unsubscribed from characteristic notifications",
     )
     .with_parameters(vec![
-        Parameter::new("characteristic_uuid", "UUID of the characteristic"),
-        Parameter::new("subscribed", "true if subscribed, false if unsubscribed"),
+        Parameter {
+            name: "characteristic_uuid".to_string(),
+            type_hint: "string".to_string(),
+            description: "UUID of the characteristic".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "subscribed".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "true if subscribed, false if unsubscribed".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -175,15 +230,12 @@ impl Server for BluetoothBleProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("NetGet-BLE")
-                .to_string();
+            let device_name = ctx.startup_params.as_ref()
+                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "NetGet-BLE".to_string());
 
-            let instruction = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("instruction"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(&ctx.instruction)
-                .to_string();
+            let instruction = "Act as a Bluetooth Low Energy GATT server".to_string();
 
             crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(
                 device_name,
@@ -199,7 +251,6 @@ impl Server for BluetoothBleProtocol {
 
     fn execute_action(
         &self,
-        _connection_id: Option<crate::server::connection::ConnectionId>,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
         // Actions are executed directly in the server event loop
