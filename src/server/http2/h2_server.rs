@@ -52,7 +52,7 @@ impl H2Server {
             loop {
                 match listener.accept().await {
                     Ok((tcp_stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = tcp_stream.local_addr().unwrap_or(local_addr);
                         info!("Accepted {} connection {} from {}", protocol_name, connection_id, remote_addr);
 

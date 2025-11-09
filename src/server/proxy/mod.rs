@@ -180,7 +180,7 @@ impl ProxyServer {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
                         let _ = status_tx.send(format!("[INFO] >>> ACCEPTED proxy connection from {}", peer_addr));
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!("Proxy connection {} from {}", connection_id, peer_addr);
                         let _ = status_tx.send(format!("[DEBUG] Proxy connection {} from {}", connection_id, peer_addr));
 

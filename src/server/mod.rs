@@ -243,6 +243,13 @@ pub use redis::RedisServer;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisProtocol;
 
+#[cfg(feature = "rss")]
+pub mod rss;
+#[cfg(feature = "rss")]
+pub use rss::RssServer;
+#[cfg(feature = "rss")]
+pub use rss::actions::RssProtocol;
+
 #[cfg(feature = "cassandra")]
 pub mod cassandra;
 #[cfg(feature = "cassandra")]
@@ -383,6 +390,13 @@ pub mod openai;
 pub use openai::OpenAiServer;
 #[cfg(feature = "openai")]
 pub use openai::actions::OpenAiProtocol;
+
+#[cfg(feature = "ollama")]
+pub mod ollama;
+#[cfg(feature = "ollama")]
+pub use ollama::OllamaServer;
+#[cfg(feature = "ollama")]
+pub use ollama::actions::OllamaProtocol;
 
 #[cfg(feature = "oauth2")]
 pub mod oauth2;

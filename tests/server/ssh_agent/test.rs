@@ -233,7 +233,7 @@ async fn example_integration_test_with_netget_server() -> Result<(), Box<dyn std
     // 2. In NetGet, run: open_server with SSH Agent on /tmp/test-agent.sock
     // 3. Uncomment and run this test
 
-    let socket_path = "/tmp/test-agent.sock";
+    let socket_path = "./tmp/test-agent.sock";
 
     println!("Attempting to connect to: {}", socket_path);
 

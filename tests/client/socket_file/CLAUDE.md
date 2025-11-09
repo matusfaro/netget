@@ -106,8 +106,8 @@ The Socket File client tests use a **hybrid approach**:
 **Impact:** Tests may fail in restricted environments
 
 **Mitigation:**
-- Use /tmp directory (world-writable)
-- Fall back to test-specific directory if /tmp unavailable
+- Use ./tmp directory (project-local)
+- Fall back to test-specific directory if ./tmp unavailable
 
 ## Test Expansion Strategy
 

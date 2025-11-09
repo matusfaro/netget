@@ -214,7 +214,7 @@ echo -e "${GREEN}All validations passed!${NC}"
 echo ""
 
 # Setup Ollama lock for concurrent test safety
-OLLAMA_LOCK_PATH="${OLLAMA_LOCK_PATH:-/tmp/netget-ollama.lock}"
+OLLAMA_LOCK_PATH="${OLLAMA_LOCK_PATH:-./netget-ollama.lock}"
 export OLLAMA_LOCK_PATH
 echo -e "${BLUE}Using Ollama lock:${NC} $OLLAMA_LOCK_PATH"
 echo ""

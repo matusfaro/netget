@@ -27,6 +27,8 @@ See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<pr
 
 **Actions/Events Design (CRITICAL)**: NEVER use bytes (`Vec<u8>`) or base64-encoded strings in action parameters or event data. LLMs cannot effectively parse or construct binary data. Instead, use structured data (JSON objects, fields, enums) that you construct into bytes. Example: Instead of `{"data": "SGVsbG8="}`, use `{"method": "GET", "path": "/", "headers": {...}}`.
 
+**Protocol Memory (CRITICAL)**: Protocols should NOT use any storage layer. The LLM returns all needed items via actions, scripts, or static responses. Example: MySQL protocol does not have actual data stored - the LLM answers all SQL queries via `answer` action, script mode, or static response. Do not implement databases, file systems, or persistent storage within protocols. Let the LLM's memory and instruction handle all state and data.
+
 ## Protocol Documentation (CRITICAL)
 
 Each protocol has TWO CLAUDE.md files:
@@ -122,7 +124,12 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 ./cargo-isolated.sh build --all-features  # DON'T USE IN WEB
 ```
 
-**Detection in code**: Check environment variable before building:
+**Detection**: Use the provided script to check your environment:
+```bash
+./am_i_claude_code_for_web.sh
+```
+
+This script checks all detection methods and provides build guidance. You can also check manually in code:
 ```bash
 if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
     echo "Running in Claude Code for Web - skipping bluetooth-ble"
@@ -139,24 +146,24 @@ fi
 1. **Pipe output to file** for analysis:
 ```bash
 # Build and save output (uses PID for uniqueness)
-./cargo-isolated.sh build --no-default-features --features tcp 2>&1 | tee /tmp/netget-build-$$.log
+./cargo-isolated.sh build --no-default-features --features tcp 2>&1 | tee ./tmp/netget-build-$$.log
 
 # Test and save output (uses PID for uniqueness)
-./cargo-isolated.sh test --no-default-features --features tcp 2>&1 | tee /tmp/netget-test-$$.log
+./cargo-isolated.sh test --no-default-features --features tcp 2>&1 | tee ./tmp/netget-test-$$.log
 ```
 
 2. **Use grep to extract issues** from saved output:
 ```bash
 # Find all compilation errors
-grep "error\[E" /tmp/netget-build-$$.log
+grep "error\[E" ./tmp/netget-build-$$.log
 
 # Find specific error types
-grep "error\[E0425\]" /tmp/netget-build-$$.log  # Unresolved names
-grep "error\[E0599\]" /tmp/netget-build-$$.log  # Method not found
+grep "error\[E0425\]" ./tmp/netget-build-$$.log  # Unresolved names
+grep "error\[E0599\]" ./tmp/netget-build-$$.log  # Method not found
 
 # Find test failures
-grep "FAILED" /tmp/netget-test-$$.log
-grep "assertion" /tmp/netget-test-$$.log
+grep "FAILED" ./tmp/netget-test-$$.log
+grep "assertion" ./tmp/netget-test-$$.log
 ```
 
 3. **Fix ALL issues before rebuilding**:
@@ -179,10 +186,10 @@ grep "assertion" /tmp/netget-test-$$.log
 **Correct approach**:
 ```bash
 # Build once, save output
-./cargo-isolated.sh build 2>&1 | tee /tmp/netget-build-$$.log
+./cargo-isolated.sh build 2>&1 | tee ./tmp/netget-build-$$.log
 
 # Analyze ALL errors
-grep "error\[E" /tmp/netget-build-$$.log  # Shows all 15 errors
+grep "error\[E" ./tmp/netget-build-$$.log  # Shows all 15 errors
 
 # Fix all 15 errors in code
 
@@ -213,6 +220,8 @@ Tasks execute at intervals/delays. Three scopes: **Global** (any server, all act
 Research: **Server library** (crate eval: compliance, maturity, LLM control), **Client library** (E2E testing), **LLM control points** (async vs sync actions), **Logging strategy**, **Example prompts** (comprehensive, basis for E2E).
 
 ## Protocol Implementation Checklist (CRITICAL: ALL protocols MUST be feature gated)
+
+**IMPORTANT**: Protocols should NOT implement storage. The LLM returns all data via actions/scripts/static responses (e.g., MySQL protocol has no actual database - LLM answers all queries).
 
 **12-Step Implementation**:
 1. **protocol/registry.rs**: Register protocol implementation (feature-gated)
@@ -302,6 +311,8 @@ NetGet now supports LLM-controlled network **clients** in addition to servers. C
 - Simple synchronous request-response model
 
 ## Client Protocol Implementation Checklist (CRITICAL)
+
+**IMPORTANT**: Client protocols should NOT implement storage. The LLM returns all data via actions/scripts/static responses (e.g., Redis client has no cache - LLM decides when to send commands).
 
 **Before implementing a new client protocol:**
 1. **Consult `CLIENT_PROTOCOL_FEASIBILITY.md`** - Review the feasibility assessment for your protocol

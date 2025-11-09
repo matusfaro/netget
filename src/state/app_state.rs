@@ -223,9 +223,14 @@ struct AppStateInner {
     servers: HashMap<ServerId, ServerInstance>,
     /// All client instances
     clients: HashMap<ClientId, ClientInstance>,
-    /// Next server ID to assign
+    /// Unified ID counter for servers, connections, and clients
+    /// This ensures all IDs are unique across all three types
+    next_unified_id: u32,
+    #[allow(dead_code)]
+    /// Next server ID to assign (DEPRECATED - use next_unified_id)
     next_server_id: u32,
-    /// Next client ID to assign
+    #[allow(dead_code)]
+    /// Next client ID to assign (DEPRECATED - use next_unified_id)
     next_client_id: u32,
     /// Current Ollama model
     ollama_model: String,
@@ -285,6 +290,7 @@ impl AppState {
                 mode: Mode::Idle,
                 servers: HashMap::new(),
                 clients: HashMap::new(),
+                next_unified_id: 1,
                 next_server_id: 1,
                 next_client_id: 1,
                 ollama_model: "qwen3-coder:30b".to_string(),
@@ -337,8 +343,8 @@ impl AppState {
     /// Add a new server instance and return its ID
     pub async fn add_server(&self, mut server: ServerInstance) -> ServerId {
         let mut inner = self.inner.write().await;
-        let id = ServerId::new(inner.next_server_id);
-        inner.next_server_id += 1;
+        let id = ServerId::new(inner.next_unified_id);
+        inner.next_unified_id += 1;
         server.id = id;
         inner.servers.insert(id, server);
 
@@ -606,6 +612,15 @@ impl AppState {
     /// Get system capabilities detected at startup
     pub async fn get_system_capabilities(&self) -> crate::privilege::SystemCapabilities {
         self.inner.read().await.system_capabilities.clone()
+    }
+
+    /// Get the next unified ID (for connections)
+    /// This ensures all IDs (servers, connections, clients) are unique across all types
+    pub async fn get_next_unified_id(&self) -> u32 {
+        let mut inner = self.inner.write().await;
+        let id = inner.next_unified_id;
+        inner.next_unified_id += 1;
+        id
     }
 
     /// Update event handler configuration for a server
@@ -1069,8 +1084,8 @@ impl AppState {
     /// Add a new client instance and return its ID
     pub async fn add_client(&self, mut client: ClientInstance) -> ClientId {
         let mut inner = self.inner.write().await;
-        let id = ClientId::new(inner.next_client_id);
-        inner.next_client_id += 1;
+        let id = ClientId::new(inner.next_unified_id);
+        inner.next_unified_id += 1;
         client.id = id;
         inner.clients.insert(id, client);
 

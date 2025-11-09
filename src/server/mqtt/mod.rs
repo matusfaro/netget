@@ -93,7 +93,7 @@ async fn handle_mqtt_connection(
     status_tx: mpsc::UnboundedSender<String>,
     server_id: crate::state::ServerId,
 ) -> Result<()> {
-    let connection_id = ConnectionId::new();
+    let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
     // Wait for CONNECT packet
     let mut buf = vec![0u8; 1024];

@@ -100,7 +100,7 @@ impl UsbMscServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new();
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!(
                             "USB/IP connection {} from {} (USB MSC device)",
@@ -206,7 +206,7 @@ impl UsbMscServer {
         );
 
         // Initialize connection data
-        let disk_path = disk_image.unwrap_or_else(|| PathBuf::from("/tmp/netget_msc_disk.img"));
+        let disk_path = disk_image.unwrap_or_else(|| PathBuf::from("./tmp/netget_msc_disk.img"));
         let disk_size_mb = 10; // Default 10MB disk
         let write_protect = true; // Start write-protected for safety
 
