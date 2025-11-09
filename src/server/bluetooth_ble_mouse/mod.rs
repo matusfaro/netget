@@ -47,7 +47,7 @@ impl BluetoothBleMouse {
 
         // Create the underlying BLE server with HID mouse configuration
         let mouse_instruction = format!(
-            "{}. Configure as a BLE HID mouse with HID Service (UUID: 0x1812). {}",
+            "Configure as a BLE HID mouse with HID Service (UUID: 0x1812). {}",
             instruction,
             "Add HID Report Map, HID Report Input, HID Information, and HID Control Point characteristics for mouse."
         );

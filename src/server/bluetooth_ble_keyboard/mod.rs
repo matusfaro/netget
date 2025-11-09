@@ -47,7 +47,7 @@ impl BluetoothBleKeyboard {
 
         // Create the underlying BLE server with HID keyboard configuration
         let keyboard_instruction = format!(
-            "{}. Configure as a BLE HID keyboard with HID Service (UUID: 0x1812). {}",
+            "Configure as a BLE HID keyboard with HID Service (UUID: 0x1812). {}",
             instruction,
             "Add HID Report Map, HID Report Input, HID Information, and HID Control Point characteristics."
         );
