@@ -121,7 +121,7 @@ User: "Find http server packages for Node.js"
 4. Event: npm_package_info_received
    - Version: 4.18.2
    - Dist: { tarball: "https://...", shasum: "..." }
-5. LLM calls: download_tarball("express", "4.18.2", "/tmp/express.tgz")
+5. LLM calls: download_tarball("express", "4.18.2", "./express.tgz")
 6. Download completes
 ```
 
@@ -219,7 +219,7 @@ All operations logged via:
 [INFO] NPM client 1 received package info for express
 [INFO] NPM client 1 downloading tarball for lodash (4.17.21)
 [INFO] NPM client 1 downloading from: https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz
-[INFO] NPM client 1 downloaded tarball to: /tmp/lodash.tgz
+[INFO] NPM client 1 downloaded tarball to: ./lodash.tgz
 [ERROR] NPM client 1 request failed: 404 Not Found
 ```
 
@@ -292,7 +292,7 @@ See `tests/client/npm/CLAUDE.md` for E2E testing approach.
 
 ### Search and Download
 ```
-"Search for lodash packages, then download the latest version to /tmp/lodash.tgz"
+"Search for lodash packages, then download the latest version to ./lodash.tgz"
 ```
 
 ### Dependency Analysis

@@ -28,7 +28,7 @@ async fn test_socket_echo() -> E2EResult<()> {
 
     // VALIDATION: Send data and verify echo response
     println!("Connecting Unix socket client...");
-    let mut stream = UnixStream::connect("/tmp/netget-test-echo.sock").await?;
+    let mut stream = UnixStream::connect("./tmp/netget-test-echo.sock").await?;
     println!("✓ Unix socket client connected");
 
     // Send test data
@@ -66,7 +66,7 @@ async fn test_socket_echo() -> E2EResult<()> {
     server.stop().await?;
 
     // Cleanup socket file
-    let _ = std::fs::remove_file("/tmp/netget-test-echo.sock");
+    let _ = std::fs::remove_file("./tmp/netget-test-echo.sock");
 
     println!("=== Test passed ===\n");
     Ok(())
@@ -88,7 +88,7 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
 
     // VALIDATION: Verify PING/PONG
     println!("Connecting Unix socket client...");
-    let mut stream = UnixStream::connect("/tmp/netget-test-ping.sock").await?;
+    let mut stream = UnixStream::connect("./tmp/netget-test-ping.sock").await?;
     println!("✓ Unix socket client connected");
 
     // Send PING
@@ -117,7 +117,7 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
     server.stop().await?;
 
     // Cleanup socket file
-    let _ = std::fs::remove_file("/tmp/netget-test-ping.sock");
+    let _ = std::fs::remove_file("./tmp/netget-test-ping.sock");
 
     println!("=== Test passed ===\n");
     Ok(())
@@ -139,7 +139,7 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
 
     // VALIDATION: Send line and verify response
     println!("Connecting Unix socket client...");
-    let mut stream = UnixStream::connect("/tmp/netget-test-line.sock").await?;
+    let mut stream = UnixStream::connect("./tmp/netget-test-line.sock").await?;
     println!("✓ Unix socket client connected");
 
     // Send command line
@@ -175,7 +175,7 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
     server.stop().await?;
 
     // Cleanup socket file
-    let _ = std::fs::remove_file("/tmp/netget-test-line.sock");
+    let _ = std::fs::remove_file("./tmp/netget-test-line.sock");
 
     println!("=== Test passed ===\n");
     Ok(())

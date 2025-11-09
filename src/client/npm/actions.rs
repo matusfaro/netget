@@ -192,7 +192,7 @@ impl Protocol for NpmClientProtocol {
                         "type": "download_tarball",
                         "package_name": "lodash",
                         "version": "4.17.21",
-                        "output_path": "/tmp/lodash.tgz"
+                        "output_path": "./lodash.tgz"
                     }),
                 },
                 ActionDefinition {

@@ -146,24 +146,24 @@ fi
 1. **Pipe output to file** for analysis:
 ```bash
 # Build and save output (uses PID for uniqueness)
-./cargo-isolated.sh build --no-default-features --features tcp 2>&1 | tee /tmp/netget-build-$$.log
+./cargo-isolated.sh build --no-default-features --features tcp 2>&1 | tee ./tmp/netget-build-$$.log
 
 # Test and save output (uses PID for uniqueness)
-./cargo-isolated.sh test --no-default-features --features tcp 2>&1 | tee /tmp/netget-test-$$.log
+./cargo-isolated.sh test --no-default-features --features tcp 2>&1 | tee ./tmp/netget-test-$$.log
 ```
 
 2. **Use grep to extract issues** from saved output:
 ```bash
 # Find all compilation errors
-grep "error\[E" /tmp/netget-build-$$.log
+grep "error\[E" ./tmp/netget-build-$$.log
 
 # Find specific error types
-grep "error\[E0425\]" /tmp/netget-build-$$.log  # Unresolved names
-grep "error\[E0599\]" /tmp/netget-build-$$.log  # Method not found
+grep "error\[E0425\]" ./tmp/netget-build-$$.log  # Unresolved names
+grep "error\[E0599\]" ./tmp/netget-build-$$.log  # Method not found
 
 # Find test failures
-grep "FAILED" /tmp/netget-test-$$.log
-grep "assertion" /tmp/netget-test-$$.log
+grep "FAILED" ./tmp/netget-test-$$.log
+grep "assertion" ./tmp/netget-test-$$.log
 ```
 
 3. **Fix ALL issues before rebuilding**:
@@ -186,10 +186,10 @@ grep "assertion" /tmp/netget-test-$$.log
 **Correct approach**:
 ```bash
 # Build once, save output
-./cargo-isolated.sh build 2>&1 | tee /tmp/netget-build-$$.log
+./cargo-isolated.sh build 2>&1 | tee ./tmp/netget-build-$$.log
 
 # Analyze ALL errors
-grep "error\[E" /tmp/netget-build-$$.log  # Shows all 15 errors
+grep "error\[E" ./tmp/netget-build-$$.log  # Shows all 15 errors
 
 # Fix all 15 errors in code
 

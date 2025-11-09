@@ -123,7 +123,7 @@ impl Protocol for UsbMscProtocol {
             description: "Path to disk image file (will be created if doesn't exist)"
                 .to_string(),
             required: false,
-            default: Some("/tmp/netget_msc_disk.img".to_string()),
+            default: Some("./tmp/netget_msc_disk.img".to_string()),
         }]
     }
 

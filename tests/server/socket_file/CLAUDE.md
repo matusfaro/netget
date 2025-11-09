@@ -53,7 +53,7 @@ The socket file E2E tests validate Unix domain socket functionality using real U
 # Build with socket_file feature
 ./cargo-isolated.sh build --release --no-default-features --features socket_file
 
-# Ensure /tmp is writable (standard on Unix systems)
+# Ensure ./tmp directory exists (created automatically if needed)
 ```
 
 ### Execution
@@ -85,9 +85,9 @@ Received: ACK: Hello, Socket!
 - **Workaround**: Only run on Linux/macOS/Unix systems
 
 ### 2. Socket File Cleanup
-- **Issue**: If test crashes, socket file may remain in /tmp
+- **Issue**: If test crashes, socket file may remain in ./tmp
 - **Impact**: Next test may fail if socket file already exists
-- **Workaround**: Tests remove existing socket files before binding; manual cleanup with `rm /tmp/netget-test-*.sock`
+- **Workaround**: Tests remove existing socket files before binding; manual cleanup with `rm ./tmp/netget-test-*.sock`
 
 ### 3. LLM Response Variability
 - **Issue**: LLM may respond slightly differently (e.g., "ACK:" vs "Ack:")
@@ -100,9 +100,9 @@ Received: ACK: Hello, Socket!
 - **Workaround**: Increase timeout or use faster model
 
 ### 5. Socket File Permissions
-- **Issue**: /tmp may not be writable in some container/sandbox environments
+- **Issue**: ./tmp directory may not exist or be writable in some environments
 - **Impact**: Socket file creation fails
-- **Workaround**: Ensure /tmp is writable or modify socket paths in tests
+- **Workaround**: Ensure ./tmp directory exists and is writable, or modify socket paths in tests
 
 ## Test Coverage
 
