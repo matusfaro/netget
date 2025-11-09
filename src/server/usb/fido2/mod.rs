@@ -36,7 +36,7 @@
 //!
 //! ## Limitations
 //!
-//! - ✅ Persistent credential storage (saved to `.netget/fido2_credentials.json`)
+//! - No persistent credential storage (in-memory only, LLM controls persistence)
 //! - No PIN/UV support
 //! - No resident key support
 //! - Simplified attestation (no proper certificate chain)
@@ -95,14 +95,10 @@ struct Fido2HidHandler {
 #[cfg(feature = "usb-fido2")]
 impl Fido2HidHandler {
     fn new() -> Self {
-        Self::with_storage(None)
-    }
-
-    fn with_storage(storage_path: Option<std::path::PathBuf>) -> Self {
         Self {
             ctaphid: CtapHidHandler::new(),
             u2f: U2fHandler::new(),
-            ctap2: Ctap2Handler::with_storage(storage_path),
+            ctap2: Ctap2Handler::new(),
             response_packets: Vec::new(),
         }
     }
@@ -307,15 +303,6 @@ impl UsbFido2Server {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        // Configure persistent storage path
-        let storage_path = std::env::current_dir()
-            .ok()
-            .map(|p| p.join(".netget").join("fido2_credentials.json"));
-
-        if let Some(ref path) = storage_path {
-            info!("FIDO2 credentials will be stored in: {}", path.display());
-        }
-
         // Create USB device descriptor for FIDO2 security key
         let device_desc = usbip::UsbDeviceDescriptor {
             bcd_usb: 0x0200,  // USB 2.0
@@ -332,8 +319,8 @@ impl UsbFido2Server {
             num_configurations: 1,
         };
 
-        // Create FIDO2 HID handler with persistent storage
-        let handler = Box::new(Fido2HidHandler::with_storage(storage_path));
+        // Create FIDO2 HID handler
+        let handler = Box::new(Fido2HidHandler::new());
         let handler_arc = Arc::new(std::sync::Mutex::new(handler as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
         // Create USB interface

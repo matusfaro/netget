@@ -145,7 +145,7 @@ impl Ctap2Response {
 
 /// Stored CTAP2 credential
 #[cfg(feature = "usb-fido2")]
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone)]
 struct Ctap2Credential {
     /// Credential ID (opaque blob)
     credential_id: Vec<u8>,
@@ -170,101 +170,15 @@ pub struct Ctap2CredentialStore {
     credentials: std::collections::HashMap<String, Vec<Ctap2Credential>>,
     /// RNG
     rng: ring::rand::SystemRandom,
-    /// Storage file path
-    storage_path: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "usb-fido2")]
 impl Ctap2CredentialStore {
     pub fn new() -> Self {
-        Self::with_storage(None)
-    }
-
-    /// Create a new credential store with optional persistent storage
-    pub fn with_storage(storage_path: Option<std::path::PathBuf>) -> Self {
-        let mut store = Self {
+        Self {
             credentials: std::collections::HashMap::new(),
             rng: ring::rand::SystemRandom::new(),
-            storage_path: storage_path.clone(),
-        };
-
-        // Load existing credentials if storage path is provided
-        if let Some(ref path) = storage_path {
-            if let Err(e) = store.load_from_disk() {
-                warn!("Failed to load credentials from {}: {}", path.display(), e);
-            } else {
-                info!("Loaded credentials from {}", path.display());
-            }
         }
-
-        store
-    }
-
-    /// Save credentials to disk
-    fn save_to_disk(&self) -> Result<()> {
-        let path = match &self.storage_path {
-            Some(p) => p,
-            None => return Ok(()), // No persistence configured
-        };
-
-        // Flatten credentials for serialization
-        let all_creds: Vec<&Ctap2Credential> = self
-            .credentials
-            .values()
-            .flatten()
-            .collect();
-
-        let json = serde_json::to_string_pretty(&all_creds)
-            .context("Failed to serialize credentials")?;
-
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create storage directory")?;
-        }
-
-        // Write to temp file first, then rename (atomic operation)
-        let temp_path = path.with_extension("tmp");
-        std::fs::write(&temp_path, json)
-            .context("Failed to write credentials to temp file")?;
-        std::fs::rename(&temp_path, path)
-            .context("Failed to rename temp file")?;
-
-        trace!("Saved {} credentials to {}", all_creds.len(), path.display());
-        Ok(())
-    }
-
-    /// Load credentials from disk
-    fn load_from_disk(&mut self) -> Result<()> {
-        let path = match &self.storage_path {
-            Some(p) => p,
-            None => return Ok(()), // No persistence configured
-        };
-
-        if !path.exists() {
-            debug!("Storage file does not exist: {}", path.display());
-            return Ok(());
-        }
-
-        let json = std::fs::read_to_string(path)
-            .context("Failed to read credentials file")?;
-
-        let creds: Vec<Ctap2Credential> = serde_json::from_str(&json)
-            .context("Failed to deserialize credentials")?;
-
-        // Rebuild credentials map
-        self.credentials.clear();
-        for cred in creds {
-            self.credentials
-                .entry(cred.rp_id.clone())
-                .or_insert_with(Vec::new)
-                .push(cred);
-        }
-
-        info!("Loaded {} credentials from {}",
-            self.credentials.values().map(|v| v.len()).sum::<usize>(),
-            path.display());
-        Ok(())
     }
 
     /// Create a new credential
@@ -302,11 +216,6 @@ impl Ctap2CredentialStore {
             .entry(rp_id.to_string())
             .or_insert_with(Vec::new)
             .push(credential.clone());
-
-        // Save to disk
-        if let Err(e) = self.save_to_disk() {
-            warn!("Failed to save credentials: {}", e);
-        }
 
         info!(
             "Created credential for RP '{}', user '{}'",
@@ -363,11 +272,6 @@ pub struct Ctap2Handler {
 #[cfg(feature = "usb-fido2")]
 impl Ctap2Handler {
     pub fn new() -> Self {
-        Self::with_storage(None)
-    }
-
-    /// Create a new CTAP2 handler with optional persistent storage
-    pub fn with_storage(storage_path: Option<std::path::PathBuf>) -> Self {
         let aaguid = [
             0x4e, 0x65, 0x74, 0x47,  // "NetG"
             0x65, 0x74, 0x2d, 0x46,  // "et-F"
@@ -377,7 +281,7 @@ impl Ctap2Handler {
 
         Self {
             aaguid,
-            store: Ctap2CredentialStore::with_storage(storage_path),
+            store: Ctap2CredentialStore::new(),
         }
     }
 
@@ -557,11 +461,6 @@ impl Ctap2Handler {
         // Increment counter
         credential.counter += 1;
 
-        // Save updated counter to disk
-        if let Err(e) = self.store.save_to_disk() {
-            warn!("Failed to save credential counter: {}", e);
-        }
-
         // Build authenticator data
         let mut auth_data = Vec::new();
         auth_data.extend_from_slice(&ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref());
@@ -604,12 +503,6 @@ impl Ctap2Handler {
     fn handle_reset(&mut self) -> Ctap2Response {
         debug!("CTAP2 Reset");
         self.store.credentials.clear();
-
-        // Save empty state to disk
-        if let Err(e) = self.store.save_to_disk() {
-            warn!("Failed to save cleared credentials: {}", e);
-        }
-
         info!("All credentials cleared");
         Ctap2Response::success(CborValue::Map(BTreeMap::new()))
     }
