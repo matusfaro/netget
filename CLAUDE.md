@@ -143,31 +143,39 @@ fi
 
 **Building and testing takes a long time** (10s-2min depending on features). **NEVER rebuild/retest after each individual fix.** Instead:
 
-1. **Pipe output to file** for analysis:
-```bash
-# Build and save output (uses PID for uniqueness)
-./cargo-isolated.sh build --no-default-features --features tcp 2>&1 | tee ./tmp/netget-build-$$.log
+**Automatic Logging**: `./cargo-isolated.sh` automatically logs all output to `./tmp/netget-<command>-$$.log` and displays the log path. Use `./cargo-isolated.sh --print-last` to view the last log.
 
-# Test and save output (uses PID for uniqueness)
-./cargo-isolated.sh test --no-default-features --features tcp 2>&1 | tee ./tmp/netget-test-$$.log
+1. **Build/test and view output**:
+```bash
+# Build and pipe to see last 50 lines (automatically logged to ./tmp/netget-build-$$.log)
+./cargo-isolated.sh build --no-default-features --features tcp | tail -50
+
+# Test and pipe to see last 50 lines (automatically logged to ./tmp/netget-test-$$.log)
+./cargo-isolated.sh test --no-default-features --features tcp | tail -50
 ```
 
-2. **Use grep to extract issues** from saved output:
+2. **Analyze saved log for ALL errors**:
 ```bash
+# View more of the log (last 100 lines)
+./cargo-isolated.sh --print-last | tail -100
+
 # Find all compilation errors
-grep "error\[E" ./tmp/netget-build-$$.log
+./cargo-isolated.sh --print-last | grep "error\[E"
+
+# Get error summary (count by type)
+./cargo-isolated.sh --print-last | grep "^error\[E" | sed 's/:.*$//' | sort | uniq -c | sort -rn
 
 # Find specific error types
-grep "error\[E0425\]" ./tmp/netget-build-$$.log  # Unresolved names
-grep "error\[E0599\]" ./tmp/netget-build-$$.log  # Method not found
+./cargo-isolated.sh --print-last | grep "error\[E0425\]"  # Unresolved names
+./cargo-isolated.sh --print-last | grep "error\[E0599\]"  # Method not found
 
 # Find test failures
-grep "FAILED" ./tmp/netget-test-$$.log
-grep "assertion" ./tmp/netget-test-$$.log
+./cargo-isolated.sh --print-last | grep "FAILED"
+./cargo-isolated.sh --print-last | grep "assertion"
 ```
 
 3. **Fix ALL issues before rebuilding**:
-   - Read through all errors/failures in the log file
+   - Analyze the complete log using `./cargo-isolated.sh --print-last`
    - Identify ALL problems (compilation errors, test failures, warnings)
    - Fix everything in a single batch
    - Only rebuild/retest once after all fixes are applied
@@ -175,29 +183,31 @@ grep "assertion" ./tmp/netget-test-$$.log
 **Anti-pattern** (wasteful):
 ```bash
 # DON'T do this - rebuilds after every single fix
-./cargo-isolated.sh build  # Error 1 found
+./cargo-isolated.sh build | tail -50  # Error 1 found
 # Fix error 1
-./cargo-isolated.sh build  # Error 2 found
+./cargo-isolated.sh build | tail -50  # Error 2 found (wasted 30s)
 # Fix error 2
-./cargo-isolated.sh build  # Error 3 found
+./cargo-isolated.sh build | tail -50  # Error 3 found (wasted another 30s)
 # ... (wastes hours)
 ```
 
 **Correct approach**:
 ```bash
-# Build once, save output
-./cargo-isolated.sh build 2>&1 | tee ./tmp/netget-build-$$.log
+# Build once and view last 50 lines (full log saved automatically)
+./cargo-isolated.sh build --no-default-features --features tcp | tail -50
 
-# Analyze ALL errors
-grep "error\[E" ./tmp/netget-build-$$.log  # Shows all 15 errors
+# Analyze ALL errors in the saved log
+./cargo-isolated.sh --print-last | grep "error\[E"  # Shows all 15 errors
 
 # Fix all 15 errors in code
 
 # Rebuild once
-./cargo-isolated.sh build
+./cargo-isolated.sh build --no-default-features --features tcp | tail -50
 ```
 
 **Time savings**: Fixing 10 errors one-by-one = 10-20 minutes. Fixing all at once = 30 seconds + one build.
+
+**Log files**: Located in `./tmp/netget-<command>-<pid>.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log.
 
 ## Logging (CRITICAL)
 
