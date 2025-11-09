@@ -216,14 +216,25 @@ pub async fn start_server_from_action(
     }
 
     // Create server instance
-    let server_id = state
-        .add_server(
-            port,
-            base_stack.to_string(),
-            instruction.clone(),
-            startup_params.clone(),
-        )
-        .await;
+    let server = crate::state::server::ServerInstance {
+        id: ServerId::new(0), // Will be assigned by add_server
+        port,
+        protocol_name: base_stack.to_string(),
+        instruction: instruction.clone(),
+        memory: String::new(),
+        status: ServerStatus::Starting,
+        connections: Default::default(),
+        local_addr: None,
+        handle: None,
+        created_at: std::time::Instant::now(),
+        status_changed_at: std::time::Instant::now(),
+        startup_params: startup_params.clone(),
+        event_handler_config: None,
+        protocol_data: serde_json::Value::Null,
+        log_files: Default::default(),
+    };
+
+    let server_id = state.add_server(server).await;
 
     // Set initial memory if provided
     if let Some(mem) = initial_memory {
@@ -232,18 +243,18 @@ pub async fn start_server_from_action(
 
     // Configure event handlers if provided
     if let Some(handlers) = event_handlers {
-        use crate::scripting::EventHandlerConfig;
+        use crate::scripting::{EventHandlerConfig, EventHandler};
 
-        let handler_configs: Vec<EventHandlerConfig> = handlers
+        let event_handlers: Vec<EventHandler> = handlers
             .into_iter()
             .filter_map(|h| serde_json::from_value(h).ok())
             .collect();
 
-        if !handler_configs.is_empty() {
+        if !event_handlers.is_empty() {
             state
                 .with_server_mut(server_id, |s| {
-                    s.event_handler_config = Some(crate::scripting::EventHandlerConfig {
-                        handlers: handler_configs,
+                    s.event_handler_config = Some(EventHandlerConfig {
+                        handlers: event_handlers,
                     });
                 })
                 .await;

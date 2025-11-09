@@ -230,8 +230,8 @@ pub async fn run_with_actions(
     // Execute each action
     for (i, action) in actions.iter().enumerate() {
         // Try to parse as common action
-        if let Ok(common_action) = crate::llm::actions::CommonAction::from_json(action) {
-            use crate::llm::actions::CommonAction;
+        if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
+            use crate::llm::actions::common::CommonAction;
             use crate::cli::{server_startup, client_startup};
 
             match common_action {

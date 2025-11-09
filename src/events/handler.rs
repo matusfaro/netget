@@ -32,6 +32,11 @@ impl EventHandler {
         self.llm.list_models().await
     }
 
+    /// Get a clone of the Ollama client
+    pub fn get_llm_client(&self) -> OllamaClient {
+        self.llm.clone()
+    }
+
     /// Handle an application event
     /// Returns Ok(true) if the application should quit
     pub async fn handle_event(&mut self, event: AppEvent, ui: &mut App) -> Result<bool> {
@@ -1444,8 +1449,8 @@ impl EventHandler {
         // Execute each action
         for (i, action) in actions.iter().enumerate() {
             // Try to parse as common action
-            if let Ok(common_action) = crate::llm::actions::CommonAction::from_json(action) {
-                use crate::llm::actions::CommonAction;
+            if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
+                use crate::llm::actions::common::CommonAction;
 
                 match common_action {
                     CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
