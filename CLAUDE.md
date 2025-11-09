@@ -27,6 +27,8 @@ See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<pr
 
 **Actions/Events Design (CRITICAL)**: NEVER use bytes (`Vec<u8>`) or base64-encoded strings in action parameters or event data. LLMs cannot effectively parse or construct binary data. Instead, use structured data (JSON objects, fields, enums) that you construct into bytes. Example: Instead of `{"data": "SGVsbG8="}`, use `{"method": "GET", "path": "/", "headers": {...}}`.
 
+**Protocol Memory (CRITICAL)**: Protocols should NOT use any storage layer. The LLM returns all needed items via actions, scripts, or static responses. Example: MySQL protocol does not have actual data stored - the LLM answers all SQL queries via `answer` action, script mode, or static response. Do not implement databases, file systems, or persistent storage within protocols. Let the LLM's memory and instruction handle all state and data.
+
 ## Protocol Documentation (CRITICAL)
 
 Each protocol has TWO CLAUDE.md files:
@@ -219,6 +221,8 @@ Research: **Server library** (crate eval: compliance, maturity, LLM control), **
 
 ## Protocol Implementation Checklist (CRITICAL: ALL protocols MUST be feature gated)
 
+**IMPORTANT**: Protocols should NOT implement storage. The LLM returns all data via actions/scripts/static responses (e.g., MySQL protocol has no actual database - LLM answers all queries).
+
 **12-Step Implementation**:
 1. **protocol/registry.rs**: Register protocol implementation (feature-gated)
 2. **rolling_tui.rs**: Add welcome message (state will be Experimental by default)
@@ -307,6 +311,8 @@ NetGet now supports LLM-controlled network **clients** in addition to servers. C
 - Simple synchronous request-response model
 
 ## Client Protocol Implementation Checklist (CRITICAL)
+
+**IMPORTANT**: Client protocols should NOT implement storage. The LLM returns all data via actions/scripts/static responses (e.g., Redis client has no cache - LLM decides when to send commands).
 
 **Before implementing a new client protocol:**
 1. **Consult `CLIENT_PROTOCOL_FEASIBILITY.md`** - Review the feasibility assessment for your protocol
