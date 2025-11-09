@@ -12,13 +12,6 @@
 
 set -e
 
-# Set AWS profile for sccache S3 backend
-export RUSTC_WRAPPER=sccache
-export SCCACHE_BUCKET=netget-sccache
-export SCCACHE_REGION=us-east-1
-export SCCACHE_CACHE_SIZE=50G
-export AWS_PROFILE=sccache-netget
-
 # Parse flags
 SKIP_CLEANUP=false
 CARGO_ARGS=()
@@ -79,6 +72,23 @@ else
         export CARGO_TARGET_DIR="${PROJECT_ROOT}/target"
     fi
     BUILD_MODE="Standard"
+fi
+
+# Check for sccache
+if [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
+    echo "⚠️  WARNING: RUSTC_WRAPPER is not set to sccache" >&2
+    echo "" >&2
+    echo "To speed up builds, install sccache:" >&2
+    echo "  cargo install sccache" >&2
+    echo "" >&2
+    echo "Then add to your ~/.bashrc, ~/.zshrc, or shell config:" >&2
+    echo "  export RUSTC_WRAPPER=sccache" >&2
+    echo "  export SCCACHE_CACHE_SIZE=50G" >&2
+    echo "" >&2
+    echo "Or set it for this session:" >&2
+    echo "  export RUSTC_WRAPPER=sccache" >&2
+    echo "  export SCCACHE_CACHE_SIZE=50G" >&2
+    echo "" >&2
 fi
 
 # Echo the target directory and session info for visibility
