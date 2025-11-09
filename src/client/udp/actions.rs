@@ -64,6 +64,12 @@ pub static UDP_CLIENT_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
 /// UDP client protocol action handler
 pub struct UdpClientProtocol;
 
+impl Default for UdpClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UdpClientProtocol {
     pub fn new() -> Self {
         Self

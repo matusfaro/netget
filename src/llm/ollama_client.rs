@@ -69,6 +69,7 @@ impl Message {
 
 /// Structured response from the LLM
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Default)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
     #[serde(default)]
@@ -99,19 +100,6 @@ pub struct LlmResponse {
     pub append_memory: Option<String>,
 }
 
-impl Default for LlmResponse {
-    fn default() -> Self {
-        Self {
-            output: None,
-            close_connection: false,
-            wait_for_more: false,
-            shutdown_server: false,
-            log_message: None,
-            set_memory: None,
-            append_memory: None,
-        }
-    }
-}
 
 impl LlmResponse {
     /// Parse from JSON string with fallback to legacy text format
@@ -476,8 +464,9 @@ impl OllamaClient {
     /// * `web_search_mode` - Current web search mode (On/Off/Ask)
     ///
     /// # Returns
+    ///
     /// * `Vec<serde_json::Value>` - All non-tool actions collected across conversation turns
-
+    ///
     /// Chat completion using conversation messages
     ///
     /// Uses ollama-rs chat API which supports conversation history.
@@ -665,7 +654,7 @@ impl OllamaClient {
             let (tools, regular): (Vec<_>, Vec<_>) = action_response
                 .actions
                 .into_iter()
-                .partition(|action| ToolAction::is_tool_action(action));
+                .partition(ToolAction::is_tool_action);
 
             // Collect regular actions
             all_actions.extend(regular);

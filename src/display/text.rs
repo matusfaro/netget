@@ -38,8 +38,8 @@ impl TextRenderer {
 
                 if let Some(image) = swash_cache.get_image(&mut self.font_system, physical_glyph.cache_key) {
                     // Blend glyph onto pixmap
-                    let glyph_x = physical_glyph.x as i32;
-                    let glyph_y = physical_glyph.y as i32;
+                    let glyph_x = physical_glyph.x;
+                    let glyph_y = physical_glyph.y;
 
                     for (img_y, row) in image.data.chunks_exact(image.placement.width as usize).enumerate() {
                         for (img_x, &alpha) in row.iter().enumerate() {
@@ -57,7 +57,7 @@ impl TextRenderer {
 
                                 let blended = tiny_skia::ColorU8::from_rgba(r, g, b, 255);
                                 let width = pixmap.width();
-                                pixmap.pixels_mut()[(py as u32 * width + px as u32) as usize] = blended.premultiply().into();
+                                pixmap.pixels_mut()[(py as u32 * width + px as u32) as usize] = blended.premultiply();
                             }
                         }
                     }

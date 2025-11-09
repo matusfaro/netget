@@ -52,6 +52,12 @@ pub static TCP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
 /// TCP client protocol action handler
 pub struct TcpClientProtocol;
 
+impl Default for TcpClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TcpClientProtocol {
     pub fn new() -> Self {
         Self

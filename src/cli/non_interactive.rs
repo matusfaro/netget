@@ -41,11 +41,7 @@ pub async fn run_non_interactive(
         Some(crate::state::app_state::ScriptingMode::Off)
     } else if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
-    } else if let Some(mode) = settings.parse_scripting_mode() {
-        Some(mode)
-    } else {
-        None
-    };
+    } else { settings.parse_scripting_mode() };
 
     if let Some(mode) = mode_to_set {
         // Validate that the requested environment is available

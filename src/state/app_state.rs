@@ -119,8 +119,10 @@ impl std::fmt::Display for ScriptingMode {
 
 /// Web search mode - controls when web search is allowed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum WebSearchMode {
     /// Web search always enabled
+    #[default]
     On,
     /// Web search always disabled
     Off,
@@ -157,16 +159,13 @@ impl std::str::FromStr for WebSearchMode {
     }
 }
 
-impl Default for WebSearchMode {
-    fn default() -> Self {
-        Self::On
-    }
-}
 
 /// Event handler mode - controls how LLM should configure event handlers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum EventHandlerMode {
     /// LLM chooses handler types (script/static/llm) as appropriate
+    #[default]
     Any,
     /// Force all events to use script handlers
     Script,
@@ -193,11 +192,6 @@ impl std::fmt::Display for EventHandlerMode {
     }
 }
 
-impl Default for EventHandlerMode {
-    fn default() -> Self {
-        Self::Any
-    }
-}
 
 /// Request for web search approval (sent from tool executor to UI)
 pub struct WebApprovalRequest {
@@ -325,7 +319,7 @@ impl AppState {
 
         // Generate 4 random hex characters for additional uniqueness
         let random_bytes: [u8; 2] = rand::random();
-        let random_hex = hex::encode(&random_bytes);
+        let random_hex = hex::encode(random_bytes);
 
         format!("claude-{}-{}-{}", pid, timestamp, random_hex)
     }

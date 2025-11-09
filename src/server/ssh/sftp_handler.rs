@@ -240,10 +240,12 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                                 let is_dir = entry.get("is_dir")?.as_bool().unwrap_or(false);
                                 let size = entry.get("size")?.as_u64().unwrap_or(0);
 
-                                let mut attrs = FileAttributes::default();
-                                attrs.size = Some(size);
                                 // Set permissions: 0755 for dirs, 0644 for files
-                                attrs.permissions = Some(if is_dir { 0o40755 } else { 0o100644 });
+                                let attrs = FileAttributes {
+                                    size: Some(size),
+                                    permissions: Some(if is_dir { 0o40755 } else { 0o100644 }),
+                                    ..Default::default()
+                                };
 
                                 Some(File::new(name, attrs))
                             }).collect::<Vec<_>>()
@@ -251,7 +253,9 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                         .unwrap_or_default();
 
                     // Mark directory as read
-                    self.handles.lock().await.get_mut(&handle).map(|h| h.dir_read_done = true);
+                    if let Some(h) = self.handles.lock().await.get_mut(&handle) {
+                        h.dir_read_done = true;
+                    }
 
                     let _ = self.status_tx.send(format!("→ SFTP listed {} items in {}", files.len(), path));
 
@@ -407,7 +411,7 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
                     Ok(Data {
                         id,
-                        data: data.into(),
+                        data,
                     })
                 }
                 Err(_) => {
@@ -582,7 +586,7 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
     fn unimplemented(&self) -> Self::Error {
         error!("SFTP unimplemented packet received");
-        let _ = self.status_tx.send(format!("[ERROR] SFTP unimplemented packet received"));
+        let _ = self.status_tx.send("[ERROR] SFTP unimplemented packet received".to_string());
         StatusCode::OpUnsupported
     }
 }

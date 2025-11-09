@@ -19,6 +19,12 @@ pub struct UdpProtocol {
     socket: Option<Arc<UdpSocket>>,
 }
 
+impl Default for UdpProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UdpProtocol {
     pub fn new() -> Self {
         Self { socket: None }

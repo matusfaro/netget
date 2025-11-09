@@ -81,15 +81,12 @@ impl StartupParams {
     /// - If the parameter exists but is not a string
     pub fn get_optional_string(&self, key: &str) -> Option<String> {
         self.validate_key(key);
-        match self.params.get(key) {
-            None => None,
-            Some(v) => Some(v.as_str().unwrap_or_else(|| {
+        self.params.get(key).map(|v| v.as_str().unwrap_or_else(|| {
                 panic!(
                     "Optional string parameter '{}' exists but is not a string. Value: {}",
                     key, v
                 )
-            }).to_string()),
-        }
+            }).to_string())
     }
 
     /// Get a required boolean parameter
@@ -115,15 +112,12 @@ impl StartupParams {
     /// - If the parameter exists but is not a boolean
     pub fn get_optional_bool(&self, key: &str) -> Option<bool> {
         self.validate_key(key);
-        match self.params.get(key) {
-            None => None,
-            Some(v) => Some(v.as_bool().unwrap_or_else(|| {
+        self.params.get(key).map(|v| v.as_bool().unwrap_or_else(|| {
                 panic!(
                     "Optional boolean parameter '{}' exists but is not a boolean. Value: {}",
                     key, v
                 )
-            })),
-        }
+            }))
     }
 
     /// Get a required integer parameter
@@ -149,15 +143,12 @@ impl StartupParams {
     /// - If the parameter exists but is not an integer
     pub fn get_optional_i64(&self, key: &str) -> Option<i64> {
         self.validate_key(key);
-        match self.params.get(key) {
-            None => None,
-            Some(v) => Some(v.as_i64().unwrap_or_else(|| {
+        self.params.get(key).map(|v| v.as_i64().unwrap_or_else(|| {
                 panic!(
                     "Optional integer parameter '{}' exists but is not an integer. Value: {}",
                     key, v
                 )
-            })),
-        }
+            }))
     }
 
     /// Get a required unsigned integer parameter
@@ -183,15 +174,12 @@ impl StartupParams {
     /// - If the parameter exists but is not an unsigned integer
     pub fn get_optional_u64(&self, key: &str) -> Option<u64> {
         self.validate_key(key);
-        match self.params.get(key) {
-            None => None,
-            Some(v) => Some(v.as_u64().unwrap_or_else(|| {
+        self.params.get(key).map(|v| v.as_u64().unwrap_or_else(|| {
                 panic!(
                     "Optional unsigned integer parameter '{}' exists but is not an unsigned integer. Value: {}",
                     key, v
                 )
-            })),
-        }
+            }))
     }
 
     /// Get an optional u32 parameter

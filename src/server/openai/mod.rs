@@ -321,7 +321,7 @@ async fn handle_chat_completions(
             });
 
             trace!("Chat completion response: {}", serde_json::to_string_pretty(&response).unwrap_or_default());
-            let _ = status_tx.send(format!("[TRACE] Chat completion response generated"));
+            let _ = status_tx.send("[TRACE] Chat completion response generated".to_string());
 
             Ok(Response::builder()
                 .status(StatusCode::OK)
