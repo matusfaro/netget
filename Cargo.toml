@@ -78,6 +78,7 @@ s3 = ["aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:rust-s3"]
 sqs = ["aws-config", "aws-sdk-sqs"]  # AWS SQS queue
 npm = []  # NPM registry server uses only HTTP, no extra deps
 openai = ["async-openai"]  # OpenAI API client
+ollama = []  # Ollama API server and client (uses existing reqwest, no extra deps)
 oauth2 = ["dep:oauth2", "urlencoding"]  # OAuth2 authorization server and client
 jsonrpc = []  # JSON-RPC 2.0 server uses only HTTP, no extra deps
 saml-idp = []  # SAML Identity Provider (authentication, assertion generation)
@@ -172,6 +173,7 @@ all-protocols = [
     "sqs",
     "npm",
     "openai",
+    "ollama",
     "oauth2",
     "jsonrpc",
     "wireguard",
