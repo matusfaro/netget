@@ -125,7 +125,7 @@ impl CassandraServer {
         addr: SocketAddr,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+        let connection_id = ConnectionId::new(self.app_state.get_next_unified_id().await);
 
         // Track the connection
         if let Some(server_id) = self.server_id {

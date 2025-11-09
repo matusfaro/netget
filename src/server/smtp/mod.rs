@@ -57,7 +57,9 @@ impl SmtpServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = crate::server::connection::ConnectionId::new();
+                        let connection_id = crate::server::connection::ConnectionId::new(
+                            app_state.get_next_unified_id().await
+                        );
                         debug!("SMTP connection {} from {}", connection_id, remote_addr);
                         let _ = status_tx.send(format!("[DEBUG] SMTP connection {} from {}", connection_id, remote_addr));
 

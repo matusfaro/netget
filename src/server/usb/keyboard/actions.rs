@@ -30,7 +30,12 @@ pub static USB_KEYBOARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host attached to USB keyboard device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -41,7 +46,12 @@ pub static USB_KEYBOARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Host detached from USB keyboard device",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -52,10 +62,30 @@ pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(||
         "Host changed keyboard LED status (Num Lock, Caps Lock, Scroll Lock)",
     )
     .with_parameters(vec![
-        Parameter::new("connection_id", "string", "Connection ID of the USB/IP session"),
-        Parameter::new("num_lock", "boolean", "Num Lock LED state"),
-        Parameter::new("caps_lock", "boolean", "Caps Lock LED state"),
-        Parameter::new("scroll_lock", "boolean", "Scroll Lock LED state"),
+        Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID of the USB/IP session".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "num_lock".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Num Lock LED state".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "caps_lock".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Caps Lock LED state".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "scroll_lock".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Scroll Lock LED state".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -69,6 +99,7 @@ pub struct UsbKeyboardProtocol {
 }
 
 #[cfg(feature = "usb-keyboard")]
+#[derive(Clone)]
 pub struct ConnectionData {
     // Placeholder for keyboard-specific connection data
     // Will be populated during USB/IP implementation
@@ -143,14 +174,14 @@ impl Protocol for UsbKeyboardProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        crate::protocol::metadata::ProtocolMetadataV2::new(
-            crate::protocol::metadata::ProtocolState::Experimental,
-            "Virtual USB HID keyboard device using USB/IP protocol",
-            "LLM controls keyboard input (typing, key presses, combinations)",
-            "E2E tests using Linux usbip client",
-            crate::protocol::metadata::PrivilegeRequirement::None,
-        )
-        .with_notes("Requires client to have vhci-hcd kernel module and run 'usbip attach'")
+        crate::protocol::metadata::ProtocolMetadataV2::builder()
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .implementation("Virtual USB HID keyboard device using USB/IP protocol")
+            .llm_control("LLM controls keyboard input (typing, key presses, combinations)")
+            .e2e_testing("E2E tests using Linux usbip client")
+            .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
+            .notes("Requires client to have vhci-hcd kernel module and run 'usbip attach'")
+            .build()
     }
 
     fn description(&self) -> &'static str {
@@ -190,14 +221,16 @@ impl Server for UsbKeyboardProtocol {
     fn execute_action(
         &self,
         action: serde_json::Value,
-        connection_id: Option<ConnectionId>,
-        _app_state: &AppState,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
 
-        let connection_id = connection_id.context("USB keyboard actions require connection_id")?;
+        // Extract connection_id from action JSON
+        let connection_id = action["connection_id"]
+            .as_u64()
+            .map(|id| ConnectionId::new(id as u32))
+            .context("USB keyboard actions require connection_id field in action")?;
 
         // Get handler (need to use blocking approach since execute_action is sync)
         let handler = {
@@ -315,13 +348,18 @@ fn type_text_action() -> ActionDefinition {
         name: "type_text".to_string(),
         description: "Type text on the USB keyboard as if a user typed it".to_string(),
         parameters: vec![
-            Parameter::new("text", "string", "Text to type"),
-            Parameter::new(
-                "typing_speed_ms",
-                "number",
-                "Delay between keypresses in milliseconds (default: 50ms)",
-            )
-            .optional(),
+            Parameter {
+            name: "text".to_string(),
+            type_hint: "string".to_string(),
+            description: "Text to type".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "typing_speed_ms".to_string(),
+            type_hint: "number".to_string(),
+            description: "Delay between keypresses in milliseconds (default: 50ms)".to_string(),
+            required: false,
+        },
         ],
         example: json!({
             "type": "type_text",
@@ -338,13 +376,18 @@ fn press_key_action() -> ActionDefinition {
         description: "Press a single key with optional modifier keys (Ctrl, Shift, Alt, GUI)"
             .to_string(),
         parameters: vec![
-            Parameter::new("key", "string", "Key to press (e.g., 'a', 'enter', 'f1')"),
-            Parameter::new(
-                "modifiers",
-                "array",
-                "Modifier keys: 'ctrl', 'shift', 'alt', 'gui' (Windows/Command key)",
-            )
-            .optional(),
+            Parameter {
+            name: "key".to_string(),
+            type_hint: "string".to_string(),
+            description: "Key to press (e.g., 'a', 'enter', 'f1')".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "modifiers".to_string(),
+            type_hint: "array".to_string(),
+            description: "Modifier keys: 'ctrl', 'shift', 'alt', 'gui' (Windows/Command key)".to_string(),
+            required: false,
+        },
         ],
         example: json!({
             "type": "press_key",
@@ -359,11 +402,12 @@ fn press_key_combo_action() -> ActionDefinition {
     ActionDefinition {
         name: "press_key_combo".to_string(),
         description: "Press multiple keys simultaneously (e.g., Ctrl+Alt+Delete)".to_string(),
-        parameters: vec![Parameter::new(
-            "keys",
-            "array",
-            "Keys to press together: 'ctrl', 'alt', 'delete', etc.",
-        )],
+        parameters: vec![Parameter {
+            name: "keys".to_string(),
+            type_hint: "array".to_string(),
+            description: "Keys to press together: 'ctrl', 'alt', 'delete', etc.".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "press_key_combo",
             "keys": ["ctrl", "alt", "delete"]

@@ -86,7 +86,6 @@ impl SnmpServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let _connection_id = ConnectionId::new();
 
                         // DEBUG: Log summary
                         debug!("SNMP received {} bytes from {}", n, peer_addr);

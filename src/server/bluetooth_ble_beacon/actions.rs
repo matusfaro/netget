@@ -17,7 +17,12 @@ pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "BLE beacon advertising started",
     )
     .with_parameters(vec![
-        Parameter::new("beacon_type", "Type of beacon (ibeacon, eddystone-uid, eddystone-url, eddystone-tlm)"),
+        Parameter {
+            name: "beacon_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Type of beacon (ibeacon, eddystone-uid, eddystone-url, eddystone-tlm)".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -110,12 +115,17 @@ impl Server for BluetoothBleBeaconProtocol {
         Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
+            // Get instruction from server instance
+            let instruction = ctx.state.get_server(ctx.server_id).await
+                .map(|s| s.instruction)
+                .unwrap_or_default();
+
             crate::server::bluetooth_ble_beacon::BluetoothBleBeacon::spawn_with_llm_actions(
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-                ctx.instruction,
+                instruction,
             )
             .await
         })
@@ -123,7 +133,6 @@ impl Server for BluetoothBleBeaconProtocol {
 
     fn execute_action(
         &self,
-        _connection_id: Option<crate::server::connection::ConnectionId>,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
         let action_type = action["type"]

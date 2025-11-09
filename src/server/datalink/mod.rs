@@ -105,7 +105,6 @@ impl DataLinkServer {
                 match cap.next_packet() {
                     Ok(packet) => {
                         let data = Bytes::copy_from_slice(packet.data);
-                        let _connection_id = ConnectionId::new();
 
                         // DEBUG: Log summary
                         debug!("Datalink received {} bytes", data.len());

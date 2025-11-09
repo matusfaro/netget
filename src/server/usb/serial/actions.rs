@@ -16,21 +16,41 @@ use tokio::sync::Mutex;
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("usb_serial_attached", "Host attached to USB serial port")
-        .with_parameters(vec![Parameter::new("connection_id", "string", "Connection ID")])
+        .with_parameters(vec![Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        }])
 });
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("usb_serial_detached", "Host detached from USB serial port")
-        .with_parameters(vec![Parameter::new("connection_id", "string", "Connection ID")])
+        .with_parameters(vec![Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        }])
 });
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("usb_serial_data_received", "Data received from host")
         .with_parameters(vec![
-            Parameter::new("connection_id", "string", "Connection ID"),
-            Parameter::new("data", "string", "Received data as string")
+            Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID".to_string(),
+            required: true,
+        },
+            Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "Received data as string".to_string(),
+            required: true,
+        }
         ])
 });
 
@@ -40,6 +60,7 @@ pub struct UsbSerialProtocol {
 }
 
 #[cfg(feature = "usb-serial")]
+#[derive(Clone)]
 pub struct ConnectionData {}
 
 #[cfg(feature = "usb-serial")]
@@ -58,17 +79,42 @@ impl Protocol for UsbSerialProtocol {
             ActionDefinition {
                 name: "send_data".to_string(),
                 description: "Send data to serial port".to_string(),
-                parameters: vec![Parameter::new("data", "string", "Data to send")],
+                parameters: vec![Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "Data to send".to_string(),
+            required: true,
+        }],
                 example: json!({"type": "send_data", "data": "Hello\n"}),
             },
             ActionDefinition {
                 name: "set_line_coding".to_string(),
                 description: "Set baud rate and line parameters".to_string(),
                 parameters: vec![
-                    Parameter::new("baud_rate", "number", "Bits per second (e.g., 115200)"),
-                    Parameter::new("data_bits", "number", "5, 6, 7, 8, or 16").optional(),
-                    Parameter::new("parity", "string", "'none', 'odd', 'even', 'mark', 'space'").optional(),
-                    Parameter::new("stop_bits", "number", "1, 1.5, or 2").optional(),
+                    Parameter {
+            name: "baud_rate".to_string(),
+            type_hint: "number".to_string(),
+            description: "Bits per second (e.g., 115200)".to_string(),
+            required: true,
+        },
+                    Parameter {
+            name: "data_bits".to_string(),
+            type_hint: "number".to_string(),
+            description: "5, 6, 7, 8, or 16".to_string(),
+            required: false,
+        },
+                    Parameter {
+            name: "parity".to_string(),
+            type_hint: "string".to_string(),
+            description: "'none', 'odd', 'even', 'mark', 'space'".to_string(),
+            required: false,
+        },
+                    Parameter {
+            name: "stop_bits".to_string(),
+            type_hint: "number".to_string(),
+            description: "1, 1.5, or 2".to_string(),
+            required: false,
+        },
                 ],
                 example: json!({"type": "set_line_coding", "baud_rate": 9600}),
             },
@@ -87,13 +133,14 @@ impl Protocol for UsbSerialProtocol {
     fn stack_name(&self) -> &'static str { "USB>CDC>ACM" }
     fn keywords(&self) -> Vec<&'static str> { vec!["usb", "serial", "cdc", "acm", "uart", "tty"] }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        crate::protocol::metadata::ProtocolMetadataV2::new(
-            crate::protocol::metadata::ProtocolState::Experimental,
-            "Virtual USB CDC ACM serial port using USB/IP protocol",
-            "LLM controls serial data transmission and line parameters",
-            "E2E tests using Linux usbip client and /dev/ttyACM0",
-            crate::protocol::metadata::PrivilegeRequirement::None,
-        ).with_notes("Appears as /dev/ttyACM0 on Linux after usbip attach")
+        crate::protocol::metadata::ProtocolMetadataV2::builder()
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .implementation("Virtual USB CDC ACM serial port using USB/IP protocol")
+            .llm_control("LLM controls serial data transmission and line parameters")
+            .e2e_testing("E2E tests using Linux usbip client and /dev/ttyACM0")
+            .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
+            .notes("Appears as /dev/ttyACM0 on Linux after usbip attach")
+            .build()
     }
     fn description(&self) -> &'static str { "Virtual USB serial port (CDC ACM)" }
     fn example_prompt(&self) -> &'static str { "Create a USB serial port and echo back any data received" }
@@ -110,7 +157,7 @@ impl Server for UsbSerialProtocol {
         })
     }
 
-    fn execute_action(&self, action: serde_json::Value, _connection_id: Option<ConnectionId>, _app_state: &AppState) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "send_data" => {

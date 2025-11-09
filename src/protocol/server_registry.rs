@@ -147,7 +147,7 @@ impl ServerRegistry {
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
                 Arc::new(crate::server::MysqlProtocol::new(
-                    ConnectionId::new(),
+                    ConnectionId::new(0), // Placeholder for protocol registry
                     Arc::new(crate::state::app_state::AppState::new()),
                     tx,
                 )),
@@ -161,7 +161,7 @@ impl ServerRegistry {
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
                 Arc::new(crate::server::PostgresqlProtocol::new(
-                    ConnectionId::new(),
+                    ConnectionId::new(0), // Placeholder for protocol registry
                     Arc::new(crate::state::app_state::AppState::new()),
                     tx,
                 )),
@@ -175,7 +175,7 @@ impl ServerRegistry {
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
                 Arc::new(crate::server::RedisProtocol::new(
-                    ConnectionId::new(),
+                    ConnectionId::new(0), // Placeholder for protocol registry
                     Arc::new(crate::state::app_state::AppState::new()),
                     tx,
                 )),
@@ -192,7 +192,7 @@ impl ServerRegistry {
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(
                 Arc::new(crate::server::CassandraProtocol::new(
-                    ConnectionId::new(),
+                    ConnectionId::new(0), // Placeholder for protocol registry
                     Arc::new(crate::state::app_state::AppState::new()),
                     tx,
                 )),

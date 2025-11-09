@@ -17,7 +17,12 @@ pub static REMOTE_BUTTON_PRESSED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "A remote control button was pressed",
     )
     .with_parameters(vec![
-        Parameter::new("button", "Button name (play_pause, volume_up, etc.)"),
+        Parameter {
+            name: "button".to_string(),
+            type_hint: "string".to_string(),
+            description: "Button name (play_pause, volume_up, etc.)".to_string(),
+            required: true,
+        },
     ])
 });
 
@@ -117,13 +122,18 @@ impl Server for BluetoothBleRemoteProtocol {
                 .unwrap_or("NetGet-Remote")
                 .to_string();
 
+            // Get instruction from server instance
+            let instruction = ctx.state.get_server(ctx.server_id).await
+                .map(|s| s.instruction)
+                .unwrap_or_default();
+
             crate::server::bluetooth_ble_remote::BluetoothBleRemote::spawn_with_llm_actions(
                 device_name,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-                ctx.instruction,
+                instruction,
             )
             .await
         })
@@ -131,7 +141,6 @@ impl Server for BluetoothBleRemoteProtocol {
 
     fn execute_action(
         &self,
-        _connection_id: Option<crate::server::connection::ConnectionId>,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
         let action_type = action["type"]
