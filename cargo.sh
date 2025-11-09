@@ -115,6 +115,13 @@ elif [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
     echo "" >&2
 fi
 
+# Create tmp directory for logs
+mkdir -p "${PROJECT_ROOT}/tmp"
+
+# Determine log file name based on command (first argument)
+COMMAND="${CARGO_ARGS[0]:-unknown}"
+LOG_FILE="${PROJECT_ROOT}/tmp/netget-${COMMAND}-$$.log"
+
 # Echo the target directory and session info for visibility
 echo "=== Cargo $BUILD_MODE Build ===" >&2
 if [[ "$CARGO_USE_ISOLATION" == true ]]; then
@@ -122,7 +129,18 @@ if [[ "$CARGO_USE_ISOLATION" == true ]]; then
 fi
 echo "Target directory: $CARGO_TARGET_DIR" >&2
 echo "Command: cargo ${CARGO_ARGS[*]}" >&2
+echo "Log file: $LOG_FILE" >&2
 echo "============================" >&2
 
-# Forward all arguments to cargo (excluding --skip-cleanup flag)
-exec cargo "${CARGO_ARGS[@]}"
+# Enable pipefail to capture cargo's exit code through the pipe
+set -o pipefail
+
+# Run cargo and tee output to log file (captures both stdout and stderr)
+cargo "${CARGO_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+EXIT_CODE=$?
+
+# Save the log file path for later retrieval
+echo "$LOG_FILE" > "${PROJECT_ROOT}/tmp/last-log.txt"
+
+# Exit with cargo's exit code
+exit $EXIT_CODE
