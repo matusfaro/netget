@@ -6,31 +6,31 @@ use tokio::net::TcpStream;
 
 /// Unique identifier for a connection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnectionId(u64);
+pub struct ConnectionId(u32);
 
 impl ConnectionId {
-    /// Create a new connection ID
-    pub fn new() -> Self {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        Self(COUNTER.fetch_add(1, Ordering::SeqCst))
+    /// Create a new connection ID from a u32 value
+    /// NOTE: Callers should use AppState::get_next_unified_id() to ensure uniqueness
+    pub fn new(id: u32) -> Self {
+        Self(id)
     }
 
     /// Get the raw ID value
-    pub fn as_u64(&self) -> u64 {
+    pub fn as_u32(&self) -> u32 {
         self.0
+    }
+
+    /// Get the raw ID value as u64 (for backwards compatibility)
+    #[deprecated(note = "Use as_u32() instead - IDs are now u32")]
+    pub fn as_u64(&self) -> u64 {
+        self.0 as u64
     }
 
     /// Parse from string (expects format "conn-123" or just "123")
     pub fn from_string(s: &str) -> Option<Self> {
         let s = s.trim();
         let id_str = s.strip_prefix("conn-").unwrap_or(s);
-        id_str.parse::<u64>().ok().map(Self)
-    }
-}
-
-impl Default for ConnectionId {
-    fn default() -> Self {
-        Self::new()
+        id_str.parse::<u32>().ok().map(Self)
     }
 }
 
@@ -57,10 +57,11 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Create a new connection
-    pub fn new(stream: TcpStream, remote_addr: SocketAddr, local_addr: SocketAddr) -> Self {
+    /// Create a new connection with a specific ID
+    /// NOTE: Callers should use AppState::get_next_unified_id() to get the ID
+    pub fn new_with_id(id: ConnectionId, stream: TcpStream, remote_addr: SocketAddr, local_addr: SocketAddr) -> Self {
         Self {
-            id: ConnectionId::new(),
+            id,
             remote_addr,
             local_addr,
             stream,
