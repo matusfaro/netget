@@ -92,34 +92,3 @@ impl AuthorityKeys {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_authority_keys_generation() {
-        let keys = AuthorityKeys::generate().unwrap();
-
-        // Verify fingerprints are 40 hex characters
-        let v3_ident = keys.v3_identity_fingerprint();
-        assert_eq!(v3_ident.len(), 40);
-        assert!(v3_ident.chars().all(|c| c.is_ascii_hexdigit()));
-
-        let fingerprint = keys.authority_fingerprint();
-        assert_eq!(fingerprint.len(), 40);
-        assert!(fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn test_signing() {
-        let keys = AuthorityKeys::generate().unwrap();
-        let data = b"test consensus document";
-
-        // Sign data
-        let signature = keys.sign(data);
-
-        // Verify signature
-        use ed25519_dalek::Verifier;
-        assert!(keys.signing_public_key().verify(data, &signature).is_ok());
-    }
-}

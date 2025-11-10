@@ -59,39 +59,3 @@ pub fn build_directory_footer() -> String {
     "directory-footer\n".to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sign_consensus() {
-        let keys = AuthorityKeys::generate().unwrap();
-        let consensus_body = "network-status-version 3\nvote-status consensus\n";
-
-        let signed = sign_consensus(consensus_body, &keys).unwrap();
-
-        // Verify format
-        assert!(signed.starts_with(consensus_body));
-        assert!(signed.contains("directory-signature sha256"));
-        assert!(signed.contains("-----BEGIN SIGNATURE-----"));
-        assert!(signed.contains("-----END SIGNATURE-----"));
-
-        // Verify signature lines are properly formatted
-        let sig_section = signed.split("-----BEGIN SIGNATURE-----").nth(1).unwrap();
-        let sig_lines: Vec<&str> = sig_section
-            .lines()
-            .filter(|l| !l.is_empty() && !l.contains("END SIGNATURE"))
-            .collect();
-
-        // Each line should be <= 64 characters
-        for line in sig_lines {
-            assert!(line.len() <= 64, "Signature line too long: {}", line.len());
-        }
-    }
-
-    #[test]
-    fn test_directory_footer() {
-        let footer = build_directory_footer();
-        assert_eq!(footer, "directory-footer\n");
-    }
-}

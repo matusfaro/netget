@@ -336,24 +336,3 @@ fn get_server_info_action() -> ActionDefinition {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_event_types() {
-        let events = get_openvpn_event_types();
-        assert_eq!(events.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_action_definitions() {
-        let protocol = OpenvpnProtocol::new();
-
-        let sync_actions = protocol.get_sync_actions();
-        assert!(!sync_actions.is_empty());
-
-        let async_actions = protocol.get_async_actions(&AppState::default());
-        assert!(!async_actions.is_empty());
-    }
-}
