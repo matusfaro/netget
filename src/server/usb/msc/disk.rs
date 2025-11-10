@@ -166,6 +166,7 @@ impl DiskImage {
     /// # Arguments
     /// * `lba` - Starting sector
     /// * `count` - Number of sectors to zero
+    #[allow(dead_code)]
     pub fn zero_sectors(&mut self, lba: u32, count: u32) -> Result<()> {
         if lba + count > self.total_sectors {
             anyhow::bail!(

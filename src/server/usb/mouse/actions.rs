@@ -59,6 +59,7 @@ pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 #[cfg(feature = "usb-mouse")]
 pub struct UsbMouseProtocol {
     /// Map of active connections (for async actions)
+    #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP mouse handlers for each connection
     handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
@@ -88,6 +89,7 @@ impl UsbMouseProtocol {
     }
 
     /// Get the USB/IP mouse handler for a connection
+    #[allow(dead_code)]
     async fn get_handler(
         &self,
         connection_id: ConnectionId,
