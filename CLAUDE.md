@@ -41,9 +41,21 @@ Each protocol has TWO CLAUDE.md files:
 
 Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients. **Status**: Unit 12/12 passing, E2E infrastructure fixed. See `TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`.
 
+### Test Location Policy (CRITICAL - NO EXCEPTIONS)
+
+**⚠️  NEVER add tests to `src/` files. ALL tests MUST be in the `tests/` directory.**
+
+This is a strict project policy. Unlike standard Rust convention:
+- ❌ **FORBIDDEN**: `#[cfg(test)] mod tests { ... }` in `src/` files
+- ✅ **REQUIRED**: All test files in `tests/` directory (e.g., `tests/module_name_test.rs`)
+- Tests in `tests/` access public APIs only via `use netget::`
+- If you need to test internal implementation, make those items public or refactor
+
+**Rationale**: Consistent test organization, clear separation of code and tests, easier to find all tests in one location.
+
 ### Organization & Feature Gating (CRITICAL)
 
-- All tests in `tests/` (never `src/`), access public APIs only
+- All tests in `tests/` directory, never in `src/`
 - Protocol E2E tests: `tests/server/<protocol>/e2e_test.rs`
 - **ALL tests MUST be feature-gated**: `#[cfg(all(test, feature = "<protocol>"))]` in mod.rs
 - Unit tests (no Ollama): `tests/base_stack_test.rs` (registry parsing), etc.

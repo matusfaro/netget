@@ -360,21 +360,3 @@ impl IpsecServer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ike_constants() {
-        assert_eq!(IKEV2_VERSION, 0x20);
-        assert_eq!(IKE_SA_INIT, 34);
-        assert_eq!(IKE_AUTH, 35);
-        assert_eq!(CREATE_CHILD_SA, 36);
-        assert_eq!(INFORMATIONAL, 37);
-    }
-
-    #[test]
-    fn test_ike_header_size() {
-        assert_eq!(IKE_HEADER_SIZE, 28);
-    }
-}

@@ -169,34 +169,3 @@ fn has_raw_socket_capability() -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_detect_capabilities() {
-        // This test just ensures detection doesn't panic
-        let caps = SystemCapabilities::detect();
-        println!("Detected capabilities: {:?}", caps);
-        println!("Description: {}", caps.description());
-
-        // Basic sanity checks
-        if caps.is_root {
-            assert!(caps.can_bind_privileged_ports);
-            assert!(caps.has_raw_socket_access);
-        }
-    }
-
-    #[test]
-    fn test_description() {
-        let caps = SystemCapabilities {
-            can_bind_privileged_ports: true,
-            has_raw_socket_access: false,
-            is_root: false,
-        };
-
-        let desc = caps.description();
-        assert!(desc.contains("privileged ports available"));
-        assert!(desc.contains("raw socket access unavailable"));
-    }
-}

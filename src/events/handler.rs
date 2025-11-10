@@ -209,7 +209,13 @@ impl EventHandler {
             Vec::new()
         };
 
-        let model = self.state.get_ollama_model().await;
+        // Get model, ensuring one is selected
+        let model = match crate::llm::ensure_model_selected(self.state.get_ollama_model().await).await {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to ensure model is selected: {}", e));
+            }
+        };
 
         // Create LLM client with status channel for trace logs
         let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());
@@ -592,7 +598,7 @@ impl EventHandler {
                 }
             }
             CommonAction::ChangeModel { model } => {
-                self.state.set_ollama_model(model.clone()).await;
+                self.state.set_ollama_model(Some(model.clone())).await;
                 let _ = status_tx.send(format!("Changed model to: {model}"));
 
                 // Signal main loop to update UI
@@ -1172,7 +1178,7 @@ impl EventHandler {
     }
 
     async fn handle_show_model(&mut self, ui: &mut App) -> Result<()> {
-        let current_model = self.state.get_ollama_model().await;
+        let current_model = self.state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
 
         ui.add_llm_message(format!("Current model: {current_model}"));
         ui.add_llm_message("".to_string());
@@ -1211,7 +1217,7 @@ impl EventHandler {
         match self.llm.list_models().await {
             Ok(models) => {
                 if models.contains(&model) {
-                    self.state.set_ollama_model(model.clone()).await;
+                    self.state.set_ollama_model(Some(model.clone())).await;
                     ui.add_llm_message(format!("✓ Changed model to: {model}"));
                 } else {
                     ui.add_llm_message(format!("✗ Model '{model}' not found"));
@@ -1284,7 +1290,7 @@ impl EventHandler {
         ui.add_llm_message("".to_string());
 
         // LLM configuration
-        let model = self.state.get_ollama_model().await;
+        let model = self.state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
         let web_search_mode = self.state.get_web_search_mode().await;
         let scripting_mode = self.state.get_selected_scripting_mode().await;
 

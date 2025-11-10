@@ -279,7 +279,7 @@ async fn handle_chat_completions(
     // Extract model and messages
     let model = match request_json.get("model").and_then(|v| v.as_str()) {
         Some(m) => m.to_string(),
-        None => app_state.get_ollama_model().await,
+        None => app_state.get_ollama_model().await.unwrap_or_else(|| "qwen2.5-coder:32b".to_string()),
     };
 
     let messages = request_json.get("messages")

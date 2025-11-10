@@ -11,6 +11,7 @@ pub mod template_engine; // Handlebars template engine
 pub mod event_instructions; // Event-specific instructions
 pub mod default_instructions; // Default instructions registry
 pub mod event_handler_executor; // Event handler execution (script/static/llm)
+pub mod model_selection; // Model selection utilities
 
 // Old modules
 pub mod client;
@@ -58,3 +59,6 @@ pub use ollama_client::Message;
 // Event instructions
 pub use event_instructions::{EventInstructions, Example, ServerInstructionConfig, InstructionSource};
 pub use default_instructions::{resolve_instructions, DEFAULT_INSTRUCTIONS};
+
+// Model selection
+pub use model_selection::{select_or_validate_model, check_ollama_availability, ensure_model_selected, ModelInfo};

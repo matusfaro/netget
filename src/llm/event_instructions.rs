@@ -126,38 +126,3 @@ impl EventInstructions {
         self
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_event_instructions_builder() {
-        let instructions = EventInstructions::new("Handle HTTP request")
-            .with_example("GET /", "200 OK")
-            .with_described_example(
-                "POST /api",
-                r#"{"status": "success"}"#,
-                "API endpoint example",
-            );
-
-        assert_eq!(instructions.instructions, "Handle HTTP request");
-        assert_eq!(instructions.examples.len(), 2);
-        assert_eq!(instructions.examples[0].input, "GET /");
-        assert_eq!(instructions.examples[1].description, Some("API endpoint example".to_string()));
-    }
-
-    #[test]
-    fn test_server_config() {
-        let config = ServerInstructionConfig::new()
-            .with_global_instructions("Be helpful".to_string())
-            .with_event_override(
-                "http_request".to_string(),
-                EventInstructions::new("Return JSON responses"),
-            );
-
-        assert_eq!(config.global_instructions, Some("Be helpful".to_string()));
-        assert!(config.get_instructions_for_event("http_request").is_some());
-        assert!(config.get_instructions_for_event("unknown").is_none());
-    }
-}

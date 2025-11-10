@@ -232,8 +232,8 @@ struct AppStateInner {
     #[allow(dead_code)]
     /// Next client ID to assign (DEPRECATED - use next_unified_id)
     next_client_id: u32,
-    /// Current Ollama model
-    ollama_model: String,
+    /// Current Ollama model (None = not yet selected/validated)
+    ollama_model: Option<String>,
     /// Available scripting environments (Python, Node.js)
     scripting_env: crate::scripting::ScriptingEnvironment,
     /// Currently selected scripting mode (LLM, Python, or JavaScript)
@@ -293,7 +293,7 @@ impl AppState {
                 next_unified_id: 1,
                 next_server_id: 1,
                 next_client_id: 1,
-                ollama_model: "qwen3-coder:30b".to_string(),
+                ollama_model: None,
                 scripting_env,
                 selected_scripting_mode,
                 event_handler_mode,
@@ -487,12 +487,12 @@ impl AppState {
     }
 
     /// Get the Ollama model name
-    pub async fn get_ollama_model(&self) -> String {
+    pub async fn get_ollama_model(&self) -> Option<String> {
         self.inner.read().await.ollama_model.clone()
     }
 
     /// Set the Ollama model name
-    pub async fn set_ollama_model(&self, model: String) {
+    pub async fn set_ollama_model(&self, model: Option<String>) {
         self.inner.write().await.ollama_model = model;
     }
 

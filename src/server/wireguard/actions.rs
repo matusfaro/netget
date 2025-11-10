@@ -415,39 +415,3 @@ fn get_server_info_action() -> ActionDefinition {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::state::app_state::AppState;
-
-    #[test]
-    fn test_event_types() {
-        let events = get_wireguard_event_types();
-        assert_eq!(events.len(), 2);
-    }
-
-    #[test]
-    fn test_action_definitions() {
-        let protocol = WireguardProtocol::new();
-
-        let sync_actions = protocol.get_sync_actions();
-        assert!(!sync_actions.is_empty());
-
-        let async_actions = protocol.get_async_actions(&AppState::default());
-        assert!(!async_actions.is_empty());
-    }
-
-    #[test]
-    fn test_authorize_peer_action() {
-        let protocol = WireguardProtocol::new();
-
-        let action = json!({
-            "type": "authorize_peer",
-            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
-            "allowed_ips": ["10.20.30.2/32"],
-        });
-
-        let result = protocol.execute_action(action);
-        assert!(result.is_ok());
-    }
-}

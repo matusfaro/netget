@@ -103,8 +103,10 @@ pub async fn call_llm_with_actions(
 
     // FALLBACK TO LLM (normal path if no handler or handler requested fallback)
 
-    // Get model from state
-    let model = state.get_ollama_model().await;
+    // Get model from state, auto-select if not set
+    let model = crate::llm::ensure_model_selected(state.get_ollama_model().await)
+        .await
+        .context("Failed to ensure model is selected")?;
 
     // Collect all actions: common + protocol sync + custom
     let mut all_actions = get_network_event_common_actions();
@@ -297,8 +299,10 @@ pub async fn call_llm(
 
     // FALLBACK TO LLM (normal path if no script or script failed/requested fallback)
 
-    // Get model from state
-    let model = state.get_ollama_model().await;
+    // Get model from state, auto-select if not set
+    let model = crate::llm::ensure_model_selected(state.get_ollama_model().await)
+        .await
+        .context("Failed to ensure model is selected")?;
 
     // Collect all actions: common + event-specific actions
     let mut all_actions = get_network_event_common_actions();
@@ -358,7 +362,7 @@ pub async fn call_llm(
             all_actions,
         )
         .await
-        .context("Failed to generate valid response after retries")?;
+        .context("✗  LLM failed to generate valid response after retries.\n   This may indicate:\n   1. Ollama is not running or not accessible\n   2. Model is not available or not loaded\n   3. Network/connection issues\n   \n   Use `/model` to check and select an available model")?;
 
     if actions.is_empty() {
         warn!("LLM returned empty actions array for event: {}", event.id());
@@ -429,8 +433,10 @@ pub async fn call_llm_for_client(
         user_message
     };
 
-    // Get current model from state
-    let model = state.get_ollama_model().await;
+    // Get current model from state, auto-select if not set
+    let model = crate::llm::ensure_model_selected(state.get_ollama_model().await)
+        .await
+        .context("Failed to ensure model is selected")?;
 
     // Create conversation with correct parameter order
     let mut conversation = crate::llm::ConversationHandler::new(

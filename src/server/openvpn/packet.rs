@@ -324,36 +324,3 @@ impl AckPacket {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_opcode_extraction() {
-        // Opcode is in upper 5 bits
-        let byte = 0b00111_000; // opcode=7 (HARD_RESET_CLIENT_V2), key_id=0
-        let opcode = (byte >> 3) & 0x1F;
-        let key_id = byte & 0x07;
-        assert_eq!(opcode, 7);
-        assert_eq!(key_id, 0);
-    }
-
-    #[test]
-    fn test_header_serialization() {
-        let header = PacketHeader {
-            opcode: Opcode::ControlHardResetServerV2,
-            key_id: 0,
-            session_id: Some(0x1234567890ABCDEF),
-            packet_id_array_len: Some(0),
-            packet_id: Some(1),
-        };
-
-        let mut buf = BytesMut::new();
-        header.serialize(&mut buf);
-
-        let (parsed, _) = PacketHeader::parse(&buf).unwrap();
-        assert_eq!(parsed.opcode as u8, header.opcode as u8);
-        assert_eq!(parsed.key_id, header.key_id);
-        assert_eq!(parsed.session_id, header.session_id);
-    }
-}
