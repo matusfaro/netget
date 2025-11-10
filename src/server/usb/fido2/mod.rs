@@ -50,7 +50,7 @@ pub mod u2f;
 pub mod ctap2;
 
 #[cfg(feature = "usb-fido2")]
-use anyhow::{Context, Result};
+use anyhow::Result;
 #[cfg(feature = "usb-fido2")]
 use std::net::SocketAddr;
 #[cfg(feature = "usb-fido2")]
@@ -58,7 +58,7 @@ use std::sync::Arc;
 #[cfg(feature = "usb-fido2")]
 use tokio::sync::mpsc;
 #[cfg(feature = "usb-fido2")]
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "usb-fido2")]
 use crate::llm::ollama_client::OllamaClient;
@@ -66,9 +66,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::state::app_state::AppState;
 
 #[cfg(feature = "usb-fido2")]
-use crate::server::usb::descriptors::{build_fido2_hid_config_descriptor, FIDO_HID_REPORT_DESCRIPTOR};
-#[cfg(feature = "usb-fido2")]
-use crate::server::usb::common::UsbSpeed;
+use crate::server::usb::descriptors::FIDO_HID_REPORT_DESCRIPTOR;
 
 #[cfg(feature = "usb-fido2")]
 use ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket};
@@ -354,8 +352,8 @@ impl UsbFido2Server {
                 handler.clone(),
             );
 
-        // Create USB/IP server
-        let server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
+        // Create USB/IP server (not wrapped in Arc - usbip::server takes ownership)
+        let server = usbip::UsbIpServer::new_simulated(vec![device]);
 
         info!("USB FIDO2 server starting on {}", listen_addr);
         let _ = status_tx.send(format!(

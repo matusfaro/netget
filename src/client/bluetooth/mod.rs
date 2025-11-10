@@ -210,14 +210,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
+                        if let Err(e) = Box::pin(Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -348,14 +348,14 @@ impl BluetoothClient {
 
                                     // Execute actions
                                     for action in actions {
-                                        if let Err(e) = Self::execute_llm_action(
+                                        if let Err(e) = Box::pin(Self::execute_llm_action(
                                             action,
                                             &client_data,
                                             &app_state,
                                             &status_tx,
                                             &llm_client,
                                             client_id,
-                                        ).await {
+                                        )).await {
                                             error!("Error executing Bluetooth action: {}", e);
                                         }
                                     }
@@ -402,14 +402,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
+                        if let Err(e) = Box::pin(Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -574,14 +574,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
+                        if let Err(e) = Box::pin(Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -654,14 +654,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
+                        if let Err(e) = Box::pin(Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }

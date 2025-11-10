@@ -5,7 +5,7 @@
 #[cfg(feature = "usb-fido2")]
 use anyhow::{bail, Context, Result};
 #[cfg(feature = "usb-fido2")]
-use ring::rand::{SecureRandom, SystemRandom};
+use ring::rand::SecureRandom;
 #[cfg(feature = "usb-fido2")]
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 #[cfg(feature = "usb-fido2")]
@@ -539,7 +539,10 @@ impl Ctap2Handler {
                 _ => None,
             })
             .and_then(|m| m.get(&CborValue::Text("rk".to_string())))
-            .and_then(|v| v.as_bool())
+            .and_then(|v| match v {
+                CborValue::Bool(b) => Some(*b),
+                _ => None,
+            })
             .unwrap_or(false);
 
         let require_user_verification = options
@@ -548,7 +551,10 @@ impl Ctap2Handler {
                 _ => None,
             })
             .and_then(|m| m.get(&CborValue::Text("uv".to_string())))
-            .and_then(|v| v.as_bool())
+            .and_then(|v| match v {
+                CborValue::Bool(b) => Some(*b),
+                _ => None,
+            })
             .unwrap_or(false);
 
         info!(

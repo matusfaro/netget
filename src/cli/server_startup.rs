@@ -182,7 +182,7 @@ pub async fn start_server_from_action(
     state: &AppState,
     port: u16,
     base_stack: &str,
-    send_first: bool,
+    _send_first: bool,
     initial_memory: Option<String>,
     instruction: String,
     startup_params: Option<serde_json::Value>,

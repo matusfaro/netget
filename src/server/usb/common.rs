@@ -3,8 +3,6 @@
 //! This module provides shared functionality for USB/IP protocol handling,
 //! including connection management, URB processing, and helper utilities.
 
-#[cfg(feature = "usb-common")]
-use anyhow::Result;
 
 /// USB/IP protocol version (1.1.1)
 #[cfg(feature = "usb-common")]
