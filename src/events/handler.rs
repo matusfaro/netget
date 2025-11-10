@@ -374,6 +374,8 @@ impl EventHandler {
                 }
                 Err(e) => {
                     let _ = status_tx.send(format!("[ERROR] LLM error: {e}"));
+                    // End conversation tracking since generate_with_tools_and_retry didn't complete
+                    conversation.end_tracking().await;
                     break; // LLM errors don't retry at this level
                 }
             }

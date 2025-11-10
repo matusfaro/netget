@@ -33,6 +33,7 @@ use uuid::Uuid;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -42,8 +43,11 @@ enum ConnectionState {
 /// Per-characteristic data for tracking pending requests
 #[derive(Debug)]
 struct CharacteristicData {
+    #[allow(dead_code)]
     uuid: String,
+    #[allow(dead_code)]
     properties: Vec<String>,
+    #[allow(dead_code)]
     permissions: Vec<String>,
     current_value: Vec<u8>,
 }

@@ -93,6 +93,7 @@ pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(||
 #[cfg(feature = "usb-keyboard")]
 pub struct UsbKeyboardProtocol {
     /// Map of active connections (for async actions)
+    #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP keyboard handlers for each connection
     handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
@@ -124,6 +125,7 @@ impl UsbKeyboardProtocol {
     }
 
     /// Get the USB/IP keyboard handler for a connection
+    #[allow(dead_code)]
     async fn get_handler(
         &self,
         connection_id: ConnectionId,

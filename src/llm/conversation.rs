@@ -146,6 +146,13 @@ impl ConversationHandler {
         self
     }
 
+    /// Manually end conversation tracking (for error paths where generate_with_tools_and_retry doesn't complete)
+    pub async fn end_tracking(&self) {
+        if let Some(state) = &self.state {
+            state.end_conversation(&self.conversation_id).await;
+        }
+    }
+
     /// Check if protocol documentation has been read in this conversation
     pub fn is_protocol_docs_read(&self) -> bool {
         self.protocol_docs_read

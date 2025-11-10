@@ -56,6 +56,7 @@ pub static USB_SERIAL_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
 
 #[cfg(feature = "usb-serial")]
 pub struct UsbSerialProtocol {
+    #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
 }
 

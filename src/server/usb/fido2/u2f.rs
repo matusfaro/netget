@@ -165,6 +165,7 @@ struct Credential {
     /// PKCS#8 private key document
     private_key: Vec<u8>,
     /// Public key (x9.62 uncompressed point format)
+    #[allow(dead_code)]
     public_key: Vec<u8>,
     /// Key handle (opaque to client)
     key_handle: Vec<u8>,

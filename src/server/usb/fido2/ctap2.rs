@@ -146,7 +146,7 @@ impl Ctap2Response {
 /// Stored CTAP2 credential
 #[cfg(feature = "usb-fido2")]
 #[derive(Clone)]
-struct Ctap2Credential {
+pub struct Ctap2Credential {
     /// Credential ID (opaque blob)
     credential_id: Vec<u8>,
     /// PKCS#8 private key
@@ -156,12 +156,15 @@ struct Ctap2Credential {
     /// Relying Party ID
     rp_id: String,
     /// User handle
+    #[allow(dead_code)]
     user_handle: Vec<u8>,
     /// User name
+    #[allow(dead_code)]
     user_name: String,
     /// Signature counter
     counter: u32,
     /// Resident key flag
+    #[allow(dead_code)]
     is_resident: bool,
 }
 

@@ -39,6 +39,7 @@ use actions::USB_MOUSE_ATTACHED_EVENT;
 /// Connection state for LLM processing
 #[cfg(feature = "usb-mouse")]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -49,6 +50,7 @@ enum ConnectionState {
 #[cfg(feature = "usb-mouse")]
 struct ConnectionData {
     state: ConnectionState,
+    #[allow(dead_code)]
     memory: String,
 }
 
