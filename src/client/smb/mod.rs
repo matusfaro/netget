@@ -261,76 +261,49 @@ impl SmbClient {
 
                         debug!("SMB client {} reading file: {}", client_id, path);
 
-                        // Open file for reading
-                        let file_result = smb_client.open_with(
+                        // Open file for reading and immediately read contents
+                        // We need to close the file before any await (SmbFile contains raw pointer, not Send)
+                        let read_result = smb_client.open_with(
                             path,
                             SmbOpenOptions::default().read(true)
-                        );
+                        ).and_then(|mut file| {
+                            let mut content_bytes = Vec::new();
+                            file.read_to_end(&mut content_bytes)?;
+                            Ok(content_bytes)
+                        });
 
-                        match file_result {
-                            Ok(mut file) => {
-                                // Read file contents into buffer
-                                let mut content_bytes = Vec::new();
-                                match file.read_to_end(&mut content_bytes) {
-                                    Ok(_) => {
-                                        let size = content_bytes.len();
+                        match read_result {
+                            Ok(content_bytes) => {
+                                let size = content_bytes.len();
 
-                                        // Try to convert to UTF-8 string, fallback to base64 for binary
-                                        let content = if let Ok(text) = String::from_utf8(content_bytes.clone()) {
-                                            text
-                                        } else {
-                                            use base64::{Engine as _, engine::general_purpose};
-                                            format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
-                                        };
+                                // Try to convert to UTF-8 string, fallback to base64 for binary
+                                let content = if let Ok(text) = String::from_utf8(content_bytes.clone()) {
+                                    text
+                                } else {
+                                    use base64::{Engine as _, engine::general_purpose};
+                                    format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
+                                };
 
-                                        // Drop file before await (SmbFile contains raw pointer, not Send)
-                                        drop(file);
+                                info!("SMB client {} read {} bytes from {}", client_id, size, path);
 
-                                        info!("SMB client {} read {} bytes from {}", client_id, size, path);
+                                let event = Event::new(
+                                    &SMB_CLIENT_FILE_READ_EVENT,
+                                    serde_json::json!({
+                                        "path": path,
+                                        "content": content,
+                                        "size": size,
+                                    }),
+                                );
 
-                                        let event = Event::new(
-                                            &SMB_CLIENT_FILE_READ_EVENT,
-                                            serde_json::json!({
-                                                "path": path,
-                                                "content": content,
-                                                "size": size,
-                                            }),
-                                        );
-
-                                        Self::call_llm_with_event(
-                                            &event,
-                                            client_id,
-                                            protocol,
-                                            llm_client,
-                                            app_state,
-                                            status_tx,
-                                            smb_client,
-                                        ).await?;
-                                    }
-                                    Err(e) => {
-                                        // Drop file before await (SmbFile contains raw pointer, not Send)
-                                        drop(file);
-
-                                        error!("SMB client {} failed to read file {}: {}", client_id, path, e);
-                                        let error_event = Event::new(
-                                            &SMB_CLIENT_ERROR_EVENT,
-                                            serde_json::json!({
-                                                "error": e.to_string(),
-                                                "operation": "read_file_content",
-                                            }),
-                                        );
-
-                                        Self::call_llm_with_event(
-                                            &error_event,
-                                            client_id,
-                                            protocol,
-                                            llm_client,
-                                            app_state,
-                                            status_tx,
-                                            smb_client,
-                                        ).await?;
-                                    }
-                                }
+                                Self::call_llm_with_event(
+                                    &event,
+                                    client_id,
+                                    protocol,
+                                    llm_client,
+                                    app_state,
+                                    status_tx,
+                                    smb_client,
+                                ).await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} read_file error: {}", client_id, e);
