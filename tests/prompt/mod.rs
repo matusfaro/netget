@@ -4,6 +4,7 @@
 //! When prompts change, review the diff to ensure it's intentional.
 
 use netget::llm::actions::protocol_trait::Server;
+use netget::llm::actions::Protocol;
 use netget::llm::PromptBuilder;
 use netget::state::app_state::AppState;
 use netget::state::server::{ServerInstance, ServerStatus};
@@ -68,7 +69,7 @@ async fn test_user_input_prompt_proxy_server() {
     #[cfg(not(feature = "proxy"))]
     let protocol_actions = vec![];
 
-    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, protocol_actions).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, protocol_actions, None).await;
     let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
@@ -113,7 +114,7 @@ async fn test_user_input_prompt() {
 
     let user_input = "start a DNS server on port 53";
 
-    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![]).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![], None).await;
     let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
@@ -148,7 +149,7 @@ async fn test_user_input_prompt_no_scripting() {
 
     let user_input = "start a DNS server on port 53";
 
-    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![]).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![], None).await;
     let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot
@@ -186,7 +187,7 @@ async fn test_user_input_prompt_without_web_search() {
 
     let user_input = "start a DNS server on port 53";
 
-    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![]).await;
+    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![], None).await;
     let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
 
     // Assert snapshot

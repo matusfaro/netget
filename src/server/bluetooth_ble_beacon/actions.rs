@@ -79,7 +79,7 @@ impl Protocol for BluetoothBleBeaconProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "beacon", "ibeacon", "eddystone", "bluetooth_ble_beacon"]
+        vec!["bluetooth", "beacon", "ibeacon", "eddystone", "bluetooth_ble_beacon"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

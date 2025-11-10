@@ -14,7 +14,7 @@ impl Protocol for BluetoothBlePresenterProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_PRESENTER" }
     fn get_event_types(&self) -> Vec<EventType> { vec![] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "presenter"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "presenter"] }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
         ProtocolMetadataV2::builder().state(DevelopmentState::Experimental)

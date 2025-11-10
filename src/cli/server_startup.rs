@@ -178,6 +178,7 @@ pub async fn start_server_by_id(
 
 /// Start a server from action parameters (used by /load command)
 /// Returns the server ID on success
+#[allow(clippy::too_many_arguments)]
 pub async fn start_server_from_action(
     state: &AppState,
     port: u16,

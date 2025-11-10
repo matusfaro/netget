@@ -76,7 +76,7 @@ impl Protocol for BluetoothBleHeartRateProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_HEART_RATE" }
     fn get_event_types(&self) -> Vec<EventType> { vec![HEART_RATE_UPDATED_EVENT.clone()] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "heart", "rate", "bluetooth_ble_heart_rate"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "heart", "rate", "bluetooth_ble_heart_rate"] }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};

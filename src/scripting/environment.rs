@@ -23,10 +23,22 @@ pub struct ScriptingEnvironment {
 impl ScriptingEnvironment {
     /// Detect available scripting environments
     pub fn detect() -> Self {
+        debug!("Detecting scripting environments...");
+        debug!("Detecting Python...");
         let python = Self::detect_python();
+        debug!("Python detection complete");
+
+        debug!("Detecting JavaScript/Node.js...");
         let javascript = Self::detect_javascript();
+        debug!("JavaScript detection complete");
+
+        debug!("Detecting Go...");
         let go = Self::detect_go();
+        debug!("Go detection complete");
+
+        debug!("Detecting Perl...");
         let perl = Self::detect_perl();
+        debug!("Perl detection complete");
 
         info!("Scripting environment detection:");
         if let Some(ref ver) = python {

@@ -81,7 +81,7 @@ impl Protocol for BluetoothBleRemoteProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "remote", "media", "bluetooth_ble_remote"]
+        vec!["bluetooth", "remote", "media", "bluetooth_ble_remote"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

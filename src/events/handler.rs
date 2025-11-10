@@ -75,7 +75,7 @@ impl EventHandler {
             }
             UserCommand::ChangeLogLevel { level } => {
                 use crate::ui::app::LogLevel;
-                if let Some(log_level) = LogLevel::from_str(&level) {
+                if let Some(log_level) = LogLevel::parse(&level) {
                     ui.set_log_level(log_level);
                 } else {
                     ui.add_llm_message(format!(

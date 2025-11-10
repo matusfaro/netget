@@ -82,7 +82,7 @@ impl Protocol for BluetoothBleBatteryProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "battery", "bluetooth_ble_battery"]
+        vec!["bluetooth", "battery", "bluetooth_ble_battery"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

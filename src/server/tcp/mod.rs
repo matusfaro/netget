@@ -199,6 +199,7 @@ impl TcpServer {
     }
 
     /// Handle new connection with LLM actions
+    #[allow(clippy::too_many_arguments)]
     async fn handle_connection_with_actions(
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,
@@ -291,6 +292,7 @@ impl TcpServer {
     }
 
     /// Handle data received on a connection with LLM actions
+    #[allow(clippy::too_many_arguments)]
     async fn handle_data_with_actions(
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,

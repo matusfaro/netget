@@ -587,6 +587,7 @@ impl StickyFooter {
     }
 
     /// Render normal content (two-column layout with floating headers)
+    #[allow(clippy::too_many_arguments)]
     fn render_normal_content(
         &self,
         stdout: &mut impl Write,
@@ -1072,8 +1073,13 @@ impl StickyFooter {
         use crate::protocol::{registry, CLIENT_REGISTRY};
 
         // Check how many protocols are excluded
+        tracing::debug!("get_dependency_status: Accessing server registry...");
         let server_excluded = registry().get_excluded_protocols(&self.system_capabilities);
+        tracing::debug!("get_dependency_status: Server registry accessed, {} excluded", server_excluded.len());
+
+        tracing::debug!("get_dependency_status: Accessing client registry...");
         let client_excluded = CLIENT_REGISTRY.get_excluded_protocols(&self.system_capabilities);
+        tracing::debug!("get_dependency_status: Client registry accessed, {} excluded", client_excluded.len());
 
         let total_excluded = server_excluded.len() + client_excluded.len();
 
@@ -1143,7 +1149,9 @@ impl StickyFooter {
         )?;
 
         // Add dependency status indicator
+        tracing::debug!("render_status_bar: Getting dependency status...");
         let (dep_status, dep_color) = self.get_dependency_status();
+        tracing::debug!("render_status_bar: Dependency status retrieved: '{}'", dep_status);
         if !dep_status.is_empty() {
             execute!(
                 stdout,

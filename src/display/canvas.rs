@@ -96,6 +96,7 @@ impl DisplayCanvas {
         pixmap.fill(sk_color);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_rectangle(&self, pixmap: &mut Pixmap, x: u32, y: u32, width: u32, height: u32, color: Color, filled: bool) {
         let mut path_builder = PathBuilder::new();
         path_builder.push_rect(
@@ -118,6 +119,7 @@ impl DisplayCanvas {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_line(&self, pixmap: &mut Pixmap, x1: u32, y1: u32, x2: u32, y2: u32, color: Color, width: u32) {
         let mut path_builder = PathBuilder::new();
         path_builder.move_to(x1 as f32, y1 as f32);
@@ -155,6 +157,7 @@ impl DisplayCanvas {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_window(&self, pixmap: &mut Pixmap, x: u32, y: u32, width: u32, height: u32, title: &str, content: &[DisplayCommand]) {
         // Draw window background
         self.draw_rectangle(pixmap, x, y, width, height, Color::LIGHT_GRAY, true);
@@ -192,6 +195,7 @@ impl DisplayCanvas {
         text_renderer.draw_text(pixmap, label_x, label_y, label, 14, Color::BLACK);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_textbox(&self, pixmap: &mut Pixmap, x: u32, y: u32, width: u32, height: u32, text: &str, placeholder: &Option<String>) {
         // Draw textbox background
         self.draw_rectangle(pixmap, x, y, width, height, Color::WHITE, true);

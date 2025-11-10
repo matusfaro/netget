@@ -79,6 +79,7 @@ impl HttpClient {
     }
 
     /// Make an HTTP request
+    #[allow(clippy::too_many_arguments)]
     pub async fn make_request(
         client_id: ClientId,
         method: String,

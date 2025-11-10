@@ -8,7 +8,6 @@ use super::metadata::ProtocolMetadataV2;
 use crate::llm::actions::Server;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
 
 /// Global protocol registry mapping protocol names to protocol implementations
 pub struct ServerRegistry {
@@ -38,6 +37,11 @@ impl ServerRegistry {
 
     /// Register all available protocols based on compiled features
     fn register_protocols(&mut self) {
+        // Create a shared dummy AppState for protocols that need it during registration
+        // This avoids creating multiple AppState instances which trigger expensive environment detection
+        #[cfg(any(feature = "mysql", feature = "postgresql", feature = "redis", feature = "cassandra"))]
+        let dummy_state = Arc::new(crate::state::app_state::AppState::new());
+
         #[cfg(feature = "tcp")]
         self.register(Arc::new(crate::server::TcpProtocol::new()));
 
@@ -148,7 +152,7 @@ impl ServerRegistry {
             self.register(
                 Arc::new(crate::server::MysqlProtocol::new(
                     ConnectionId::new(0), // Placeholder for protocol registry
-                    Arc::new(crate::state::app_state::AppState::new()),
+                    dummy_state.clone(),
                     tx,
                 )),
             );
@@ -162,7 +166,7 @@ impl ServerRegistry {
             self.register(
                 Arc::new(crate::server::PostgresqlProtocol::new(
                     ConnectionId::new(0), // Placeholder for protocol registry
-                    Arc::new(crate::state::app_state::AppState::new()),
+                    dummy_state.clone(),
                     tx,
                 )),
             );
@@ -176,7 +180,7 @@ impl ServerRegistry {
             self.register(
                 Arc::new(crate::server::RedisProtocol::new(
                     ConnectionId::new(0), // Placeholder for protocol registry
-                    Arc::new(crate::state::app_state::AppState::new()),
+                    dummy_state.clone(),
                     tx,
                 )),
             );
@@ -193,7 +197,7 @@ impl ServerRegistry {
             self.register(
                 Arc::new(crate::server::CassandraProtocol::new(
                     ConnectionId::new(0), // Placeholder for protocol registry
-                    Arc::new(crate::state::app_state::AppState::new()),
+                    dummy_state.clone(),
                     tx,
                 )),
             );
@@ -510,17 +514,18 @@ impl ServerRegistry {
 
         // If overlaps found, log warnings with detailed information
         if !overlaps.is_empty() {
-            error!("⚠️  WARNING: Keyword overlaps detected between protocols:\n");
+            use tracing::warn;
+            warn!("⚠️  WARNING: Keyword overlaps detected between protocols:\n");
 
             for (keyword, protocols) in &overlaps {
-                error!("  Keyword '{}' is used by:", keyword);
+                warn!("  Keyword '{}' is used by:", keyword);
                 for (protocol_name, source) in protocols {
-                    error!("    - {} ({})", protocol_name, source);
+                    warn!("    - {} ({})", protocol_name, source);
                 }
             }
 
-            error!("Note: Each keyword should ideally be unique to a single protocol.");
-            error!("      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n");
+            warn!("Note: Each keyword should ideally be unique to a single protocol.");
+            warn!("      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n");
         }
     }
 

@@ -174,6 +174,7 @@ impl ScheduledTask {
     }
 
     /// Create a new connection-scoped recurring task
+    #[allow(clippy::too_many_arguments)]
     pub fn new_connection_recurring(
         id: TaskId,
         name: String,

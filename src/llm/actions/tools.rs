@@ -820,7 +820,7 @@ pub async fn execute_generate_random(
                 "letters" => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
                 "lowercase" => "abcdefghijklmnopqrstuvwxyz",
                 "uppercase" => "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                "alphanumeric" | _ => {
+                _ => {
                     "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
                 }
             };
