@@ -11,9 +11,9 @@ use crate::state::app_state::WebSearchMode;
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// Ollama model name
-    #[serde(default = "default_model")]
-    pub model: String,
+    /// Ollama model name (None = auto-select from available models)
+    #[serde(default)]
+    pub model: Option<String>,
 
     /// Scripting mode (llm, python, javascript, go)
     #[serde(default)]
@@ -28,10 +28,6 @@ pub struct Settings {
     web_search_enabled: Option<bool>,
 }
 
-fn default_model() -> String {
-    "qwen3-coder:30b".to_string()
-}
-
 fn default_web_search_mode() -> String {
     "on".to_string()
 }
@@ -39,7 +35,7 @@ fn default_web_search_mode() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            model: default_model(),
+            model: None,
             scripting_mode: None,
             web_search_mode: default_web_search_mode(),
             web_search_enabled: None,
@@ -123,7 +119,7 @@ impl Settings {
     }
 
     /// Update model and save
-    pub fn set_model(&mut self, model: String) -> Result<()> {
+    pub fn set_model(&mut self, model: Option<String>) -> Result<()> {
         self.model = model;
         self.save()
     }

@@ -397,8 +397,22 @@ impl OllamaClient {
             self.ollama.generate(request),
         )
         .await
-        .context("Ollama API call timed out after 120 seconds - check if Ollama is running and model is loaded")?
-        .map_err(|e| anyhow::anyhow!("Ollama request failed: {}", e))?;
+        .context("Ollama API call timed out after 120 seconds.\n   Please check:\n   1. Ollama is running (https://ollama.ai)\n   2. Model is loaded and ready\n   3. Use `/model` to list and select a model")?
+        .map_err(|e| {
+            // Check if it's a connection error
+            let error_str = e.to_string().to_lowercase();
+            if error_str.contains("connection") || error_str.contains("refused") || error_str.contains("connect") {
+                anyhow::anyhow!(
+                    "✗  Cannot connect to Ollama.\n   Please ensure:\n   1. Ollama is running: https://ollama.ai\n   2. Ollama is listening on http://localhost:11434\n   3. Use `/model` command to list and select a model\n\n   Original error: {}", e
+                )
+            } else if error_str.contains("not found") || error_str.contains("404") {
+                anyhow::anyhow!(
+                    "✗  Model not found in Ollama.\n   Please:\n   1. Pull the model: ollama pull {}\n   2. Or use `/model` to select a different model\n\n   Original error: {}", model, e
+                )
+            } else {
+                anyhow::anyhow!("✗  Ollama request failed: {}\n   Use `/model` to check available models", e)
+            }
+        })?;
 
         // DEBUG: Summary
         debug!(

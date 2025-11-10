@@ -318,7 +318,7 @@ impl ConversationHandler {
             let (original_response, cleaned_response) = self
                 .generate_with_retry()
                 .await
-                .context("Failed to generate valid response after retries")?;
+                .context("✗  LLM failed to generate valid response after retries.\n   This may indicate:\n   1. Ollama is not running or not accessible\n   2. Model is not available or not loaded\n   3. Network/connection issues\n   \n   Use `/model` to check and select an available model")?;
 
             // Add assistant's response to conversation history (with reasoning preserved)
             self.messages
