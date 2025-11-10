@@ -299,7 +299,7 @@ impl UsbFido2Server {
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
         _llm_client: OllamaClient,
-        app_state: Arc<AppState>,
+        _app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         _support_u2f: Option<bool>,

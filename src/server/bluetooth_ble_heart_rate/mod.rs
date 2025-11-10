@@ -20,7 +20,7 @@ impl BluetoothBleHeartRate {
         _instruction: String,
     ) -> Result<std::net::SocketAddr> {
         info!("Starting BLE Heart Rate Service: {}", device_name);
-        let hr_instruction = format!("Configure as BLE Heart Rate Service (UUID: 0x180D) with Heart Rate Measurement characteristic (UUID: 0x2A37).", "");
+        let hr_instruction = "Configure as BLE Heart Rate Service (UUID: 0x180D) with Heart Rate Measurement characteristic (UUID: 0x2A37).".to_string();
         crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(device_name, llm_client, app_state, status_tx, server_id, hr_instruction).await
     }
 }

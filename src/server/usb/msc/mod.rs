@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[cfg(feature = "usb-msc")]
 use tokio::sync::{mpsc, Mutex, RwLock};
 #[cfg(feature = "usb-msc")]
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "usb-msc")]
 use crate::llm::action_helper::call_llm;

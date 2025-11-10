@@ -69,7 +69,7 @@ Black-box, prompt-driven. LLM interprets prompts, tests validate with real clien
 
 ### Build Isolation (CRITICAL)
 
-**Use `./cargo-isolated.sh`** (session-specific `target-claude/claude-$$`). **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`). **Speed**: Fast with `--no-default-features --features <protocol>` (10-30s), slow with `--all-features` (1-2min). **Cleanup**: `rm -rf target-claude/`.
+**Use `./cargo-isolated.sh`** (session-specific `target-claude/claude-{PPID}`). **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`). **Speed**: Fast with `--no-default-features --features <protocol>` (10-30s), slow with `--all-features` (1-2min). **Cleanup**: `rm -rf target-claude/`.
 
 ### Build Performance & Feature Flags (CRITICAL)
 
@@ -143,14 +143,14 @@ fi
 
 **Building and testing takes a long time** (10s-2min depending on features). **NEVER rebuild/retest after each individual fix.** Instead:
 
-**Automatic Logging**: `./cargo-isolated.sh` automatically logs all output to `./tmp/netget-<command>-$$.log` and displays the log path. Use `./cargo-isolated.sh --print-last` to view the last log.
+**Automatic Logging**: `./cargo-isolated.sh` automatically logs all output to `./tmp/netget-<command>-{PPID}.log` and displays the log path. Use `./cargo-isolated.sh --print-last` to view the last log.
 
 1. **Build/test and view output**:
 ```bash
-# Build and pipe to see last 50 lines (automatically logged to ./tmp/netget-build-$$.log)
+# Build and pipe to see last 50 lines (automatically logged to ./tmp/netget-build-{PPID}.log)
 ./cargo-isolated.sh build --no-default-features --features tcp | tail -50
 
-# Test and pipe to see last 50 lines (automatically logged to ./tmp/netget-test-$$.log)
+# Test and pipe to see last 50 lines (automatically logged to ./tmp/netget-test-{PPID}.log)
 ./cargo-isolated.sh test --no-default-features --features tcp | tail -50
 ```
 
@@ -207,7 +207,7 @@ fi
 
 **Time savings**: Fixing 10 errors one-by-one = 10-20 minutes. Fixing all at once = 30 seconds + one build.
 
-**Log files**: Located in `./tmp/netget-<command>-<pid>.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log.
+**Log files**: Located in `./tmp/netget-<command>-{PPID}.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log.
 
 ## Logging (CRITICAL)
 

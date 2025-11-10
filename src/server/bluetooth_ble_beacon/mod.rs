@@ -31,7 +31,7 @@ impl BluetoothBleBeacon {
 
         // Create the underlying BLE server with beacon configuration
         let beacon_instruction = format!(
-            "Configure as a BLE beacon for advertising only. Do not accept connections. {}",
+            "Configure as a BLE beacon for advertising only. Do not accept connections. {} {}",
             instruction,
             "Use advertising packets to broadcast beacon data (iBeacon or Eddystone format)."
         );

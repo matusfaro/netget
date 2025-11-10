@@ -4,10 +4,10 @@
 # Example: ./cargo-isolated.sh build --release --all-features
 #
 # How it works:
-# - Uses $$ (shell PID) to create session-specific build directories
+# - Uses PPID (parent shell PID) to create session-specific build directories
 # - All cargo commands in the same terminal session share the same build directory
 # - Different terminal sessions (different Claude instances) get isolated directories
-# - Format: target-claude/claude-{shell_pid}/
+# - Format: target-claude/claude-{parent_pid}/
 #
 # Options:
 # - --skip-cleanup: Skip cleanup of old target directories (faster startup)
@@ -68,5 +68,11 @@ fi
 # Enable isolated build mode and call cargo.sh
 # Use parent PID as session PID to track the calling shell
 # This ensures all invocations from the same shell session share the same session ID
+#
+# Cross-platform compatibility:
+# - $PPID is a standard Bash variable (POSIX) available on:
+#   * Linux (all distributions)
+#   * macOS (all versions)
+#   * Windows (Git Bash, MSYS2, WSL, Cygwin)
 export CARGO_SESSION_PID="${CARGO_SESSION_PID:-$PPID}"
 CARGO_USE_ISOLATION=true exec "${SCRIPT_DIR}/cargo.sh" "$@"

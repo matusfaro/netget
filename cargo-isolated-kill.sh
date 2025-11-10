@@ -3,7 +3,7 @@
 # Usage: ./cargo-isolated-kill.sh
 #
 # This script only kills processes associated with the current shell session's
-# isolated build directory (target-claude/claude-$$). It will NOT affect other
+# isolated build directory (target-claude/claude-{PPID}). It will NOT affect other
 # Claude instances or their build processes.
 
 set -e
@@ -11,11 +11,21 @@ set -e
 # Determine project root
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Use parent shell PID for session tracking (same as cargo-isolated.sh)
+# This ensures we kill processes from the same shell session
+#
+# Cross-platform compatibility:
+# - $PPID is a standard Bash variable (POSIX) available on:
+#   * Linux (all distributions)
+#   * macOS (all versions)
+#   * Windows (Git Bash, MSYS2, WSL, Cygwin)
+SESSION_PID="${CARGO_SESSION_PID:-$PPID}"
+
 # Get the session-specific build directory (same as cargo-isolated.sh)
-SESSION_BUILD_DIR="${PROJECT_ROOT}/target-claude/claude-$$"
+SESSION_BUILD_DIR="${PROJECT_ROOT}/target-claude/claude-${SESSION_PID}"
 
 echo "=== Cargo Isolated Kill ===" >&2
-echo "Session PID: $$" >&2
+echo "Session PID: ${SESSION_PID}" >&2
 echo "Session build directory: $SESSION_BUILD_DIR" >&2
 echo "============================" >&2
 

@@ -13,7 +13,7 @@ use serde_cbor::Value as CborValue;
 #[cfg(feature = "usb-fido2")]
 use std::collections::BTreeMap;
 #[cfg(feature = "usb-fido2")]
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// CTAP2 command codes
 #[cfg(feature = "usb-fido2")]
@@ -501,7 +501,7 @@ impl Ctap2Handler {
         };
 
         // Parse parameters
-        let client_data_hash = match params.get(&CborValue::Integer(0x01)) {
+        let _client_data_hash = match params.get(&CborValue::Integer(0x01)) {
             Some(CborValue::Bytes(b)) if b.len() == 32 => b.clone(),
             _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
         };
@@ -671,6 +671,9 @@ impl Ctap2Handler {
             info!("GetAssertion approved by LLM (approval_id={})", approval_id);
         }
 
+        // Check PIN status before borrowing store mutably
+        let pin_verified = self.store.pin_verified();
+
         // Find credential
         let credential = match self.store.find_credentials(&rp_id, None) {
             Some(c) => c,
@@ -683,13 +686,18 @@ impl Ctap2Handler {
         // Increment counter
         credential.counter += 1;
 
+        // Copy values we need before dropping credential reference
+        let counter = credential.counter;
+        let credential_id = credential.credential_id.clone();
+        let private_key = credential.private_key.clone();
+
         // Build authenticator data
         let mut auth_data = Vec::new();
         auth_data.extend_from_slice(&ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref());
         // Flags: UP=1, UV=(pin verified)
-        let flags = 0x01 | if self.store.pin_verified() { 0x04 } else { 0x00 };
+        let flags = 0x01 | if pin_verified { 0x04 } else { 0x00 };
         auth_data.push(flags);
-        auth_data.extend_from_slice(&credential.counter.to_be_bytes());
+        auth_data.extend_from_slice(&counter.to_be_bytes());
 
         // Sign (authenticator_data || client_data_hash)
         let mut sig_data = auth_data.clone();
@@ -697,7 +705,7 @@ impl Ctap2Handler {
 
         let key_pair = match EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_FIXED_SIGNING,
-            &credential.private_key,
+            &private_key,
             &ring::rand::SystemRandom::new()
         ) {
             Ok(kp) => kp,
@@ -716,7 +724,7 @@ impl Ctap2Handler {
         };
 
         let mut response = BTreeMap::new();
-        response.insert(CborValue::Integer(0x01), CborValue::Bytes(credential.credential_id.clone()));
+        response.insert(CborValue::Integer(0x01), CborValue::Bytes(credential_id));
         response.insert(CborValue::Integer(0x02), CborValue::Bytes(auth_data));
         response.insert(CborValue::Integer(0x03), CborValue::Bytes(signature));
 

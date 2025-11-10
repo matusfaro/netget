@@ -445,7 +445,7 @@ impl BluetoothClient {
                     "connect_device" => {
                         let device_address = data["device_address"].as_str().map(|s| s.to_string());
                         let device_name = data["device_name"].as_str().map(|s| s.to_string());
-                        Self::connect_to_device(client_data, app_state, status_tx, llm_client, client_id, device_address, device_name).await?;
+                        Box::pin(Self::connect_to_device(client_data, app_state, status_tx, llm_client, client_id, device_address, device_name)).await?;
                     }
                     "discover_services" => {
                         Self::discover_services(client_data, app_state, status_tx, llm_client, client_id).await?;
