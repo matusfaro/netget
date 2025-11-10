@@ -55,6 +55,7 @@ enum ConnectionState {
 
 /// Per-connection data for USB MSC
 #[cfg(feature = "usb-msc")]
+#[derive(Clone)]
 struct ConnectionData {
     state: ConnectionState,
     memory: String,
@@ -277,8 +278,8 @@ impl UsbMscServer {
         // Get local address for USB/IP server
         let usbip_addr = remote_addr; // Use same address as TCP connection
 
-        // Create and spawn USB/IP server
-        let server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
+        // Create and spawn USB/IP server (not wrapped in Arc - usbip::server takes ownership)
+        let server = usbip::UsbIpServer::new_simulated(vec![device]);
         tokio::spawn(async move {
             usbip::server(usbip_addr, server).await;
             debug!("USB/IP server task completed for MSC connection");

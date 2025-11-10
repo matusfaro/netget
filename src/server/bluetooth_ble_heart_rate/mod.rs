@@ -17,7 +17,7 @@ impl BluetoothBleHeartRate {
         app_state: Arc<crate::state::app_state::AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        instruction: String,
+        _instruction: String,
     ) -> Result<std::net::SocketAddr> {
         info!("Starting BLE Heart Rate Service: {}", device_name);
         let hr_instruction = format!("Configure as BLE Heart Rate Service (UUID: 0x180D) with Heart Rate Measurement characteristic (UUID: 0x2A37).", "");

@@ -235,7 +235,7 @@ pub async fn run_with_actions(
             use crate::cli::{server_startup, client_startup};
 
             match common_action {
-                CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
                     // Execute open_server action
                     match server_startup::start_server_from_action(
                         &state,

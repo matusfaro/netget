@@ -212,8 +212,8 @@ impl UsbKeyboardServer {
             handler.clone(),
         );
 
-        // Create USB/IP server
-        let server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
+        // Create USB/IP server (not wrapped in Arc - usbip::server takes ownership)
+        let server = usbip::UsbIpServer::new_simulated(vec![device]);
 
         // Get a unique address for this USB/IP device server
         // We bind to port 3240 (standard USB/IP port) on the remote address
@@ -277,7 +277,7 @@ impl UsbKeyboardServer {
         connection_id: ConnectionId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
+        _status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::keyboard::UsbKeyboardProtocol>,
         server_id: crate::state::ServerId,

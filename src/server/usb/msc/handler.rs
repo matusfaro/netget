@@ -369,14 +369,20 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
                 // This is a CBW (Command Block Wrapper)
                 match CommandBlockWrapper::parse(data) {
                     Some(cbw) => {
+                        // Copy packed fields to avoid unaligned references
+                        let tag = cbw.tag;
+                        let lun = cbw.lun;
+                        let flags = cbw.flags;
+                        let data_transfer_length = cbw.data_transfer_length;
+
                         debug!(
                             "BOT: Received CBW (tag={:#010x}, lun={}, flags={:#04x}, length={})",
-                            cbw.tag,
-                            cbw.lun,
-                            cbw.flags,
-                            cbw.data_transfer_length
+                            tag,
+                            lun,
+                            flags,
+                            data_transfer_length
                         );
-                        self.last_tag = cbw.tag;
+                        self.last_tag = tag;
 
                         // Extract SCSI command (up to cb_length bytes)
                         let scsi_cmd = &cbw.cb[..cbw.cb_length as usize];

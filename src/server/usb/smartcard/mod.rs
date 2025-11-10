@@ -52,6 +52,8 @@ pub mod crypto;
 #[cfg(feature = "usb-smartcard")]
 use anyhow::Result;
 #[cfg(feature = "usb-smartcard")]
+use std::net::SocketAddr;
+#[cfg(feature = "usb-smartcard")]
 use std::sync::Arc;
 #[cfg(feature = "usb-smartcard")]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

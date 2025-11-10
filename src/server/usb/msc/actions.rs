@@ -259,8 +259,7 @@ impl Server for UsbMscProtocol {
         let disk_image = ctx
             .startup_params
             .as_ref()
-            .and_then(|p| p.get("disk_image"))
-            .and_then(|v| v.as_str())
+            .and_then(|p| p.get_optional_string("disk_image"))
             .map(std::path::PathBuf::from);
 
         Box::pin(async move {

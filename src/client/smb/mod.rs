@@ -22,7 +22,7 @@ use crate::client::smb::actions::{
     SMB_CLIENT_ERROR_EVENT,
 };
 
-use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbOptions, SmbDirent, SmbDirentType, SmbOpenOptions, SmbMode};
+use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbOptions, SmbDirent, SmbDirentType, SmbOpenOptions};
 use std::io::{Read as IoRead, Write as IoWrite};
 
 /// SMB client that connects to an SMB/CIFS server
@@ -67,10 +67,8 @@ impl SmbClient {
             .username(&username)
             .password(&password);
 
-        if let Some(d) = domain {
-            creds = creds.domain(&d);
-        }
-        if let Some(w) = workgroup {
+        // Note: pavao API uses workgroup() for both domain and workgroup
+        if let Some(w) = workgroup.or(domain) {
             creds = creds.workgroup(&w);
         }
 
@@ -273,40 +271,60 @@ impl SmbClient {
                             Ok(mut file) => {
                                 // Read file contents into buffer
                                 let mut content_bytes = Vec::new();
-                                if let Err(e) = file.read_to_end(&mut content_bytes) {
-                                    error!("SMB client {} failed to read file {}: {}", client_id, path, e);
-                                    continue;
+                                match file.read_to_end(&mut content_bytes) {
+                                    Ok(_) => {
+                                        let size = content_bytes.len();
+
+                                        // Try to convert to UTF-8 string, fallback to base64 for binary
+                                        let content = if let Ok(text) = String::from_utf8(content_bytes.clone()) {
+                                            text
+                                        } else {
+                                            use base64::{Engine as _, engine::general_purpose};
+                                            format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
+                                        };
+
+                                        info!("SMB client {} read {} bytes from {}", client_id, size, path);
+
+                                        let event = Event::new(
+                                            &SMB_CLIENT_FILE_READ_EVENT,
+                                            serde_json::json!({
+                                                "path": path,
+                                                "content": content,
+                                                "size": size,
+                                            }),
+                                        );
+
+                                        Self::call_llm_with_event(
+                                            &event,
+                                            client_id,
+                                            protocol,
+                                            llm_client,
+                                            app_state,
+                                            status_tx,
+                                            smb_client,
+                                        ).await?;
+                                    }
+                                    Err(e) => {
+                                        error!("SMB client {} failed to read file {}: {}", client_id, path, e);
+                                        let error_event = Event::new(
+                                            &SMB_CLIENT_ERROR_EVENT,
+                                            serde_json::json!({
+                                                "error": e.to_string(),
+                                                "operation": "read_file_content",
+                                            }),
+                                        );
+
+                                        Self::call_llm_with_event(
+                                            &error_event,
+                                            client_id,
+                                            protocol,
+                                            llm_client,
+                                            app_state,
+                                            status_tx,
+                                            smb_client,
+                                        ).await?;
+                                    }
                                 }
-                                let size = content_bytes.len();
-
-                                // Try to convert to UTF-8 string, fallback to base64 for binary
-                                let content = if let Ok(text) = String::from_utf8(content_bytes.clone()) {
-                                    text
-                                } else {
-                                    use base64::{Engine as _, engine::general_purpose};
-                                    format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
-                                };
-
-                                info!("SMB client {} read {} bytes from {}", client_id, size, path);
-
-                                let event = Event::new(
-                                    &SMB_CLIENT_FILE_READ_EVENT,
-                                    serde_json::json!({
-                                        "path": path,
-                                        "content": content,
-                                        "size": size,
-                                    }),
-                                );
-
-                                Self::call_llm_with_event(
-                                    &event,
-                                    client_id,
-                                    protocol,
-                                    llm_client,
-                                    app_state,
-                                    status_tx,
-                                    smb_client,
-                                ).await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} read_file error: {}", client_id, e);
@@ -353,29 +371,49 @@ impl SmbClient {
                         match file_result {
                             Ok(mut file) => {
                                 // Write content to file
-                                if let Err(e) = file.write_all(content_bytes) {
-                                    error!("SMB client {} failed to write file {}: {}", client_id, path, e);
-                                    continue;
+                                match file.write_all(content_bytes) {
+                                    Ok(_) => {
+                                        info!("SMB client {} wrote {} bytes to {}", client_id, content_bytes.len(), path);
+
+                                        let event = Event::new(
+                                            &SMB_CLIENT_FILE_WRITTEN_EVENT,
+                                            serde_json::json!({
+                                                "path": path,
+                                                "bytes_written": content_bytes.len(),
+                                            }),
+                                        );
+
+                                        Self::call_llm_with_event(
+                                            &event,
+                                            client_id,
+                                            protocol,
+                                            llm_client,
+                                            app_state,
+                                            status_tx,
+                                            smb_client,
+                                        ).await?;
+                                    }
+                                    Err(e) => {
+                                        error!("SMB client {} failed to write file {}: {}", client_id, path, e);
+                                        let error_event = Event::new(
+                                            &SMB_CLIENT_ERROR_EVENT,
+                                            serde_json::json!({
+                                                "error": e.to_string(),
+                                                "operation": "write_file_content",
+                                            }),
+                                        );
+
+                                        Self::call_llm_with_event(
+                                            &error_event,
+                                            client_id,
+                                            protocol,
+                                            llm_client,
+                                            app_state,
+                                            status_tx,
+                                            smb_client,
+                                        ).await?;
+                                    }
                                 }
-                                info!("SMB client {} wrote {} bytes to {}", client_id, content_bytes.len(), path);
-
-                                let event = Event::new(
-                                    &SMB_CLIENT_FILE_WRITTEN_EVENT,
-                                    serde_json::json!({
-                                        "path": path,
-                                        "bytes_written": content_bytes.len(),
-                                    }),
-                                );
-
-                                Self::call_llm_with_event(
-                                    &event,
-                                    client_id,
-                                    protocol,
-                                    llm_client,
-                                    app_state,
-                                    status_tx,
-                                    smb_client,
-                                ).await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} write_file error: {}", client_id, e);
