@@ -27,13 +27,16 @@ pub async fn run_non_interactive(
     // Create application state
     let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
 
-    // Override model if specified in args
-    if let Some(model) = &args.model {
-        state.set_ollama_model(model.clone()).await;
-        debug!("Using model: {}", model);
-    } else if !settings.model.is_empty() {
-        state.set_ollama_model(settings.model.clone()).await;
-    }
+    // Determine configured model: args override settings
+    let configured_model = args.model.clone().or(settings.model.clone());
+
+    // Select or validate model from Ollama (non-interactive = exit on error)
+    let selected_model = crate::llm::select_or_validate_model(configured_model, false)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("No model available"))?;
+
+    info!("✓  Using model: {}", selected_model);
+    state.set_ollama_model(Some(selected_model)).await;
 
     // Determine scripting mode with priority: no-scripts flag > CLI arg > saved setting > auto-detected
     let mode_to_set = if args.no_scripts {
@@ -191,14 +194,6 @@ pub async fn run_with_actions(
 
     // Create application state
     let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
-
-    // Override model if specified in args
-    if let Some(model) = &args.model {
-        state.set_ollama_model(model.clone()).await;
-        debug!("Using model: {}", model);
-    } else if !settings.model.is_empty() {
-        state.set_ollama_model(settings.model.clone()).await;
-    }
 
     // Determine scripting mode
     let mode_to_set = if args.no_scripts {

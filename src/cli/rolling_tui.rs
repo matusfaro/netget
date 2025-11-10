@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Instant};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::events::{EventHandler, UserCommand};
 use crate::llm::OllamaClient;
@@ -57,15 +57,28 @@ pub async fn run_rolling_tui(
     // Wrap palette in Arc for sharing
     let palette = Arc::new(palette);
 
-    // Override model if specified in args, otherwise use settings
-    let effective_model = if let Some(model) = &args.model {
-        model.clone()
-    } else {
-        settings.lock().await.model.clone()
+    // Determine configured model: args override settings
+    let configured_model = args.model.clone().or(settings.lock().await.model.clone());
+
+    // Select or validate model from Ollama
+    let selected_model = match crate::llm::select_or_validate_model(configured_model, true).await {
+        Ok(Some(model)) => {
+            info!("✓  Using model: {}", model);
+            model
+        }
+        Ok(None) => {
+            // No model available, but interactive mode can continue
+            warn!("⚠  No model selected. Use /model command to select one.");
+            "".to_string() // Empty string as placeholder
+        }
+        Err(e) => {
+            error!("Failed to initialize model: {}", e);
+            return Err(e);
+        }
     };
 
-    state.set_ollama_model(effective_model.clone()).await;
-    app.connection_info.model = effective_model;
+    state.set_ollama_model(if selected_model.is_empty() { None } else { Some(selected_model.clone()) }).await;
+    app.connection_info.model = selected_model;
 
     // Load web search setting from settings file
     let web_search_mode = settings.lock().await.get_web_search_mode();
@@ -567,8 +580,23 @@ async fn execute_single_task(
     // Build prompt
     let prompt = PromptBuilder::build_task_execution_prompt(&state, &task, protocol_actions).await;
 
-    // Get current model
-    let model = state.get_ollama_model().await;
+    // Get current model, ensuring one is selected
+    let model = match crate::llm::ensure_model_selected(state.get_ollama_model().await).await {
+        Ok(m) => m,
+        Err(e) => {
+            let error_msg = format!("Model selection failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to ensure model is selected for task execution: {}", e));
+            // Update task status to failed
+            state.update_task_status(task.id, crate::state::task::TaskStatus::Failed(error_msg.clone())).await;
+            let result = TaskExecutionResult {
+                success: false,
+                actions: Vec::new(),
+                error: Some(error_msg),
+            };
+            state.record_task_execution(task.id, &result).await;
+            return;
+        }
+    };
 
     // Register task as conversation
     let conversation_source = match &task.scope {
@@ -1032,7 +1060,7 @@ async fn handle_key_event(
                         handle_status_command(&command, app, state, event_handler, footer, &palette).await?;
                     }
                     UserCommand::ChangeModel { model } => {
-                        state.set_ollama_model(model.clone()).await;
+                        state.set_ollama_model(Some(model.clone())).await;
                         app.connection_info.model = model.clone();
                         print_output_line(&format!("Model changed to: {}", model), footer, &palette)?;
                         update_ui_from_state(app, state, footer).await;
@@ -1547,7 +1575,7 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     let old_footer_height = term_height.saturating_sub(old_scroll_height);
 
     app.connection_info.mode = state.get_mode().await.to_string();
-    app.connection_info.model = state.get_ollama_model().await;
+    app.connection_info.model = state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
 
     // Update server list
     let servers = state.get_all_servers().await;
@@ -1723,7 +1751,7 @@ async fn handle_status_command(
             }
         }
         UserCommand::ShowModel => {
-            let current_model = state.get_ollama_model().await;
+            let current_model = state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
             print_output_line(&format!("Current model: {}", current_model), footer, palette)?;
             print_output_line("", footer, palette)?;
             print_output_line("Fetching available models...", footer, palette)?;
@@ -1785,7 +1813,7 @@ async fn handle_status_command(
             if let Ok(cwd) = std::env::current_dir() {
                 print_output_line(&format!("Working directory: {}", cwd.display()), footer, palette)?;
             }
-            print_output_line(&format!("Model: {}", state.get_ollama_model().await), footer, palette)?;
+            print_output_line(&format!("Model: {}", state.get_ollama_model().await.unwrap_or_else(|| "None".to_string())), footer, palette)?;
         }
         _ => {}
     }
