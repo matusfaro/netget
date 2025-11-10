@@ -964,7 +964,7 @@ let guard = mutex.lock().await;
 ## 12. MULTI-INSTANCE CONCURRENCY PATTERNS
 
 ### Concurrent Instances
-- `cargo-isolated.sh` - Uses session-specific `target-claude-$$`
+- `cargo-isolated.sh` - Uses session-specific `target-claude-{PPID}`
 - Different instances use different build directories
 - Safe to run multiple NetGet instances simultaneously
 

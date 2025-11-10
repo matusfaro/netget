@@ -24,7 +24,7 @@ use ring::rand::SecureRandom;
 #[cfg(feature = "usb-fido2")]
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 #[cfg(feature = "usb-fido2")]
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// U2F command codes (INS byte)
 #[cfg(feature = "usb-fido2")]

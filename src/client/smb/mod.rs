@@ -283,6 +283,9 @@ impl SmbClient {
                                             format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
                                         };
 
+                                        // Drop file before await (SmbFile contains raw pointer, not Send)
+                                        drop(file);
+
                                         info!("SMB client {} read {} bytes from {}", client_id, size, path);
 
                                         let event = Event::new(

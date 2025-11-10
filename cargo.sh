@@ -5,7 +5,7 @@
 #
 # Modes:
 # - Standard mode (default): Uses target/ directory
-# - Isolated mode: Set CARGO_USE_ISOLATION=true to use target-claude/claude-$$/
+# - Isolated mode: Set CARGO_USE_ISOLATION=true to use target-claude/claude-{PPID}/
 #
 # Options:
 # - --skip-cleanup: Skip cleanup of old target directories (faster startup)

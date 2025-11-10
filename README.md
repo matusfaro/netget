@@ -394,7 +394,7 @@ brew install samba
 ./cargo-isolated-kill.sh                      # Kill all isolated builds (not system cargo!)
 ```
 
-Output is automatically logged to `./tmp/netget-<command>-$$.log`.
+Output is automatically logged to `./tmp/netget-<command>-{PPID}.log`.
 
 ## Configuration
 

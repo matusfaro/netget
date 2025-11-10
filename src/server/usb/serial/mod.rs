@@ -37,7 +37,7 @@ pub struct UsbSerialServer;
 impl UsbSerialServer {
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
-        llm_client: OllamaClient,
+        _llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
@@ -47,8 +47,8 @@ impl UsbSerialServer {
         info!("USB Serial server listening on {}", local_addr);
         let _ = status_tx.send(format!("USB Serial server listening on {}", local_addr));
 
-        let connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>> = Arc::new(Mutex::new(HashMap::new()));
-        let protocol = Arc::new(crate::server::usb::serial::actions::UsbSerialProtocol::new());
+        let _connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>> = Arc::new(Mutex::new(HashMap::new()));
+        let _protocol = Arc::new(crate::server::usb::serial::actions::UsbSerialProtocol::new());
 
         tokio::spawn(async move {
             loop {
