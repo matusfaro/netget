@@ -72,12 +72,10 @@ export CARGO_BUILD_INCREMENTAL=false
 # Use remap-path-prefix (stable) so differing CARGO_TARGET_DIR and workspace paths don't change cache keys [web:31][web:21]
 # Map project root and the session-specific target root to stable anchors
 PROJECT_ROOT="$(pwd)"
-ADD_REMAPS=(
-  "-Cremap-path-prefix=${PROJECT_ROOT}=/proj"
-  "-Cremap-path-prefix=${ISOLATED_ROOT}=/tgt"
-)
+# Note: Use --remap-path-prefix (double dash) which is the correct flag for rustc
+ADD_REMAPS="--remap-path-prefix=${PROJECT_ROOT}=/proj --remap-path-prefix=${ISOLATED_ROOT}=/tgt"
 # Preserve user-provided flags while appending ours
-export RUSTFLAGS="${RUSTFLAGS:-} ${ADD_REMAPS[*]}"
+export RUSTFLAGS="${RUSTFLAGS:-} ${ADD_REMAPS}"
 
 # Optional: trim embedded paths consistently via Cargo’s trim-paths when available
 # Users can also enable in .cargo/config.toml: [profile.release] trim-paths = true [web:21]
