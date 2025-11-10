@@ -329,9 +329,20 @@ Provide references for this repository."#,
     let _ = status_tx.send(format!("[DEBUG] Calling LLM for ref advertisement"));
 
     // Call LLM with retry
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
         .generate_with_retry(
-            &model,
+            &model_str,
             &prompt,
             r#"[{"type": "git_advertise_refs", ...}]"#
         )
@@ -492,9 +503,20 @@ Generate a pack file response."#,
     let _ = status_tx.send("[DEBUG] Calling LLM for pack generation".to_string());
 
     // Call LLM with retry
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
         .generate_with_retry(
-            &model,
+            &model_str,
             &prompt,
             r#"[{"type": "git_send_pack", ...}]"#
         )

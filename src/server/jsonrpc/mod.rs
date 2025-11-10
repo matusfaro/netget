@@ -444,9 +444,10 @@ Handle this method call and respond appropriately."#,
     let _ = status_tx.send(format!("[DEBUG] Calling LLM for method: {}", method));
 
     // Call LLM with retry
+    let model_str = crate::llm::ensure_model_selected(model).await?;
     let llm_response = llm_client
         .generate_with_retry(
-            &model,
+            &model_str,
             &prompt,
             r#"[{"type": "jsonrpc_success" or "jsonrpc_error", ...}]"#
         )

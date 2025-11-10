@@ -371,9 +371,20 @@ Provide standard Mercurial capabilities for this repository."#,
     let _ = status_tx.send("[DEBUG] Calling LLM for capabilities".to_string());
 
     // Call LLM with retry
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
         .generate_with_retry(
-            &model,
+            &model_str,
             &prompt,
             r#"[{"type": "hg_capabilities", ...}]"#
         )
@@ -527,8 +538,19 @@ Provide repository heads."#,
     debug!("Calling LLM for Mercurial heads: {}", repo);
     let _ = status_tx.send("[DEBUG] Calling LLM for heads".to_string());
 
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
-        .generate_with_retry(&model, &prompt, r#"[{"type": "hg_heads", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_heads", ...}]"#)
         .await
     {
         Ok(response) => response,
@@ -660,8 +682,19 @@ Provide branch mappings for this repository."#,
     debug!("Calling LLM for Mercurial branchmap: {}", repo);
     let _ = status_tx.send("[DEBUG] Calling LLM for branchmap".to_string());
 
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
-        .generate_with_retry(&model, &prompt, r#"[{"type": "hg_branchmap", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_branchmap", ...}]"#)
         .await
     {
         Ok(response) => response,
@@ -808,8 +841,19 @@ Provide key-value mappings for this namespace."#,
     debug!("Calling LLM for Mercurial listkeys: {}, {}", repo, namespace);
     let _ = status_tx.send("[DEBUG] Calling LLM for listkeys".to_string());
 
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
-        .generate_with_retry(&model, &prompt, r#"[{"type": "hg_listkeys", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_listkeys", ...}]"#)
         .await
     {
         Ok(response) => response,
@@ -944,8 +988,19 @@ Generate a bundle response."#,
     debug!("Calling LLM for Mercurial getbundle: {}", repo);
     let _ = status_tx.send("[DEBUG] Calling LLM for getbundle".to_string());
 
+    let model_str = match crate::llm::ensure_model_selected(model).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            return Ok(build_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Model selection failed: {}", e),
+            ));
+        }
+    };
     let llm_response = match llm_client
-        .generate_with_retry(&model, &prompt, r#"[{"type": "hg_send_bundle", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_send_bundle", ...}]"#)
         .await
     {
         Ok(response) => response,
