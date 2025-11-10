@@ -150,6 +150,10 @@ pub struct App {
     pub system_capabilities: crate::privilege::SystemCapabilities,
     /// Active and recently-completed conversations
     pub conversations: Vec<crate::state::app_state::ConversationInfo>,
+    /// Last submitted input (for auto-clear on failure)
+    pub last_submitted_input: Option<String>,
+    /// Timestamp of last submission (for auto-clear timeout)
+    pub last_submission_time: Option<std::time::Instant>,
 }
 
 impl Default for App {
@@ -170,6 +174,8 @@ impl Default for App {
             connection_id_map: std::collections::HashMap::new(),
             system_capabilities: crate::privilege::SystemCapabilities::detect(),
             conversations: Vec::new(),
+            last_submitted_input: None,
+            last_submission_time: None,
         }
     }
 }

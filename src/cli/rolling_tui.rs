@@ -202,9 +202,14 @@ pub async fn run_rolling_tui(
     // Main event loop
     info!("Entering main event loop");
 
+    // Track pending input clear timeout
+    let mut input_clear_deadline: Option<tokio::time::Instant> = None;
+
     loop {
         // Drain status messages from spawned tasks
         let mut ui_needs_update = false;
+        let mut llm_error_occurred = false;
+
         while let Ok(msg) = status_rx.try_recv() {
             if msg == "__UPDATE_UI__" {
                 // Special signal to update UI from state
@@ -212,6 +217,10 @@ pub async fn run_rolling_tui(
             } else {
                 // Filter messages by log level
                 let should_show = if msg.starts_with("[ERROR]") {
+                    // Check if this is an LLM-related error
+                    if msg.contains("LLM error") || msg.contains("LLM call failed") || msg.contains("Failed to execute actions") {
+                        llm_error_occurred = true;
+                    }
                     true
                 } else if msg.starts_with("[WARN]") {
                     app.log_level >= LogLevel::Warn
@@ -233,6 +242,11 @@ pub async fn run_rolling_tui(
             }
         }
 
+        // If an LLM error occurred and we have a tracked submission, schedule input clear
+        if llm_error_occurred && app.last_submitted_input.is_some() {
+            input_clear_deadline = Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs(5));
+        }
+
         // Render footer immediately if messages were printed to reposition cursor
         // This ensures cursor is in the input field before select! blocks
         if ui_needs_update {
@@ -252,6 +266,27 @@ pub async fn run_rolling_tui(
                     pending_resize = None;
                 }
             }
+
+            // Input clear timeout after LLM failure
+            _ = async {
+                if let Some(deadline) = input_clear_deadline {
+                    tokio::time::sleep_until(deadline).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                // Clear the input field if it's not empty
+                let current_input = footer.input().text();
+                if !current_input.is_empty() {
+                    footer.input_mut().clear();
+                    footer.render(&mut stdout())?;
+                }
+                // Clear the deadline and tracking
+                input_clear_deadline = None;
+                app.last_submitted_input = None;
+                app.last_submission_time = None;
+            }
+
             // Keyboard events
             maybe_event = event_stream.next() => {
                 match maybe_event {
@@ -990,6 +1025,10 @@ async fn handle_key_event(
             if !text.is_empty() {
                 // Add to history
                 app.add_to_history(text.clone());
+
+                // Track this submission for auto-clear on failure
+                app.last_submitted_input = Some(text.clone());
+                app.last_submission_time = Some(std::time::Instant::now());
 
                 // Parse command
                 let command = UserCommand::parse(&text);
