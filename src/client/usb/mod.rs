@@ -24,6 +24,7 @@ use crate::client::usb::actions::{
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -32,7 +33,9 @@ enum ConnectionState {
 
 /// Per-client data for LLM handling
 struct ClientData {
+    #[allow(dead_code)]
     state: ConnectionState,
+    #[allow(dead_code)]
     queued_events: Vec<Event>,
     memory: String,
 }
@@ -344,7 +347,7 @@ impl UsbClient {
                                     index,
                                     data: &out_data,
                                 };
-                                interface_clone.control_out(control_out).await;
+                                let _ = interface_clone.control_out(control_out).await;
                                 Ok(Vec::new())
                             };
 

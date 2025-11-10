@@ -28,6 +28,7 @@ use crate::client::bluetooth::actions::{
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -36,9 +37,11 @@ enum ConnectionState {
 
 /// Per-client data for LLM handling
 struct ClientData {
+    #[allow(dead_code)]
     state: ConnectionState,
     memory: String,
     peripheral: Option<Peripheral>,
+    #[allow(dead_code)]
     manager: Manager,
     adapter: Adapter,
 }

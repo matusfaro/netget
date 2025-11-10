@@ -136,6 +136,7 @@ pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 #[cfg(feature = "usb-msc")]
 pub struct UsbMscProtocol {
     /// Map of active connections (for async actions)
+    #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP MSC handlers for each connection
     handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
@@ -167,6 +168,7 @@ impl UsbMscProtocol {
     }
 
     /// Get the USB/IP MSC handler for a connection
+    #[allow(dead_code)]
     async fn get_handler(
         &self,
         connection_id: ConnectionId,
