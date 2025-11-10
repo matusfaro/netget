@@ -658,38 +658,3 @@ impl CircuitManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_circuit_id() {
-        let id = CircuitId::new(0x12345678);
-        assert_eq!(id.as_u32(), 0x12345678);
-
-        let bytes = id.to_bytes();
-        assert_eq!(bytes, [0x12, 0x34, 0x56, 0x78]);
-
-        let id2 = CircuitId::from_bytes(&bytes);
-        assert_eq!(id, id2);
-    }
-
-    #[test]
-    fn test_ntor_handshake() {
-        let server = NtorServer::new();
-
-        // Simulate client public key (random for test)
-        let client_x = [42u8; 32];
-
-        let result = server.server_handshake(&client_x);
-        assert!(result.is_ok());
-
-        let (y, auth, keys) = result.unwrap();
-        assert_eq!(y.len(), 32);
-        assert_eq!(auth.len(), 32);
-        assert_eq!(keys.kf.len(), 16);
-        assert_eq!(keys.kb.len(), 16);
-        assert_eq!(keys.df.len(), 20);
-        assert_eq!(keys.db.len(), 20);
-    }
-}

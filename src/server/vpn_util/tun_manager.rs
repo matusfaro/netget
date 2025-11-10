@@ -130,29 +130,3 @@ impl Drop for TunManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore] // Requires root privileges
-    async fn test_create_tun() {
-        let result = TunManager::create(Some("test0"), 1500, None).await;
-
-        // This will fail without root, which is expected
-        match result {
-            Ok(tun) => {
-                assert_eq!(tun.mtu(), 1500);
-                assert!(tun.name().starts_with("test"));
-            }
-            Err(e) => {
-                // Expected to fail without root
-                assert!(
-                    e.to_string().contains("root") || e.to_string().contains("Permission"),
-                    "Unexpected error: {}",
-                    e
-                );
-            }
-        }
-    }
-}

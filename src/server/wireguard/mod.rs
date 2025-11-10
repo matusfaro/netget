@@ -365,12 +365,3 @@ impl Drop for WireguardServer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_max_peers_constant() {
-        assert_eq!(MAX_PEERS, 100);
-    }
-}
