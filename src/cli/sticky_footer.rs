@@ -1180,7 +1180,7 @@ impl StickyFooter {
         // Calculate visual position considering wrapping, box borders, and "> " prefix
         let input_start_line = self.terminal_height
             - self.calculate_input_lines()
-            - 4; // -4 for input_box_bottom, separator before status, status bar, and we're inside the box
+            - 2; // -2 for status bar and input_box_bottom
 
         let mut visual_row = input_start_line;
         let mut visual_col = 2; // Start at column 2 to account for "│ " left border
