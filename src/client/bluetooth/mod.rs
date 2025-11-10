@@ -6,6 +6,7 @@ pub use actions::BluetoothClientProtocol;
 use anyhow::{Context, Result};
 use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
 use btleplug::platform::{Adapter, Manager, Peripheral};
+use futures::future::BoxFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -210,14 +211,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Box::pin(Self::execute_llm_action(
+                        if let Err(e) = Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        )).await {
+                        ).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -232,15 +233,16 @@ impl BluetoothClient {
     }
 
     /// Connect to a specific BLE device
-    async fn connect_to_device(
-        client_data: &Arc<Mutex<ClientData>>,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        llm_client: &OllamaClient,
+    fn connect_to_device<'a>(
+        client_data: &'a Arc<Mutex<ClientData>>,
+        app_state: &'a Arc<AppState>,
+        status_tx: &'a mpsc::UnboundedSender<String>,
+        llm_client: &'a OllamaClient,
         client_id: ClientId,
         device_address: Option<String>,
         device_name: Option<String>,
-    ) -> Result<()> {
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
         let adapter = {
             let data = client_data.lock().await;
             data.adapter.clone()
@@ -348,14 +350,14 @@ impl BluetoothClient {
 
                                     // Execute actions
                                     for action in actions {
-                                        if let Err(e) = Box::pin(Self::execute_llm_action(
+                                        if let Err(e) = Self::execute_llm_action(
                                             action,
                                             &client_data,
                                             &app_state,
                                             &status_tx,
                                             &llm_client,
                                             client_id,
-                                        )).await {
+                                        ).await {
                                             error!("Error executing Bluetooth action: {}", e);
                                         }
                                     }
@@ -402,14 +404,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Box::pin(Self::execute_llm_action(
+                        if let Err(e) = Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        )).await {
+                        ).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -421,17 +423,19 @@ impl BluetoothClient {
         }
 
         Ok(())
+        })
     }
 
     /// Execute an action returned by the LLM
-    async fn execute_llm_action(
+    fn execute_llm_action<'a>(
         action: serde_json::Value,
-        client_data: &Arc<Mutex<ClientData>>,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        llm_client: &OllamaClient,
+        client_data: &'a Arc<Mutex<ClientData>>,
+        app_state: &'a Arc<AppState>,
+        status_tx: &'a mpsc::UnboundedSender<String>,
+        llm_client: &'a OllamaClient,
         client_id: ClientId,
-    ) -> Result<()> {
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
         use crate::llm::actions::client_trait::Client;
         let protocol = BluetoothClientProtocol::new();
 
@@ -445,7 +449,7 @@ impl BluetoothClient {
                     "connect_device" => {
                         let device_address = data["device_address"].as_str().map(|s| s.to_string());
                         let device_name = data["device_name"].as_str().map(|s| s.to_string());
-                        Box::pin(Self::connect_to_device(client_data, app_state, status_tx, llm_client, client_id, device_address, device_name)).await?;
+                        Self::connect_to_device(client_data, app_state, status_tx, llm_client, client_id, device_address, device_name).await?;
                     }
                     "discover_services" => {
                         Self::discover_services(client_data, app_state, status_tx, llm_client, client_id).await?;
@@ -490,6 +494,7 @@ impl BluetoothClient {
         }
 
         Ok(())
+        })
     }
 
     /// Discover GATT services and characteristics
@@ -574,14 +579,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Box::pin(Self::execute_llm_action(
+                        if let Err(e) = Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        )).await {
+                        ).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -654,14 +659,14 @@ impl BluetoothClient {
 
                     // Execute actions
                     for action in actions {
-                        if let Err(e) = Box::pin(Self::execute_llm_action(
+                        if let Err(e) = Self::execute_llm_action(
                             action,
                             client_data,
                             app_state,
                             status_tx,
                             llm_client,
                             client_id,
-                        )).await {
+                        ).await {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }

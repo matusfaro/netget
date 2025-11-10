@@ -341,58 +341,37 @@ impl SmbClient {
 
                         let content_bytes = content.as_bytes();
 
-                        // Open file for writing
-                        let file_result = smb_client.open_with(
+                        // Open file for writing and immediately write contents
+                        // We need to close the file before any await (SmbFile contains raw pointer, not Send)
+                        let write_result = smb_client.open_with(
                             path,
                             SmbOpenOptions::default().write(true).create(true).truncate(true)
-                        );
+                        ).and_then(|mut file| {
+                            file.write_all(content_bytes)?;
+                            Ok(content_bytes.len())
+                        });
 
-                        match file_result {
-                            Ok(mut file) => {
-                                // Write content to file
-                                match file.write_all(content_bytes) {
-                                    Ok(_) => {
-                                        info!("SMB client {} wrote {} bytes to {}", client_id, content_bytes.len(), path);
+                        match write_result {
+                            Ok(bytes_written) => {
+                                info!("SMB client {} wrote {} bytes to {}", client_id, bytes_written, path);
 
-                                        let event = Event::new(
-                                            &SMB_CLIENT_FILE_WRITTEN_EVENT,
-                                            serde_json::json!({
-                                                "path": path,
-                                                "bytes_written": content_bytes.len(),
-                                            }),
-                                        );
+                                let event = Event::new(
+                                    &SMB_CLIENT_FILE_WRITTEN_EVENT,
+                                    serde_json::json!({
+                                        "path": path,
+                                        "bytes_written": bytes_written,
+                                    }),
+                                );
 
-                                        Self::call_llm_with_event(
-                                            &event,
-                                            client_id,
-                                            protocol,
-                                            llm_client,
-                                            app_state,
-                                            status_tx,
-                                            smb_client,
-                                        ).await?;
-                                    }
-                                    Err(e) => {
-                                        error!("SMB client {} failed to write file {}: {}", client_id, path, e);
-                                        let error_event = Event::new(
-                                            &SMB_CLIENT_ERROR_EVENT,
-                                            serde_json::json!({
-                                                "error": e.to_string(),
-                                                "operation": "write_file_content",
-                                            }),
-                                        );
-
-                                        Self::call_llm_with_event(
-                                            &error_event,
-                                            client_id,
-                                            protocol,
-                                            llm_client,
-                                            app_state,
-                                            status_tx,
-                                            smb_client,
-                                        ).await?;
-                                    }
-                                }
+                                Self::call_llm_with_event(
+                                    &event,
+                                    client_id,
+                                    protocol,
+                                    llm_client,
+                                    app_state,
+                                    status_tx,
+                                    smb_client,
+                                ).await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} write_file error: {}", client_id, e);
