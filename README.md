@@ -1,506 +1,552 @@
-# NetGet - LLM-Controlled Network Application
+# NetGet
 
-A Rust CLI application where an LLM (via Ollama) controls network protocols and acts as a server (or client) for various protocols like FTP, HTTP, or custom protocols. The application provides only the TCP/IP stack - all protocol logic is handled by the LLM.
+**LLM-Controlled Network Protocol Server & Client**
+
+NetGet is a Rust CLI application where an LLM (via Ollama) controls 50+ network protocols as both servers and clients. Instead of hardcoding protocol logic, NetGet provides the network stack while the LLM constructs raw protocol datagrams or high-level responses based on natural language instructions.
+
+```bash
+# Start a MySQL server that reads schema from files
+netget "act as MySQL server, read schema.json for database structure"
+
+# Start an SSH server with custom authentication
+netget "SSH server on port 2222, allow users alice and bob"
+
+# Connect as HTTP client to test an API
+netget "connect to https://api.example.com as HTTP client"
+```
+
+## Why NetGet?
+
+**Traditional Approach**: Hardcode protocol behavior
+```rust
+match command {
+    "USER" => send("331 Password required\r\n"),
+    "PASS" => send("230 Logged in\r\n"),
+    // ... hundreds of lines of rigid logic
+}
+```
+
+**NetGet's Approach**: Instruct the LLM in natural language
+```bash
+> act as FTP server, allow anonymous login, serve file data.txt with content 'hello'
+```
+
+The LLM handles all protocol details (welcome messages, authentication, file transfer) without any code changes.
+
+## Key Features
+
+### 🌐 50+ Network Protocols
+
+Both server and client modes for:
+
+**Core Transport**
+- TCP, UDP, HTTP, HTTP/2, HTTP/3, TLS, DataLink
+
+**Application Protocols**
+- SSH, FTP, DNS, DHCP, SMTP, IMAP, MySQL, PostgreSQL, Redis
+- MQTT, Kafka, gRPC, WebSocket, WebDAV, NFS, SMB
+- OpenVPN, WireGuard, Tor, IPSec (honeypot)
+
+**IoT & Hardware**
+- Bluetooth Low Energy (15+ GATT services: keyboard, mouse, heart rate, etc.)
+- USB/IP (keyboard, mouse, serial, mass storage, FIDO2, smart card)
+
+**Routing & Infrastructure**
+- BGP, OSPF, IS-IS, RIP, mDNS, SNMP, NTP, Syslog
+
+**Specialized**
+- OAuth2, SAML, OpenID Connect, MCP, JSON-RPC, XML-RPC
+- BitTorrent (tracker, DHT, peer), OpenAPI, Kubernetes, etcd
+
+See the `/docs` command in the TUI for full protocol details and metadata.
+
+### 🤖 LLM-Driven Intelligence
+
+- **Tool Calling**: LLM can read files and search the web before responding
+- **Scripting Mode**: Use Python/JavaScript for deterministic protocol logic (0 LLM calls)
+- **Scheduled Tasks**: Time-based automation at global, server, or connection scope
+- **Memory**: LLM maintains conversation history across requests
+
+### 🖥️ Rich Terminal Interface
+
+**Rolling Terminal UI** with sticky footer:
+- **Three-column layout**: Active servers | Active clients | Status & stats
+- **Natural scrolling**: Output flows into your terminal's scrollback buffer
+- **Multi-line input**: Shift+Enter for complex commands
+- **Command history**: Up/down arrows with persistent storage
+- **Log levels**: Ctrl+L to toggle ERROR/WARN/INFO/DEBUG/TRACE
+- **Web search**: Ctrl+W to enable LLM web search capability
+
+## Quick Start
+
+### Prerequisites
+
+1. **Install Ollama** (LLM runtime)
+   ```bash
+   curl https://ollama.ai/install.sh | sh
+   ollama pull qwen3-coder:30b  # or another model
+   ```
+
+2. **Install Rust** (latest stable)
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+### Installation
+
+```bash
+git clone https://github.com/matusfaro/netget.git
+cd netget
+
+# Build specific protocols (fast: 10-30s)
+./cargo-isolated.sh build --release --no-default-features --features tcp,http,ssh,mysql
+
+# Or build all protocols (slow: 1-2 min, requires system dependencies)
+./cargo-isolated.sh build --release --all-features
+```
+
+### Run Your First Server
+
+```bash
+# Start Ollama
+ollama serve
+
+# Start NetGet
+./target/release/netget
+
+# In the NetGet prompt, type:
+> listen on port 8080 via HTTP, serve a page that says "Hello World"
+```
+
+Now visit `http://localhost:8080` in your browser!
 
 ## Architecture
 
-### Core Components
+NetGet uses an event-driven architecture where all network events flow through a central event handler that coordinates with the LLM:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   Interactive TUI                        │
-│  ┌──────────────┐  ┌────────────┐  ┌────────────────┐  │
-│  │ User Input   │  │ LLM        │  │ Connection     │  │
-│  │              │  │ Responses  │  │ Info & Stats   │  │
-│  └──────────────┘  └────────────┘  └────────────────┘  │
+│                   Rolling Terminal UI                    │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
+│  │  Active  │  │  Active  │  │  Connection Info &   │  │
+│  │  Servers │  │  Clients │  │  Stats               │  │
+│  └──────────┘  └──────────┘  └──────────────────────┘  │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │         Status / Activity Log                     │  │
+│  │         Status / Activity Log (Scrolling)        │  │
 │  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Event System                          │
-│  - User Commands                                         │
-│  - Network Events (data received/sent, connections)      │
-│  - LLM Coordination                                      │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │  Input: > your commands here (Shift+Enter)       │  │
+│  └──────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
                             │
          ┌──────────────────┴──────────────────┐
          ▼                                     ▼
 ┌──────────────────┐               ┌──────────────────────┐
-│   TCP/IP Stack   │               │   Ollama LLM Client  │
-│  - TcpServer     │               │  - Prompt Generation │
-│  - Connections   │               │  - Response Parsing  │
-│  - Packets       │               │                      │
+│  Network Layer   │               │   LLM Integration    │
+│  • TCP/UDP       │◄─────────────►│  • Ollama Client     │
+│  • TLS           │               │  • Tool Calling      │
+│  • Raw Sockets   │               │  • Scripting         │
+│  • USB/IP        │               │  • Web Search        │
+│  • Bluetooth     │               │                      │
 └──────────────────┘               └──────────────────────┘
 ```
 
-### Module Structure
+### Key Modules
 
-- **`ui/`** - Full-screen terminal interface with ratatui
-  - `app.rs` - Application state and rendering
-  - `layout.rs` - 4-panel layout management
-  - `events.rs` - Terminal input handling
-
-- **`network/`** - TCP/IP stack implementation
-  - `tcp.rs` - Async TCP server
-  - `connection.rs` - Connection management
-  - `packet.rs` - Packet representation
-
-- **`protocol/`** - Protocol type definitions (NO implementations)
-  - Only defines protocol types (FTP, HTTP, Custom)
-  - All protocol logic is handled by LLM
-
+- **`cli/`** - Terminal UI (rolling output, sticky footer, input handling)
+- **`server/<protocol>/`** - Protocol server implementations
+- **`client/<protocol>/`** - Protocol client implementations
+- **`protocol/`** - Protocol registry and metadata
+- **`llm/`** - Ollama integration and prompt engineering
+- **`llm/actions/`** - LLM action system (user-triggered and network-triggered)
+- **`events/`** - Event coordination between network, LLM, and UI
 - **`state/`** - Application state management
-  - `app_state.rs` - Global state (mode, protocol, connections, instructions)
-  - `machine.rs` - Generic state machine utilities
 
-- **`llm/`** - Ollama integration
-  - `client.rs` - Ollama API client
-  - `prompt.rs` - Prompt generation for different scenarios
+### Design Principles
 
-- **`events/`** - Event coordination
-  - `types.rs` - Event and command definitions
-  - `handler.rs` - LLM-driven event processing
+1. **Decentralized Protocol Registry**: Each protocol implements traits independently (no central switch statements except in startup)
+2. **Dual Logging**: All logs go to both tracing macros (→ `netget.log`) and status channel (→ TUI)
+3. **State Machine**: Per-connection state (Idle → Processing → Accumulating) prevents concurrent LLM calls
+4. **Feature Gating**: Every protocol is optional and feature-gated for fast compilation
+5. **No Protocol Storage**: Protocols don't store data—LLM returns everything via actions/scripts/static responses
 
-## How It Works
+## Usage Examples
 
-### 1. User Issues Command
+### Server Examples
 
-User types a command like:
+#### HTTP Server with Dynamic Content
+```bash
+> listen on port 8080 via HTTP
+> For /api/time return JSON with current timestamp
+> For /api/random return a random number between 1 and 100
 ```
-listen on port 21 via FTP protocol and serve a single file data.txt with content 'hello'
+
+#### MySQL Server with Schema File
+```bash
+# Create schema file first
+$ cat > schema.json <<EOF
+{
+  "database": "shop",
+  "tables": [
+    {"name": "products", "columns": ["id", "name", "price"]},
+    {"name": "users", "columns": ["id", "email", "created_at"]}
+  ]
+}
+EOF
+
+> act as MySQL server, read schema.json for database structure
+> Answer SELECT queries based on the schema
 ```
 
-### 2. State Management
+#### SSH Server with Custom Behavior
+```bash
+> SSH server on port 2222
+> Allow password authentication for user "admin" with password "secret"
+> When user runs "date", return current date and time
+> When user runs "fortune", return a random fortune cookie message
+```
 
-The application:
-- Sets mode to Server
-- Sets protocol type to FTP
-- Stores user instruction in memory
+#### DNS Server with Dynamic Responses
+```bash
+> DNS server on port 5353
+> For *.local domains, return 127.0.0.1
+> For *.dev domains, return 192.168.1.100
+> For google.com, return 8.8.8.8
+```
 
-### 3. TCP Connection Established
+### Client Examples
 
-When a client connects:
-- Application asks LLM: "What initial data should we send?" (provides context: FTP protocol, user instructions)
-- LLM generates FTP welcome message: `220 NetGet FTP Server Ready\r\n`
-- Application sends the exact bytes
+#### HTTP Client Testing API
+```bash
+> connect to https://api.github.com as HTTP client
+> Send GET request to /users/octocat
+> Show me the response headers and body
+```
 
-### 4. Data Received
+#### Redis Client Session
+```bash
+> connect to 127.0.0.1:6379 as Redis client
+> Send: SET mykey "Hello World"
+> Send: GET mykey
+> Send: INCR counter
+```
 
-When data arrives from client:
-- Application asks LLM: "Client sent: `USER anonymous\r\n`. What should we respond?"
-- LLM generates: `331 Password required\r\n`
-- Application sends response
+#### TCP Client for Protocol Testing
+```bash
+> connect to localhost:25 as TCP client
+> This is an SMTP server, try sending an email
+```
 
-### 5. Continuous Interaction
+### Advanced Features
 
-This pattern continues for all network events:
-- LLM reads current state
-- LLM reads user instructions
-- LLM reads received data
-- LLM decides: send response / close connection / no response
+#### Tool Calling (File Reading)
+```bash
+> act as HTTP server on port 8000
+> For /config, read config.json and return it as JSON
+> For /users, read users.csv and return it formatted as HTML table
+```
 
-## Prerequisites
+The LLM will automatically call `read_file()` when handling requests.
 
-- Rust (latest stable)
-- [Ollama](https://ollama.ai/) running locally
-- An Ollama model (e.g., `llama3.2:latest`)
+#### Web Search Integration
+```bash
+# Enable web search
+Ctrl+W
+
+> act as HTTP server on port 80
+> If you receive a request you don't understand, search for the HTTP RFC
+```
+
+The LLM can search the web for protocol documentation, RFCs, or any other information.
+
+#### Scripting Mode (Zero LLM Calls)
+```bash
+> listen on port 3000 via HTTP
+> Use JavaScript scripting mode for responses
+> For /api/time return: { "time": new Date().toISOString() }
+> For /health return: { "status": "ok" }
+```
+
+Scripting mode is deterministic and makes zero LLM calls after setup.
+
+#### Scheduled Tasks
+```bash
+> listen on port 22 via SSH
+> Schedule a task every 60 seconds to broadcast "System health check complete"
+> Schedule a task after 300 seconds to close all idle connections
+```
+
+Tasks can be scoped to global (any server), server-specific, or connection-specific.
+
+### Managing Connections
 
 ```bash
-# Install Ollama
-curl https://ollama.ai/install.sh | sh
-
-# Pull a model
-ollama pull llama3.2:latest
+> status                    # Show all active servers and clients
+> close server 1            # Close specific server
+> close client 2            # Close specific client
+> close all                 # Close everything
+> model llama3.3:70b        # Switch to different LLM model
 ```
+
+## Testing
+
+NetGet has comprehensive test coverage with both unit tests and end-to-end tests.
+
+### Unit Tests (No Ollama Required)
+
+```bash
+./cargo-isolated.sh test --lib
+```
+
+Tests protocol parsing, registry, metadata, and core utilities.
+
+### E2E Tests (Ollama Required)
+
+```bash
+# Start Ollama first
+ollama serve
+ollama pull qwen3-coder:30b
+
+# Run E2E tests for specific protocol (fast)
+./cargo-isolated.sh test --no-default-features --features tcp --test server::tcp::e2e_test
+
+# Run all E2E tests for a protocol (server + client)
+./cargo-isolated.sh test --no-default-features --features http
+```
+
+**E2E Test Philosophy**:
+- **Black-box testing**: Tests use real clients (curl, mysql CLI, ssh clients, etc.)
+- **LLM budget**: Each test suite limited to < 10 LLM calls via aggressive caching
+- **Prompt-driven**: Tests validate that LLM interprets prompts correctly
+- **Localhost only**: All tests run on 127.0.0.1/::1 for privacy
+
+### Test Organization
+
+- **Unit tests**: `tests/base_stack_test.rs` (registry parsing, etc.)
+- **Protocol E2E**: `tests/server/<protocol>/e2e_test.rs`, `tests/client/<protocol>/e2e_test.rs`
+- **Documentation**: Each protocol has TWO `CLAUDE.md` files:
+  - `src/server/<protocol>/CLAUDE.md` - Implementation details
+  - `tests/server/<protocol>/CLAUDE.md` - Test strategy
 
 ## Building
 
 ### System Dependencies
 
-Most protocols have no system dependencies. However, the `bluetooth-ble` feature requires `libdbus-1-dev`:
+Most protocols are pure Rust with no system dependencies. Exceptions:
 
-**Ubuntu/Debian:**
+**Bluetooth BLE** (requires D-Bus):
 ```bash
+# Ubuntu/Debian
 sudo apt-get install libdbus-1-dev pkg-config
-```
 
-**Fedora/RHEL:**
-```bash
+# Fedora/RHEL
 sudo dnf install dbus-devel pkgconf-pkg-config
 ```
 
-To build without bluetooth-ble:
+**SMB Client** (requires libsmbclient):
 ```bash
-./cargo-isolated.sh build --release --no-default-features --features tcp,http,dns  # etc.
+# Ubuntu/Debian
+sudo apt-get install libsmbclient-dev
+
+# macOS
+brew install samba
 ```
 
-### Building All Protocols
+### Build Strategies
 
+**Fast Development** (10-30s, recommended):
 ```bash
-./cargo-isolated.sh build --release --all-features  # Requires libdbus-1-dev for bluetooth-ble
+# Single protocol
+./cargo-isolated.sh build --no-default-features --features tcp
+
+# Multiple related protocols
+./cargo-isolated.sh build --no-default-features --features tcp,http,dns,mysql
 ```
 
-## Testing
-
-NetGet has both **unit tests** and **integration tests**:
-
-### Unit Tests (no Ollama required)
+**Full Build** (1-2 min, requires all system dependencies):
 ```bash
-./cargo-isolated.sh test --lib
+./cargo-isolated.sh build --all-features
 ```
 
-### Integration Tests (requires Ollama)
-
-Integration tests verify the full system with real FTP clients and LLM interaction.
-
+**Claude Code for Web** (skip bluetooth-ble):
 ```bash
-# Start Ollama first
-ollama serve
-ollama pull deepseek-coder:latest
+# Check if running in web environment
+./am_i_claude_code_for_web.sh
 
-# In another terminal, run all tests
-./cargo-isolated.sh test
-
-# Or run only integration tests
-./cargo-isolated.sh test --test ftp_integration_test
+# Use explicit features (safe in all environments)
+./cargo-isolated.sh build --no-default-features --features tcp,http,dns
 ```
 
-**Note**: Integration tests will fail if Ollama is not running. This is expected behavior.
+### Build Performance Notes
 
-See [`tests/README.md`](tests/README.md) for detailed testing documentation.
+- **sccache**: NetGet uses sccache for caching compiled artifacts
+- **Feature gating**: Each protocol is optional—only compile what you need
+- **Isolated builds**: `./cargo-isolated.sh` uses session-specific target directory to avoid conflicts
+- **Parallel builds**: Multiple instances can build concurrently with `--ollama-lock` for test isolation
 
-## Running
-
-```bash
-# Start Ollama (if not running)
-ollama serve
-
-# Run NetGet interactively
-./cargo-isolated.sh run
-
-# Run with debug logging enabled
-./cargo-isolated.sh run -- --debug
-
-# Pass a command directly (executes before entering TUI)
-./cargo-isolated.sh run -- "listen on port 21 via ftp"
-
-# Combine flags
-./cargo-isolated.sh run -- --debug "listen on port 21 via ftp"
-```
-
-### UI Architecture
-
-NetGet uses a **rolling terminal interface** (like `tail -f`):
-
-- **Output Scrolling**: Server logs and LLM responses scroll naturally into your terminal's scrollback buffer
-- **Sticky Footer**: Input field and status bar remain fixed at the bottom
-- **Status Bar**: Shows model name, scripting mode (LLM/Python/JavaScript), web search toggle, and packet statistics
-- **Log Levels**: ERROR, WARN, INFO, DEBUG, TRACE (toggle with Ctrl+L)
-- **Natural Navigation**: Use your terminal's native scrollback (scrollbar, page up/down)
-
-### Shell-like Features
-
-NetGet provides a rich command-line interface with familiar keybindings:
-
-#### Command History
-- **Up/Down arrows**: Navigate through previous commands
-- **History indicator**: Title bar shows "History N/M" when browsing
-- **Smart editing**: Start typing to exit history and edit current input
-- **Persistent storage**: History automatically saved to `~/.netget_history` on exit
-- **Cross-session**: Previous commands are loaded when you restart NetGet
-
-#### Multi-line Input
-- **Shift+Enter**: Insert newline for multi-line commands
-- **Enter**: Submit command
-- **Smart cursor**: Tracks position across multiple lines
-
-#### Keybindings
-- **Ctrl+A**: Move to start of line
-- **Ctrl+E**: Move to end of line
-- **Ctrl+K**: Delete from cursor to end of line
-- **Ctrl+W**: Toggle web search on/off
-- **Ctrl+U**: Clear entire input
-- **Ctrl+L**: Cycle log level (ERROR → WARN → INFO → DEBUG → TRACE)
-- **Home/End**: Jump to line start/end
-- **Ctrl+C**: Quit application
-
-#### CLI Arguments
-
-Execute commands immediately on startup:
+### Cargo Isolated Scripts
 
 ```bash
-# Start server with single command
-netget "listen on port 21 via ftp"
-
-# Useful for scripting and automation
+./cargo-isolated.sh build --features tcp      # Build with isolated target dir
+./cargo-isolated.sh test --features http      # Test with isolation
+./cargo-isolated.sh run -- --debug            # Run with debug logging
+./cargo-isolated.sh --print-last              # View last build/test output
+./cargo-isolated-kill.sh                      # Kill all isolated builds (not system cargo!)
 ```
 
-## Usage Examples
-
-### Example 1: FTP Server
-
-```
-> listen on port 21 via FTP protocol
-> Also serve a single file data.txt with content 'hello world'
-```
-
-The LLM will:
-- Send FTP welcome messages
-- Handle USER, PASS, PWD, LIST, RETR commands
-- Serve the file as instructed
-
-### Example 2: Echo Server
-
-```
-> listen on TCP port 1234, and echo back everything that is sent to you
-```
-
-### Example 3: Question Answering Server
-
-```
-> listen on TCP port 12121, expect text to be sent to you, try to answer the questions sent to you
-```
-
-### Example 4: HTTP Server
-
-```
-> listen on port 80 via HTTP
-> Serve a simple HTML page with "Hello World"
-```
-
-### Managing Connections
-
-```
-> status                  # Show current state
-> close                   # Close all connections
-```
+Output is automatically logged to `./tmp/netget-<command>-$$.log`.
 
 ## Configuration
 
-### Changing Ollama Model
+### LLM Model Selection
 
-The default model is `deepseek-coder:latest`.
-
-**Change model at runtime** (recommended):
-```
-model deepseek-coder:latest
-model llama3.2:latest
-model codellama:latest
+**Change at runtime** (recommended):
+```bash
+> model qwen3-coder:30b
+> model llama3.3:70b
+> model codestral:latest
 ```
 
-**Change default model** (requires rebuild):
-```rust
-// In src/state/app_state.rs
-ollama_model: "llama3:latest".to_string(),
-```
-
-The current model is always displayed in the Connection Info panel.
+**Default model**: `qwen3-coder:30b` (configured in `src/state/app_state.rs`)
 
 ### Ollama URL
 
-Default is `http://localhost:11434`. Change in `src/llm/client.rs`:
+Default: `http://localhost:11434`
 
+To change, edit `src/llm/client.rs`:
 ```rust
 pub fn default() -> Self {
     Self::new("http://your-ollama-host:11434")
 }
 ```
 
-## Prompt Engineering
+### Log Levels
 
-The LLM receives detailed prompts for each event. See `src/llm/prompt.rs`:
+- **Runtime**: Press `Ctrl+L` to cycle through ERROR → WARN → INFO → DEBUG → TRACE
+- **Startup**: `netget --debug` enables debug logging to `netget.log`
 
-- **`build_data_received_prompt`** - When data arrives
-- **`build_connection_established_prompt`** - When connection opens
-- **`build_status_prompt`** - For status explanations
+### History
 
-Prompts include:
-- Current mode (server/client)
-- Protocol type (FTP, HTTP, Custom)
-- All user instructions
-- Connection state
-- Received data
+Command history is persisted to `~/.netget_history` across sessions.
 
-## Testing
+## Protocol Implementation
 
-### Test FTP Server
+### Adding a New Server Protocol
+
+See `CLAUDE.md` for the full 12-step checklist. Quick overview:
+
+1. Add feature to `Cargo.toml`
+2. Implement server in `src/server/<protocol>/mod.rs`
+3. Implement actions in `src/server/<protocol>/actions.rs`
+4. Register in `protocol/registry.rs` (feature-gated)
+5. Add match arm in `cli/server_startup.rs` (feature-gated)
+6. Write E2E test in `tests/server/<protocol>/e2e_test.rs`
+7. Document in `src/server/<protocol>/CLAUDE.md` and `tests/server/<protocol>/CLAUDE.md`
+
+### Adding a New Client Protocol
+
+Similar to server, but:
+- Implement in `src/client/<protocol>/mod.rs` and `actions.rs`
+- Register in `protocol/client_registry.rs`
+- Add match arm in `cli/client_startup.rs`
+- See `CLIENT_PROTOCOL_FEASIBILITY.md` for protocol evaluation criteria
+
+## Advanced Topics
+
+### Multi-Instance Collaboration
+
+- Use `./cargo-isolated.sh` for per-session build isolation
+- Use `--ollama-lock` flag to serialize LLM API access across instances
+- Use git worktrees for concurrent development branches
+- Never use `pkill cargo`—use `./cargo-isolated-kill.sh` instead
+
+### Efficient Iteration
+
+Build/test logging is automatic. Analyze all errors before rebuilding:
 
 ```bash
-# Terminal 1: Start NetGet
-./cargo-isolated.sh run
+# Build and pipe last 50 lines
+./cargo-isolated.sh build --features tcp | tail -50
 
-# Enter in NetGet UI:
-listen on port 2121 via ftp
+# Analyze ALL errors from saved log
+./cargo-isolated.sh --print-last | grep "error\[E"
 
-# Terminal 2: Connect with FTP client
-ftp localhost 2121
-# Try: USER anonymous, PASS test, PWD, SYST, LIST
+# Fix ALL issues at once, then rebuild once
+./cargo-isolated.sh build --features tcp | tail -50
 ```
 
-### Test with netcat
+This saves 10-20 minutes per development cycle vs fixing one error at a time.
 
+### Protocol-Specific Documentation
+
+Each protocol has detailed documentation:
+
+- **Implementation**: `src/server/<protocol>/CLAUDE.md` or `src/client/<protocol>/CLAUDE.md`
+  - Library choices, architecture, LLM integration, limitations
+- **Testing**: `tests/server/<protocol>/CLAUDE.md` or `tests/client/<protocol>/CLAUDE.md`
+  - Test strategy, LLM call budget, runtime, known issues
+
+**Always read both before modifying a protocol.**
+
+## Troubleshooting
+
+### Ollama Connection Failed
+```
+Error: Failed to connect to Ollama
+```
+**Fix**: Ensure Ollama is running: `ollama serve`
+
+### Model Not Found
+```
+Error: Model not found
+```
+**Fix**: Pull the model: `ollama pull qwen3-coder:30b`
+
+### Port Already in Use
+```
+Error: Address already in use
+```
+**Fix**: Choose a different port or kill the process using that port.
+
+### Build Fails with Missing Libraries
+```
+error: failed to run custom build command for `dbus`
+```
+**Fix**: Install system dependencies (see Building section) or use `--no-default-features` with explicit protocol features to skip protocols requiring system libraries.
+
+### Bluetooth BLE in Claude Code for Web
+**Fix**: Never use `--all-features` in web environment. Use explicit features instead:
 ```bash
-# Terminal 1: Start NetGet, enter:
-listen on port 5000
-
-# Terminal 2:
-nc localhost 5000
-# Type messages and see LLM responses
+./cargo-isolated.sh build --no-default-features --features tcp,http,dns
 ```
-
-## Project Structure
-
-```
-netget/
-├── Cargo.toml
-├── README.md
-├── src/
-│   ├── main.rs              # Event loop orchestration
-│   ├── lib.rs
-│   ├── ui/                  # Full-screen TUI
-│   │   ├── mod.rs
-│   │   ├── app.rs
-│   │   ├── layout.rs
-│   │   └── events.rs
-│   ├── network/             # TCP/IP stack
-│   │   ├── mod.rs
-│   │   ├── tcp.rs
-│   │   ├── connection.rs
-│   │   └── packet.rs
-│   ├── protocol/            # Protocol types only
-│   │   └── mod.rs
-│   ├── state/               # State management
-│   │   ├── mod.rs
-│   │   ├── app_state.rs
-│   │   └── machine.rs
-│   ├── llm/                 # Ollama integration
-│   │   ├── mod.rs
-│   │   ├── client.rs
-│   │   └── prompt.rs
-│   └── events/              # Event coordination
-│       ├── mod.rs
-│       ├── types.rs
-│       └── handler.rs
-```
-
-## Key Design Decisions
-
-### Why LLM-Only Protocol Handling?
-
-1. **Flexibility**: Support any protocol without writing code
-2. **Learning**: LLM can adapt to custom or undocumented protocols
-3. **Natural Language Control**: Users describe behavior, not implementation
-4. **Experimentation**: Test protocol variations easily
-
-### Why Not Hardcode Protocols?
-
-Traditional approach would implement FTP/HTTP/etc in Rust. Downsides:
-- Rigid behavior
-- Requires code changes for new protocols
-- Can't easily modify behavior
-- Users must understand implementation
-
-### LLM Approach Benefits:
-
-- User says: "Act as FTP server with file X"
-- LLM generates exact FTP protocol responses
-- Behavior changes with user instructions
-- No code modifications needed
 
 ## Performance Considerations
 
-- Each network event triggers an LLM call (can be slow)
-- Suitable for experimentation, testing, learning
-- Not for production high-throughput servers
-- Future: Add caching for common protocol patterns
+- **LLM latency**: Each network event may trigger an LLM call (can be slow)
+- **Scripting mode**: For deterministic protocols, use Python/JavaScript scripting (zero LLM calls)
+- **Caching**: Connection state machine prevents concurrent LLM calls on same connection
+- **Ollama lock**: Use `--ollama-lock` to serialize LLM API across instances (default in tests)
 
-## Limitations (MVP)
+**Use case**: NetGet is ideal for protocol testing, security research, learning, and development. Not recommended for production high-throughput servers.
 
-- [ ] No client mode yet (only server)
-- [ ] No streaming LLM responses
-- [ ] No persistent file storage
-- [ ] One connection at a time handled sequentially
-- [ ] No TLS/SSL support
-- [ ] No UDP support
+## Contributing
 
-## Future Enhancements
+NetGet is an experimental project exploring LLM-controlled networking. Contributions welcome!
 
-- **Client Mode**: LLM as protocol client
-- **Multi-Protocol**: Layer protocols (TCP→HTTP→WebSocket)
-- **Learning Mode**: Train on protocol traces
-- **Replay Mode**: Record and replay sessions
-- **UI Improvements**: Hex view, packet inspector
-- **Performance**: Cache common responses
+**Ideas for enhancement**:
+1. New protocol implementations
+2. Better prompt engineering for existing protocols
+3. Scripting mode templates for common protocols
+4. Performance optimizations (caching, connection pooling)
+5. Additional tool calling capabilities
+6. Protocol fuzzing and security testing features
 
 ## Files Created
 
 NetGet creates the following files:
-
-- **`netget.log`** - Application logs (only created with `--debug` flag)
+- **`netget.log`** - Application logs (only with `--debug` flag)
 - **`~/.netget_history`** - Command history (always created)
-
-Both files are safe to delete if you want to start fresh.
-
-## Troubleshooting
-
-### Debugging / Logs
-
-By default, NetGet runs without logging to keep things clean. To enable debug logging:
-
-```bash
-# Run with debug logging
-netget --debug
-
-# Or with cargo
-./cargo-isolated.sh run -- --debug
-```
-
-Logs are written to `netget.log` in the current directory. This prevents log messages from garbling the TUI.
-
-```bash
-# View logs in real-time
-tail -f netget.log
-
-# Search for errors
-grep ERROR netget.log
-```
-
-### Ollama Connection Failed
-
-```
-Error: Failed to connect to Ollama
-```
-
-**Fix**: Ensure Ollama is running: `ollama serve`
-
-### Model Not Found
-
-```
-Error: Model not found
-```
-
-**Fix**: Pull the model: `ollama pull llama3.2:latest`
-
-### Port Already in Use
-
-```
-Error: Address already in use
-```
-
-**Fix**: Choose a different port or kill the process using that port.
-
-## Contributing
-
-This is an experimental project. Ideas for improvement:
-
-1. Better prompt engineering
-2. Protocol-specific prompt templates
-3. Multi-connection handling improvements
-4. Client mode implementation
-5. WebSocket support
+- **`./tmp/netget-*.log`** - Build/test logs from `cargo-isolated.sh`
 
 ## License
 
@@ -508,6 +554,7 @@ MIT
 
 ## Acknowledgments
 
-- Built with [tokio](https://tokio.rs/) for async runtime
-- UI powered by [ratatui](https://github.com/ratatui-org/ratatui)
+- Built with [Tokio](https://tokio.rs/) for async runtime
+- Terminal UI powered by [Crossterm](https://github.com/crossterm-rs/crossterm)
 - LLM integration via [Ollama](https://ollama.ai/)
+- 50+ protocol implementations using best-in-class Rust crates
