@@ -18,7 +18,6 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use crate::server::connection::ConnectionId;
 use actions::{ArpProtocol, ARP_REQUEST_RECEIVED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;

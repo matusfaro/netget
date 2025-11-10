@@ -37,6 +37,7 @@ impl BluetoothBleBattery {
             app_state,
             status_tx,
             server_id,
+            format!("Act as a Bluetooth Battery Service. Report battery level at {}%.", initial_level),
         ).await
     }
 }

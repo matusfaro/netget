@@ -327,7 +327,7 @@ impl SamlClient {
                             for attr in e.attributes() {
                                 if let Ok(attr) = attr {
                                     if attr.key.as_ref() == b"Name" {
-                                        if let Ok(value) = attr.unescape_value() {
+                                        if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) {
                                             current_attr_name = Some(value.to_string());
                                         }
                                     }
@@ -351,7 +351,7 @@ impl SamlClient {
                         for attr in e.attributes() {
                             if let Ok(attr) = attr {
                                 if attr.key.as_ref() == b"Value" {
-                                    if let Ok(value) = attr.unescape_value() {
+                                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) {
                                         status_code = value.to_string();
                                     }
                                 }

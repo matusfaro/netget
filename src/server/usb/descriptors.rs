@@ -1012,6 +1012,7 @@ pub mod scsi_opcode {
     pub const MODE_SENSE_6: u8 = 0x1A;
     pub const START_STOP_UNIT: u8 = 0x1B;
     pub const PREVENT_ALLOW_MEDIUM_REMOVAL: u8 = 0x1E;
+    pub const READ_FORMAT_CAPACITIES: u8 = 0x23;
     pub const READ_CAPACITY_10: u8 = 0x25;
     pub const READ_10: u8 = 0x28;
     pub const WRITE_10: u8 = 0x2A;

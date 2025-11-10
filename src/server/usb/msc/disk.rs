@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 #[cfg(feature = "usb-msc")]
 use memmap2::MmapMut;
 #[cfg(feature = "usb-msc")]
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 #[cfg(feature = "usb-msc")]
 use std::path::Path;
 #[cfg(feature = "usb-msc")]

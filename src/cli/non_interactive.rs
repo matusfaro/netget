@@ -223,7 +223,7 @@ pub async fn run_with_actions(
     let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
 
     // Create status channel
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    let (_status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
     println!("Loading {} action(s)...\n", actions.len());
 
@@ -235,7 +235,7 @@ pub async fn run_with_actions(
             use crate::cli::{server_startup, client_startup};
 
             match common_action {
-                CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                CommonAction::OpenServer { port, base_stack, send_first: _, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
                     // Execute open_server action
                     match server_startup::start_server_from_action(
                         &state,

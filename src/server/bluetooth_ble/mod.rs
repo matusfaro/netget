@@ -69,7 +69,7 @@ impl BluetoothBle {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        instruction: String,
+        _instruction: String,
     ) -> Result<std::net::SocketAddr> {
         // Create event channel for peripheral events
         let (event_tx, event_rx) = mpsc::channel::<PeripheralEvent>(256);

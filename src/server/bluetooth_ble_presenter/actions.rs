@@ -1,9 +1,8 @@
 //! BLE Presenter Service
-use crate::llm::actions::{protocol_trait::{ActionResult, Protocol, Server}, ActionDefinition, Parameter, ParameterDefinition};
+use crate::llm::actions::{protocol_trait::{ActionResult, Protocol, Server}, ActionDefinition, ParameterDefinition};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
-use serde_json::json;
 
 pub struct BluetoothBlePresenterProtocol;
 impl BluetoothBlePresenterProtocol { pub fn new() -> Self { Self } }

@@ -4,13 +4,7 @@
 //! including connection management, URB processing, and helper utilities.
 
 #[cfg(feature = "usb-common")]
-use anyhow::{Context, Result};
-#[cfg(feature = "usb-common")]
-use std::net::SocketAddr;
-#[cfg(feature = "usb-common")]
-use tokio::net::TcpStream;
-#[cfg(feature = "usb-common")]
-use tracing::{debug, error, info, trace, warn};
+use anyhow::Result;
 
 /// USB/IP protocol version (1.1.1)
 #[cfg(feature = "usb-common")]

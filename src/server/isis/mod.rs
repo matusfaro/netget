@@ -214,7 +214,11 @@ impl IsisServer {
                             src_mac[3], src_mac[4], src_mac[5]
                         ];
 
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id = ConnectionId::new(
+                            tokio::runtime::Handle::current().block_on(
+                                app_state.get_next_unified_id()
+                            )
+                        );
 
                         // DEBUG: Log summary
                         debug!("IS-IS received {} bytes from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -588,7 +592,7 @@ impl IsisServer {
     }
 
     /// Get MAC address of interface (platform-specific)
-    fn get_interface_mac(interface: &str) -> Result<[u8; 6]> {
+    fn get_interface_mac(_interface: &str) -> Result<[u8; 6]> {
         // Try to get MAC from system
         #[cfg(target_os = "linux")]
         {

@@ -14,7 +14,7 @@ use std::time::Duration;
 #[cfg(feature = "usb-fido2")]
 use tokio::sync::{oneshot, RwLock};
 #[cfg(feature = "usb-fido2")]
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Global storage for approval managers (one per server instance)
 #[cfg(feature = "usb-fido2")]
@@ -224,9 +224,9 @@ impl ApprovalManager {
     }
 
     /// Update configuration
-    pub async fn set_config(&self, config: ApprovalConfig) {
-        *self.config.write().await = config;
-        info!("Approval config updated: {:?}", config);
+    pub async fn set_config(&self, new_config: ApprovalConfig) {
+        *self.config.write().await = new_config.clone();
+        info!("Approval config updated: {:?}", new_config);
     }
 
     /// Get current configuration

@@ -11,7 +11,7 @@ pub mod actions;
 pub use actions::UsbMouseProtocol;
 
 #[cfg(feature = "usb-mouse")]
-use anyhow::{Context, Result};
+use anyhow::Result;
 #[cfg(feature = "usb-mouse")]
 use std::collections::HashMap;
 #[cfg(feature = "usb-mouse")]
@@ -21,20 +21,16 @@ use std::sync::Arc;
 #[cfg(feature = "usb-mouse")]
 use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-mouse")]
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info};
 
 #[cfg(feature = "usb-mouse")]
 use crate::llm::action_helper::call_llm;
-#[cfg(feature = "usb-mouse")]
-use crate::llm::actions::protocol_trait::Server;
 #[cfg(feature = "usb-mouse")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "usb-mouse")]
 use crate::protocol::Event;
 #[cfg(feature = "usb-mouse")]
 use crate::server::connection::ConnectionId;
-#[cfg(feature = "usb-mouse")]
-use crate::server::usb::descriptors::*;
 #[cfg(feature = "usb-mouse")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-mouse")]
@@ -237,7 +233,7 @@ impl UsbMouseServer {
         connection_id: ConnectionId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
+        _status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::mouse::UsbMouseProtocol>,
         server_id: crate::state::ServerId,
@@ -265,7 +261,7 @@ impl UsbMouseServer {
         }
 
         // Get instruction and memory
-        let (instruction, memory) = {
+        let (_instruction, _memory) = {
             if let Some(server) = app_state.get_server(server_id).await {
                 (server.instruction.clone(), String::new())
             } else {

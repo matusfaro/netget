@@ -326,7 +326,8 @@ impl Server for UsbKeyboardProtocol {
                     .as_any()
                     .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
                 {
-                    let empty_report = usbip::hid::UsbHidKeyboardReport::new();
+                    // Create empty report (all zeros)
+                    let empty_report = usbip::hid::UsbHidKeyboardReport::from_ascii(0);
                     hid.pending_key_events.push_back(empty_report);
                     tracing::info!("Released all keys for connection {}", connection_id);
                     Ok(ActionResult::NoAction)

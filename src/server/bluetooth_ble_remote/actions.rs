@@ -118,7 +118,7 @@ impl Server for BluetoothBleRemoteProtocol {
     > {
         Box::pin(async move {
             let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
-                .and_then(|v| v.as_str())
+                .as_deref()
                 .unwrap_or("NetGet-Remote")
                 .to_string();
 

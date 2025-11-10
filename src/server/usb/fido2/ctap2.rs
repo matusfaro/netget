@@ -5,15 +5,15 @@
 #[cfg(feature = "usb-fido2")]
 use anyhow::{bail, Context, Result};
 #[cfg(feature = "usb-fido2")]
-use ring::rand::SecureRandom;
+use ring::rand::{SecureRandom, SystemRandom};
 #[cfg(feature = "usb-fido2")]
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 #[cfg(feature = "usb-fido2")]
 use serde_cbor::Value as CborValue;
 #[cfg(feature = "usb-fido2")]
 use std::collections::BTreeMap;
 #[cfg(feature = "usb-fido2")]
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info};
 
 /// CTAP2 command codes
 #[cfg(feature = "usb-fido2")]
@@ -451,10 +451,6 @@ impl Ctap2Handler {
             Ctap2Command::ClientPin => self.handle_client_pin(request.cbor_params),
             Ctap2Command::GetNextAssertion => self.handle_get_next_assertion(),
             Ctap2Command::Reset => self.handle_reset(),
-            _ => {
-                warn!("Unsupported CTAP2 command: {:?}", request.command);
-                Ctap2Response::error(Ctap2Status::InvalidCommand)
-            }
         };
 
         response.to_bytes()
@@ -538,13 +534,19 @@ impl Ctap2Handler {
         // Parse options (0x07)
         let options = params.get(&CborValue::Integer(0x07));
         let require_resident_key = options
-            .and_then(|o| o.as_map())
+            .and_then(|o| match o {
+                CborValue::Map(m) => Some(m),
+                _ => None,
+            })
             .and_then(|m| m.get(&CborValue::Text("rk".to_string())))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
         let require_user_verification = options
-            .and_then(|o| o.as_map())
+            .and_then(|o| match o {
+                CborValue::Map(m) => Some(m),
+                _ => None,
+            })
             .and_then(|m| m.get(&CborValue::Text("uv".to_string())))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
@@ -699,7 +701,7 @@ impl Ctap2Handler {
             }
         };
 
-        let signature = match key_pair.sign(&sig_data) {
+        let signature = match key_pair.sign(&self.store.rng, &sig_data) {
             Ok(sig) => sig.as_ref().to_vec(),
             Err(e) => {
                 warn!("Failed to sign: {}", e);

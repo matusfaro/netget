@@ -103,7 +103,7 @@ impl Server for BluetoothBleDataStreamProtocol {
     fn spawn(&self, ctx: crate::protocol::SpawnContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
             let instruction = ctx.state.get_server(ctx.server_id).await.map(|s| s.instruction).unwrap_or_default();
-            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name")).and_then(|v| v.as_str()).unwrap_or("NetGet-Stream").to_string();
+            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name")).as_deref().unwrap_or("NetGet-Stream").to_string();
             crate::server::bluetooth_ble_data_stream::BluetoothBleDataStream::spawn_with_llm_actions(
                 device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
             ).await

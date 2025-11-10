@@ -22,7 +22,8 @@ use crate::client::smb::actions::{
     SMB_CLIENT_ERROR_EVENT,
 };
 
-use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbMode, SmbDirent};
+use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbOptions, SmbDirent, SmbDirentType, SmbOpenOptions, SmbMode};
+use std::io::{Read as IoRead, Write as IoWrite};
 
 /// SMB client that connects to an SMB/CIFS server
 pub struct SmbClient;
@@ -60,16 +61,21 @@ impl SmbClient {
             client_id, username, domain, workgroup
         );
 
-        // Create SMB credentials
-        let creds = SmbCredentials::new(
-            &username,
-            &password,
-            domain.as_deref(),
-            workgroup.as_deref(),
-        );
+        // Create SMB credentials using builder pattern
+        let mut creds = SmbCredentials::default()
+            .server(&remote_addr)
+            .username(&username)
+            .password(&password);
 
-        // Create SMB client with automatic SMB version detection
-        let smb_client = PavaoSmbClient::new(creds, SmbMode::Auto)
+        if let Some(d) = domain {
+            creds = creds.domain(&d);
+        }
+        if let Some(w) = workgroup {
+            creds = creds.workgroup(&w);
+        }
+
+        // Create SMB client
+        let smb_client = PavaoSmbClient::new(creds, SmbOptions::default())
             .context("Failed to create SMB client")?;
 
         // For SMB, we use a dummy local address since it's a library-based client
@@ -191,17 +197,16 @@ impl SmbClient {
                                         let dirent: &SmbDirent = entry;
                                         serde_json::json!({
                                             "name": dirent.name(),
-                                            "type": match dirent.smbc_type() {
-                                                1 => "workgroup",
-                                                2 => "server",
-                                                3 => "file_share",
-                                                4 => "printer_share",
-                                                5 => "comms_share",
-                                                6 => "ipc_share",
-                                                7 => "dir",
-                                                8 => "file",
-                                                9 => "link",
-                                                _ => "unknown",
+                                            "type": match dirent.get_type() {
+                                                SmbDirentType::Workgroup => "workgroup",
+                                                SmbDirentType::Server => "server",
+                                                SmbDirentType::FileShare => "file_share",
+                                                SmbDirentType::PrinterShare => "printer_share",
+                                                SmbDirentType::CommsShare => "comms_share",
+                                                SmbDirentType::IpcShare => "ipc_share",
+                                                SmbDirentType::Dir => "dir",
+                                                SmbDirentType::File => "file",
+                                                SmbDirentType::Link => "link",
                                             },
                                             "comment": dirent.comment(),
                                         })
@@ -258,8 +263,20 @@ impl SmbClient {
 
                         debug!("SMB client {} reading file: {}", client_id, path);
 
-                        match smb_client.read(path) {
-                            Ok(content_bytes) => {
+                        // Open file for reading
+                        let file_result = smb_client.open_with(
+                            path,
+                            SmbOpenOptions::default().read(true)
+                        );
+
+                        match file_result {
+                            Ok(mut file) => {
+                                // Read file contents into buffer
+                                let mut content_bytes = Vec::new();
+                                if let Err(e) = file.read_to_end(&mut content_bytes) {
+                                    error!("SMB client {} failed to read file {}: {}", client_id, path, e);
+                                    continue;
+                                }
                                 let size = content_bytes.len();
 
                                 // Try to convert to UTF-8 string, fallback to base64 for binary
@@ -326,8 +343,20 @@ impl SmbClient {
                         debug!("SMB client {} writing file: {}", client_id, path);
 
                         let content_bytes = content.as_bytes();
-                        match smb_client.write(path, content_bytes) {
-                            Ok(()) => {
+
+                        // Open file for writing
+                        let file_result = smb_client.open_with(
+                            path,
+                            SmbOpenOptions::default().write(true).create(true).truncate(true)
+                        );
+
+                        match file_result {
+                            Ok(mut file) => {
+                                // Write content to file
+                                if let Err(e) = file.write_all(content_bytes) {
+                                    error!("SMB client {} failed to write file {}: {}", client_id, path, e);
+                                    continue;
+                                }
                                 info!("SMB client {} wrote {} bytes to {}", client_id, content_bytes.len(), path);
 
                                 let event = Event::new(
@@ -378,7 +407,7 @@ impl SmbClient {
 
                         debug!("SMB client {} creating directory: {}", client_id, path);
 
-                        match smb_client.mkdir(path, 0o755) {
+                        match smb_client.mkdir(path, pavao::SmbMode::from(0o755)) {
                             Ok(()) => {
                                 info!("SMB client {} created directory {}", client_id, path);
                                 let _ = status_tx.send(format!("[CLIENT] SMB client {} created directory: {}", client_id, path));

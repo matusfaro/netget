@@ -17,7 +17,7 @@
 #[cfg(feature = "usb-smartcard")]
 use anyhow::{bail, Context, Result};
 #[cfg(feature = "usb-smartcard")]
-use tracing::{debug, trace};
+use tracing::debug;
 
 /// ISO 7816-4 instruction codes
 #[cfg(feature = "usb-smartcard")]
@@ -351,7 +351,7 @@ impl ApduHandler {
     fn handle_get_data(&self, cmd: &ApduCommand) -> ApduResponse {
         // GET_DATA: retrieve data objects
         // P1P2 = data object identifier
-        let data_id = u16::from_be_bytes([cmd.p1, cmd.p2]);
+        let _data_id = u16::from_be_bytes([cmd.p1, cmd.p2]);
 
         // Return dummy data for demo
         ApduResponse::success(vec![0x01, 0x02, 0x03, 0x04])

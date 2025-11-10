@@ -50,9 +50,7 @@ pub mod apdu;
 pub mod crypto;
 
 #[cfg(feature = "usb-smartcard")]
-use anyhow::{Context, Result};
-#[cfg(feature = "usb-smartcard")]
-use std::net::SocketAddr;
+use anyhow::Result;
 #[cfg(feature = "usb-smartcard")]
 use std::sync::Arc;
 #[cfg(feature = "usb-smartcard")]

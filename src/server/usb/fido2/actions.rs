@@ -18,15 +18,13 @@ use crate::state::app_state::AppState;
 #[cfg(feature = "usb-fido2")]
 use anyhow::{Context, Result};
 #[cfg(feature = "usb-fido2")]
-use serde_json::json;
-#[cfg(feature = "usb-fido2")]
 use std::collections::HashMap;
 #[cfg(feature = "usb-fido2")]
 use std::sync::{Arc, LazyLock};
 #[cfg(feature = "usb-fido2")]
 use tokio::sync::Mutex;
 #[cfg(feature = "usb-fido2")]
-use tracing::{info, debug, error, warn};
+use tracing::info;
 
 // Event type definitions
 #[cfg(feature = "usb-fido2")]
@@ -291,10 +289,80 @@ impl Protocol for UsbFido2Protocol {
         vec![]
     }
 
-    fn execute_action(
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            FIDO2_DEVICE_ATTACHED_EVENT.clone(),
+            FIDO2_REGISTER_REQUEST_EVENT.clone(),
+            FIDO2_AUTHENTICATE_REQUEST_EVENT.clone(),
+        ]
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["fido2", "u2f", "webauthn", "security key", "yubikey"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Virtual FIDO2/U2F security key over USB/IP protocol")
+            .llm_control("Approval of authentication/registration requests, credential management")
+            .e2e_testing("Manual testing with web browsers (Chrome/Firefox) via USB/IP attach")
+            .notes("Requires vhci-hcd kernel module (Linux only). Inspired by softfido architecture.")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "Virtual FIDO2/U2F security key for passwordless authentication"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Create a FIDO2 security key on port 3240 that auto-approves authentication requests"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "USB"
+    }
+}
+
+// Implement Server trait
+#[cfg(feature = "usb-fido2")]
+impl Server for UsbFido2Protocol {
+    fn spawn(
         &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            // Extract startup parameters
+            let support_u2f = ctx.startup_params
+                .as_ref()
+                .and_then(|p| Some(p.get_bool("support_u2f")));
+            let support_fido2 = ctx.startup_params
+                .as_ref()
+                .and_then(|p| Some(p.get_bool("support_fido2")));
+            let auto_approve = ctx.startup_params
+                .as_ref()
+                .and_then(|p| Some(p.get_bool("auto_approve")));
+
+            // Call the actual spawn function
+            crate::server::usb::fido2::UsbFido2Server::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                support_u2f,
+                support_fido2,
+                auto_approve,
+            )
+            .await
+        })
+    }
+
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Missing action type")?;
@@ -379,78 +447,5 @@ impl Protocol for UsbFido2Protocol {
             }
             _ => Ok(ActionResult::NoAction),
         }
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            FIDO2_DEVICE_ATTACHED_EVENT.clone(),
-            FIDO2_REGISTER_REQUEST_EVENT.clone(),
-            FIDO2_AUTHENTICATE_REQUEST_EVENT.clone(),
-        ]
-    }
-
-    fn keywords(&self) -> Vec<&'static str> {
-        vec!["fido2", "u2f", "webauthn", "security key", "yubikey"]
-    }
-
-    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-
-        ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Virtual FIDO2/U2F security key over USB/IP protocol")
-            .llm_control("Approval of authentication/registration requests, credential management")
-            .e2e_testing("Manual testing with web browsers (Chrome/Firefox) via USB/IP attach")
-            .notes("Requires vhci-hcd kernel module (Linux only). Inspired by softfido architecture.")
-            .build()
-    }
-
-    fn description(&self) -> &'static str {
-        "Virtual FIDO2/U2F security key for passwordless authentication"
-    }
-
-    fn example_prompt(&self) -> &'static str {
-        "Create a FIDO2 security key on port 3240 that auto-approves authentication requests"
-    }
-
-    fn group_name(&self) -> &'static str {
-        "USB"
-    }
-}
-
-// Implement Server trait
-#[cfg(feature = "usb-fido2")]
-impl Server for UsbFido2Protocol {
-    fn spawn(
-        &self,
-        ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-    > {
-        Box::pin(async move {
-            // Extract startup parameters
-            let support_u2f = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_bool("support_u2f"));
-            let support_fido2 = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_bool("support_fido2"));
-            let auto_approve = ctx.startup_params
-                .as_ref()
-                .and_then(|p| p.get_bool("auto_approve"));
-
-            // Call the actual spawn function
-            crate::server::usb::fido2::UsbFido2Server::spawn_with_llm_actions(
-                ctx.listen_addr,
-                ctx.llm_client,
-                ctx.state,
-                ctx.status_tx,
-                ctx.server_id,
-                support_u2f,
-                support_fido2,
-                auto_approve,
-            )
-            .await
-        })
     }
 }
