@@ -324,16 +324,15 @@ impl UsbClient {
                             let interface_clone = interface.clone();
                             let result = if out_data.is_empty() && length > 0 {
                                 // IN transfer
-                                let buffer = RequestBuffer::new(length);
                                 let control_in = ControlIn {
                                     control_type: ControlType::Vendor,
                                     recipient: Recipient::Device,
                                     request,
                                     value,
                                     index,
-                                    length: buffer.len() as u16,
+                                    length: length as u16,
                                 };
-                                let result = interface_clone.control_in(control_in, buffer).await;
+                                let result = interface_clone.control_in(control_in).await;
                                 Ok::<Vec<u8>, nusb::Error>(result.data.to_vec())
                             } else {
                                 // OUT transfer
