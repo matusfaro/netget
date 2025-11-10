@@ -308,6 +308,9 @@ impl SmbClient {
                                         ).await?;
                                     }
                                     Err(e) => {
+                                        // Drop file before await (SmbFile contains raw pointer, not Send)
+                                        drop(file);
+
                                         error!("SMB client {} failed to read file {}: {}", client_id, path, e);
                                         let error_event = Event::new(
                                             &SMB_CLIENT_ERROR_EVENT,
