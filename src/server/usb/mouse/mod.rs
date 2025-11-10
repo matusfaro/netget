@@ -21,7 +21,7 @@ use std::sync::Arc;
 #[cfg(feature = "usb-mouse")]
 use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-mouse")]
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "usb-mouse")]
 use crate::llm::action_helper::call_llm;
