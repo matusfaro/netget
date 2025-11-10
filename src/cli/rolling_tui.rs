@@ -60,19 +60,34 @@ pub async fn run_rolling_tui(
     // Determine configured model: args override settings
     let configured_model = args.model.clone().or(settings.lock().await.model.clone());
 
-    // Select or validate model from Ollama
-    let selected_model = match crate::llm::select_or_validate_model(configured_model, true).await {
+    // Select or validate model from Ollama - print to console before entering raw mode
+    let selected_model = match crate::llm::select_or_validate_model(configured_model.clone(), true).await {
         Ok(Some(model)) => {
             info!("✓  Using model: {}", model);
+            // Print to console before raw mode is enabled
+            if let Some(ref config_model) = configured_model {
+                if config_model == &model {
+                    println!("✓  Using configured model: {}", model);
+                } else {
+                    println!("⚠  Configured model '{}' not found, auto-selected: {}", config_model, model);
+                }
+            } else {
+                println!("⚠  No model configured, auto-selected: {} (largest/most recent)", model);
+                println!("   To set a different model, use: /model or edit ~/.netget settings");
+            }
             model
         }
         Ok(None) => {
             // No model available, but interactive mode can continue
             warn!("⚠  No model selected. Use /model command to select one.");
+            println!("✗  Ollama is not available or no models found.");
+            println!("   Please ensure Ollama is running: https://ollama.ai");
+            println!("   Use `/model` to list and select a model once Ollama is running.");
             "".to_string() // Empty string as placeholder
         }
         Err(e) => {
             error!("Failed to initialize model: {}", e);
+            println!("✗  Failed to initialize model: {}", e);
             return Err(e);
         }
     };
@@ -83,6 +98,11 @@ pub async fn run_rolling_tui(
     // Load web search setting from settings file
     let web_search_mode = settings.lock().await.get_web_search_mode();
     state.set_web_search_mode(web_search_mode).await;
+
+    // Apply event handler mode from CLI if provided
+    if let Ok(Some(handler_mode)) = args.parse_event_handler_mode() {
+        state.set_event_handler_mode(handler_mode).await;
+    }
 
     // Setup terminal (raw mode only, no alternate screen)
     debug!("Rolling TUI: Enabling raw mode...");
@@ -1055,7 +1075,7 @@ async fn handle_key_event(
 
                 // Handle command
                 match command {
-                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowScriptingEnv | UserCommand::ShowWebSearch | UserCommand::ShowEnvironment => {
+                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowWebSearch | UserCommand::ShowEventHandler | UserCommand::ShowEnvironment => {
                         // Handle status/info commands
                         handle_status_command(&command, app, state, event_handler, footer, &palette).await?;
                     }
@@ -1297,68 +1317,29 @@ async fn handle_key_event(
                             let _ = handler_clone.handle_interpret_with_actions(llm_input, status_tx_clone, None).await;
                         });
                     }
-                    UserCommand::ChangeScriptingEnv { env } => {
-                        // Parse the scripting environment
-                        let mode = match env.to_lowercase().as_str() {
-                            "on" | "auto" => Some(crate::state::app_state::ScriptingMode::On),
-                            "off" | "llm" => Some(crate::state::app_state::ScriptingMode::Off),
-                            "python" | "py" => Some(crate::state::app_state::ScriptingMode::Python),
-                            "javascript" | "js" | "node" => Some(crate::state::app_state::ScriptingMode::JavaScript),
-                            "go" | "golang" => Some(crate::state::app_state::ScriptingMode::Go),
-                            "perl" => Some(crate::state::app_state::ScriptingMode::Perl),
-                            _ => None,
+                    UserCommand::SetEventHandler { mode } => {
+                        // Set event handler mode
+                        state.set_event_handler_mode(mode).await;
+                        let message = match mode {
+                            crate::state::app_state::EventHandlerMode::Any => {
+                                "Event handler mode set to: ANY (LLM chooses handler types)"
+                            }
+                            crate::state::app_state::EventHandlerMode::Script => {
+                                "Event handler mode set to: SCRIPT (force script handlers)"
+                            }
+                            crate::state::app_state::EventHandlerMode::Static => {
+                                "Event handler mode set to: STATIC (force static responses)"
+                            }
+                            crate::state::app_state::EventHandlerMode::Llm => {
+                                "Event handler mode set to: LLM (force LLM handlers)"
+                            }
                         };
 
-                        if let Some(new_mode) = mode {
-                            // Check if the environment is available
-                            let scripting_env = state.get_scripting_env().await;
-                            let available = match new_mode {
-                                crate::state::app_state::ScriptingMode::On => true,
-                                crate::state::app_state::ScriptingMode::Off => true,
-                                crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
-                                crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
-                                crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
-                                crate::state::app_state::ScriptingMode::Perl => scripting_env.perl.is_some(),
-                            };
+                        print_output_line(message, footer, &palette)?;
 
-                            if available {
-                                state.set_selected_scripting_mode(new_mode).await;
-                                let message = match new_mode {
-                                    crate::state::app_state::ScriptingMode::On => {
-                                        "Scripting environment set to: ON (LLM will choose runtime for each script)"
-                                    }
-                                    crate::state::app_state::ScriptingMode::Off => {
-                                        "Scripting environment set to: OFF (LLM will handle all requests directly)"
-                                    }
-                                    crate::state::app_state::ScriptingMode::Python => {
-                                        "Scripting environment set to: Python (LLM will produce Python code)"
-                                    }
-                                    crate::state::app_state::ScriptingMode::JavaScript => {
-                                        "Scripting environment set to: JavaScript (LLM will produce JavaScript code)"
-                                    }
-                                    crate::state::app_state::ScriptingMode::Go => {
-                                        "Scripting environment set to: Go (LLM will produce Go code)"
-                                    }
-                                    crate::state::app_state::ScriptingMode::Perl => {
-                                        "Scripting environment set to: Perl (LLM will produce Perl code)"
-                                    }
-                                };
-                                print_output_line(message, footer, &palette)?;
-
-                                // Save to settings
-                                let mode_str = new_mode.as_str().to_lowercase();
-                                if let Err(e) = settings.lock().await.set_scripting_mode(mode_str) {
-                                    error!("Failed to save scripting mode setting: {}", e);
-                                }
-
-                                update_ui_from_state(app, state, footer).await;
-                                footer.render(&mut stdout())?;
-                            } else {
-                                print_output_line(&format!("{} environment is not available on this system", new_mode), footer, &palette)?;
-                            }
-                        } else {
-                            print_output_line(&format!("Unknown scripting environment: {}. Valid options: on (auto), off (llm), python, javascript, go, perl", env), footer, &palette)?;
-                        }
+                        // Update footer status bar
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
                     }
                     UserCommand::SetWebSearch { mode } => {
                         state.set_web_search_mode(mode).await;
@@ -1800,11 +1781,12 @@ async fn handle_status_command(
             print_output_line("To change, use: /web on, /web ask, or /web off", footer, palette)?;
             print_output_line("Or press Ctrl+W to cycle through modes", footer, palette)?;
         }
-        UserCommand::ShowScriptingEnv => {
-            let mode = state.get_selected_scripting_mode().await;
-            print_output_line(&format!("Current scripting mode: {}", mode), footer, palette)?;
+        UserCommand::ShowEventHandler => {
+            let mode = state.get_event_handler_mode().await;
+            print_output_line(&format!("Current event handler mode: {}", mode), footer, palette)?;
             print_output_line("", footer, palette)?;
-            print_output_line("To change, use: /script <env>", footer, palette)?;
+            print_output_line("To change, use: /handler any, /handler script, /handler static, or /handler llm", footer, palette)?;
+            print_output_line("Or press Ctrl+H to cycle through modes", footer, palette)?;
         }
         UserCommand::ShowEnvironment => {
             print_output_line("=== Environment Information ===", footer, palette)?;

@@ -192,6 +192,20 @@ impl std::fmt::Display for EventHandlerMode {
     }
 }
 
+impl std::str::FromStr for EventHandlerMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "any" => Ok(Self::Any),
+            "script" => Ok(Self::Script),
+            "static" => Ok(Self::Static),
+            "llm" => Ok(Self::Llm),
+            _ => Err(format!("Invalid event handler mode: {}", s)),
+        }
+    }
+}
+
 
 /// Request for web search approval (sent from tool executor to UI)
 pub struct WebApprovalRequest {

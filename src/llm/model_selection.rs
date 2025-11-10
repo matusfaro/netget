@@ -210,15 +210,17 @@ pub async fn select_or_validate_model(
 pub async fn ensure_model_selected(current_model: Option<String>) -> Result<String> {
     if let Some(model) = current_model {
         // Model already set
+        debug!("Model already selected: {}", model);
         return Ok(model);
     }
 
     // No model set, try to auto-select one
-    warn!("No model selected, attempting to auto-select from available models...");
+    warn!("⚠  No model selected, attempting to auto-select from available models...");
 
     match select_or_validate_model(None, false).await {
         Ok(Some(model)) => {
             info!("✓  Auto-selected model: {}", model);
+            warn!("⚠  Auto-selected model: {} (no model was configured)", model);
             Ok(model)
         }
         Ok(None) => {

@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use std::collections::HashMap;
 
-use crate::state::app_state::WebSearchMode;
+use crate::state::app_state::{EventHandlerMode, WebSearchMode};
 
 /// HTTP response to be sent back to the client
 #[derive(Debug, Clone)]
@@ -46,16 +46,14 @@ pub enum UserCommand {
     ChangeLogLevel {
         level: String,
     },
-    /// Show current scripting environment (slash command: /script)
-    ShowScriptingEnv,
-    /// Change scripting environment (slash command: /script <env>)
-    ChangeScriptingEnv {
-        env: String,
-    },
     /// Show current web search status (slash command: /web)
     ShowWebSearch,
     /// Set web search mode (slash command: /web on|off|ask)
     SetWebSearch { mode: WebSearchMode },
+    /// Show current event handler mode (slash command: /handler)
+    ShowEventHandler,
+    /// Set event handler mode (slash command: /handler any|script|static|llm)
+    SetEventHandler { mode: EventHandlerMode },
     /// Generate test output lines (slash command: /test <count>)
     TestOutput {
         count: usize,
@@ -137,17 +135,6 @@ impl UserCommand {
             };
         }
 
-        // /script command
-        if input_lower.starts_with("/script") {
-            let rest = trimmed[7..].trim();
-            if rest.is_empty() {
-                // Show current scripting environment
-                return UserCommand::ShowScriptingEnv;
-            }
-            return UserCommand::ChangeScriptingEnv {
-                env: rest.to_string(),
-            };
-        }
 
         // /web command
         if input_lower.starts_with("/web") {
@@ -159,6 +146,25 @@ impl UserCommand {
             // Parse on/off/ask argument using WebSearchMode's FromStr
             match rest.parse::<WebSearchMode>() {
                 Ok(mode) => return UserCommand::SetWebSearch { mode },
+                Err(_) => {
+                    // Unknown argument - treat as unknown command
+                    return UserCommand::UnknownSlashCommand {
+                        command: trimmed.to_string(),
+                    };
+                }
+            }
+        }
+
+        // /handler command
+        if input_lower.starts_with("/handler") {
+            let rest = trimmed[8..].trim();
+            if rest.is_empty() {
+                // Show current event handler mode
+                return UserCommand::ShowEventHandler;
+            }
+            // Parse any/script/static/llm argument using EventHandlerMode's FromStr
+            match rest.parse::<EventHandlerMode>() {
+                Ok(mode) => return UserCommand::SetEventHandler { mode },
                 Err(_) => {
                     // Unknown argument - treat as unknown command
                     return UserCommand::UnknownSlashCommand {

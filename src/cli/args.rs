@@ -73,12 +73,13 @@ pub struct Args {
     )]
     pub scripting_env: Option<String>,
 
-    /// Disable script generation (force LLM to use actions only)
+    /// Event handler mode to use (any, script, static, llm)
     #[clap(
-        long = "no-scripts",
-        help = "Disable script generation, force LLM to respond with actions only (same as --env off)"
+        long = "handler",
+        value_name = "MODE",
+        help = "Event handler mode: any (LLM chooses handler types), script (force script handlers), static (force static responses), llm (force LLM handlers)"
     )]
-    pub no_scripts: bool,
+    pub event_handler_mode: Option<String>,
 
     /// Listen address for servers (default: 127.0.0.1)
     #[clap(
@@ -273,11 +274,6 @@ impl Args {
 
     /// Parse the scripting environment argument into a ScriptingMode
     pub fn parse_scripting_mode(&self) -> Result<Option<crate::state::app_state::ScriptingMode>> {
-        // --no-scripts flag takes precedence
-        if self.no_scripts {
-            return Ok(Some(crate::state::app_state::ScriptingMode::Off));
-        }
-
         match &self.scripting_env {
             None => Ok(None),
             Some(env) => {
@@ -297,6 +293,29 @@ impl Args {
                     }
                 };
                 Ok(Some(mode))
+            }
+        }
+    }
+
+    /// Parse the event handler mode argument into an EventHandlerMode
+    pub fn parse_event_handler_mode(&self) -> Result<Option<crate::state::app_state::EventHandlerMode>> {
+        match &self.event_handler_mode {
+            None => Ok(None),
+            Some(mode) => {
+                let parsed_mode = match mode.to_lowercase().as_str() {
+                    "any" => crate::state::app_state::EventHandlerMode::Any,
+                    "script" => crate::state::app_state::EventHandlerMode::Script,
+                    "static" => crate::state::app_state::EventHandlerMode::Static,
+                    "llm" => crate::state::app_state::EventHandlerMode::Llm,
+                    _ => {
+                        anyhow::bail!(
+                            "Invalid event handler mode: '{}'\n\
+                             Valid options: any, script, static, llm",
+                            mode
+                        );
+                    }
+                };
+                Ok(Some(parsed_mode))
             }
         }
     }

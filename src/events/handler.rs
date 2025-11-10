@@ -159,16 +159,6 @@ impl EventHandler {
                 );
                 Ok(false)
             }
-            UserCommand::ShowScriptingEnv => {
-                // This command is only supported in rolling TUI mode
-                ui.add_llm_message("Scripting environment command is only supported in rolling TUI mode".to_string());
-                Ok(false)
-            }
-            UserCommand::ChangeScriptingEnv { env: _ } => {
-                // This command is only supported in rolling TUI mode
-                ui.add_llm_message("Scripting environment command is only supported in rolling TUI mode".to_string());
-                Ok(false)
-            }
             UserCommand::ShowWebSearch => {
                 // This command is only supported in rolling TUI mode
                 ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
@@ -177,6 +167,16 @@ impl EventHandler {
             UserCommand::SetWebSearch { mode: _ } => {
                 // This command is only supported in rolling TUI mode
                 ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
+            UserCommand::ShowEventHandler => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message("Event handler command is only supported in rolling TUI mode".to_string());
+                Ok(false)
+            }
+            UserCommand::SetEventHandler { mode: _ } => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message("Event handler command is only supported in rolling TUI mode".to_string());
                 Ok(false)
             }
             UserCommand::ShowDocs { protocol } => {
@@ -210,12 +210,18 @@ impl EventHandler {
         };
 
         // Get model, ensuring one is selected
-        let model = match crate::llm::ensure_model_selected(self.state.get_ollama_model().await).await {
+        let current_model = self.state.get_ollama_model().await;
+        let model = match crate::llm::ensure_model_selected(current_model.clone()).await {
             Ok(m) => m,
             Err(e) => {
                 return Err(anyhow::anyhow!("Failed to ensure model is selected: {}", e));
             }
         };
+
+        // If model was auto-selected (wasn't set before), notify via status_tx
+        if current_model.is_none() {
+            let _ = status_tx.send(format!("⚠  Auto-selected model: {} (no model was configured)", model));
+        }
 
         // Create LLM client with status channel for trace logs
         let llm_with_status = self.llm.clone().with_status_tx(status_tx.clone());

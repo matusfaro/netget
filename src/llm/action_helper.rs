@@ -434,9 +434,15 @@ pub async fn call_llm_for_client(
     };
 
     // Get current model from state, auto-select if not set
-    let model = crate::llm::ensure_model_selected(state.get_ollama_model().await)
+    let current_model = state.get_ollama_model().await;
+    let model = crate::llm::ensure_model_selected(current_model.clone())
         .await
         .context("Failed to ensure model is selected")?;
+
+    // If model was auto-selected (wasn't set before), notify via status_tx
+    if current_model.is_none() {
+        let _ = status_tx.send(format!("⚠  Auto-selected model: {} (no model was configured)", model));
+    }
 
     // Create conversation with correct parameter order
     let mut conversation = crate::llm::ConversationHandler::new(

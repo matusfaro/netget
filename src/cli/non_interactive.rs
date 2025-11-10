@@ -38,11 +38,8 @@ pub async fn run_non_interactive(
     info!("✓  Using model: {}", selected_model);
     state.set_ollama_model(Some(selected_model)).await;
 
-    // Determine scripting mode with priority: no-scripts flag > CLI arg > saved setting > auto-detected
-    let mode_to_set = if args.no_scripts {
-        // Force LLM-only mode (no script generation)
-        Some(crate::state::app_state::ScriptingMode::Off)
-    } else if let Some(mode) = args.parse_scripting_mode()? {
+    // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
+    let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
     } else { settings.parse_scripting_mode() };
 
@@ -66,10 +63,13 @@ pub async fn run_non_interactive(
         }
 
         state.set_selected_scripting_mode(mode).await;
-        if args.no_scripts {
-            debug!("Script generation disabled (--no-scripts flag)");
-        }
         debug!("Using scripting mode: {}", mode);
+    }
+
+    // Apply event handler mode from CLI if provided
+    if let Some(handler_mode) = args.parse_event_handler_mode()? {
+        state.set_event_handler_mode(handler_mode).await;
+        debug!("Using event handler mode: {}", handler_mode);
     }
 
     // Load web search setting from settings file
@@ -196,14 +196,17 @@ pub async fn run_with_actions(
     let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
 
     // Determine scripting mode
-    let mode_to_set = if args.no_scripts {
-        Some(crate::state::app_state::ScriptingMode::Off)
-    } else if let Some(mode) = args.parse_scripting_mode()? {
+    let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
     } else { settings.parse_scripting_mode() };
 
     if let Some(mode) = mode_to_set {
         state.set_selected_scripting_mode(mode).await;
+    }
+
+    // Apply event handler mode from CLI if provided
+    if let Some(handler_mode) = args.parse_event_handler_mode()? {
+        state.set_event_handler_mode(handler_mode).await;
     }
 
     // Setup web search mode

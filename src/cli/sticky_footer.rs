@@ -1108,6 +1108,12 @@ impl StickyFooter {
             (self.connection_info.scripting_env.as_str(), self.palette.success)
         };
 
+        // Determine handler color: green for ANY, yellow for others
+        let handler_color = match self.connection_info.event_handler_mode {
+            crate::state::app_state::EventHandlerMode::Any => self.palette.success,
+            _ => self.palette.ask,
+        };
+
         execute!(stdout, cursor::MoveTo(0, line))?;
 
         // Print each segment with appropriate coloring
@@ -1131,7 +1137,6 @@ impl StickyFooter {
             Print(script_status.to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
-            Print(" ^e"),
             Print(" | WebSearch:"),
             ResetColor,
             SetForegroundColor(web_color),
@@ -1141,6 +1146,7 @@ impl StickyFooter {
             Print(" ^w"),
             Print(" | Handler:"),
             ResetColor,
+            SetForegroundColor(handler_color),
             Print(self.connection_info.event_handler_mode.as_str().to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
