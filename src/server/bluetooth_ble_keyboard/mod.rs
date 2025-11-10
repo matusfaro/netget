@@ -29,6 +29,7 @@ pub struct ClientConnection {
 /// BLE HID Keyboard server
 pub struct BluetoothBleKeyboard {
     connections: Arc<Mutex<HashMap<ClientId, ClientConnection>>>,
+    #[allow(dead_code)]
     next_client_id: Arc<Mutex<u32>>,
 }
 

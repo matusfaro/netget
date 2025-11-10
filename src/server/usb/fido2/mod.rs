@@ -96,6 +96,7 @@ struct Fido2HidHandler {
 
 #[cfg(feature = "usb-fido2")]
 impl Fido2HidHandler {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self::new_with_approval_manager(None)
     }

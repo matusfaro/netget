@@ -16,6 +16,7 @@ use crate::{llm::OllamaClient, server::connection::ConnectionId, state::app_stat
 
 #[cfg(feature = "usb-serial")]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -24,9 +25,13 @@ enum ConnectionState {
 
 #[cfg(feature = "usb-serial")]
 struct ConnectionData {
+    #[allow(dead_code)]
     state: ConnectionState,
+    #[allow(dead_code)]
     memory: String,
+    #[allow(dead_code)]
     line_coding: crate::server::usb::descriptors::LineCoding,
+    #[allow(dead_code)]
     control_lines: crate::server::usb::descriptors::ControlLineState,
 }
 

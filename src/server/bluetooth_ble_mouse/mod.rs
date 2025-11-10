@@ -29,6 +29,7 @@ pub struct ClientConnection {
 /// BLE HID Mouse server
 pub struct BluetoothBleMouse {
     connections: Arc<Mutex<HashMap<ClientId, ClientConnection>>>,
+    #[allow(dead_code)]
     next_client_id: Arc<Mutex<u32>>,
 }
 

@@ -39,6 +39,7 @@ use actions::USB_KEYBOARD_ATTACHED_EVENT;
 /// Connection state for LLM processing
 #[cfg(feature = "usb-keyboard")]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -49,7 +50,9 @@ enum ConnectionState {
 #[cfg(feature = "usb-keyboard")]
 struct ConnectionData {
     state: ConnectionState,
+    #[allow(dead_code)]
     memory: String,
+    #[allow(dead_code)]
     led_status: u8, // Num Lock, Caps Lock, Scroll Lock
 }
 

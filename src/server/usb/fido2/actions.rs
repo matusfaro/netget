@@ -127,6 +127,7 @@ pub static FIDO2_AUTHENTICATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new
 #[cfg(feature = "usb-fido2")]
 pub struct UsbFido2Protocol {
     /// Map of active connections
+    #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP HID handlers for each connection
     handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
@@ -159,6 +160,7 @@ impl UsbFido2Protocol {
     }
 
     /// Get the USB/IP FIDO2 handler for a connection
+    #[allow(dead_code)]
     async fn get_handler(
         &self,
         connection_id: ConnectionId,

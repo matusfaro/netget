@@ -47,6 +47,7 @@ use actions::USB_MSC_ATTACHED_EVENT;
 /// Connection state for LLM processing
 #[cfg(feature = "usb-msc")]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ConnectionState {
     Idle,
     Processing,
@@ -58,10 +59,15 @@ enum ConnectionState {
 #[derive(Clone)]
 struct ConnectionData {
     state: ConnectionState,
+    #[allow(dead_code)]
     memory: String,
+    #[allow(dead_code)]
     disk_path: PathBuf,
+    #[allow(dead_code)]
     write_protect: bool,
+    #[allow(dead_code)]
     total_sectors: u32,
+    #[allow(dead_code)]
     bytes_per_sector: u32,
 }
 
