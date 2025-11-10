@@ -11,7 +11,7 @@ pub mod actions;
 pub use actions::UsbKeyboardProtocol;
 
 #[cfg(feature = "usb-keyboard")]
-use anyhow::{Context, Result};
+use anyhow::Result;
 #[cfg(feature = "usb-keyboard")]
 use std::collections::HashMap;
 #[cfg(feature = "usb-keyboard")]
@@ -21,20 +21,16 @@ use std::sync::Arc;
 #[cfg(feature = "usb-keyboard")]
 use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-keyboard")]
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info};
 
 #[cfg(feature = "usb-keyboard")]
 use crate::llm::action_helper::call_llm;
-#[cfg(feature = "usb-keyboard")]
-use crate::llm::actions::protocol_trait::Server;
 #[cfg(feature = "usb-keyboard")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "usb-keyboard")]
 use crate::protocol::Event;
 #[cfg(feature = "usb-keyboard")]
 use crate::server::connection::ConnectionId;
-#[cfg(feature = "usb-keyboard")]
-use crate::server::usb::descriptors::*;
 #[cfg(feature = "usb-keyboard")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-keyboard")]
@@ -206,7 +202,7 @@ impl UsbKeyboardServer {
             usbip::ClassCode::HID as u8,
             0x00, // Subclass: no subclass
             0x00, // Protocol: none
-            Some("NetGet Virtual Keyboard"),
+            "NetGet Virtual Keyboard",
             vec![usbip::UsbEndpoint {
                 address: 0x81,         // EP1 IN (interrupt)
                 attributes: 0x03,      // Interrupt transfer
@@ -233,20 +229,10 @@ impl UsbKeyboardServer {
         ));
 
         // Spawn USB/IP protocol server
-        let server_clone = server.clone();
-        let status_tx_clone = status_tx.clone();
         let connection_id_clone = connection_id;
         tokio::spawn(async move {
-            if let Err(e) = usbip::server(usbip_addr, server_clone).await {
-                error!(
-                    "USB/IP server error for keyboard connection {}: {}",
-                    connection_id_clone, e
-                );
-                let _ = status_tx_clone.send(format!(
-                    "USB/IP server error for connection {}: {}",
-                    connection_id_clone, e
-                ));
-            }
+            usbip::server(usbip_addr, server).await;
+            debug!("USB/IP server task completed for keyboard connection {}", connection_id_clone);
         });
 
         // Wait a moment for server to start
@@ -319,9 +305,8 @@ impl UsbKeyboardServer {
         }
 
         // Get instruction and memory
-        let (instruction, memory) = {
-            let servers = app_state.servers.lock().await;
-            if let Some(server) = servers.iter().find(|s| s.id == server_id) {
+        let (_instruction, _memory) = {
+            if let Some(server) = app_state.get_server(server_id).await {
                 (server.instruction.clone(), String::new())
             } else {
                 return Err(anyhow::anyhow!("Server not found"));

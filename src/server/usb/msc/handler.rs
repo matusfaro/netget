@@ -8,7 +8,7 @@ use super::disk::DiskImage;
 #[cfg(feature = "usb-msc")]
 use crate::server::usb::descriptors::{scsi_opcode, scsi_sense_key, CommandBlockWrapper, CommandStatusWrapper};
 #[cfg(feature = "usb-msc")]
-use anyhow::{Context, Result};
+use anyhow::Result;
 #[cfg(feature = "usb-msc")]
 use std::sync::Arc;
 #[cfg(feature = "usb-msc")]
@@ -142,9 +142,10 @@ impl UsbMscHandler {
 
     /// SCSI READ_CAPACITY(10) command (0x25) - Return disk capacity
     async fn scsi_read_capacity(&mut self) -> Result<u8> {
-        let disk = self.disk_image.read().await;
-        let last_lba = disk.total_sectors() - 1;
-        let block_size = disk.bytes_per_sector();
+        let (last_lba, block_size) = {
+            let disk = self.disk_image.read().await;
+            (disk.total_sectors() - 1, disk.bytes_per_sector())
+        };
 
         debug!(
             "SCSI READ_CAPACITY: last_lba={}, block_size={}",
@@ -171,8 +172,12 @@ impl UsbMscHandler {
         );
 
         // Read sectors from disk image
-        let disk = self.disk_image.read().await;
-        match disk.read_sectors(lba, transfer_len) {
+        let result = {
+            let disk = self.disk_image.read().await;
+            disk.read_sectors(lba, transfer_len)
+        };
+
+        match result {
             Ok(data) => {
                 self.pending_data = data;
                 self.clear_sense();
@@ -261,9 +266,10 @@ impl UsbMscHandler {
 
     /// SCSI READ_FORMAT_CAPACITIES command (0x23)
     async fn scsi_read_format_capacities(&mut self) -> Result<u8> {
-        let disk = self.disk_image.read().await;
-        let total_sectors = disk.total_sectors();
-        let block_size = disk.bytes_per_sector();
+        let (total_sectors, block_size) = {
+            let disk = self.disk_image.read().await;
+            (disk.total_sectors(), disk.bytes_per_sector())
+        };
 
         debug!("SCSI READ_FORMAT_CAPACITIES: {} sectors", total_sectors);
 
@@ -290,8 +296,12 @@ impl UsbMscHandler {
                 transfer_len
             );
 
-            let mut disk = self.disk_image.write().await;
-            match disk.write_sectors(lba, data) {
+            let result = {
+                let mut disk = self.disk_image.write().await;
+                disk.write_sectors(lba, data)
+            };
+
+            match result {
                 Ok(sectors_written) => {
                     info!(
                         "WRITE(10) completed: {} sectors written to LBA {}",
@@ -317,124 +327,126 @@ impl UsbMscHandler {
 impl usbip::UsbInterfaceHandler for UsbMscHandler {
     fn handle_urb(
         &mut self,
-        setup: &usbip::SetupPacket,
-    ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        trace!(
-            "MSC control request: type={:#04x}, request={:#04x}",
-            setup.request_type,
-            setup.request
-        );
-
-        match (setup.request_type, setup.request) {
-            // Bulk-Only Mass Storage Reset (0x21, 0xFF)
-            (0x21, 0xFF) => {
-                debug!("BOT: Mass Storage Reset");
-                self.reset_bot_state();
-                Ok(vec![])
-            }
-
-            // Get Max LUN (0xA1, 0xFE)
-            (0xA1, 0xFE) => {
-                debug!("BOT: Get Max LUN");
-                Ok(vec![0x00]) // Single LUN device
-            }
-
-            _ => {
-                warn!(
-                    "Unsupported MSC control request: type={:#04x}, request={:#04x}",
-                    setup.request_type, setup.request
-                );
-                Err("Unsupported control request".into())
-            }
-        }
-    }
-
-    fn handle_data_out(
-        &mut self,
-        _ep: u8,
+        _interface: &usbip::UsbInterface,
+        endpoint: usbip::UsbEndpoint,
+        setup: usbip::SetupPacket,
         data: &[u8],
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Bulk OUT endpoint (0x02) - receives CBW and write data
-
-        if data.len() == 31 {
-            // This is a CBW (Command Block Wrapper)
-            match CommandBlockWrapper::parse(data) {
-                Ok(cbw) => {
-                    debug!(
-                        "BOT: Received CBW (tag={:#010x}, lun={}, flags={:#04x}, length={})",
-                        cbw.tag,
-                        cbw.lun,
-                        cbw.flags,
-                        cbw.data_transfer_length
-                    );
-                    self.last_tag = cbw.tag;
-
-                    // Extract SCSI command (up to cb_length bytes)
-                    let scsi_cmd = &cbw.cb[..cbw.cb_length as usize];
-
-                    // Handle SCSI command (need to block on async)
-                    let status = tokio::runtime::Handle::current()
-                        .block_on(self.handle_scsi_command(scsi_cmd))
-                        .unwrap_or(CommandStatusWrapper::STATUS_FAILED);
-
-                    self.current_cbw = Some(cbw);
-
-                    // If no pending data, mark CSW as ready
-                    if self.pending_data.is_empty() && self.pending_write.is_none() {
-                        self.csw_pending = true;
-                    }
-
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("Failed to parse CBW: {}", e);
-                    Err(e.into())
-                }
-            }
-        } else {
-            // This is write data for a WRITE(10) command
-            if let Err(e) = tokio::runtime::Handle::current().block_on(self.handle_write_data(data)) {
-                error!("Failed to handle write data: {}", e);
-            }
-            self.csw_pending = true; // Send CSW after write data
-            Ok(())
-        }
-    }
-
-    fn handle_data_in(
-        &mut self,
-        _ep: u8,
-    ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        // Bulk IN endpoint (0x81) - sends data and CSW
-
-        if !self.pending_data.is_empty() {
-            // Send pending data (from READ or INQUIRY, etc.)
-            let data = std::mem::take(&mut self.pending_data);
-            debug!("BOT: Sending {} bytes of data", data.len());
-            self.csw_pending = true; // Send CSW after data
-            Ok(data)
-        } else if self.csw_pending {
-            // Send CSW (Command Status Wrapper)
-            let cbw = self.current_cbw.as_ref().ok_or("No CBW for CSW")?;
-            let csw = CommandStatusWrapper::new(
-                self.last_tag,
-                0, // data_residue (assume all data transferred)
-                if self.sense_key == scsi_sense_key::NO_SENSE {
-                    CommandStatusWrapper::STATUS_PASSED
-                } else {
-                    CommandStatusWrapper::STATUS_FAILED
-                },
+    ) -> std::result::Result<Vec<u8>, std::io::Error> {
+        // Check if this is a control transfer (endpoint 0) or data transfer
+        if endpoint.address == 0 {
+            // Control transfer
+            trace!(
+                "MSC control request: type={:#04x}, request={:#04x}",
+                setup.request_type,
+                setup.request
             );
 
-            debug!("BOT: Sending CSW (tag={:#010x}, status={})", csw.tag, csw.status);
-            self.csw_pending = false;
-            self.current_cbw = None;
+            match (setup.request_type, setup.request) {
+                // Bulk-Only Mass Storage Reset (0x21, 0xFF)
+                (0x21, 0xFF) => {
+                    debug!("BOT: Mass Storage Reset");
+                    self.reset_bot_state();
+                    Ok(vec![])
+                }
 
-            Ok(csw.to_bytes().to_vec())
+                // Get Max LUN (0xA1, 0xFE)
+                (0xA1, 0xFE) => {
+                    debug!("BOT: Get Max LUN");
+                    Ok(vec![0x00]) // Single LUN device
+                }
+
+                _ => {
+                    warn!(
+                        "Unsupported MSC control request: type={:#04x}, request={:#04x}",
+                        setup.request_type, setup.request
+                    );
+                    Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Unsupported control request"))
+                }
+            }
+        } else if endpoint.address & 0x80 == 0 {
+            // Bulk OUT endpoint (host to device) - receives CBW and write data
+            if data.len() == 31 {
+                // This is a CBW (Command Block Wrapper)
+                match CommandBlockWrapper::parse(data) {
+                    Some(cbw) => {
+                        debug!(
+                            "BOT: Received CBW (tag={:#010x}, lun={}, flags={:#04x}, length={})",
+                            cbw.tag,
+                            cbw.lun,
+                            cbw.flags,
+                            cbw.data_transfer_length
+                        );
+                        self.last_tag = cbw.tag;
+
+                        // Extract SCSI command (up to cb_length bytes)
+                        let scsi_cmd = &cbw.cb[..cbw.cb_length as usize];
+
+                        // Handle SCSI command (need to block on async)
+                        let _status = tokio::runtime::Handle::current()
+                            .block_on(self.handle_scsi_command(scsi_cmd))
+                            .unwrap_or(CommandStatusWrapper::STATUS_FAILED);
+
+                        self.current_cbw = Some(cbw);
+
+                        // If no pending data, mark CSW as ready
+                        if self.pending_data.is_empty() && self.pending_write.is_none() {
+                            self.csw_pending = true;
+                        }
+
+                        Ok(vec![])
+                    }
+                    None => {
+                        error!("Failed to parse CBW: invalid format");
+                        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid CBW format"))
+                    }
+                }
+            } else {
+                // This is write data for a WRITE(10) command
+                if let Err(e) = tokio::runtime::Handle::current().block_on(self.handle_write_data(data)) {
+                    error!("Failed to handle write data: {}", e);
+                }
+                self.csw_pending = true; // Send CSW after write data
+                Ok(vec![])
+            }
         } else {
-            // No data to send
-            Ok(vec![])
+            // Bulk IN endpoint (device to host) - sends data and CSW
+            if !self.pending_data.is_empty() {
+                // Send pending data (from READ or INQUIRY, etc.)
+                let data = std::mem::take(&mut self.pending_data);
+                debug!("BOT: Sending {} bytes of data", data.len());
+                self.csw_pending = true; // Send CSW after data
+                Ok(data)
+            } else if self.csw_pending {
+                // Send CSW (Command Status Wrapper)
+                let _cbw = self.current_cbw.as_ref()
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "No CBW for CSW"))?;
+                let csw = CommandStatusWrapper::new(
+                    self.last_tag,
+                    0, // data_residue (assume all data transferred)
+                    if self.sense_key == scsi_sense_key::NO_SENSE {
+                        CommandStatusWrapper::STATUS_PASSED
+                    } else {
+                        CommandStatusWrapper::STATUS_FAILED
+                    },
+                );
+
+                let tag = csw.tag;
+                let status = csw.status;
+                debug!("BOT: Sending CSW (tag={:#010x}, status={})", tag, status);
+                self.csw_pending = false;
+                self.current_cbw = None;
+
+                Ok(csw.to_bytes().to_vec())
+            } else {
+                // No data to send
+                Ok(vec![])
+            }
         }
+    }
+
+    fn get_class_specific_descriptor(&self) -> Option<Vec<u8>> {
+        // MSC doesn't have class-specific descriptors beyond standard interface descriptor
+        None
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {

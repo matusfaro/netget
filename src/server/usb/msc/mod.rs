@@ -29,20 +29,16 @@ use std::sync::Arc;
 #[cfg(feature = "usb-msc")]
 use tokio::sync::{mpsc, Mutex, RwLock};
 #[cfg(feature = "usb-msc")]
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info};
 
 #[cfg(feature = "usb-msc")]
 use crate::llm::action_helper::call_llm;
-#[cfg(feature = "usb-msc")]
-use crate::llm::actions::protocol_trait::Server;
 #[cfg(feature = "usb-msc")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "usb-msc")]
 use crate::protocol::Event;
 #[cfg(feature = "usb-msc")]
 use crate::server::connection::ConnectionId;
-#[cfg(feature = "usb-msc")]
-use crate::server::usb::descriptors::*;
 #[cfg(feature = "usb-msc")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-msc")]
@@ -260,7 +256,7 @@ impl UsbMscServer {
                 0x08, // Mass Storage Class
                 0x06, // SCSI Transparent Command Set
                 0x50, // Bulk-Only Transport
-                Some("NetGet Virtual Disk"),
+                "NetGet Virtual Disk",
                 vec![
                     usbip::UsbEndpoint {
                         address: 0x81,         // EP1 IN (Bulk)
@@ -283,11 +279,9 @@ impl UsbMscServer {
 
         // Create and spawn USB/IP server
         let server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
-        let server_clone = server.clone();
         tokio::spawn(async move {
-            if let Err(e) = usbip::server(usbip_addr, server_clone).await {
-                error!("USB/IP server error: {}", e);
-            }
+            usbip::server(usbip_addr, server).await;
+            debug!("USB/IP server task completed for MSC connection");
         });
 
         info!(

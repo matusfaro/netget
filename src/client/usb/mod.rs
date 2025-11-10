@@ -413,9 +413,9 @@ impl UsbClient {
                             );
 
                             let interface_clone = interface.clone();
-                            let result = interface_clone.bulk_out(endpoint, out_data).await;
+                            let result = interface_clone.bulk_out(endpoint, out_data.into()).await;
 
-                            match result {
+                            match result.status {
                                 Ok(_) => {
                                     trace!("USB client {} bulk OUT completed", client_id);
                                 }

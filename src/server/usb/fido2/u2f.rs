@@ -20,11 +20,11 @@
 #[cfg(feature = "usb-fido2")]
 use anyhow::{bail, Context, Result};
 #[cfg(feature = "usb-fido2")]
-use ring::rand::SecureRandom;
+use ring::rand::{SecureRandom, SystemRandom};
 #[cfg(feature = "usb-fido2")]
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 #[cfg(feature = "usb-fido2")]
-use tracing::{debug, trace, warn};
+use tracing::debug;
 
 /// U2F command codes (INS byte)
 #[cfg(feature = "usb-fido2")]
@@ -192,7 +192,7 @@ impl U2fCredentialStore {
     }
 
     /// Register a new credential
-    pub fn register(&mut self, app_param: &[u8], challenge_param: &[u8]) -> Result<Vec<u8>> {
+    pub fn register(&mut self, app_param: &[u8], _challenge_param: &[u8]) -> Result<Vec<u8>> {
         debug!("U2F REGISTER: app_param={} bytes", app_param.len());
 
         // Generate new key pair
@@ -298,7 +298,7 @@ impl U2fCredentialStore {
             &self.rng
         )?;
 
-        let signature = key_pair.sign(&sig_data)?;
+        let signature = key_pair.sign(&self.rng, &sig_data)?;
 
         // Append signature
         response.extend_from_slice(signature.as_ref());

@@ -5,11 +5,11 @@
 
 pub mod actions;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info};
+use tracing::info;
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::state::app_state::AppState;

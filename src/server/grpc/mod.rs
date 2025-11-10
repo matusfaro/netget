@@ -141,7 +141,7 @@ impl GrpcServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = crate::server::connection::ConnectionId::new(
-                            app_state_clone.get_next_unified_id().await
+                            service.app_state.get_next_unified_id().await
                         );
                         debug!("gRPC connection {} from {}", connection_id, remote_addr);
                         let _ = status_tx.send(format!("[DEBUG] gRPC connection from {}", remote_addr));

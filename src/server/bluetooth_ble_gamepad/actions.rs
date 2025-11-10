@@ -3,7 +3,6 @@ use crate::llm::actions::{protocol_trait::{ActionResult, Protocol, Server}, Acti
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
-use serde_json::json;
 
 pub struct BluetoothBleGamepadProtocol;
 impl BluetoothBleGamepadProtocol { pub fn new() -> Self { Self } }

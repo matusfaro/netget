@@ -181,10 +181,11 @@ impl Protocol for UsbMscProtocol {
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         vec![crate::llm::actions::ParameterDefinition {
             name: "disk_image".to_string(),
-            description: "Path to disk image file (will be created if doesn't exist)"
+            type_hint: "string".to_string(),
+            description: "Path to disk image file (default: ./tmp/netget_msc_disk.img, will be created if doesn't exist)"
                 .to_string(),
             required: false,
-            default: Some("./tmp/netget_msc_disk.img".to_string()),
+            example: serde_json::json!("./tmp/netget_msc_disk.img"),
         }]
     }
 
@@ -257,7 +258,8 @@ impl Server for UsbMscProtocol {
     > {
         let disk_image = ctx
             .startup_params
-            .get("disk_image")
+            .as_ref()
+            .and_then(|p| p.get("disk_image"))
             .and_then(|v| v.as_str())
             .map(std::path::PathBuf::from);
 

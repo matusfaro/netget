@@ -161,12 +161,12 @@ impl Server for UsbSerialProtocol {
         let action_type = action["type"].as_str().context("Action must have 'type' field")?;
         match action_type {
             "send_data" => {
-                let data = action["data"].as_str().context("send_data requires 'data' field")?;
+                let _data = action["data"].as_str().context("send_data requires 'data' field")?;
                 // TODO: Implement serial data transmission via USB/IP
                 Ok(ActionResult::NoAction)
             }
             "set_line_coding" => {
-                let baud_rate = action["baud_rate"].as_u64().context("Requires 'baud_rate'")? as u32;
+                let _baud_rate = action["baud_rate"].as_u64().context("Requires 'baud_rate'")? as u32;
                 // TODO: Implement line coding configuration
                 Ok(ActionResult::NoAction)
             }

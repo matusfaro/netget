@@ -48,7 +48,7 @@ impl UsbSerialServer {
         let _ = status_tx.send(format!("USB Serial server listening on {}", local_addr));
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
-        let protocol = Arc::new(crate::server::usb::serial::UsbSerialProtocol::new());
+        let protocol = Arc::new(crate::server::usb::serial::actions::UsbSerialProtocol::new());
 
         tokio::spawn(async move {
             loop {
