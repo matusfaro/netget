@@ -321,7 +321,7 @@ impl UsbMscServer {
         remote_addr: SocketAddr,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
+        _status_tx: mpsc::UnboundedSender<String>,
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: Arc<crate::server::usb::msc::UsbMscProtocol>,
         server_id: crate::state::ServerId,
