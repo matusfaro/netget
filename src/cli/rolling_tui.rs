@@ -1083,6 +1083,12 @@ async fn handle_key_event(
                         state.set_ollama_model(Some(model.clone())).await;
                         app.connection_info.model = model.clone();
                         print_output_line(&format!("Model changed to: {}", model), footer, &palette)?;
+
+                        // Save the new model to settings
+                        if let Err(e) = settings.lock().await.set_model(Some(model.clone())) {
+                            error!("Failed to save model setting: {}", e);
+                        }
+
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
