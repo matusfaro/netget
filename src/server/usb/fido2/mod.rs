@@ -283,9 +283,9 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
         }
     }
 
-    fn get_class_specific_descriptor(&self) -> Option<Vec<u8>> {
+    fn get_class_specific_descriptor(&self) -> Vec<u8> {
         // Return HID descriptor for FIDO2
-        None // HID descriptor is typically returned via GET_DESCRIPTOR request
+        vec![] // HID descriptor is typically returned via GET_DESCRIPTOR request
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {

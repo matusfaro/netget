@@ -593,7 +593,7 @@ impl SmbClient {
 
                     // Execute actions
                     for action in actions {
-                        Self::execute_smb_action(
+                        Box::pin(Self::execute_smb_action(
                             smb_client,
                             action,
                             client_id,
@@ -601,7 +601,7 @@ impl SmbClient {
                             llm_client,
                             app_state,
                             status_tx,
-                        ).await?;
+                        )).await?;
                     }
                 }
                 Err(e) => {

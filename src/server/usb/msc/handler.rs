@@ -450,9 +450,9 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
         }
     }
 
-    fn get_class_specific_descriptor(&self) -> Option<Vec<u8>> {
+    fn get_class_specific_descriptor(&self) -> Vec<u8> {
         // MSC doesn't have class-specific descriptors beyond standard interface descriptor
-        None
+        vec![]
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {
