@@ -62,7 +62,7 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_WEIGHT_SCALE" }
     fn get_event_types(&self) -> Vec<EventType> { vec![WEIGHT_MEASUREMENT_EVENT.clone()] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "weight", "scale", "health"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "weight", "scale", "health"] }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};

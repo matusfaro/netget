@@ -94,7 +94,7 @@ impl Protocol for BluetoothBleKeyboardProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "keyboard", "hid", "bluetooth_ble_keyboard"]
+        vec!["bluetooth", "keyboard", "hid", "bluetooth_ble_keyboard"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

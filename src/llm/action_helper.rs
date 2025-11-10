@@ -66,6 +66,7 @@ use tracing::{debug, warn};
 ///     vec![],
 /// ).await?;
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub async fn call_llm_with_actions(
     llm_client: &OllamaClient,
     state: &AppState,
@@ -392,6 +393,7 @@ pub struct ClientLlmResult {
 ///
 /// This is a simplified version of call_llm for client protocols.
 /// Unlike servers, clients don't have complex scripting or connection tracking.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_llm_for_client(
     llm_client: &OllamaClient,
     state: &AppState,

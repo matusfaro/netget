@@ -47,9 +47,12 @@ pub async fn run_rolling_tui(
     palette: ColorPalette,
 ) -> Result<()> {
     info!("Starting rolling TUI mode");
+    debug!("Rolling TUI: Entry point reached");
 
     // Wrap settings in Arc<Mutex> for sharing with event handlers
+    debug!("Rolling TUI: Wrapping settings in Arc<Mutex>");
     let settings = Arc::new(Mutex::new(settings));
+    debug!("Rolling TUI: Settings wrapped");
 
     // Wrap palette in Arc for sharing
     let palette = Arc::new(palette);
@@ -69,19 +72,42 @@ pub async fn run_rolling_tui(
     state.set_web_search_mode(web_search_mode).await;
 
     // Setup terminal (raw mode only, no alternate screen)
+    debug!("Rolling TUI: Enabling raw mode...");
     terminal::enable_raw_mode()?;
+    debug!("Rolling TUI: Raw mode enabled");
+
+    // Ensure raw mode is disabled even if we panic
+    // This prevents the terminal from being left in a broken state
+    struct RawModeGuard;
+    impl Drop for RawModeGuard {
+        fn drop(&mut self) {
+            let _ = terminal::disable_raw_mode();
+        }
+    }
+    let _guard = RawModeGuard;
 
     // Get terminal size (use defaults if detection fails or returns 0, e.g., in PTY tests)
+    debug!("Rolling TUI: Getting terminal size...");
     let (width, height) = match terminal::size() {
-        Ok((w, h)) if w > 0 && h > 0 => (w, h),
-        _ => (80, 24), // Default to 80x24 if size detection fails or returns 0
+        Ok((w, h)) if w > 0 && h > 0 => {
+            debug!("Rolling TUI: Terminal size: {}x{}", w, h);
+            (w, h)
+        }
+        _ => {
+            debug!("Rolling TUI: Terminal size detection failed, using default 80x24");
+            (80, 24) // Default to 80x24 if size detection fails or returns 0
+        }
     };
 
     // Create sticky footer with system capabilities
+    debug!("Rolling TUI: Getting system capabilities for footer...");
     let system_capabilities = state.get_system_capabilities().await;
+    debug!("Rolling TUI: Creating sticky footer...");
     let mut footer = StickyFooter::new(width, height, system_capabilities, (*palette).clone())?;
+    debug!("Rolling TUI: Sticky footer created");
     let scroll_height = footer.scroll_region_height();
     let footer_height = height.saturating_sub(scroll_height);
+    debug!("Rolling TUI: Scroll height: {}, Footer height: {}", scroll_height, footer_height);
 
     // Create web approval channel for ASK mode
     let (web_approval_tx, mut web_approval_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -122,17 +148,25 @@ pub async fn run_rolling_tui(
     footer.set_log_level(app.log_level);
 
     // Print welcome messages to scrolling region
+    debug!("Rolling TUI: Printing welcome messages...");
     print_welcome_messages(&mut footer, &palette)?;
+    debug!("Rolling TUI: Welcome messages printed");
 
     // Render footer initially to position cursor correctly
     // Without this, the cursor sits at the terminal default position until first keystroke
+    debug!("Rolling TUI: Rendering footer...");
     footer.render(&mut stdout())?;
+    debug!("Rolling TUI: Footer rendered");
 
     // Create status channel for server messages
+    debug!("Rolling TUI: Creating status channel...");
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    debug!("Rolling TUI: Status channel created");
 
     // Create keyboard event stream
+    debug!("Rolling TUI: Creating event stream...");
     let mut event_stream = EventStream::new();
+    debug!("Rolling TUI: Event stream created");
 
     // Create tick interval for UI updates
     let mut tick_interval = interval(Duration::from_millis(100));
@@ -760,6 +794,7 @@ fn clear_sticky_footer(footer: &StickyFooter) -> Result<()> {
 }
 
 /// Handle keyboard and other events
+#[allow(clippy::too_many_arguments)]
 async fn handle_event(
     event: Event,
     app: &mut App,
@@ -779,6 +814,7 @@ async fn handle_event(
 }
 
 /// Handle keyboard key events
+#[allow(clippy::too_many_arguments)]
 async fn handle_key_event(
     key_code: KeyCode,
     modifiers: KeyModifiers,
@@ -1003,7 +1039,7 @@ async fn handle_key_event(
                         footer.render(&mut stdout())?;
                     }
                     UserCommand::ChangeLogLevel { level } => {
-                        if let Some(log_level) = crate::ui::app::LogLevel::from_str(&level) {
+                        if let Some(log_level) = crate::ui::app::LogLevel::parse(&level) {
                             app.set_log_level(log_level);
                             footer.set_log_level(log_level);
                             print_output_line(&format!("Log level set to: {}", log_level.as_str()), footer, &palette)?;

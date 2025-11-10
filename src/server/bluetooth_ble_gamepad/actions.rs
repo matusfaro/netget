@@ -14,7 +14,7 @@ impl Protocol for BluetoothBleGamepadProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_GAMEPAD" }
     fn get_event_types(&self) -> Vec<EventType> { vec![] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "gamepad"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "gamepad"] }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
         ProtocolMetadataV2::builder().state(DevelopmentState::Experimental)

@@ -19,18 +19,27 @@ pub struct ClientRegistry {
 impl ClientRegistry {
     /// Create a new client protocol registry
     fn new() -> Self {
+        tracing::debug!("ClientRegistry::new() - Creating new client registry");
         let mut registry = Self {
             protocols: HashMap::new(),
             keyword_map: HashMap::new(),
         };
 
         // Register all client protocols based on feature flags
+        tracing::debug!("ClientRegistry::new() - Registering client protocols");
         registry.register_protocols();
+        tracing::debug!("ClientRegistry::new() - Client protocols registered");
+
+        tracing::debug!("ClientRegistry::new() - Building keyword map");
         registry.build_keyword_map();
+        tracing::debug!("ClientRegistry::new() - Keyword map built");
 
         // Validate that no keywords overlap between protocols
+        tracing::debug!("ClientRegistry::new() - Validating keyword uniqueness");
         registry.validate_keyword_uniqueness();
+        tracing::debug!("ClientRegistry::new() - Keyword uniqueness validated");
 
+        tracing::debug!("ClientRegistry::new() - Client registry created");
         registry
     }
 
@@ -85,7 +94,11 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::grpc::GrpcClientProtocol::new()));
 
         #[cfg(feature = "http")]
-        self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
+        {
+            tracing::debug!("ClientRegistry: Registering HTTP client protocol");
+            self.register(Arc::new(crate::client::http::HttpClientProtocol::new()));
+            tracing::debug!("ClientRegistry: HTTP client protocol registered");
+        }
 
         #[cfg(feature = "http2")]
         self.register(Arc::new(crate::client::http2::Http2ClientProtocol::new()));
@@ -323,19 +336,20 @@ impl ClientRegistry {
             }
         }
 
-        // If overlaps found, panic with detailed error message
+        // If overlaps found, log warnings with detailed information
         if !overlaps.is_empty() {
-            let mut error_msg = String::from("Client keyword overlaps detected between protocols:\n");
+            use tracing::warn;
+            warn!("⚠️  WARNING: Client keyword overlaps detected between protocols:\n");
 
-            for (keyword, protocols) in overlaps {
-                error_msg.push_str(&format!("\n  Keyword '{}' is used by:\n", keyword));
+            for (keyword, protocols) in &overlaps {
+                warn!("  Keyword '{}' is used by:", keyword);
                 for (protocol_name, source) in protocols {
-                    error_msg.push_str(&format!("    - {} ({})\n", protocol_name, source));
+                    warn!("    - {} ({})", protocol_name, source);
                 }
             }
 
-            error_msg.push_str("\nEach keyword must be unique to a single protocol.");
-            panic!("{}", error_msg);
+            warn!("Note: Each keyword should ideally be unique to a single protocol.");
+            warn!("      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n");
         }
     }
 

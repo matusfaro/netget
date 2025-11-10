@@ -104,6 +104,7 @@ pub async fn start_client_by_id(
 
 /// Start a client from action parameters (used by /load command)
 /// Returns the client ID on success
+#[allow(clippy::too_many_arguments)]
 pub async fn start_client_from_action(
     state: &AppState,
     protocol: &str,

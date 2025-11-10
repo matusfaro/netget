@@ -58,9 +58,18 @@ pub enum Action {
 
 impl CommandInterpretation {
     /// Parse from LLM JSON response
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> anyhow::Result<Self> {
         serde_json::from_str(s)
             .map_err(|e| anyhow::anyhow!("Failed to parse command interpretation: {}", e))
+    }
+}
+
+impl std::str::FromStr for CommandInterpretation {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        CommandInterpretation::from_str(s)
     }
 }
 

@@ -99,6 +99,7 @@ pub async fn try_execute_event_handler(
 }
 
 /// Execute a script handler
+#[allow(clippy::too_many_arguments)]
 async fn execute_script_handler(
     state: &AppState,
     server_id: ServerId,

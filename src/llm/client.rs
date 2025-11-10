@@ -109,6 +109,7 @@ pub struct LlmResponse {
 
 impl LlmResponse {
     /// Parse from JSON string with fallback to legacy text format
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         let trimmed = s.trim();
 
@@ -178,8 +179,17 @@ impl Default for HttpLlmResponse {
     }
 }
 
+impl std::str::FromStr for LlmResponse {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        LlmResponse::from_str(s)
+    }
+}
+
 impl HttpLlmResponse {
     /// Parse from JSON string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         let trimmed = s.trim();
         serde_json::from_str::<HttpLlmResponse>(trimmed)
@@ -193,6 +203,14 @@ impl HttpLlmResponse {
             headers: self.headers,
             body: Bytes::from(self.body),
         }
+    }
+}
+
+impl std::str::FromStr for HttpLlmResponse {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        HttpLlmResponse::from_str(s)
     }
 }
 
@@ -268,10 +286,19 @@ pub struct CommandInterpretation {
 
 impl CommandInterpretation {
     /// Parse from JSON string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         let trimmed = s.trim();
         serde_json::from_str::<CommandInterpretation>(trimmed)
             .context("Failed to parse command interpretation as JSON")
+    }
+}
+
+impl std::str::FromStr for CommandInterpretation {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        CommandInterpretation::from_str(s)
     }
 }
 
@@ -300,6 +327,7 @@ impl OllamaClient {
     }
 
     /// Create a default client pointing to localhost
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self::new("http://localhost:11434")
     }
@@ -335,6 +363,7 @@ impl OllamaClient {
             .context("Failed to open Ollama lock file")?;
 
         // Try to acquire lock with timeout/stale detection
+        #[allow(clippy::never_loop)]
         let lock_acquired = loop {
             // Try non-blocking lock first
             match file.try_lock_exclusive() {
@@ -727,6 +756,12 @@ impl OllamaClient {
             .context("Failed to parse models list")?;
 
         Ok(response.models.into_iter().map(|m| m.name).collect())
+    }
+}
+
+impl Default for OllamaClient {
+    fn default() -> Self {
+        OllamaClient::default()
     }
 }
 

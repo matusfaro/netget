@@ -8,6 +8,12 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+/// Type alias for protocol groups mapping
+type ProtocolGroups = std::collections::HashMap<
+    &'static str,
+    Vec<(String, std::sync::Arc<dyn crate::llm::actions::Server>)>,
+>;
+
 /// Task definition for attaching to a server at creation time
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerTaskDefinition {
@@ -873,10 +879,7 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
 
     // Group protocols by their group_name
     let registry = crate::protocol::server_registry::registry();
-    let mut groups: std::collections::HashMap<
-        &'static str,
-        Vec<(String, std::sync::Arc<dyn crate::llm::actions::Server>)>,
-    > = std::collections::HashMap::new();
+    let mut groups: ProtocolGroups = std::collections::HashMap::new();
 
     for protocol_name in all_base_stacks(include_disabled) {
         if let Some(protocol) = registry.get(&protocol_name) {

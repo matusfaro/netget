@@ -14,7 +14,7 @@ impl Protocol for BluetoothBleFileTransferProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_FILE_TRANSFER" }
     fn get_event_types(&self) -> Vec<EventType> { vec![] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "file_transfer"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "file_transfer"] }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
         ProtocolMetadataV2::builder().state(DevelopmentState::Experimental)

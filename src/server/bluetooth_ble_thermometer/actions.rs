@@ -34,7 +34,7 @@ impl Protocol for BluetoothBleThermometerProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_THERMOMETER" }
     fn get_event_types(&self) -> Vec<EventType> { vec![TEMPERATURE_UPDATED_EVENT.clone()] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "thermometer", "temperature"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "thermometer", "temperature"] }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
         ProtocolMetadataV2::builder().state(DevelopmentState::Experimental).implementation("BLE Health Thermometer (0x1809)").llm_control("Actions: set_temperature").e2e_testing("Requires BLE device").notes("Standard GATT Thermometer Service").build()

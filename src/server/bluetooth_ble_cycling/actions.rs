@@ -60,7 +60,7 @@ impl Protocol for BluetoothBleCyclingProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_CYCLING" }
     fn get_event_types(&self) -> Vec<EventType> { vec![CYCLING_MEASUREMENT_EVENT.clone()] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "cycling", "bike", "fitness"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "cycling", "bike", "fitness"] }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};

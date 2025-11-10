@@ -82,7 +82,7 @@ impl Protocol for BluetoothBleDataStreamProtocol {
     fn protocol_name(&self) -> &'static str { "BLUETOOTH_BLE_DATA_STREAM" }
     fn get_event_types(&self) -> Vec<EventType> { vec![STREAM_STARTED_EVENT.clone(), STREAM_DATA_EVENT.clone()] }
     fn stack_name(&self) -> &'static str { "DATALINK" }
-    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "ble", "stream", "data", "sensor"] }
+    fn keywords(&self) -> Vec<&'static str> { vec!["bluetooth", "stream", "data", "sensor"] }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};

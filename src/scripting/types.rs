@@ -24,7 +24,7 @@ impl ScriptLanguage {
     }
 
     /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "python" | "python3" => Some(ScriptLanguage::Python),
             "javascript" | "js" | "node" => Some(ScriptLanguage::JavaScript),
@@ -228,7 +228,7 @@ pub enum ScriptUpdateOperation {
 
 impl ScriptUpdateOperation {
     /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "set" => Some(ScriptUpdateOperation::Set),
             "add_contexts" | "add" => Some(ScriptUpdateOperation::AddContexts),

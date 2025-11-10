@@ -14,6 +14,7 @@ mod theme;
 use anyhow::Result;
 pub use args::Args;
 use clap::Parser;
+use tracing::debug;
 
 use crate::events::EventHandler;
 use crate::llm::OllamaClient;
@@ -49,16 +50,23 @@ pub async fn run() -> Result<()> {
         non_interactive::run_non_interactive(prompt, &args, settings).await
     } else if args.is_interactive() {
         // Interactive TUI mode - no prompt and terminal is available
+        debug!("Entering interactive TUI mode");
+        debug!("Creating AppState...");
         let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
+        debug!("AppState created");
 
         // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
+        debug!("Parsing scripting mode...");
         let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
             Some(mode)
         } else { settings.parse_scripting_mode() };
+        debug!("Scripting mode to set: {:?}", mode_to_set);
 
         if let Some(mode) = mode_to_set {
             // Validate that the requested environment is available
+            debug!("Getting scripting environment for validation...");
             let scripting_env = state.get_scripting_env().await;
+            debug!("Scripting environment retrieved");
             let available = match mode {
                 crate::state::app_state::ScriptingMode::On => true, // LLM chooses runtime
                 crate::state::app_state::ScriptingMode::Off => true, // Always available
@@ -79,23 +87,37 @@ pub async fn run() -> Result<()> {
         }
 
         // Determine theme: CLI arg > auto-detect > neutral fallback
+        debug!("Parsing theme argument: {}", args.theme);
         let theme_option = theme::parse_theme(&args.theme)?;
+        debug!("Theme option parsed: {:?}", theme_option);
         let theme = if let Some(t) = theme_option {
+            debug!("Using explicit theme: {:?}", t);
             t
         } else {
             // Auto-detect
-            theme::detect_theme().unwrap_or(theme::Theme::Neutral)
+            debug!("Auto-detecting theme...");
+            let detected = theme::detect_theme().unwrap_or(theme::Theme::Neutral);
+            debug!("Theme detected: {:?}", detected);
+            detected
         };
+        debug!("Creating color palette from theme: {:?}", theme);
         let color_palette = theme::ColorPalette::from_theme(theme);
+        debug!("Color palette created");
 
         // Get system capabilities for UI display
+        debug!("Getting system capabilities...");
         let system_capabilities = state.get_system_capabilities().await;
+        debug!("Creating App...");
         let app = App::new(system_capabilities);
+        debug!("Getting ollama lock status...");
         let lock_enabled = state.get_ollama_lock_enabled().await;
+        debug!("Creating OllamaClient...");
         let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
+        debug!("Creating EventHandler...");
         let event_handler = EventHandler::new(state.clone(), llm.clone());
 
         // Note: init_terminal not needed for rolling TUI (manages terminal itself)
+        debug!("Entering rolling TUI...");
         rolling_tui::run_rolling_tui(state, app, event_handler, llm, settings, &args, color_palette).await
     } else {
         // No prompt and no terminal available

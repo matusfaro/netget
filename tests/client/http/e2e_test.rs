@@ -15,7 +15,7 @@ mod http_client_tests {
         // Start an HTTP server listening on an available port
         let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP. Respond to GET requests with 'Hello from server'.");
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -26,7 +26,7 @@ mod http_client_tests {
             server.port
         ));
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         // Give client time to make request
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -54,7 +54,7 @@ mod http_client_tests {
         // Start a simple HTTP server
         let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP. Log all incoming requests.");
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -64,7 +64,7 @@ mod http_client_tests {
             server.port
         ));
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 

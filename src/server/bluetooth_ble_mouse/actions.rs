@@ -95,7 +95,7 @@ impl Protocol for BluetoothBleMouseProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "mouse", "hid", "bluetooth_ble_mouse"]
+        vec!["bluetooth", "mouse", "hid", "bluetooth_ble_mouse"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

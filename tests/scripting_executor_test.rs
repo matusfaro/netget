@@ -40,7 +40,7 @@ print(json.dumps(response))
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.len(), 1);
+    assert_eq!(response.actions.len(), 1);
 }
 
 #[test]
@@ -86,9 +86,9 @@ print(json.dumps(response))
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.len(), 1);
+    assert_eq!(response.actions.len(), 1);
 
-    let action = &response[0];
+    let action = &response.actions[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("ssh_auth_decision"));
     assert_eq!(action.get("allowed").and_then(|v| v.as_bool()), Some(true));
 }
@@ -125,7 +125,7 @@ console.log(JSON.stringify(response));
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.len(), 1);
+    assert_eq!(response.actions.len(), 1);
 }
 
 #[test]
@@ -164,9 +164,9 @@ fmt.Println(string(jsonBytes))
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.len(), 1);
+    assert_eq!(response.actions.len(), 1);
 
-    let action = &response[0];
+    let action = &response.actions[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
     assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Go"));
 }
@@ -205,9 +205,9 @@ print encode_json($response);
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.len(), 1);
+    assert_eq!(response.actions.len(), 1);
 
-    let action = &response[0];
+    let action = &response.actions[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
     assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Perl"));
 }
@@ -253,9 +253,9 @@ print encode_json($response);
     assert!(result.is_ok());
 
     let response = result.unwrap();
-    assert_eq!(response.len(), 1);
+    assert_eq!(response.actions.len(), 1);
 
-    let action = &response[0];
+    let action = &response.actions[0];
     assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("ssh_auth_decision"));
     assert_eq!(action.get("allowed").and_then(|v| v.as_bool()), Some(true));
 }
